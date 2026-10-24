@@ -1,0 +1,423 @@
+diff --git a/ops/hosted-autonomy-queue-pass.ts b/ops/hosted-autonomy-queue-pass.ts
+index 5341496..18ea40c 100644
+--- a/ops/hosted-autonomy-queue-pass.ts
++++ b/ops/hosted-autonomy-queue-pass.ts
+@@ -10,10 +10,12 @@ import {
+   queueRecordProtected,
+ } from "./hosted-autonomy-queue-context.ts";
+ import {
++  hasQueueDeliveryProvenance,
+   hasQueueIntentNamespace,
+   isQueueHeld,
+   queueCustodyRequired,
+ } from "./hosted-autonomy-queue-policy.ts";
++import { releaseRequestMatchesDelivery } from "../src/repair/loop-records.ts";
+ import {
+   QueueCustodyWriter,
+   queueHold,
+@@ -100,6 +102,14 @@ export async function runHostedQueueCustody(
+       return writer.result(false);
+     }
+     if (effective === null) return writer.result(false);
++    if (
++      effective === false && queue.config.mode === "off" &&
++      !queue.config.proofActivated &&
++      !await releaseDormantHolds(writer, native, deps.clock.now())
++    ) {
++      writer.actions.push("queue:dormant_release_unverified");
++      return writer.result(false);
++    }
+     if (effective && !queue.config.proofActivated) {
+       writer.actions.push("queue:activation_unaccepted");
+       return writer.result(false);
+@@ -199,3 +209,38 @@ async function acquireSnapshotHolds(
+   }
+   return await writer.update(changed);
+ }
++
++/**
++ * Owner directive 2026-10-24 (#180): with queue proof dormant, admission off
++ * and an authenticated negative merge_queue rule, a bare open-ended hold on an
++ * unbooked gateway pull (no queue intent, no queue provenance, no native
++ * entry, no matching release request) is no custody. It returns to the
++ * runtime's transient wait so the ordinary direct path re-observes it.
++ */
++async function releaseDormantHolds(
++  writer: QueueCustodyWriter,
++  native: QueueSnapshot,
++  now: number,
++): Promise<boolean> {
++  const { snapshot } = writer.observed;
++  const released = snapshot.work.filter((record) =>
++    record.repository.owner === "ubiquity" &&
++    record.repository.name === "ai.ubq.fi" &&
++    record.nextStep !== "done" && isQueueHeld(record) &&
++    !hasQueueIntentNamespace(record) && !hasQueueDeliveryProvenance(record) &&
++    record.intent?.kind !== "base_refresh" &&
++    !native.entries.some((entry) => entry.pull.number === record.target.pr) &&
++    !snapshot.releaseRequests.some((request) =>
++      releaseRequestMatchesDelivery(request, record)
++    )
++  ).map((record): WorkRecordV1 => ({
++    ...record,
++    wait: { reason: "unavailable", since: now, until: now },
++    updatedAt: now,
++  }));
++  if (!await writer.update(released)) return false;
++  for (const record of released) {
++    writer.actions.push(`queue:${record.id}:dormant_hold_released`);
++  }
++  return true;
++}
+diff --git a/tests/host/hosted-autonomy-conflict-producer_test.ts b/tests/host/hosted-autonomy-conflict-producer_test.ts
+index 11658fe..6a9e912 100644
+--- a/tests/host/hosted-autonomy-conflict-producer_test.ts
++++ b/tests/host/hosted-autonomy-conflict-producer_test.ts
+@@ -343,7 +343,15 @@ for (
+       // Three writes (the charge settlement, the resolved intent, the streak
+       // reset), and nothing else pushed.
+       assert.equal(w.writes.length, 3);
+-      assert.ok(w.nativeReads.includes("POST /graphql"));
++      // Dormant queue proof (owner directive 2026-10-24, #180): the guard
++      // proves the authenticated negative rule and skips the queue read.
++      assert.ok(w.nativeReads.length > 0);
++      assert.ok(
++        w.nativeReads.every((read) =>
++          read === "GET /repos/ubiquity/ai.ubq.fi/rules/branches/development"
++        ),
++        JSON.stringify(w.nativeReads),
++      );
+       assert.deepEqual(
+         await w.refs(),
+         [...refsBefore, `${w.ref} ${w.merge}`].sort(),
+@@ -490,7 +498,15 @@ Deno.test("conflict producer: the launcher's candidate port opens exactly the in
+         refReads: w.http.paths,
+       }),
+     );
+-    assert.ok(w.nativeReads.includes("POST /graphql"));
++    // Dormant queue proof (owner directive 2026-10-24, #180): the guard
++    // proves the authenticated negative rule and skips the queue read.
++    assert.ok(w.nativeReads.length > 0);
++    assert.ok(
++      w.nativeReads.every((read) =>
++        read === "GET /repos/ubiquity/ai.ubq.fi/rules/branches/development"
++      ),
++      JSON.stringify(w.nativeReads),
++    );
+     assert.equal(await remoteRef(rig, w.ref), w.merge);
+     assert.deepEqual(await rig.hosted.snapshot(), admitted, "no state write");
+   } finally {
+diff --git a/tests/host/hosted-autonomy-queue-consumers_test.ts b/tests/host/hosted-autonomy-queue-consumers_test.ts
+index 73f7077..c7a221f 100644
+--- a/tests/host/hosted-autonomy-queue-consumers_test.ts
++++ b/tests/host/hosted-autonomy-queue-consumers_test.ts
+@@ -727,7 +727,7 @@ Deno.test("activated direct proof: only the resolver's live capability can book"
+   }
+ });
+ 
+-Deno.test("active queue floor: open green spent head never merges; verified direct booking preserves charges once", async () => {
++Deno.test("dormant queue floor: open green spent head merges directly once; verified direct booking preserves charges once", async () => {
+   const f = await fixture(true);
+   try {
+     const facts = await directProofFacts();
+@@ -761,13 +761,15 @@ Deno.test("active queue floor: open green spent head never merges; verified dire
+       resolveDelivery: () => resolveQueueAwareDelivery(facts, POLICY),
+     };
+     assert.equal(f.facts.record.counters.reviewRounds, 3);
++    // Owner directive 2026-10-24 (#180): with queue proof dormant an
++    // unprotected gateway record takes the direct launcher delivery.
+     await runHostedDeliveryPass(f.context);
+     assert.equal(
+       f.rig.merges,
+-      0,
+-      "compiled active floor never calls the direct merge",
++      1,
++      "dormant floor merges the exact green head once",
+     );
+-    assert.equal(f.rig.writes, 0, "open work cannot be booked");
++    assert.equal(f.rig.writes, 0, "an unobserved merge books nothing");
+     const open = await f.rig.state.readRepair();
+     assert.ok(open.ok && open.value.status === "found");
+     assert.deepEqual(
+@@ -788,7 +790,7 @@ Deno.test("active queue floor: open green spent head never merges; verified dire
+       booked.value.snapshot.reservations,
+       f.context.snapshot.reservations,
+     );
+-    assert.equal(f.rig.merges, 0);
++    assert.equal(f.rig.merges, 1);
+     assert.equal(f.rig.writes, 1);
+     await runHostedDeliveryPass({
+       ...f.context,
+@@ -799,7 +801,7 @@ Deno.test("active queue floor: open green spent head never merges; verified dire
+       revisions: [],
+       ...createHostedAutonomyScopes(f.context.deps),
+     });
+-    assert.equal(f.rig.merges, 0);
++    assert.equal(f.rig.merges, 1);
+     assert.equal(f.rig.writes, 1, "exact replay is read-only");
+   } finally {
+     await Deno.remove(f.rig.tmp, { recursive: true });
+diff --git a/tests/host/local-github-review-owner_test.ts b/tests/host/local-github-review-owner_test.ts
+index a981c5f..7dc43dd 100644
+--- a/tests/host/local-github-review-owner_test.ts
++++ b/tests/host/local-github-review-owner_test.ts
+@@ -204,7 +204,7 @@ Deno.test("local GitHub review owner: explicit self capability reaches native re
+       activated
+         ? []
+         : name === "ai.ubq.fi"
+-        ? [`GET ${rulesPath}`, "POST /graphql", `GET ${pullPath}`]
++        ? [`GET ${rulesPath}`, `GET ${pullPath}`]
+         : [`GET ${pullPath}`],
+       JSON.stringify(result),
+     );
+diff --git a/tests/host/merge-queue-authority_test.ts b/tests/host/merge-queue-authority_test.ts
+index 4c0eb36..1e5340e 100644
+--- a/tests/host/merge-queue-authority_test.ts
++++ b/tests/host/merge-queue-authority_test.ts
+@@ -42,17 +42,35 @@ Deno.test("queue authority remains dark with absent source pins and uses REST-on
+   assert.equal(rig.nativeReads, 0);
+ });
+ 
+-Deno.test("actual LF queue authority refuses legacy direct delivery with admission off", async () => {
++Deno.test("shipped queue authority is dormant with admission off; an activated floor still refuses legacy direct", async () => {
+   const rig = await authorityRig();
+   rig.toggles.merged = true;
+   rig.toggles.rule = false;
+-  const authority = createHostedQueueAuthority(rig.options);
++  // Owner directive 2026-10-24 (#180): the shipped source pins are dormant.
++  const shipped = createHostedQueueAuthority(rig.options);
+   assert.equal(
+-    (await authority.authorization.readAuthorization(rig.request())).status,
++    (await shipped.authorization.readAuthorization(rig.request())).status,
+     "unavailable",
+   );
+   assert.equal(
+-    (await authority.resolveDelivery(rig.deliveryRequest())).status,
++    (await shipped.resolveDelivery(rig.deliveryRequest())).status,
++    "legacy_direct",
++  );
++  const activated = createHostedQueueAuthority({
++    ...rig.options,
++    configuration: {
++      mode: "off",
++      proofActivated: true,
++      policy: QUEUE_PROOF_POLICY,
++      pins: QUEUE_AUTHORITY_PINS,
++    },
++  });
++  assert.equal(
++    (await activated.authorization.readAuthorization(rig.request())).status,
++    "unavailable",
++  );
++  assert.equal(
++    (await activated.resolveDelivery(rig.deliveryRequest())).status,
+     "unavailable",
+   );
+ });
+diff --git a/tests/host/merge-queue-kill-switch_test.ts b/tests/host/merge-queue-kill-switch_test.ts
+index 97d94bc..2f1943e 100644
+--- a/tests/host/merge-queue-kill-switch_test.ts
++++ b/tests/host/merge-queue-kill-switch_test.ts
+@@ -358,9 +358,11 @@ Deno.test("production queue factories apply the same lower-only selector under a
+   }
+ });
+ 
+-Deno.test("current production ceiling cannot be raised and proof activation cannot be lowered", async () => {
++Deno.test("current production ceiling cannot be raised and the shipped queue proof is dormant", async () => {
+   assert.equal(QUEUE_MODE_CEILING, "off");
+-  assert.equal(QUEUE_PROOF_ACTIVATED, true);
++  // Owner directive 2026-10-24 (#180): proof stays dormant until an accepted
++  // canary populates the authority pins. No selector can raise it.
++  assert.equal(QUEUE_PROOF_ACTIVATED, false);
+   const rig = await factoryRig();
+   const production = Reflect.apply(createHostedQueueCoordinator, undefined, [{
+     state: rig.state,
+@@ -370,7 +372,7 @@ Deno.test("current production ceiling cannot be raised and proof activation cann
+     queueMode: "on",
+   }]) as ReturnType<typeof createHostedQueueCoordinator>;
+   assert.equal(production.config.mode, "off");
+-  assert.equal(production.config.proofActivated, true);
++  assert.equal(production.config.proofActivated, false);
+   for (const selector of ["on", "observe", "off", "invalid", undefined]) {
+     const source = { ...dormantSource, mode: "off" as const };
+     assert.equal(rig.coordinator(selector, source).config.mode, "off");
+diff --git a/tests/host/merge-queue-proof_test.ts b/tests/host/merge-queue-proof_test.ts
+index 20fd115..57a6e7b 100644
+--- a/tests/host/merge-queue-proof_test.ts
++++ b/tests/host/merge-queue-proof_test.ts
+@@ -480,7 +480,7 @@ Deno.test("fixture proof: active delivery consumer requires a pinned exact synth
+   }
+ });
+ 
+-Deno.test("fixture proof: compiled active floor rejects legacy direct despite fixture false", async () => {
++Deno.test("fixture proof: dormant compiled floor accepts exact legacy direct; queue custody still refuses it", async () => {
+   const facts = await directProofFacts();
+   const { resolveHostedDelivery } = await import(
+     "../../ops/hosted-autonomy-delivery-proof.ts"
+@@ -511,36 +511,41 @@ Deno.test("fixture proof: compiled active floor rejects legacy direct despite fi
+         : facts.task,
+     },
+   });
+-  const proof = await resolveHostedDelivery(
+-    {
+-      snapshot: liveSnapshot([facts.record], [facts.receipt]),
+-      observedHead: SHA1,
+-      deps: {
+-        state: new MemoryState(),
+-        githubFor: () => surface,
+-        clock: { now: () => T0 },
+-        queueCustody: {
+-          ready: true,
+-          proofActivated: false,
+-          protectedRecordIds: new Set(),
+-          resolveDelivery: () =>
+-            Promise.resolve({
+-              status: "legacy_direct",
+-              binding: facts.binding,
+-              revision: facts.revision!,
+-            }),
++  const resolve = (protectedRecordIds: ReadonlySet<string>) =>
++    resolveHostedDelivery(
++      {
++        snapshot: liveSnapshot([facts.record], [facts.receipt]),
++        observedHead: SHA1,
++        deps: {
++          state: new MemoryState(),
++          githubFor: () => surface,
++          clock: { now: () => T0 },
++          queueCustody: {
++            ready: true,
++            proofActivated: false,
++            protectedRecordIds,
++            resolveDelivery: () =>
++              Promise.resolve({
++                status: "legacy_direct",
++                binding: facts.binding,
++                revision: facts.revision!,
++              }),
++          },
+         },
+       },
+-    },
+-    facts.record,
+-    {
+-      repository: facts.record.repository,
+-      key: "fixture",
+-      surface,
+-      baseBranch: "development",
+-    },
+-    pull,
+-    "delivery",
+-  );
+-  assert.equal(proof, null);
++      facts.record,
++      {
++        repository: facts.record.repository,
++        key: "fixture",
++        surface,
++        baseBranch: "development",
++      },
++      pull,
++      "delivery",
++    );
++  // Owner directive 2026-10-24 (#180): the shipped floor is dormant.
++  const proof = await resolve(new Set());
++  assert.equal(proof?.kind, "legacy");
++  assert.equal(proof?.head, facts.binding.head);
++  assert.equal(await resolve(new Set([facts.record.id])), null);
+ });
+diff --git a/tests/host/queue-dormant-hold-release_test.ts b/tests/host/queue-dormant-hold-release_test.ts
+new file mode 100644
+index 0000000..34430d6
+--- /dev/null
++++ b/tests/host/queue-dormant-hold-release_test.ts
+@@ -0,0 +1,77 @@
++import assert from "node:assert/strict";
++import { runHostedQueueCustody } from "../../ops/hosted-autonomy-queue-pass.ts";
++import { queueHold } from "../../ops/hosted-autonomy-queue-writer.ts";
++import { createQueueIntent } from "../../ops/hosted-autonomy-queue-intent.ts";
++import { isQueueHeld } from "../../ops/hosted-autonomy-queue-policy.ts";
++import { canonicalStringify } from "../../src/contracts/canonical.ts";
++import { orchestrationRig } from "./merge-queue-orchestration-fixtures.ts";
++
++async function dormantHeld() {
++  const f = await orchestrationRig();
++  f.queue.config.mode = "off";
++  f.queue.config.proofActivated = false;
++  f.state.repair!.work[0] = queueHold(f.state.repair!.work[0], f.now());
++  assert.ok(isQueueHeld(f.state.repair!.work[0]));
++  return f;
++}
++
++Deno.test("dormant queue proof: a bare custody hold on an unbooked gateway pull is released to a transient wait", async () => {
++  const f = await dormantHeld();
++  const charges = canonicalStringify(f.state.repair!.reservations);
++  f.advance(1000);
++  const result = await runHostedQueueCustody(f.deps, f.now() + 60000);
++  assert.equal(result.ready, true, result.actions.join(" "));
++  const record = f.state.repair!.work[0];
++  assert.equal(isQueueHeld(record), false);
++  assert.deepEqual(record.wait, {
++    reason: "unavailable",
++    since: f.now(),
++    until: f.now(),
++  });
++  assert.ok(
++    result.actions.includes(`queue:${record.id}:dormant_hold_released`),
++    result.actions.join(" "),
++  );
++  assert.equal(canonicalStringify(f.state.repair!.reservations), charges);
++  assert.equal(f.calls.includes("enqueue"), false);
++  // The next pass needs no native queue read at all.
++  f.calls.length = 0;
++  const next = await runHostedQueueCustody(f.deps, f.now() + 60000);
++  assert.deepEqual(next.actions, ["queue:inactive_no_rule"]);
++  assert.equal(f.calls.includes("queue"), false);
++});
++
++Deno.test("dormant queue proof: activated proof, a native entry, an unknown rule or queue intent keep the hold", async (t) => {
++  for (const variant of ["activated", "entry", "rules", "intent"] as const) {
++    await t.step(variant, async () => {
++      const f = await dormantHeld();
++      if (variant === "activated") f.queue.config.proofActivated = true;
++      if (variant === "entry") f.join();
++      if (variant === "rules") {
++        f.rules({ status: "unavailable", reason: "http" });
++      }
++      if (variant === "intent") {
++        const held = f.state.repair!.work[0];
++        const intent = await createQueueIntent(
++          { ...held, intent: null },
++          f.proof.binding,
++          f.now(),
++        );
++        f.state.repair!.work[0] = { ...held, intent };
++      }
++      f.advance(1000);
++      const result = await runHostedQueueCustody(f.deps, f.now() + 60000);
++      assert.equal(
++        isQueueHeld(f.state.repair!.work[0]),
++        true,
++        result.actions.join(" "),
++      );
++      assert.equal(
++        result.actions.some((action) =>
++          action.endsWith("dormant_hold_released")
++        ),
++        false,
++      );
++    });
++  }
++});
+diff --git a/tests/host/target-policy-runtime_test.ts b/tests/host/target-policy-runtime_test.ts
+index 801581c..0a13a32 100644
+--- a/tests/host/target-policy-runtime_test.ts
++++ b/tests/host/target-policy-runtime_test.ts
+@@ -224,7 +224,6 @@ Deno.test("target policy: composed gateway candidate preserver rejects deploymen
+     assert.equal(publicationCalls, 0);
+     assert.deepEqual(reads, [
+       "GET /repos/ubiquity/ai.ubq.fi/rules/branches/development",
+-      "POST /graphql",
+       `GET /repos/ubiquity/ai.ubq.fi/git/ref/${ref.slice("refs/".length)}`,
+     ]);
+     assert.deepEqual(
