@@ -7,7 +7,40 @@ grant. Muse ownership is retired. Current policy belongs in
 checkpoints below retain their original text and do not establish current
 ownership, authority or acceptance.
 
-## Latest checkpoint (2026-10-24 05:00 UTC)
+## Latest checkpoint (2026-10-24 08:30 UTC)
+
+- Acceptance progress: the first autonomous closures. Sentinel issue #179 went
+  issue → PR #194 → deterministic base refresh onto green `development` → CI 7/7
+  green → native review completed with no findings and task acceptance
+  `fulfilled` → self merge `2cf5c9416e` by `ubiquity-sentinel[bot]` at 07:24 UTC
+  → issue closed as completed. Passport (bonus) merged three repairs
+  autonomously on the same launcher with the P0-only policy live: PR 165
+  (issue 25) at 06:24, PR 154 (issue 49) and PR 171 (issue 77) at 06:40, all
+  merged and closed by `ubiquity-sentinel[bot]`. ai.ubq.fi has none: every merge
+  there still waits on #180 (`queue.proofActivated`, owner-only edit).
+- Runtime: every supervisor run since 2026-10-23 22:50 UTC settled `success`,
+  including three launcher advances and their model-disabled bootstraps
+  (generations 96 and 97, no rollback). The launcher is `b69a7bf4a5`.
+- Fixed by hand and landed on `development` (`83a308d059`, merged with the self
+  merge of #194): #196 and #197 (self-merge transient git reads and proof
+  custody, live since `b69a7bf4a5`), #198–#202 (pre-merge rate limit and
+  deadline, history-cache straddle, rollback issue-only scoping, scoping
+  comment), the red self-head base read (name-filtered strict `readChecks`; an
+  unverified round-2 P1 confirmed by reading) and the hosted retirement guard
+  for a kept self-merge proof (held-fix review P3). Each change carries a test
+  that fails on the previous code. A held-fix adversarial review found no P0, P1
+  or P2. CI `40076814549` failed once in the modules shard on the unrelated
+  `model-port-early-notifications` heap bound (33.7 MB against 32 MB; 3/3 local
+  passes); one re-run is in flight.
+- Review loop: round 2's nine unverified candidates were re-verified (two
+  skeptics each): four survived and are filed as #204–#207; five were refuted or
+  split. The self-merge recovery dead end on a non-transient conflict is filed
+  as #203.
+- Next: on a green re-run advance `sentinel-supervisor` to `83a308d059` and
+  close #198–#202; watch #195 (issue 187) and the Passport queue; ai.ubq.fi
+  needs #180.
+
+## Prior checkpoint (2026-10-24 05:00 UTC)
 
 - Publication: `development` carries the P0-only merge policy (`c84aab84a0`,
   `23afdff3dd`, `d1bffb79aa`). CI `40062384705` on `d1bffb79aa` failed 13 tests
