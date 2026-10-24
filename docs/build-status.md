@@ -7,7 +7,58 @@ grant. Muse ownership is retired. Current policy belongs in
 checkpoints below retain their original text and do not establish current
 ownership, authority or acceptance.
 
-## Latest checkpoint (2026-10-24 08:30 UTC)
+## Latest checkpoint (2026-10-24 12:45 UTC)
+
+- Acceptance, ai.ubq.fi: correcting the 08:30 checkpoint, ai.ubq.fi has
+  autonomous merges. `ubiquity-sentinel[bot]` merged PR 1254 (issue 1212) and PR
+  1255 (issue 1229) at 06:20 UTC and PR 1258 (issue 1250) at 09:08 UTC onto
+  `development`, each on the exact head of a completed internal review receipt
+  with no findings and task acceptance `fulfilled`. Their source issues stay
+  open by design: Gateway closure waits for an accepted VPS release, and the
+  release path is disabled (`release-deferred:count=33:release_path=disabled`).
+  With Sentinel #179 and Passport 25, 49 and 77, every target now has an
+  autonomous issue → PR → completed review → merge.
+- Live maintenance on launcher `87365939e3` (run `40093950692`): the pass
+  applied instead of skipping `release_not_terminal`. It released the dormant
+  queue holds of ai.ubq.fi 1212, 1214, 1229 and 1250 and booked 1212's merged
+  delivery.
+- Live runtime: the crash fix `41b82bb6ff` (a terminal block kept the PR a
+  self-merge receipt binds) is proven live. Bootstrap `40085603484` and the
+  ordinary runs `40085831848` and `40088502752` settled `success`.
+- Owner directives of 2026-10-24, landed on `development` with tests that fail
+  on the previous code:
+  - #180, queue proof off: `c8809b32b6` and `b7cd073fb1` set
+    `queue.proofActivated` false and release the dormant ai.ubq.fi holds;
+    `3a7d2ab1f8` aligns the uncertainty-maintenance read counts (CI green).
+  - Other people's PRs never hold Sentinel (`f2db8fc948`, CI green): discovery
+    is off in every composition and the existing parks (Passport 87–108,
+    ai.ubq.fi 300 and 1281–1283) return to work. DECISIONS records the
+    supersession of the 2026-10-18 takeover approval.
+  - Hand edits of reserved files: `87365939e3` counts an `abandoned` release as
+    terminal (release `f42d04c7`, abandoned as included_in_successor, had
+    skipped every closure, retry and delivery pass for all targets since 09:24
+    UTC); `9c4de3fc22` (#189) and `62af807857` (#203). #150 was already fixed by
+    `4d25ed48f3`. #150, #189 and #203 are closed.
+- Launcher: `sentinel-supervisor` advanced `41b82bb6ff` → `3a7d2ab1f8` (11:49
+  UTC) → `87365939e3` (12:19) → `62af807857` (12:33), each an exact CI-green
+  `development` SHA with no workflow change.
+- Held locally for the next batch: `afb2b719d9` (#158 item 2: launcher merges
+  refuse a protected-path change) and the #158 DECISIONS record.
+- Open owner items:
+  - Set the repository variable `SENTINEL_AUTO_FOLLOW` to `on`. Every self merge
+    creates a `requested` hosted release, and the maintenance chain for all
+    targets defers until a launcher advance abandons it; with auto-follow off
+    only a manual advance does.
+  - Decide whether a merged ai.ubq.fi repair may close its issue before a VPS
+    release while `sentinel-release` stays disabled; today 33 merged records
+    wait on the release path.
+  - Decide #191, #185, #177, #192 (pending third-party statuses advisory), the
+    automatic refusal of #158 item 3 (the trade-off is recorded) and
+    #152/#161/#162 (release path, disabled).
+- Next: verify the bootstrap and first ordinary run on `62af807857`, the
+  re-admitted records, ai.ubq.fi 1229 and 1250 booked, and record 173's closure.
+
+## Prior checkpoint (2026-10-24 08:30 UTC)
 
 - Acceptance progress: the first autonomous closures. Sentinel issue #179 went
   issue → PR #194 → deterministic base refresh onto green `development` → CI 7/7

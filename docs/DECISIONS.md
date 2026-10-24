@@ -2732,3 +2732,23 @@ standing approval above. Applied as follows.
 - Where an outside pull request and Sentinel's own both target an issue,
   whichever merges first closes the issue, and the other Sentinel record then
   retires as "source issue is closed".
+
+## 2026-10-24: merge-time protected paths and the held-run approval trade-off (#158)
+
+- The launcher's merge gates refuse a protected-path change at merge time, not
+  only at publication. `preMergeGate` lists the pull request's files (a rename's
+  previous path included) for a head about to merge and refuses
+  `protected_path`, or `protected_path_unverified` when the listing is unproven.
+  The carried gate checks the exact patch it already proves. The list is
+  `selectTrustedTargetPolicyV1(...).protectedPaths`, the same list runtime
+  publication refuses.
+- Under CI first, the launcher approves GitHub-held CI runs of model-authored
+  heads before any review (`ciFirstApprovalEligible`). This is accepted because
+  every target's `.github/workflows/` is a protected path: a model candidate can
+  neither publish nor merge a workflow change, so an approved run executes only
+  owner-authored workflow definitions. Sentinel's `ci.yml` runs with
+  `contents: read` and no secrets (checked 2026-10-24); ai.ubq.fi
+  `deno-deploy.yml` did at the 2026-10-17 audit in #158. The owner accepts the
+  exposure if they later add a secret or a write permission to such a workflow:
+  model code would then run with it before review. An automatic refusal for that
+  case is an owner decision and is not implemented.
