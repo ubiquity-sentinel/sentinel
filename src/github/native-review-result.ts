@@ -5,7 +5,7 @@ import {
   expectSha256Hex,
   fail,
 } from "../contracts/validation.ts";
-import { expectStrictJson } from "./journal-json.ts";
+import { expectEnvelopeJson } from "./native-review-envelope-repair.ts";
 import {
   expectJournalExactKeys,
   parseReviewResultV1,
@@ -48,6 +48,7 @@ export function nativeReviewInstructions(
     JSON.stringify(reviewResultOutputSchema(task)),
     "Set findings to an empty array for a clean or unavailable verdict, and include at least one finding for a findings verdict.",
     "Every finding must satisfy lineStart <= lineEnd.",
+    "Inside RESULT, keep every string value on one line and free of double quote characters; quote code with backticks.",
     "Never repeat a finding: every finding must be distinct from every other finding.",
     "Assess taskAcceptance explicitly from the exact supplied task and committed evidence. Never infer fulfilled from a clean code review. Preserve the exact issueNumber and taskDigest; insufficient evidence is uncertain or unavailable.",
     "Mirror every result.findings entry in native findings with identical title/body, code_location.absolute_file_path under the exact checkout, and matching line_range.start/end. Native findings must be empty exactly when result.findings is empty. Do not add prose outside the envelope in overall_explanation.",
@@ -103,7 +104,7 @@ export function parseNativeReviewResult(
     text.indexOf(NATIVE_REVIEW_CLOSE, end + NATIVE_REVIEW_CLOSE.length) >= 0
   ) fail("$", "invalid_value", "native result envelope unavailable");
   const envelope = expectRecord(
-    expectStrictJson(text.slice(NATIVE_REVIEW_OPEN.length, end), "$"),
+    expectEnvelopeJson(text.slice(NATIVE_REVIEW_OPEN.length, end), "$"),
     "$",
   );
   expectJournalExactKeys(envelope, ["binding", "result"], "$");
