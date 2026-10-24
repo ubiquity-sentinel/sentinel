@@ -27,6 +27,10 @@ ownership, authority or acceptance.
   refuses deterministically; filed as #184 (owner policy decision). The walk's
   300 s budget processes about one producer wave per maintenance run
   (`deferred_budget`, 975 history steps); filed as #185.
+- 01:45 UTC: CI 40050503785 passed on fdc98f727a (token fix plus the test
+  fixture moved under the repository root, which the CI shards can read);
+  launcher `sentinel-supervisor` advanced 9b2de3d259 → fdc98f727a. The audit's
+  verified P1/P2 risks are filed as #186–#193.
 - Next: CI on the fix, launcher advance, then watch maintenance preserve #179
   and Passport 77/83; refresh the status board and dashboard afterwards.
 
