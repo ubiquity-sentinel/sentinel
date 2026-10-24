@@ -22,9 +22,11 @@ ownership, authority or acceptance.
   fails on the old wiring) and an unfinished-preservation diagnostic/action.
   Local proof: the real #179 bundle preserves through the real preserver against
   a local remote (only my shallow clone broke the fresh-store proof).
-- Remaining in this class: existing-PR successors (42/49/50/53/59) need takeover
-  authority the maintenance port lacks; the walk's 300 s budget processes about
-  one producer wave per maintenance run (`deferred_budget`, 975 history steps).
+- Remaining in this class: Passport 42/49/50/53/59 are retry successors that do
+  not descend from their published PR head, which the publication validator
+  refuses deterministically; filed as #184 (owner policy decision). The walk's
+  300 s budget processes about one producer wave per maintenance run
+  (`deferred_budget`, 975 history steps); filed as #185.
 - Next: CI on the fix, launcher advance, then watch maintenance preserve #179
   and Passport 77/83; refresh the status board and dashboard afterwards.
 
