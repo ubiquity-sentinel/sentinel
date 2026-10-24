@@ -85,7 +85,13 @@ completed current-head receipt with no unresolved P0 and current-head CI that is
 not red before autonomous merge. Owner directive 2026-10-24: branch protection
 rules and rulesets are not a merge requirement on any target, and the only
 internal review policy is that every P0 is resolved (P1/P2/P3 never block); a
-check the target's own CI skipped or marked neutral is not red.
+check the target's own CI skipped or marked neutral is not red. Owner directive
+2026-10-24: the target's own CI is the primary path; when the target's own CI
+cannot start a job on the exact head (for example the target org's billing or
+spending limit stops every job before it starts), Sentinel's backup CI in the
+ubiquity-sentinel org runs those jobs of the target's own workflow on the exact
+pull request merge tree, and its verified result stands in for exactly those
+never-started checks. Backup CI never overrides a check that ran and failed.
 Missing/stale/unavailable evidence cannot pass. Development reviews follow the
 separate owner preference above.
 

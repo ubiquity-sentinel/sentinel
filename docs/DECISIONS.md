@@ -2997,6 +2997,28 @@ standing approval above. Applied as follows.
   charged.
 - The current-head review, CI and P0 gates are unchanged.
 
+## 2026-10-24: backup CI in the ubiquity-sentinel org (owner decision)
+
+- Owner decision (2026-10-24): "primary path is to use the org's own ci but
+  backup path is to use ubiquity-sentinel org as the backup".
+- Finding: since 06:40 UTC GitHub has not started any Actions job in the private
+  `ubiquity/passport.ubq.fi`. Every check run completes in about one second with
+  conclusion `failure`, no runner, no steps and the annotation "The job was not
+  started because recent account payments have failed or your spending limit
+  needs to be increased". Under "current-head CI not red", 61 of the 71 open
+  Passport issues cannot be reviewed or merged.
+- Primary path, unchanged: the target's own CI on the exact head decides.
+- Backup path: when a required check on the exact head never started (an Actions
+  job with no runner and no steps), Sentinel runs that job of the target's own
+  workflow file, as committed at the head, in the ubiquity-sentinel org on the
+  exact pull request merge tree (the commit whose parents are exactly the
+  reviewed base and the head). It runs in an isolated job with no Sentinel
+  credential and only a read token for the target. The trusted host verifies the
+  result's binding (repository, pull request, head, base, merge tree, workflow
+  file blob, job, run identity) before it counts, and a verified success stands
+  in for exactly that never-started check. A check that ran and failed is never
+  overridden, and missing, stale or unverifiable backup evidence never passes.
+
 ## 2026-10-24: a red target base gets its own repair (base-repair lane)
 
 - Finding (live state, 2026-10-24 23:00 UTC): all 39 Passport records at `work`
