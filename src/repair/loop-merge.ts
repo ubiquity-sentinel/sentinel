@@ -30,6 +30,7 @@ import {
 import { ensureBaseRefreshIntent } from "./loop-base-refresh.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
 import { gateDeliveryOnChecks } from "./loop-checks.ts";
+import { waitSince } from "./loop-ci-correction.ts";
 import { configFor, sameRepositoryIdentity } from "./loop-records.ts";
 import { waitRelease } from "./loop-release.ts";
 import { standingReviewAttempt } from "./loop-review-records.ts";
@@ -496,6 +497,29 @@ export async function handleMergeOutcome(
     return { kind: "progress" }; // reconciled via readPullRequest next run
   }
   const reason = outcome.reason;
+  if (
+    reason === "checks_pending" && record.intent?.kind === "merge" &&
+    record.intent.selfMerge === undefined
+  ) {
+    // Issue #189: the port refuses `checks_pending` only for an open,
+    // unmerged pull request, so the intent binds no write. Clearing it into a
+    // bounded `ci_pending` wait lets the pre-merge CI dispatcher (which
+    // selects intent-free `ci_pending` records) start CI the target never
+    // starts itself; the next turn's CI gate re-observes the head.
+    return persistWork(
+      deps,
+      context,
+      setWait(
+        clearIntent(record, now),
+        {
+          reason: "ci_pending",
+          since: waitSince(record, "ci_pending", now),
+          until: now + CHECK_POLL_MS,
+        },
+        now,
+      ),
+    );
+  }
   if (
     reason === "checks_pending" || reason === "conflict" ||
     reason === "review_required"
