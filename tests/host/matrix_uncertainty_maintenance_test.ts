@@ -42,6 +42,7 @@ import {
   runHostedAutonomy,
 } from "../../ops/hosted-autonomy.ts";
 import { markBlocked } from "../../src/repair/transitions.ts";
+import { QUEUE_PROOF_ACTIVATED } from "../../src/github/queue-runtime-policy.ts";
 import {
   createMatrixUncertaintyMaintenance,
   MATRIX_UNCERTAINTY_DETAIL,
@@ -1052,16 +1053,29 @@ Deno.test("uncertainty maintenance defers missing, unknown, queued and drifting 
           assert.deepEqual(after, before, "no charge, intent or wait changes");
         }
         assert.deepEqual(await f.state.readRelease(), release);
+        // With the shipped queue proof dormant (owner directive 2026-10-24,
+        // #180), admission off and an authenticated negative rule read, the
+        // guard allows through a fresh state read and never reads pulls or
+        // GraphQL. A live merge_queue rule still forces the strict path.
         assert.equal(
           queueReads,
-          {
-            missing: 0,
-            unavailable: 0,
-            queued: 13,
-            state_drift: 13,
-            observation_lost: 1,
-            no_rule: 39,
-          }[mode],
+          (QUEUE_PROOF_ACTIVATED
+            ? {
+              missing: 0,
+              unavailable: 0,
+              queued: 13,
+              state_drift: 13,
+              observation_lost: 1,
+              no_rule: 39,
+            }
+            : {
+              missing: 0,
+              unavailable: 0,
+              queued: 13,
+              state_drift: 0,
+              observation_lost: 0,
+              no_rule: 0,
+            })[mode],
         );
         assert.equal(ruleReads > 0, mode !== "missing");
       } finally {
