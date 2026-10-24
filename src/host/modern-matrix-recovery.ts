@@ -27,6 +27,7 @@ import type {
 import { ingestMatrixResults } from "./matrix.ts";
 import type { MatrixBundleImporterV1 } from "./matrix-git.ts";
 import type { RepairCycleDepsV1 } from "../repair/loop.ts";
+import type { CandidateProofPassV1 } from "./actions-candidates-proof.ts";
 
 /** Proven closed-wave integrity faults must not become availability deferrals. */
 export class ClosedCWaveRecoveryIntegrityFailure extends Error {
@@ -413,7 +414,15 @@ export interface ClosedCWaveRecoveryDepsV1 {
   state: StateReadView & RepairStateWriter;
   clock: Clock;
   configs: readonly RepositoryConfigV1[];
-  cycleFor(config: RepositoryConfigV1): RepairCycleDepsV1;
+  /**
+   * One target's cycle. A producer pass passes its own `proofPass`, so every
+   * candidate that pass preserves for this target is proved in the pass's one
+   * fresh store (#185); omitted, each proof uses its own new store.
+   */
+  cycleFor(
+    config: RepositoryConfigV1,
+    proofPass?: CandidateProofPassV1,
+  ): RepairCycleDepsV1;
   prepareTarget(config: RepositoryConfigV1): Promise<void>;
   importerFor(
     config: RepositoryConfigV1,

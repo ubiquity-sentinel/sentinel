@@ -143,7 +143,7 @@ export async function createHostedClosedMatrixRecovery(input: {
     state: input.state,
     clock: input.clock,
     configs,
-    cycleFor: (config) => ({
+    cycleFor: (config, proofPass) => ({
       state: input.state,
       clock: input.clock,
       configs,
@@ -159,6 +159,7 @@ export async function createHostedClosedMatrixRecovery(input: {
         scratch: input.scratch,
         remoteUrl:
           `https://github.com/${config.repository.owner}/${config.repository.name}.git`,
+        ...(proofPass === undefined ? {} : { proofPass }),
       }),
       githubCooldown: gate,
       incidents: refused<IncidentAdapter>(),

@@ -2887,3 +2887,39 @@ standing approval above. Applied as follows.
   is not re-admitted (it needs no round), and nothing is refunded, re-counted or
   charged.
 - The current-head review, CI and P0 gates are unchanged.
+
+## 2026-10-24: one fresh proof store per target per maintenance pass (#185)
+
+- Finding: the maintenance `current_matrix` walk preserved about one candidate
+  every 15 s and ended on its 300 s budget (`deferred_budget`), so each run
+  recovered roughly one producer wave. Every preservation's durability proof
+  (`freshStoreProof`,
+  [src/host/actions-candidates-proof.ts](../src/host/actions-candidates-proof.ts))
+  ran `git init --bare` and fetched the target's full history into a new empty
+  store.
+- Decision: each producer pass (`recoverHostedMatrixProducer`) owns one
+  `CandidateProofPassV1`, and builds its ingest cycle and every preservation of
+  a target with it (`cycleFor(config, proofPass)`). The first proof of the pass
+  for a target creates ONE new empty bare store in the run's private scratch and
+  pays the history fetch. Every later proof of that pass fetches its own exact
+  operation ref into the same store, which transfers only the objects the store
+  lacks: each fully proved head is recorded there as a private
+  `refs/sentinel-proved/<head>` negotiation ref.
+- Every per-candidate check still runs for every proof in that store:
+  `FETCH_HEAD` equals the head; no shallow, replace or alternate masking; the
+  exact head, base and published-head commits; ancestry; and credential-free
+  publication validation. The source-mirror import and validation are unchanged.
+- The store only receives objects fetched from the fixed target remote during
+  that pass, and automatic gc is off for those fetches. A failed proof ends the
+  store's reuse the way a one-off store ends: it is removed when every child
+  settled, and kept for diagnosis after an unproved settlement or a validator
+  refusal. The next proof starts over in a new empty store. The pass closes its
+  stores when it ends, so a store is never reused across passes or runs.
+- The proof still shows that the remote's exact ref holds the head and that the
+  head's full graph is present. Objects an earlier proof of the same pass
+  fetched came from the same remote, which confirmed the common commits during
+  negotiation; this is accepted as equivalent to a per-candidate empty store.
+- Every other caller (runtime preservation, published-refresh validation, the
+  `existing_candidate_refs` phase and the closed-C ingest) still creates one
+  store per proof. The walk budget is unchanged; letting preservation continue
+  past the walk deadline under its own bound was not needed.
