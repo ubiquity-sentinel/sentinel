@@ -62,6 +62,14 @@ closed ones.
   own `development` CI most likely has a red check (inferred from state; this
   session cannot read Passport's check runs). If so, fixing that base check
   unblocks them all.
+- The same red base also holds 23 reviewed Passport PRs (138–169, issues 6–68)
+  at `delivery` since 05:06 UTC (checked 14:15 UTC with the shipped
+  delivery-line code). Their bases moved, so each needs one refresh, and
+  Sentinel refreshes one record at a time. Three of the red-base candidates (PRs
+  143, 146 and 158) sit on the current tip waiting for their CI, so they stand
+  ahead in that line and hold all 23. Each base recheck raises their stall count
+  by one; they stop holding at 12, around 17:00 UTC. Refreshed heads would still
+  meet the red base, so a green Passport base is the actual fix.
 - Ten ai.ubq.fi PRs from forks (1284 to 1294) are open for issues 1281 to 1283.
   They are not Sentinel's.
 
