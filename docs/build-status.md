@@ -7,7 +7,33 @@ grant. Muse ownership is retired. Current policy belongs in
 checkpoints below retain their original text and do not establish current
 ownership, authority or acceptance.
 
-## Latest checkpoint (2026-10-24 16:20 UTC)
+## Latest checkpoint (2026-10-24 17:40 UTC)
+
+- Launcher: `51c7004b5d` at 16:42 UTC, `17d91e3c13` at 17:12 and `b3cede8f71` at
+  17:37 UTC, each an exact CI-green `development` SHA with no workflow change.
+  #204, #205 and #206 are installed and closed.
+- Two red repair jobs, ordinary runs `40113229034` (16:52) and `40113959407`
+  (17:02) on `51c7004b5d`. Both died on an uncaught "matrix artifact provenance
+  unavailable or conflicting" in the matrix consumer's artifact recovery.
+  GitHub's Actions API was answering 502 for run job listings, and the artifact
+  reader turned any non-200 into a provenance refusal. Fixes:
+  - `17d91e3c13`: a repository artifact listing (440 artifacts, 5 pages) whose
+    count shifts between pages lists again, up to three times.
+  - `b3cede8f71`: a GitHub 5xx is retried twice. A persistent one throws
+    `MatrixArtifactUnavailableError`, and the consumer then leaves every charge
+    unresolved and still runs the ordinary target cycles. Real provenance
+    conflicts still fail closed.
+- Since about 17:00 UTC GitHub's Actions API returns every job of new runs with
+  an empty `steps` array (runs at 16:48 and earlier still list theirs; no GitHub
+  incident is declared). Execution evidence needs the runtime step, so every
+  prepare since then reports `pending` with "hosted execution metadata is
+  invalid". Supervisor runs stay green but do no repair work. The saved
+  execution is `40113959407`. This recovers by itself once GitHub serves steps
+  again. The evidence binding is not weakened.
+- Next: once prepare runs again, confirm a bootstrap and an ordinary run on
+  `b3cede8f71`.
+
+## Prior checkpoint (2026-10-24 16:20 UTC)
 
 - Launcher: `e115fb6ac4` at 15:51 UTC (CI `40107905409` green). Its bootstrap
   `40109314922` settled `success`. Ordinary runs `40106345750` and `40107701392`
