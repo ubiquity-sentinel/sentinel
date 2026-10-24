@@ -88,6 +88,9 @@ function suitedChecks(
  * THAT repository: the sentinel self repository's paths are never reused as a
  * fallback for a foreign target, and no other repository name is hard-coded.
  */
+/** GitHub lists at most 3000 files of a pull request (30 pages of 100). */
+const PULL_FILE_PAGES = 30;
+
 export function createHostedAutonomyGitHub(
   token: string,
   repository: RepositoryIdentityV1,
@@ -290,6 +293,36 @@ export function createHostedAutonomyGitHub(
         branch,
         LISTING_PAGE_SIZE,
       );
+    },
+    async listPullFiles(number: number) {
+      if (!Number.isSafeInteger(number) || number <= 0) return null;
+      const paths: string[] = [];
+      for (let page = 1; page <= PULL_FILE_PAGES; page++) {
+        const body = await request(
+          "GET",
+          `/repos/${scope}/pulls/${number}/files?per_page=${LISTING_PAGE_SIZE}&page=${page}`,
+        );
+        if (!Array.isArray(body)) return null;
+        for (const entry of body) {
+          if (entry === null || typeof entry !== "object") return null;
+          const row = entry as Record<string, unknown>;
+          const filename = row["filename"];
+          if (typeof filename !== "string" || filename.length === 0) {
+            return null;
+          }
+          paths.push(filename);
+          const previous = row["previous_filename"];
+          if (previous !== undefined) {
+            if (typeof previous !== "string" || previous.length === 0) {
+              return null;
+            }
+            paths.push(previous);
+          }
+        }
+        if (body.length < LISTING_PAGE_SIZE) return paths;
+      }
+      // GitHub's 3000-file cap: a full last page cannot prove completeness.
+      return null;
     },
     async listParkedRuns(head: string) {
       // The approval listing gates the same delivery as the checks themselves,

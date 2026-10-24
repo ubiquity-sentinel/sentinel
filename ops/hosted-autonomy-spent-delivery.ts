@@ -32,7 +32,12 @@ import {
   reviewedIdentity,
 } from "../src/repair/carried-review.ts";
 import { releaseRequestId } from "../src/repair/keys.ts";
-import { releaseRequestMatchesDelivery } from "../src/repair/loop-records.ts";
+import {
+  releaseRequestMatchesDelivery,
+  touchesProtected,
+} from "../src/repair/loop-records.ts";
+import { createLocalRepositoryConfig } from "../src/host/local-config.ts";
+import { selectTrustedTargetPolicyV1 } from "../src/host/target-policy.ts";
 import { reviewAuthorizesMerge } from "../src/repair/review-gate.ts";
 import { advanceToDelivery } from "../src/repair/transitions.ts";
 import {
@@ -56,6 +61,7 @@ import {
   sameRepository,
 } from "./hosted-autonomy-policy.ts";
 import {
+  type HostedTreeChangeV1,
   sameTreeChanges,
   treeChangesDigest,
 } from "./hosted-autonomy-github-trees.ts";
@@ -426,6 +432,55 @@ export async function adoptableSpentMerge(
  * pass through `tipGreen`). `spent` is true when the merge is made under the
  * spent rule, so the Gateway record is written with `advanceToDelivery`.
  */
+/**
+ * Issue #158 item 2: a launcher merge never lands a change to the target's
+ * protected paths (the list runtime publication refuses). A change set that
+ * cannot be resolved for the target fails closed.
+ */
+function touchesTargetProtected(
+  repository: RepositoryIdentityV1,
+  changes: readonly Pick<HostedTreeChangeV1, "path">[],
+): boolean {
+  try {
+    const policy = selectTrustedTargetPolicyV1(
+      createLocalRepositoryConfig(),
+      repository,
+    );
+    return changes.some((change) =>
+      touchesProtected(policy.protectedPaths, change.path)
+    );
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * The pull request's changed paths (a rename's previous path included)
+ * checked against the target's protected paths. The production surface
+ * always lists files; a fixture surface without that read skips the check.
+ * A failed or incomplete listing refuses.
+ */
+async function protectedPathRefusal(
+  surface: HostedAutonomyGitHubV1,
+  repository: RepositoryIdentityV1,
+  pull: number,
+): Promise<"protected_path" | "protected_path_unverified" | null> {
+  if (surface.listPullFiles === undefined) return null;
+  let paths: readonly string[] | null = null;
+  try {
+    paths = await surface.listPullFiles(pull);
+  } catch {
+    paths = null;
+  }
+  if (paths === null) return "protected_path_unverified";
+  return touchesTargetProtected(
+      repository,
+      paths.map((path) => ({ path })),
+    )
+    ? "protected_path"
+    : null;
+}
+
 export async function preMergeGate(input: {
   context: HostedAutonomyPassContextV1;
   scope: HostedAutonomyScopeV1;
@@ -479,6 +534,15 @@ export async function preMergeGate(input: {
       input.tipGreen.set(scope.key, green);
     }
     if (!green) return { refusal: "base_ci_pending", spent: false };
+  }
+  // Last, so only a head about to merge pays for the file listing.
+  const protectedRefusal = await protectedPathRefusal(
+    surface,
+    record.repository,
+    pull.number,
+  );
+  if (protectedRefusal !== null) {
+    return { refusal: protectedRefusal, spent: false };
   }
   return { refusal: null, spent: parked || moved };
 }
@@ -726,7 +790,8 @@ export async function carriedPatchRefusal(
     refusal:
       | "carried_proof_unavailable"
       | "carried_patch_changed"
-      | "carried_not_on_tip";
+      | "carried_not_on_tip"
+      | "protected_path";
   }
   | {
     refusal: null;
@@ -758,6 +823,9 @@ export async function carriedPatchRefusal(
   if (refreshed.mergeBase !== base) return { refusal: "carried_not_on_tip" };
   if (!sameTreeChanges(reviewed.changes, refreshed.changes)) {
     return { refusal: "carried_patch_changed" };
+  }
+  if (touchesTargetProtected(receipt.repository, reviewed.changes)) {
+    return { refusal: "protected_path" };
   }
   return {
     refusal: null,

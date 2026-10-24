@@ -255,6 +255,17 @@ Deno.test("carried merge (launcher): nothing short of the full proof merges", as
       "carried_proof_unavailable",
     ],
     [
+      // Issue #158 item 2: the exact patch touches a Gateway protected path.
+      "protected path",
+      refreshed618(),
+      {},
+      {
+        reviewed: [{ ...REVIEWED_CHANGES[1], path: "deno.json" }],
+        refreshed: [{ ...REVIEWED_CHANGES[1], path: "deno.json" }],
+      },
+      "protected_path",
+    ],
+    [
       "source issue closed",
       refreshed618(),
       { issueOpen: { 618: false } },
