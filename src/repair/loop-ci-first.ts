@@ -41,6 +41,7 @@
  * at its own admission (`counters.retries` through `countRetry`), after the
  * failure is re-derived from live check runs (`confirmPreReviewCiFix`).
  */
+import { ownBaseRed } from "./base-repair.ts";
 import type { GitHubCheckV1 } from "../contracts/ports.ts";
 import type { WorkRecordV1, WorkWaitV1 } from "../contracts/work-record.ts";
 import {
@@ -270,8 +271,11 @@ export async function gateReviewOnCi(
     new Set(failed.map((check) => check.name)),
   );
   if (!base.ok) return UNAVAILABLE;
-  const disposition = decideCiDisposition(
-    attributeFailedChecks(failed, base.value.checks),
+  const disposition = await ownBaseRed(
+    deps,
+    record,
+    decideCiDisposition(attributeFailedChecks(failed, base.value.checks)),
+    failed,
   );
   switch (disposition.kind) {
     case "candidate":

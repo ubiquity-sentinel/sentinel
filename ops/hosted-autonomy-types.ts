@@ -144,6 +144,13 @@ export interface HostedAutonomyGitHubV1 {
    */
   hasAllChecksGreen(head: string, base?: string): Promise<boolean | null>;
   /**
+   * Base-repair read: the names of the check runs on the exact commit that
+   * completed with `failure`, `timed_out` or `startup_failure` (empty when
+   * none did), or null when the complete listing cannot be read. Optional:
+   * a surface without it files no base-repair issue.
+   */
+  failedChecks?(head: string): Promise<string[] | null>;
+  /**
    * `baseBranch` is the branch the merge must be integrated into; a merged
    * pull whose integration cannot be verified without it reads as null.
    */
@@ -339,7 +346,9 @@ export interface HostedSelfObservationV1 {
     input: { jobId: number; maxBytes: number },
   ): Promise<string | null>;
   listOpenIssueBodies(): Promise<string[] | null>;
-  fileIssue(input: { title: string; body: string }): Promise<number | null>;
+  fileIssue(
+    input: { title: string; body: string; labels?: string[] },
+  ): Promise<number | null>;
 }
 
 /**

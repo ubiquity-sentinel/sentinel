@@ -19,6 +19,7 @@
  * memory and in the correction request; the durable record holds the ordinary
  * lifecycle step, wait or blocker message.
  */
+import { ownBaseRed } from "./base-repair.ts";
 import type { GitHubCheckV1 } from "../contracts/ports.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import {
@@ -77,7 +78,12 @@ async function attributeAgainstBase(
     new Set(failed.map((check) => check.name)),
   );
   if (!base.ok) return null;
-  return decideCiDisposition(attributeFailedChecks(failed, base.value.checks));
+  return ownBaseRed(
+    deps,
+    record,
+    decideCiDisposition(attributeFailedChecks(failed, base.value.checks)),
+    failed,
+  );
 }
 
 /**

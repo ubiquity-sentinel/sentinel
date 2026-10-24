@@ -2997,6 +2997,50 @@ standing approval above. Applied as follows.
   charged.
 - The current-head review, CI and P0 gates are unchanged.
 
+## 2026-10-24: a red target base gets its own repair (base-repair lane)
+
+- Finding (live state, 2026-10-24 23:00 UTC): all 39 Passport records at `work`
+  were held by the CI-first gate's `base_red` rule. Their failing check is red
+  on Passport `main` too, so they back off uncharged until "a later base move".
+  Two of them held the delivery line for the 22 reviewed Passport PRs behind
+  them. A red base can only move by a merge, and no merge passes a red base, so
+  nothing in Sentinel was assigned to fix it and the whole target stayed wedged.
+- Decision: the launcher's maintenance pass reads the base tip of every foreign
+  target with live work
+  ([ops/hosted-autonomy-base-repair.ts](../ops/hosted-autonomy-base-repair.ts)).
+  When a completed check on that exact commit failed (`failure`, `timed_out` or
+  `startup_failure`), it files one issue labelled P0, titled
+  `CI is failing on <branch>`, with `<!-- sentinel:base-repair:<branch> -->` as
+  the first body line and the failing check names, unless an open issue already
+  starts with that marker. It writes no state and never edits, closes or
+  comments on an existing issue. The self scope is left to self-observation.
+- The runtime admits the issue like any other; its P0 label selects it before
+  ordinary work. For that task alone (P0, open, authored by the App, marker on
+  the first line; `src/repair/base-repair.ts`), a `base_red` failure is the
+  candidate's own failure: its head still fails the checks it was filed to fix,
+  so it takes the ordinary charged CI fix route instead of the uncharged hold.
+  Every other record keeps the hold, and an ordinary record is never read for
+  it.
+- Unchanged: current-head CI, native review, the P0 merge block, custody and
+  accounting. The fix merges through the ordinary gates; its pull request closes
+  the issue, and every held record then refreshes onto the green base.
+
+## 2026-10-24: private state clones skip git's background maintenance
+
+- Finding (CI flake on `ca87acea8a`, reproduced): git 2.55 on the CI runners
+  (and on the hosted runtime's runners) detaches `git maintenance run --auto`
+  after a fetch, and since 2.54 its geometric repack may still be deleting loose
+  objects in Sentinel's private state scratch clone while the repair history
+  cache measures it (`diskBytes` NotFound). The read then reports
+  `historical repair cache unavailable`. Locally git 2.43 never runs it; under
+  git 2.56 with the repack condition forced, four history-cache tests fail.
+- Decision: the state transport's fetch passes `--no-auto-gc`, as
+  `src/host/actions-candidates-proof.ts` already does for its stores. The
+  scratch clones are read once and deleted, so skipping their maintenance
+  changes nothing else. Every live caller of `readRepairAt` (queue provenance,
+  existing-PR takeover, maintenance publication, matrix recovery, matrix
+  uncertainty) stops seeing the spurious unavailable read.
+
 ## 2026-10-24: recover the native review envelope's escaping slips
 
 - Finding: Codex 0.154.0 runs review mode without an output schema

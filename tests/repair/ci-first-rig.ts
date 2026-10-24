@@ -83,6 +83,8 @@ export interface CiFirstRigOptions {
   hosted?: boolean;
   /** The legacy review cutoff the launcher hands the runtime. */
   legacyReviewCutoff?: number;
+  /** The record's severity (default: the helper's own). */
+  severity?: WorkRecordV1["classification"]["severity"];
   /** Repository, task identity and issue of the record (legacy shapes). */
   identity?: {
     repository: RepositoryIdentityV1;
@@ -168,6 +170,9 @@ export async function ciFirstRig(prefix: string, options: CiFirstRigOptions) {
     wait: options.wait ?? null,
     blocker: options.blocker ?? null,
     counters: { attempts, retries, reviewRounds: rounds },
+    ...(options.severity === undefined
+      ? {}
+      : { classification: { severity: options.severity, priority: null } }),
   });
   const reviews = [
     ...(options.reviews ?? []),

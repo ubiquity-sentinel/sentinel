@@ -102,6 +102,7 @@ const MAINTENANCE_PROGRESS_PHASES = [
   "closure",
   "self_observation",
   "followup",
+  "base_repair",
   "summary_memory",
   "summary_park",
   "artifact_cleanup",

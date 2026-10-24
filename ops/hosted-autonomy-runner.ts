@@ -40,6 +40,7 @@ import {
   settledSince,
 } from "./hosted-autonomy-continuation.ts";
 import { runHostedFollowUpPass } from "./hosted-autonomy-follow-up-pass.ts";
+import { runHostedBaseRepairPass } from "./hosted-autonomy-base-repair.ts";
 import { runHostedQueueCustody } from "./hosted-autonomy-queue-pass.ts";
 import { protectQueueState } from "./hosted-autonomy-queue-state.ts";
 import type {
@@ -207,6 +208,20 @@ export async function runHostedAutonomy(
       followUpComplete = false;
     } finally {
       finishFollowup();
+    }
+    const finishBaseRepair = beginMaintenanceProgress("base_repair");
+    try {
+      followUps = [
+        ...followUps,
+        ...await runHostedBaseRepairPass(
+          scoped,
+          startedAt + HOSTED_AUTONOMY_PASS_DEADLINE_MS,
+        ),
+      ];
+    } catch {
+      followUps = [...followUps, "base-repair:unexpected_error"];
+    } finally {
+      finishBaseRepair();
     }
     await deps.onQueueCustodyReady?.(followUpComplete && !degraded);
     return followUps.length === 0

@@ -3,6 +3,9 @@ import {
   reviewTaskStatementDigest,
 } from "../src/contracts/review-receipt.ts";
 import { isGreenConclusion } from "../src/repair/ci-rejection.ts";
+
+/** Conclusions that make a completed check run a failure on its commit. */
+const FAILED_CONCLUSIONS = new Set(["failure", "timed_out", "startup_failure"]);
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import {
   type CoverageCheckV1,
@@ -276,6 +279,14 @@ export function createHostedAutonomyGitHub(
       if (expected === null) return null;
       const reported = runs.map((run) => ({ name: String(run["name"]) }));
       return missingExpectedChecks(reported, expected).length === 0;
+    },
+    async failedChecks(head: string) {
+      const runs = await readCompleteCheckRuns(head);
+      if (runs === null) return null;
+      return runs.filter((run) =>
+        run["status"] === "completed" &&
+        FAILED_CONCLUSIONS.has(String(run["conclusion"]))
+      ).map((run) => String(run["name"]));
     },
     readPull,
     async listPullsByHeadRef(branch: string) {
@@ -600,10 +611,13 @@ export function createHostedAutonomyGitHub(
         }
         return bodies;
       },
-      async fileIssue(input: { title: string; body: string }) {
+      async fileIssue(
+        input: { title: string; body: string; labels?: string[] },
+      ) {
         const created = await request("POST", `/repos/${scope}/issues`, {
           title: input.title,
           body: input.body,
+          ...(input.labels === undefined ? {} : { labels: input.labels }),
         });
         if (created === null || typeof created !== "object") return null;
         const number = Number((created as Record<string, unknown>)["number"]);
