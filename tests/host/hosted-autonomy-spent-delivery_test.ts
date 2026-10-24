@@ -1,7 +1,7 @@
 /**
  * Spent-round delivery (owner decision 2026-10-16) on the live ai.ubq.fi
  * shapes of 23:21Z: a record whose review rounds are spent, whose LATEST
- * completed current-head review has no unresolved P0/P1 and whose required CI
+ * completed current-head review has no unresolved P0 and whose required CI
  * on that exact head is green merges through the trusted delivery path, also
  * on the Gateway, and is recorded exactly like an ordinary delivery (the
  * record advanced with the runtime's own `advanceToDelivery` beside one open
@@ -342,24 +342,27 @@ Deno.test("spent delivery S3: a spent head whose required CI is red is never mer
   }
 });
 
-/** A later completed P1 review of the same head and base. */
-function laterP1(receipt: ReviewReceiptV1): ReviewReceiptV1 {
+/**
+ * A later completed P0 review of the same head and base (owner directive
+ * 2026-10-24: only an unresolved P0 blocks a merge).
+ */
+function laterP0(receipt: ReviewReceiptV1): ReviewReceiptV1 {
   return parseReviewReceiptV1({
     ...receipt,
     id: `review-receipt:${"9".repeat(64)}`,
     requestId: `${receipt.requestId}:later`,
-    findings: [finding("P1")],
-    unresolvedSeverities: ["P1"],
+    findings: [finding("P0")],
+    unresolvedSeverities: ["P0"],
     completedAt: receipt.completedAt! + 60_000,
     observedAt: receipt.observedAt + 60_000,
   });
 }
 
 Deno.test("spent delivery S4: the LATEST completed current-head review decides", async (t) => {
-  await t.step("Gateway: a later P1 after a clean review refuses", async () => {
+  await t.step("Gateway: a later P0 after a clean review refuses", async () => {
     const record = liveRecord(618);
     const receipts = liveReceipts(record);
-    const reviews = [...receipts, laterP1(receipts[0])];
+    const reviews = [...receipts, laterP0(receipts[0])];
     await withRig(
       "s4-gateway",
       [record],
@@ -377,11 +380,11 @@ Deno.test("spent delivery S4: the LATEST completed current-head review decides",
     );
   });
   await t.step(
-    "self: a delivery record whose later review has a P1 is not merged",
+    "self: a delivery record whose later review has a P0 is not merged",
     async () => {
       const self = deliveryRecord();
       const receipt = authorizingReceipt();
-      await withRig("s4-self", [self], [receipt, laterP1(receipt)], {
+      await withRig("s4-self", [self], [receipt, laterP0(receipt)], {
         tip: BASE,
         green: { [HEAD]: true },
         pulls: {

@@ -224,7 +224,7 @@ export function legacyReview(input: {
     summary: null,
     findings: [{
       id: "finding-1",
-      severity: "P1",
+      severity: "P0",
       path: null,
       message: "correction required",
       fingerprint: "a".repeat(64),
@@ -232,7 +232,7 @@ export function legacyReview(input: {
       resolutionEvidence: null,
     }],
     findingsUncounted: 0,
-    unresolvedSeverities: ["P1"],
+    unresolvedSeverities: ["P0"],
     submittedAt: T0 + 1000,
     completedAt: T0 + 2000,
     observedAt: T0 + 3000,

@@ -397,10 +397,10 @@ Deno.test("maintenance publication: genuine submitted successor restores into a 
       (await persistTransition(r.deps, context, (draft) => {
         draft.reviews.push(completedReceipt(7, r.ctx.head, r.ctx.base, {
           repository: REPOSITORY,
-          unresolvedSeverities: ["P1"],
+          unresolvedSeverities: ["P0"],
           findings: [{
             id: "edge",
-            severity: "P1",
+            severity: "P0",
             path: "candidate.txt",
             message: "Fix edge case",
             resolved: false,

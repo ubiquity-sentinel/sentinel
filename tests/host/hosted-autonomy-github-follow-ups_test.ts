@@ -402,7 +402,7 @@ function finding(
   };
 }
 
-Deno.test("follow-up render: bounded body, deterministic overflow, only open P2/P3", () => {
+Deno.test("follow-up render: bounded body, deterministic overflow, only open P1/P2/P3", () => {
   const many = Array.from({ length: 25 }, (_, index) =>
     finding(
       index,
@@ -427,7 +427,10 @@ Deno.test("follow-up render: bounded body, deterministic overflow, only open P2/
       `\n${issue.omitted} more findings are recorded only in review receipt`,
     ),
   );
-  assert.equal(issue.title, "Review follow-ups from #1052: 25 P2/P3 findings");
+  assert.equal(
+    issue.title,
+    "Review follow-ups from #1052: 25 P1/P2/P3 findings",
+  );
   // Every P2 is listed before any P3, in a stable order.
   const severities = [...issue.body.matchAll(/^### \d+\. (P[23]) at /gm)].map((
     m,
@@ -461,9 +464,16 @@ Deno.test("follow-up render: bounded body, deterministic overflow, only open P2/
     })!,
   ));
   assert.equal(
-    candidateWith([finding(1, "P1", "[P1] blocks")]),
+    candidateWith([finding(1, "P0", "[P0] blocks")]),
     undefined,
-    "a P1 review is never a candidate",
+    "a P0 review is never a candidate",
+  );
+  // Owner directive 2026-10-24: a P1 no longer blocks the merge, so a merged
+  // PR's unresolved P1 is follow-up work like a P2/P3.
+  assert.notEqual(
+    candidateWith([finding(1, "P1", "[P1] follow-up")]),
+    undefined,
+    "an unresolved P1 is filed as follow-up work",
   );
   assert.equal(
     renderFollowUpIssue({ candidate: mixed, mergeRevision: "x", depth: 1 }),
