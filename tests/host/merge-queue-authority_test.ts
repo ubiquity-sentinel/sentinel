@@ -42,17 +42,35 @@ Deno.test("queue authority remains dark with absent source pins and uses REST-on
   assert.equal(rig.nativeReads, 0);
 });
 
-Deno.test("actual LF queue authority refuses legacy direct delivery with admission off", async () => {
+Deno.test("shipped queue authority is dormant with admission off; an activated floor still refuses legacy direct", async () => {
   const rig = await authorityRig();
   rig.toggles.merged = true;
   rig.toggles.rule = false;
-  const authority = createHostedQueueAuthority(rig.options);
+  // Owner directive 2026-10-24 (#180): the shipped source pins are dormant.
+  const shipped = createHostedQueueAuthority(rig.options);
   assert.equal(
-    (await authority.authorization.readAuthorization(rig.request())).status,
+    (await shipped.authorization.readAuthorization(rig.request())).status,
     "unavailable",
   );
   assert.equal(
-    (await authority.resolveDelivery(rig.deliveryRequest())).status,
+    (await shipped.resolveDelivery(rig.deliveryRequest())).status,
+    "legacy_direct",
+  );
+  const activated = createHostedQueueAuthority({
+    ...rig.options,
+    configuration: {
+      mode: "off",
+      proofActivated: true,
+      policy: QUEUE_PROOF_POLICY,
+      pins: QUEUE_AUTHORITY_PINS,
+    },
+  });
+  assert.equal(
+    (await activated.authorization.readAuthorization(rig.request())).status,
+    "unavailable",
+  );
+  assert.equal(
+    (await activated.resolveDelivery(rig.deliveryRequest())).status,
     "unavailable",
   );
 });

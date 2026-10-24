@@ -727,7 +727,7 @@ Deno.test("activated direct proof: only the resolver's live capability can book"
   }
 });
 
-Deno.test("active queue floor: open green spent head never merges; verified direct booking preserves charges once", async () => {
+Deno.test("dormant queue floor: open green spent head merges directly once; verified direct booking preserves charges once", async () => {
   const f = await fixture(true);
   try {
     const facts = await directProofFacts();
@@ -761,13 +761,15 @@ Deno.test("active queue floor: open green spent head never merges; verified dire
       resolveDelivery: () => resolveQueueAwareDelivery(facts, POLICY),
     };
     assert.equal(f.facts.record.counters.reviewRounds, 3);
+    // Owner directive 2026-10-24 (#180): with queue proof dormant an
+    // unprotected gateway record takes the direct launcher delivery.
     await runHostedDeliveryPass(f.context);
     assert.equal(
       f.rig.merges,
-      0,
-      "compiled active floor never calls the direct merge",
+      1,
+      "dormant floor merges the exact green head once",
     );
-    assert.equal(f.rig.writes, 0, "open work cannot be booked");
+    assert.equal(f.rig.writes, 0, "an unobserved merge books nothing");
     const open = await f.rig.state.readRepair();
     assert.ok(open.ok && open.value.status === "found");
     assert.deepEqual(
@@ -788,7 +790,7 @@ Deno.test("active queue floor: open green spent head never merges; verified dire
       booked.value.snapshot.reservations,
       f.context.snapshot.reservations,
     );
-    assert.equal(f.rig.merges, 0);
+    assert.equal(f.rig.merges, 1);
     assert.equal(f.rig.writes, 1);
     await runHostedDeliveryPass({
       ...f.context,
@@ -799,7 +801,7 @@ Deno.test("active queue floor: open green spent head never merges; verified dire
       revisions: [],
       ...createHostedAutonomyScopes(f.context.deps),
     });
-    assert.equal(f.rig.merges, 0);
+    assert.equal(f.rig.merges, 1);
     assert.equal(f.rig.writes, 1, "exact replay is read-only");
   } finally {
     await Deno.remove(f.rig.tmp, { recursive: true });

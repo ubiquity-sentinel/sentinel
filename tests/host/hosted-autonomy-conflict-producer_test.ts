@@ -343,7 +343,15 @@ for (
       // Three writes (the charge settlement, the resolved intent, the streak
       // reset), and nothing else pushed.
       assert.equal(w.writes.length, 3);
-      assert.ok(w.nativeReads.includes("POST /graphql"));
+      // Dormant queue proof (owner directive 2026-10-24, #180): the guard
+      // proves the authenticated negative rule and skips the queue read.
+      assert.ok(w.nativeReads.length > 0);
+      assert.ok(
+        w.nativeReads.every((read) =>
+          read === "GET /repos/ubiquity/ai.ubq.fi/rules/branches/development"
+        ),
+        JSON.stringify(w.nativeReads),
+      );
       assert.deepEqual(
         await w.refs(),
         [...refsBefore, `${w.ref} ${w.merge}`].sort(),
@@ -490,7 +498,15 @@ Deno.test("conflict producer: the launcher's candidate port opens exactly the in
         refReads: w.http.paths,
       }),
     );
-    assert.ok(w.nativeReads.includes("POST /graphql"));
+    // Dormant queue proof (owner directive 2026-10-24, #180): the guard
+    // proves the authenticated negative rule and skips the queue read.
+    assert.ok(w.nativeReads.length > 0);
+    assert.ok(
+      w.nativeReads.every((read) =>
+        read === "GET /repos/ubiquity/ai.ubq.fi/rules/branches/development"
+      ),
+      JSON.stringify(w.nativeReads),
+    );
     assert.equal(await remoteRef(rig, w.ref), w.merge);
     assert.deepEqual(await rig.hosted.snapshot(), admitted, "no state write");
   } finally {
