@@ -56,9 +56,17 @@ export async function readHostedMaintenanceCompatibility(
   ) return { status: "ordinary" };
   try {
     // Queue observation precedes every active maintenance compatibility path.
-    if (custody?.custodyActivated !== true || !await input.readQueueReady()) {
-      return hold();
-    }
+    // It holds only while queue proof is active. With queue proof off (owner
+    // directive 2026-10-24, #180), an unprovable ai.ubq.fi observation no
+    // longer stops every target's maintenance: the runner's queue custody
+    // prelude protects the native-queue records instead (#188). Live, it held
+    // every maintenance pass from 16:43 UTC on.
+    if (custody?.custodyActivated !== true) return hold();
+    const queueReady = await input.readQueueReady();
+    if (
+      !queueReady &&
+      (queue ?? QUEUE_RUNTIME_CAPABILITY).proofActivated !== false
+    ) return hold();
     const [release, repair] = await Promise.all([
       input.state.readRelease(),
       input.state.readRepair(),

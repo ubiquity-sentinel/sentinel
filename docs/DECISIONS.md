@@ -2770,3 +2770,14 @@ standing approval above. Applied as follows.
   future pin appends to them.
 - Whether the legacy class is the cutoff rule or the owner's list of twelve
   still needs the owner's answer.
+
+## 2026-10-24: an unready ai.ubq.fi queue observation no longer holds all maintenance
+
+- The maintenance preflight still reads ai.ubq.fi's branch rules and merge queue
+  first. A failed or inconsistent read now holds maintenance only while queue
+  proof is active. With queue proof off (owner directive of 2026-10-24, #180),
+  maintenance continues for every target. The runner's queue custody prelude
+  then protects every ai.ubq.fi native-queue record and grants no
+  protected-write authority (#188).
+- Live, the read failed on every maintenance pass from 16:43 UTC, so no closure,
+  retry, delivery or follow-up pass ran for any target.
