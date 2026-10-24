@@ -7,7 +7,38 @@ grant. Muse ownership is retired. Current policy belongs in
 checkpoints below retain their original text and do not establish current
 ownership, authority or acceptance.
 
-## Latest checkpoint (2026-10-24 19:55 UTC)
+## Latest checkpoint (2026-10-24 21:15 UTC)
+
+- Launcher: `34fec27394` (manual, 20:11; it changes `supervisor-dispatch.yml`)
+  bootstrapped green (run `40130299983`) and ran an ordinary cycle green
+  (`40130832020`). `4766d9d4ef` (manual, 21:03) is bootstrapping now (run
+  `40133034506`). The release ceremony installed Sentinel's own PR 212 merge
+  `c70efb0d85` by itself before that.
+- Auto-follow: the follow runs from `development` with the new workflow-change
+  guard and decides correctly, but the repository variable
+  `SENTINEL_AUTO_FOLLOW` is explicitly `off` (set 2026-10-22) and overrides the
+  new default. Owner action: set it to `on` or delete it. Until then the primary
+  advances the launcher to each CI-green `development` SHA.
+- Shipped to `development` (CI green or running), each reviewed by an
+  adversarial three-lens workflow first:
+  - five review rounds for CI-first-era records (owner decision 2026-10-24),
+    with launcher re-admission of ceiling parks (`006f59dc1f`);
+  - full-scope Gateway base evidence (`94df25f4c9`, review finding fixed);
+  - #185 one proof store per pass (`4b37a2fa8a`), #191 one bootstrap retry
+    (`ba34da1cea`), #152 carried release binders (`4766d9d4ef`), #169 unsent
+    queue admissions (`c0350489d0`, review finding fixed), #161/#162 VPS bridge
+    interfaces (`434f829e80`).
+- Closed today in this stretch: #159, #183 (verified on all three targets), #192
+  (installed), ai.ubq.fi #300 (already fixed upstream).
+- Held: #177 (the event-only rule would stop CI fixes on Sentinel's own PRs;
+  options posted on the issue). Under review: #156, #155.
+- CI flake: `model-port-early-notifications_test` (heap bound) failed CI on
+  `437e929d45`; unrelated, still flaky after PR 212.
+- ai.ubq.fi: PRs 1295 and 1256 parked at their 6-hour CI bound (progress
+  comments posted); base evidence ships with the next install. Reserved-file
+  parks remain with the other-repos agent.
+
+## Prior checkpoint (2026-10-24 19:55 UTC)
 
 - Runtime: 13 consecutive green supervisor runs since 17:43 UTC on launcher
   `31212ac234`. The last non-green run was the 17:30 cancellation.
