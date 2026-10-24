@@ -4,6 +4,7 @@ import type {
   GitHubBranchProtectionsV1,
   GitHubCheckSuitesV1,
   GitHubChecksV1,
+  GitHubCheckV1,
   GitHubPullRequestV1,
   GitHubRefV1,
   GitHubReviewDecisionV1,
@@ -35,6 +36,41 @@ import type {
 import { GitHubClientIssues } from "./client-issues.ts";
 import { parseWire, parseWith, repoPath } from "./client-response.ts";
 import { REVIEW_DECISION_QUERY } from "./client-issue-wire.ts";
+
+/**
+ * The commit statuses an unfiltered head CI read reports (sentinel issue
+ * #192). Each context is judged by its latest status: the newest
+ * `created_at`, and on a tie the first listed (GitHub lists newest first),
+ * the same recency as the gate's `latestChecks`. A context whose latest status
+ * is `pending` is advisory once the head reports at least one check run and
+ * every check run has completed: all of its observations are left out, so a
+ * third-party status that never reports (a stale integration, a preview
+ * deployment) cannot hold a head whose check runs are done. Every other
+ * context keeps its whole history exactly as before: a failed or errored
+ * status still fails and a successful one still passes. A pending status
+ * still waits while any check run runs, and when the head reports no check
+ * run at all (its statuses are its only CI). Omitting a status adds no
+ * observation, so it never turns a red check run green.
+ */
+function headStatuses(
+  runs: readonly GitHubCheckV1[],
+  statuses: readonly GitHubCheckV1[],
+): GitHubCheckV1[] {
+  if (runs.length === 0 || runs.some((run) => run.status !== "completed")) {
+    return [...statuses];
+  }
+  const latest = new Map<string, GitHubCheckV1>();
+  const time = (status: GitHubCheckV1) => status.startedAt ?? -1;
+  for (const status of statuses) {
+    const previous = latest.get(status.name);
+    if (previous === undefined || time(status) > time(previous)) {
+      latest.set(status.name, status);
+    }
+  }
+  return statuses.filter((status) =>
+    latest.get(status.name)?.status === "completed"
+  );
+}
 
 export abstract class GitHubClientReads extends GitHubClientIssues {
   /** Host-authored base-review jobs; unrelated supervisor jobs are not task CI. */
@@ -195,18 +231,25 @@ export abstract class GitHubClientReads extends GitHubClientIssues {
       },
     );
     if (!statusesCollected.ok) return statusesCollected;
+    const statuses: GitHubCheckV1[] = [];
     for (const item of statusesCollected.value) {
       if (!wanted(item, "context")) continue;
       const parsed = parseWith(item, (v) => parseCommitStatusWire(v, "$", sha));
       if (!parsed.ok) return parsed;
-      checks.push(parsed.value);
+      statuses.push(parsed.value);
     }
-    if (checks.length > this.maxItems) {
+    // The bound counts every observation read, advisory statuses included.
+    if (checks.length + statuses.length > this.maxItems) {
       return portError(
         "unavailable",
         "GitHub API checks collection size bound exceeded",
       );
     }
+    // A name-filtered read (the base attribution of given head failures)
+    // judges no other check run of the commit: its statuses are as recorded.
+    checks.push(
+      ...(names === undefined ? headStatuses(checks, statuses) : statuses),
+    );
     return portOk({ head: sha, checks });
   }
 

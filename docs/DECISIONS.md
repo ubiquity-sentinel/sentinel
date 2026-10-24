@@ -2816,3 +2816,24 @@ standing approval above. Applied as follows.
   tracked in Sentinel issue #181 (the complete check set for an opted-in
   dispatch run). Until then the base run is scoped by its first-parent diff, so
   a head check the base run skips stays unattributed exactly as before.
+
+## 2026-10-24: a pending commit status no longer holds a finished head's CI (#192)
+
+- The head CI read (`readChecks` in `src/github/client-reads.ts`) still folds
+  the head's commit statuses into its check runs, and each status context is
+  judged by its latest status (newest `created_at`). A context whose latest
+  status is `pending` is advisory once the head reports at least one check run
+  and every check run has completed: it is left out of the read. A third-party
+  status that never reports, such as a stale integration or a preview
+  deployment, therefore no longer holds the CI-first gate in `ci_pending` until
+  the six-hour park, nor the delivery and merge gates that read the same list.
+- A failed or errored status still counts as a failure, and a successful one
+  still passes. A pending status still waits while any check run is running, and
+  when the head has no check run at all, because the statuses are then the only
+  CI. Leaving a status out adds no observation, so it never turns a red check
+  run green.
+- A name-filtered read (the base attribution of given head failures) returns its
+  statuses as recorded. A required check a target's own branch rules name stays
+  required (`requiredChecksState`): an omitted pending context reads as absent,
+  which is pending. No target configuration names required status contexts. The
+  launcher's `hasAllChecksGreen` reads check runs only and is unchanged.
