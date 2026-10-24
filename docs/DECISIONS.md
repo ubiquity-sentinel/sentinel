@@ -2797,14 +2797,17 @@ standing approval above. Applied as follows.
   already has a run, when its record base equals the live pull request base and
   that base SHA has no run of the workflow (any event or status). The inputs are
   `base_ref: development`, the App login and `scope_base` set to the base
-  commit's first parent. The pass reads the parent through the branch
+  itself. That empty changed-path scope makes the gateway's test scope run
+  everything (`runAll`); a first-parent scope would report `success` for gates
+  it never ran and blame a pre-existing base failure on the candidate (review
+  finding, upheld 2 of 3). The pass reads the tip through the branch
   (`GET /commits/development`) and dispatches only while that tip is still the
   exact base, so a branch that already moved (`<pr>:base_moved`) never draws a
-  dispatch on every pass; an unreadable tip or parent skips the base. Head
-  dispatches keep priority, a base SHA that has any run is never dispatched
-  again, and the same grant, cooldown gate, deadline and refusal-ends-the-pass
-  rules apply. Decisions are `<pr>:base_stale`, `<pr>:base_run_exists`,
-  `<pr>:base_runs_unreadable`, `<pr>:base_moved`, `<pr>:base_parent_unreadable`,
+  dispatch on every pass; an unreadable tip skips the base. Head dispatches keep
+  priority, a base SHA that has any run is never dispatched again, and the same
+  grant, cooldown gate, deadline and refusal-ends-the-pass rules apply.
+  Decisions are `<pr>:base_stale`, `<pr>:base_run_exists`,
+  `<pr>:base_runs_unreadable`, `<pr>:base_moved`, `<pr>:base_tip_unreadable`,
   `<pr>:base_dispatch_refused:<reason>` and
   `<pr>:base_dispatched:confirmed|pending_visibility|unconfirmed`; the pass
   reports `base_dispatched`.
@@ -2812,10 +2815,10 @@ standing approval above. Applied as follows.
   wait, counter or receipt. A base branch that moves before GitHub resolves the
   ref yields a run on another SHA, which is reported as `pending_visibility` and
   never retried in the pass.
-- Like-for-like attribution additionally needs the owner's ai.ubq.fi change
-  tracked in Sentinel issue #181 (the complete check set for an opted-in
-  dispatch run). Until then the base run is scoped by its first-parent diff, so
-  a head check the base run skips stays unattributed exactly as before.
+- A full-scope run still skips `docs` and `verify-artifact`. Their attribution
+  needs the owner's ai.ubq.fi change tracked in Sentinel issue #181 (the
+  complete check set for an opted-in dispatch run); until then a head check the
+  base run skips stays unattributed exactly as before.
 
 ## 2026-10-24: a pending commit status no longer holds a finished head's CI (#192)
 
@@ -2862,3 +2865,25 @@ standing approval above. Applied as follows.
 - Unchanged: exact first-parent ancestry, complete CI evidence for the exact
   SHA, failed-bootstrap exclusion, the expected-old non-force ref update and its
   readback, and the model-disabled bootstrap at generation+1.
+
+## 2026-10-24: up to five review rounds for CI-first-era records
+
+- Owner decision (2026-10-24): "For your triage you can have up to five
+  reviews." It answers the finding that native reviews returned an unparseable
+  result on about one attempt in three today (PR 211 and ai.ubq.fi 1258,
+  `json_syntax`), each spending one of three rounds.
+- `MAX_REVIEW_ROUNDS` is five for a record of the CI-first era: created at or
+  after the pinned CI-first cutoff (2026-10-17 17:05 UTC) with no review
+  admitted before it (`reviewRoundCeilingFor`). A record from before the cutoff,
+  one with an earlier review admission, and one whose creation time is unknown
+  keep the 2026-10-16 ceiling of three (`LEGACY_REVIEW_ROUND_CEILING`). The
+  legacy exception, its final round and the spent-round delivery rules are
+  defined against three, so they keep their exact membership and behavior.
+- The launcher re-admits a record the runtime's ceiling gate parked under the
+  old ceiling (no completed review, an unresolved P0, no task acceptance, or a
+  moved base) once its durable ledger leaves a round: it returns to `work`
+  uncharged (`other:review_rounds_raised`), and the runtime gates, refreshes,
+  corrects or reviews it on its ordinary path. A reviewed head awaiting delivery
+  is not re-admitted (it needs no round), and nothing is refunded, re-counted or
+  charged.
+- The current-head review, CI and P0 gates are unchanged.

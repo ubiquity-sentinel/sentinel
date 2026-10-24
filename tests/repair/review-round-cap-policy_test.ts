@@ -16,6 +16,8 @@ import {
   ceilingParkMessage,
   isDeliverableReviewRoundCeilingPark,
   isReviewRoundCeilingPark,
+  LEGACY_REVIEW_CUTOFF,
+  LEGACY_REVIEW_ROUND_CEILING,
   legacyFinalRoundArmed,
   legacyFinalRoundOpen,
   legacyReviewRoundClassDrift,
@@ -32,6 +34,7 @@ import {
   REVIEW_ROUND_CEILING_UNACCEPTED,
   REVIEW_ROUND_CEILING_UNREVIEWED,
   reviewRoundCeiling,
+  reviewRoundCeilingFor,
   reviewRoundsLeft,
   reviewRoundsSpent,
 } from "../../src/repair/review-round-cap.ts";
@@ -127,8 +130,11 @@ const ledger = (rows: ReturnType<typeof reviewCharges>) => ({
   reservations: rows,
 });
 
-Deno.test("round cap policy: one ceiling of three, every alias equal", () => {
-  assert.equal(MAX_REVIEW_ROUNDS, 3);
+Deno.test("round cap policy: five for the CI-first era, three before it, every alias equal", () => {
+  // Owner decision 2026-10-24 raised the ordinary ceiling from three to five;
+  // the legacy class keeps the 2026-10-16 ceiling.
+  assert.equal(MAX_REVIEW_ROUNDS, 5);
+  assert.equal(LEGACY_REVIEW_ROUND_CEILING, 3);
   assert.equal(CI_CORRECTION_REVIEW_ROUNDS, MAX_REVIEW_ROUNDS);
   assert.equal(CONFLICT_RESOLUTION_REVIEW_ROUNDS, MAX_REVIEW_ROUNDS);
   assert.equal(HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS, MAX_REVIEW_ROUNDS);
@@ -283,7 +289,11 @@ Deno.test("round cap policy: the one-time legacy class is a rule over the cutoff
   assert.equal(legacyFinalRoundOpen(ledger(old), record, CUT), true);
   assert.equal(legacyFinalRoundArmed(ledger(old), record, CUT), false);
   assert.equal(reviewRoundsLeft(ledger(old), record, CUT), 0);
-  assert.equal(reviewRoundCeiling(ledger(old), record, CUT), MAX_REVIEW_ROUNDS);
+  // A pre-era record keeps the 2026-10-16 ceiling.
+  assert.equal(
+    reviewRoundCeiling(ledger(old), record, CUT),
+    LEGACY_REVIEW_ROUND_CEILING,
+  );
   assert.equal(reviewRoundAvailable(ledger(old), record, CUT), true);
   // An old retry (R79's own correction, before the cutoff) arms nothing; a
   // refunded fix after it neither.
@@ -654,4 +664,24 @@ Deno.test("round cap policy: a model-authored candidate can never weaken the cei
       "ops/hosted-autonomy-base-refresh-retries.ts",
     ]
   ) assert.ok(protectedPaths.includes(path), path);
+});
+
+Deno.test("round cap policy: a CI-first-era record may spend five rounds (owner decision 2026-10-24)", () => {
+  const era = LEGACY_REVIEW_CUTOFF.activatedNotBefore!;
+  const record = {
+    ...legacy(1249, 3),
+    createdAt: era + 60_000,
+  };
+  const charges = reviewCharges(record.id, 3, { repository: AI }).map(
+    (charge, index) => ({ ...charge, createdAt: era + 120_000 + index }),
+  );
+  assert.equal(reviewRoundCeilingFor(ledger(charges), record), 5);
+  assert.equal(reviewRoundsLeft(ledger(charges), record, null), 2);
+  // One review admitted before the era keeps the old ceiling.
+  const mixed = [{ ...charges[0], createdAt: era - 1 }, ...charges.slice(1)];
+  assert.equal(reviewRoundCeilingFor(ledger(mixed), record), 3);
+  assert.equal(reviewRoundsLeft(ledger(mixed), record, null), 0);
+  // An unknown creation time keeps the old ceiling.
+  const { createdAt: _unknown, ...unknown } = record;
+  assert.equal(reviewRoundCeilingFor(ledger(charges), unknown), 3);
 });

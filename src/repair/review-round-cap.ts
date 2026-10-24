@@ -26,8 +26,21 @@ import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { HOSTED_RUNTIME_ROLLOUT } from "../host/hosted-runtime-rollout.ts";
 
-/** Review rounds any task may spend, everywhere (owner decision 2026-10-16). */
-export const MAX_REVIEW_ROUNDS = 3;
+/**
+ * Review rounds a CI-first-era task may spend. Owner decision 2026-10-16 set
+ * three; owner decision 2026-10-24 ("you can have up to five reviews") raised
+ * it to five after native reviews returned unparseable results on about one
+ * attempt in three, each spending a round. See `reviewRoundCeilingFor`.
+ */
+export const MAX_REVIEW_ROUNDS = 5;
+
+/**
+ * The 2026-10-16 ceiling. A record from before the CI-first era keeps it, and
+ * the legacy exception is defined against it, so the legacy class, the
+ * spent-round delivery rules and every pre-era record behave exactly as they
+ * did under three.
+ */
+export const LEGACY_REVIEW_ROUND_CEILING = 3;
 
 /** Prefix of every ceiling park message; parks are matched by exact text. */
 export const REVIEW_ROUND_CEILING_PREFIX = "review round ceiling reached: ";
@@ -113,7 +126,7 @@ export const REVIEW_ROUND_CEILING_MESSAGES: readonly string[] = [
  * hands it to runs of exactly those revisions; with no cutoff (null) nothing
  * is legacy. A record's pin is the rounds it had spent before the cutoff
  * (`legacyReviewRoundPin`), and the record is in the class once that pin
- * reaches `MAX_REVIEW_ROUNDS`:
+ * reaches `LEGACY_REVIEW_ROUND_CEILING`:
  *
  * - a record new under the CI-first runtime has no admission before its
  *   activation, so its pin is 0 and it can never get a fourth round;
@@ -212,10 +225,18 @@ const LEGACY_REPOSITORY: RepositoryIdentityV1 = {
   installationId: 155687488,
 };
 
-type RoundRecord = Pick<
-  WorkRecordV1,
-  "id" | "repository" | "source" | "related" | "counters" | "intent" | "target"
->;
+type RoundRecord =
+  & Pick<
+    WorkRecordV1,
+    | "id"
+    | "repository"
+    | "source"
+    | "related"
+    | "counters"
+    | "intent"
+    | "target"
+  >
+  & Partial<Pick<WorkRecordV1, "createdAt">>;
 type Ledger = { readonly reservations: readonly BudgetReservationV1[] };
 /** The legacy cutoff an evaluation runs under; absent or null is none. */
 export type LegacyCutoff = number | null | undefined;
@@ -257,7 +278,8 @@ function countedCharges(
  * cutoff (its spent rounds less its counted review admissions created at or
  * after the cutoff), when the record is an ai.ubq.fi issue record with at
  * least one counted review admission before the cutoff (so it existed under
- * the old order) and that count reaches `MAX_REVIEW_ROUNDS`; otherwise null.
+ * the old order) and that count reaches `LEGACY_REVIEW_ROUND_CEILING`;
+ * otherwise null.
  * A record new under the CI-first runtime has no admission before the cutoff
  * and is never legacy, whatever its counter says.
  */
@@ -273,7 +295,7 @@ export function legacyReviewRoundPin(
   const after = charges.filter((charge) => charge.createdAt >= cutoff).length;
   if (after === charges.length) return null;
   const pin = reviewRoundsSpent(snapshot, record) - after;
-  return pin >= MAX_REVIEW_ROUNDS ? pin : null;
+  return pin >= LEGACY_REVIEW_ROUND_CEILING ? pin : null;
 }
 
 /**
@@ -314,7 +336,7 @@ const CI_RED_PREFIXES = [
 /**
  * The shape of the owner's legacy class as the owner named it (decision-time
  * state, sequence 36388): an ai.ubq.fi issue record parked CI-red by the merge
- * gate whose spent rounds reach `MAX_REVIEW_ROUNDS`. Returns those spent
+ * gate whose spent rounds reach `LEGACY_REVIEW_ROUND_CEILING`. Returns those spent
  * rounds, otherwise null. It grants nothing; the launcher compares it with the
  * rule (`legacyReviewRoundClassDrift`).
  */
@@ -329,7 +351,7 @@ export function legacyReviewRoundClassPin(
     !CI_RED_PREFIXES.some((prefix) => blocker.message.startsWith(prefix))
   ) return null;
   const spent = reviewRoundsSpent(snapshot, record);
-  return spent >= MAX_REVIEW_ROUNDS ? spent : null;
+  return spent >= LEGACY_REVIEW_ROUND_CEILING ? spent : null;
 }
 
 /**
@@ -381,8 +403,29 @@ export function legacyReviewRoundClassDrift(
 }
 
 /**
+ * The ordinary ceiling of one record (owner decision 2026-10-24): five for a
+ * record of the CI-first era, three for a record created before the pinned
+ * CI-first cutoff (`LEGACY_REVIEW_CUTOFF.activatedNotBefore`, 2026-10-17
+ * 17:05 UTC), for one with any review admitted before it, and for one whose
+ * creation time is not known. The legacy class and its final round are
+ * defined only for pre-era records, so they keep their exact rules.
+ */
+export function reviewRoundCeilingFor(
+  snapshot: Ledger,
+  record: RoundRecord,
+): number {
+  const era = LEGACY_REVIEW_CUTOFF.activatedNotBefore;
+  const preEra = era === null || typeof record.createdAt !== "number" ||
+    record.createdAt < era ||
+    countedCharges(snapshot, record, "review_request").some((charge) =>
+      charge.createdAt < era!
+    );
+  return preEra ? LEGACY_REVIEW_ROUND_CEILING : MAX_REVIEW_ROUNDS;
+}
+
+/**
  * The record's ceiling: its legacy pin + 1 once that final round is armed,
- * otherwise `MAX_REVIEW_ROUNDS`.
+ * otherwise `reviewRoundCeilingFor`.
  */
 export function reviewRoundCeiling(
   snapshot: Ledger,
@@ -391,7 +434,7 @@ export function reviewRoundCeiling(
 ): number {
   return legacyFinalRoundArmed(snapshot, record, cutoff)
     ? legacyReviewRoundPin(snapshot, record, cutoff)! + 1
-    : MAX_REVIEW_ROUNDS;
+    : reviewRoundCeilingFor(snapshot, record);
 }
 
 /**
@@ -432,7 +475,7 @@ export function reviewRoundsSpent(
 }
 
 /**
- * True once the task has spent the ordinary ceiling (`MAX_REVIEW_ROUNDS`) by
+ * True once the task has spent its ordinary ceiling (`reviewRoundCeilingFor`) by
  * the same count. The spent-round delivery rule qualifies a record on this: a
  * legacy record's one final round is extra, kept for a CI-fixed head.
  */
@@ -440,11 +483,13 @@ export function ordinaryReviewRoundsSpent(
   snapshot: Ledger,
   record: RoundRecord,
 ): boolean {
-  return reviewRoundsSpent(snapshot, record) >= MAX_REVIEW_ROUNDS;
+  return reviewRoundsSpent(snapshot, record) >=
+    reviewRoundCeilingFor(snapshot, record);
 }
 
 /**
- * Reviews this task may still request: `MAX_REVIEW_ROUNDS` minus the rounds
+ * Reviews this task may still request: its ceiling (`reviewRoundCeilingFor`)
+ * minus the rounds
  * spent, never below zero, or exactly the one final round of a legacy record
  * once a CI fix armed it (`legacyFinalRoundArmed`).
  */
@@ -454,7 +499,11 @@ export function reviewRoundsLeft(
   cutoff?: LegacyCutoff,
 ): number {
   if (legacyFinalRoundArmed(snapshot, record, cutoff)) return 1;
-  return Math.max(0, MAX_REVIEW_ROUNDS - reviewRoundsSpent(snapshot, record));
+  return Math.max(
+    0,
+    reviewRoundCeilingFor(snapshot, record) -
+      reviewRoundsSpent(snapshot, record),
+  );
 }
 
 /**
