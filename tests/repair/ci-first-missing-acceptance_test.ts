@@ -328,9 +328,16 @@ Deno.test("CI first, missing task acceptance: any change-only clean verdict on t
   assert.equal(missing([bound, changeOnly]), true);
   // Only a clean verdict on this exact PR, head and base counts.
   assert.equal(
-    missing([{ ...changeOnly, unresolvedSeverities: ["P1"] }]),
+    missing([{ ...changeOnly, unresolvedSeverities: ["P0"] }]),
     false,
     "a rejection is a correction, not a missing acceptance",
+  );
+  // Owner directive 2026-10-24: only an unresolved P0 blocks, so a P1-only
+  // change-only verdict is a clean one whose task acceptance is still missing.
+  assert.equal(
+    missing([{ ...changeOnly, unresolvedSeverities: ["P1"] }]),
+    true,
+    "an unresolved P1 is no rejection: the clean verdict lacks acceptance",
   );
   assert.equal(
     missing([{

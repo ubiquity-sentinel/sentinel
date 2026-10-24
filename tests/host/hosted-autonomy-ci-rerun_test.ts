@@ -124,6 +124,12 @@ const gatewayReceipt = (overrides: Record<string, unknown> = {}) => ({
   ...unrelatedForeignReceipt(overrides),
   repository: GATEWAY,
 });
+/** The one unresolved severity that still rejects a review (2026-10-24). */
+const P0_FINDING = {
+  ...finding("P1"),
+  severity: "P0" as const,
+  message: "P0 finding",
+};
 
 async function gatewayDelivery(
   run: HistoricalRun,
@@ -551,8 +557,8 @@ Deno.test("ci re-run: only the exact flake-candidate shape is re-run", async (t)
     [
       "a rejecting review",
       blockedSnapshot(undefined, [gatewayReceipt({
-        findings: [finding("P1")],
-        unresolvedSeverities: ["P1"],
+        findings: [P0_FINDING],
+        unresolvedSeverities: ["P0"],
       })]),
       {},
     ],
@@ -581,6 +587,21 @@ Deno.test("ci re-run: only the exact flake-candidate shape is re-run", async (t)
   ];
   const control = fakeSurface();
   assert.deepEqual(await rerunPass(blockedSnapshot(), control.surface), [SENT]);
+  // Owner directive 2026-10-24: only an unresolved P0 rejects a review; an
+  // unresolved P1 leaves the head clean-reviewed, so it is re-run too.
+  const p1 = fakeSurface();
+  assert.deepEqual(
+    await rerunPass(
+      blockedSnapshot(undefined, [gatewayReceipt({
+        findings: [finding("P1")],
+        unresolvedSeverities: ["P1"],
+      })]),
+      p1.surface,
+    ),
+    [SENT],
+    "an unresolved P1 does not reject",
+  );
+  assert.deepEqual(p1.reruns, [RUN_ID]);
   for (const [name, snapshot, options, closed] of cases) {
     await t.step(name, async () => {
       const { surface, reruns } = fakeSurface(options);

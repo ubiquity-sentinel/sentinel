@@ -172,14 +172,16 @@ Deno.test({
       let context = await adoptNative(r, capture);
       const native = context.snapshot.work[0];
       capture.phase = "native-review-receipt";
+      // Only an unresolved P0 rejects the native head and admits a charged
+      // correction (owner directive 2026-10-24; P1/P2/P3 never block).
       assert.deepEqual(
         await persistTransition(r.deps, context, (draft) => {
           draft.reviews.push(completedReceipt(7, r.ctx.head, r.ctx.base, {
             repository: native.repository,
-            unresolvedSeverities: ["P1"],
+            unresolvedSeverities: ["P0"],
             findings: [{
-              id: "native-p1",
-              severity: "P1",
+              id: "native-p0",
+              severity: "P0",
               path: "candidate.txt",
               message: "The submitted change does not cover the edge case",
               resolved: false,

@@ -48,6 +48,13 @@ import {
   run,
 } from "./hosted-autonomy-rig.ts";
 
+/** The one unresolved severity that still rejects a review (2026-10-24). */
+const P0_FINDING = {
+  ...finding("P1"),
+  severity: "P0" as const,
+  message: "P0 finding",
+};
+
 async function retirementClosureRig(merged = false, review = foreignReceipt()) {
   const retiring = deliveryRecord({
     nextStep: "work",
@@ -341,8 +348,8 @@ Deno.test("hosted autonomy: retirement continuation refuses unverified readback 
         true,
         mode === "adverse-review"
           ? foreignReceipt({
-            findings: [finding("P1")],
-            unresolvedSeverities: ["P1"],
+            findings: [P0_FINDING],
+            unresolvedSeverities: ["P0"],
           })
           : foreignReceipt(),
       );
@@ -431,6 +438,40 @@ Deno.test("hosted autonomy: retirement continuation refuses unverified readback 
         await Deno.remove(rig.tmp, { recursive: true });
       }
     });
+  }
+});
+
+Deno.test("hosted autonomy: retirement continuation treats an unresolved P1 as a clean foreign review", async () => {
+  // Owner directive 2026-10-24: only an unresolved P0 is adverse. The same
+  // merged foreign delivery under a P1 review is verified and closed.
+  const { rig, closedAt } = await retirementClosureRig(
+    true,
+    foreignReceipt({
+      findings: [finding("P1")],
+      unresolvedSeverities: ["P1"],
+    }),
+  );
+  try {
+    const result = await run(rig);
+    assert.equal(result.reason, "closed_issues", JSON.stringify(result));
+    assert.equal(rig.merges, 0, "the pull request was already merged");
+    assert.deepEqual(rig.closed, [SHARED_ISSUE_NUMBER]);
+    assert.deepEqual(closedAt, [{
+      repository: FOREIGN_REPO,
+      issueNumber: SHARED_ISSUE_NUMBER,
+    }]);
+    const after = await rig.state.readRepair();
+    assert.ok(after.ok && after.value.status === "found");
+    if (!after.ok || after.value.status !== "found") {
+      throw new Error("unreadable");
+    }
+    assert.equal(
+      after.value.snapshot.work.find((record) => record.id === FOREIGN_TARGET)
+        ?.nextStep,
+      "done",
+    );
+  } finally {
+    await Deno.remove(rig.tmp, { recursive: true });
   }
 });
 

@@ -21,7 +21,10 @@
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
-import type { ReviewReceiptV1 } from "../../src/contracts/review-receipt.ts";
+import type {
+  ReviewFindingV1,
+  ReviewReceiptV1,
+} from "../../src/contracts/review-receipt.ts";
 import {
   carriedDeliveryAction,
   carriedMergeReceipt,
@@ -34,6 +37,7 @@ import {
   authorizingReceipt,
   BASE,
   deliveryRecord,
+  finding,
   HEAD,
   MERGE,
   SELF_REPO,
@@ -330,11 +334,23 @@ Deno.test("carried merge (launcher): only a spent record at work whose latest re
     }),
     null,
   );
-  // The latest review rejects (an unresolved P1): never carried.
+  // The latest review rejects (an unresolved P0): never carried.
   assert.equal(
-    shape(record, [{ ...receipt, unresolvedSeverities: ["P1"] }]),
+    shape(record, [{ ...receipt, unresolvedSeverities: ["P0"] }]),
     null,
   );
+  assert.equal(
+    shape(record, [{
+      ...receipt,
+      findings: [{ ...finding("P1"), severity: "P0" } as ReviewFindingV1],
+    }]),
+    null,
+    "an unresolved P0 finding rejects on its own",
+  );
+  // Owner directive 2026-10-24: only P0 blocks; an unresolved P1 leaves the
+  // review clean and the record carried.
+  const p1 = { ...receipt, unresolvedSeverities: ["P1" as const] };
+  assert.equal(shape(record, [p1]), p1);
   // A completed review of the refreshed head itself: the exact rule's.
   assert.equal(
     shape(record, [

@@ -126,7 +126,7 @@ Deno.test("hosted autonomy: a damaged foreign merged PR is recovered only for ve
         "wrong-task",
         "wrong-reviewer",
         "quality-only",
-        "p1",
+        "p0",
         "missing-merger",
         "alternate-merger",
         "alternate-author",
@@ -190,9 +190,9 @@ Deno.test("hosted autonomy: a damaged foreign merged PR is recovered only for ve
         reviewOverrides.observedReviewer = "github-actions[bot]";
       }
       if (control === "quality-only") reviewOverrides.taskAcceptance = null;
-      if (control === "p1") {
-        reviewOverrides.findings = [finding("P1")];
-        reviewOverrides.unresolvedSeverities = ["P1"];
+      if (control === "p0") {
+        reviewOverrides.findings = [finding("P0")];
+        reviewOverrides.unresolvedSeverities = ["P0"];
       }
       if (Object.keys(reviewOverrides).length > 0) {
         reviews = [foreignReceipt(reviewOverrides)];
@@ -451,19 +451,37 @@ Deno.test(
 );
 
 Deno.test(
-  "hosted autonomy: only a receipt with no unresolved P0/P1 authorizes delivery",
+  "hosted autonomy: only a receipt with no unresolved P0 authorizes delivery",
   async () => {
-    const blocked = await makeRig("autonomy-p1", {
+    // Owner directive 2026-10-24: an unresolved P0 is the only blocking
+    // severity; a P1 (like a P2) leaves the receipt authorizing.
+    const blocked = await makeRig("autonomy-p0", {
       repair: repairSnapshot([deliveryRecord()], [
         authorizingReceipt({
-          findings: [finding("P1")],
-          unresolvedSeverities: ["P1"],
+          findings: [finding("P0")],
+          unresolvedSeverities: ["P0"],
         }),
       ]),
     });
     assert.equal((await run(blocked.rig, blocked.github)).status, "skipped");
     assert.equal(blocked.rig.writes, 0);
     assert.equal(blocked.rig.merges, 0);
+
+    const allowedP1 = await makeRig("autonomy-p1", {
+      repair: repairSnapshot([deliveryRecord()], [
+        authorizingReceipt({
+          findings: [finding("P1")],
+          unresolvedSeverities: ["P1"],
+        }),
+      ]),
+      pull: pullFacts({ state: "open", merged: false, mergeCommitSha: null }),
+      afterMerge: pullFacts(),
+    });
+    assert.equal(
+      (await run(allowedP1.rig, allowedP1.github)).status,
+      "applied",
+    );
+    assert.equal(allowedP1.rig.merges, 1);
 
     const allowed = await makeRig("autonomy-p2", {
       repair: repairSnapshot([deliveryRecord()], [
@@ -489,7 +507,7 @@ Deno.test(
     assert.equal(otherHead.rig.writes, 0);
 
     await Promise.all(
-      [blocked, allowed, otherHead].map((entry) =>
+      [blocked, allowedP1, allowed, otherHead].map((entry) =>
         Deno.remove(entry.rig.tmp, { recursive: true })
       ),
     );

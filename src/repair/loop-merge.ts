@@ -167,7 +167,7 @@ export async function executeMerge(
   // HARD INVARIANT: nothing merges without a passing review. Find a durable
   // completed receipt for this exact PR/head, then require the strict
   // authorization predicate (exact repository/PR/head/base, trusted reviewer,
-  // zero uncounted findings, no unresolved P0/P1). A completed-but-unclean
+  // zero uncounted findings, no unresolved P0). A completed-but-unclean
   // receipt is authoritative disposition, never a blind resubmission.
   const currentRound = standingReviewAttempt(record);
   const currentReviewId = await reviewReceiptId(
@@ -251,7 +251,7 @@ export async function executeMerge(
   );
   if (receipt === null) {
     // A durable completed verdict exists but does not authorize this exact
-    // merge (base drift, unresolved P0/P1, uncounted findings, untrusted
+    // merge (base drift, unresolved P0, uncounted findings, untrusted
     // reviewer). Never resubmit or merge: surface the state contradiction.
     return { kind: "state_error", detail: MERGE_WITHOUT_REVIEW_DETAIL };
   }

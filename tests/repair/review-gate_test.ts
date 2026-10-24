@@ -3,10 +3,12 @@
  * the terminal-block transition semantics.
  *
  * The merge gate must refuse every receipt that is not a completed,
- * exact-identity, trusted, P0/P1-free authorization for the record's current
- * published head. The terminal-block transition must clear a dead publication
- * identity (stale `target.pr` and any residual non-construction intent) while
- * preserving the candidate head/base/branch and counters.
+ * exact-identity, trusted, P0-free authorization for the record's current
+ * published head (owner directive 2026-10-24: only an unresolved P0 blocks;
+ * unresolved P1/P2/P3 findings are recorded and never withhold the merge).
+ * The terminal-block transition must clear a dead publication identity (stale
+ * `target.pr` and any residual non-construction intent) while preserving the
+ * candidate head/base/branch and counters.
  */
 import assert from "node:assert/strict";
 
@@ -249,7 +251,7 @@ Deno.test("review gate: an issue-backed delivery requires the exact bound positi
     );
   }
   // The positive control: the same completed receipt WITH the bound fulfilled
-  // acceptance authorizes, and the existing P0/P1 strength is untouched.
+  // acceptance authorizes, and the existing P0 strength is untouched.
   assert.equal(
     taskAcceptanceRefusal(completedReceipt(), base, TRUSTED_TASK),
     null,
@@ -330,13 +332,6 @@ Deno.test("review gate: every non-authorizing receipt fails closed", () => {
       }),
     ],
     [
-      "unresolved P1",
-      completedReceipt({
-        findings: [finding("P1")],
-        unresolvedSeverities: ["P1"],
-      }),
-    ],
-    [
       "wrong head",
       completedReceipt({
         pullRequest: { number: 12, head: SHA2, base: SHA2 },
@@ -360,6 +355,23 @@ Deno.test("review gate: every non-authorizing receipt fails closed", () => {
       reviewAuthorizesMerge(receipt, base, REVIEWER, TRUSTED_TASK),
       false,
       `${label} must not authorize`,
+    );
+  }
+  // Only an unresolved P0 blocks (owner directive 2026-10-24): the same
+  // completed receipt with an unresolved P1 or P3 finding still authorizes.
+  for (const severity of ["P1", "P3"] as const) {
+    assert.equal(
+      reviewAuthorizesMerge(
+        completedReceipt({
+          findings: [finding(severity)],
+          unresolvedSeverities: [severity],
+        }),
+        base,
+        REVIEWER,
+        TRUSTED_TASK,
+      ),
+      true,
+      `unresolved ${severity} authorizes`,
     );
   }
   // A receipt observed from a different reviewer than the adapter policy.
