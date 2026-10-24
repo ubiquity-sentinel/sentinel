@@ -7,7 +7,35 @@ grant. Muse ownership is retired. Current policy belongs in
 checkpoints below retain their original text and do not establish current
 ownership, authority or acceptance.
 
-## Latest checkpoint (2026-10-24 12:45 UTC)
+## Latest checkpoint (2026-10-24 13:30 UTC)
+
+- Throughput restored: ordinary run `40095160777` (generation 101, launcher
+  `62af807857`) admitted 26 work items in one wave (Passport 22, ai.ubq.fi 3,
+  Sentinel 1; before it every ordinary run admitted 0) and all 26 matrix cells
+  succeeded. The 22 Passport admissions are the re-admitted existing-PR holds
+  (issues 87–108). The plan job took 14 minutes (18 before).
+- More hand fixes on `development`: `b97a210cb1` (the current-matrix walk, the
+  producer, existing-candidate and historical recoveries and the closed-wave
+  ingest also treated `abandoned` and `owner_superseded` releases as in flight;
+  Sentinel 204–208 kept reserved implementation intents from the crashed run
+  `40081911304`), `afb2b719d9` (#158) and `c2adb4bb73` (#188: unprovable
+  ai.ubq.fi queue custody no longer stops maintenance for every target).
+  `1d056586ed` aligns the queue runner test CI `40096206432` failed on. #158 and
+  #188 are closed.
+- Launcher: `755718ff7a` at 13:02 UTC (bootstrap `40097996543` succeeded), then
+  `1d056586ed` at 13:38 (CI green).
+- Live, bootstrap `40097996543`: the current-matrix walk now runs but spent its
+  300 s budget walking 1031 release-history steps for two parked ai.ubq.fi rows
+  (587, 608) whose producer `37996641586` plan expired, so the in-flight
+  recovery of the 26-cell wave ran out of budget (`deferred_budget`) on every
+  pass. The run's own repair job consumed only part of the wave (Passport 87–90
+  candidates, ai.ubq.fi 1283 → its own PR 1295; ai.ubq.fi 1281/1282 and Sentinel
+  183 parked on protected paths). The walk fix (with in-flight work the parked
+  traversal stops at half the budget) is the next commit. A fresh-store fetch is
+  cheap (Passport 0.8 s, ai.ubq.fi 2.9 s measured), so #185's per-candidate
+  proof is not the binding cost today.
+
+## Prior checkpoint (2026-10-24 12:45 UTC)
 
 - Acceptance, ai.ubq.fi: correcting the 08:30 checkpoint, ai.ubq.fi has
   autonomous merges. `ubiquity-sentinel[bot]` merged PR 1254 (issue 1212) and PR

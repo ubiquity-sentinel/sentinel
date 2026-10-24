@@ -402,6 +402,32 @@ Deno.test("an unfound blocker-bound producer leaves the ordinary walk its budget
   }
 });
 
+Deno.test("with in-flight work the parked traversal leaves the ordinary walk half the budget", async () => {
+  // Live 2026-10-24 (run 40097996543): two parked rows named a producer whose
+  // plan had expired 1031 history steps back; that traversal read until its
+  // 30 s reserve and the in-flight producer's recovery ran out of budget on
+  // every pass. With in-flight work pending it now stops at half the budget.
+  const rig = await walkRig({
+    producers: 120,
+    rows: [
+      working("work-in-flight"),
+      blocked("blocked-unfound", FIRST_RUN - 50, 7001),
+    ],
+    gitCost: (args) => args[0] === "merge-base" ? 3000 : 0,
+    recoverCost: () => 60_000,
+    applies: (runId) => runId === FIRST_RUN + 119,
+  });
+  try {
+    const outcome = await captured(rig.walk);
+    assert.equal(outcome.error, null, String(outcome.error));
+    const result = outcome.value as { status: string } | null;
+    assert.equal(result?.status, "applied", outcome.lines.join("\n"));
+    assert.deepEqual(rig.calls.recovered, [FIRST_RUN + 119]);
+  } finally {
+    await rig.cleanup();
+  }
+});
+
 Deno.test("a listed bound plan artifact with a conflicting identity stays fatal", async () => {
   const rig = await walkRig({
     producers: 2,
