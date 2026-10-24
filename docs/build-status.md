@@ -124,6 +124,18 @@ charged, self CI-first `test-local` admission window, self merge
 pipeline-identity refusal without a park, matrix_plan dispatcher deadline; they
 become individual issues once the round confirms no further P0.
 
+Transparency (owner request, 2026-10-24 00:05 UTC): progress and blockers are
+now reported in plain language in two places refreshed at each checkpoint of
+this session: the GitHub status board issue `#182` (what is blocking, who can
+unblock it, the exact action; every tracked issue per target with its PR and
+stage; recent runs) and the claude.ai dashboard "Sentinel Status Board"
+(https://claude.ai/artifact/9e1c69dyqQArndV3cENx7h, same data as tables and
+tiles). Both are generated from the `sentinel-state/repair` work records and the
+Actions API by the scratchpad script; Sentinel does not yet publish them itself
+(a self issue will ask for per-issue progress comments). Review policy amended
+by the owner at the same time: at most five review rounds, and the loop stops at
+the first round that reports no P0; P1+ of that round become individual issues.
+
 Next action: observe the first run on `d32daa1910` (bootstrap, then the first
 ordinary run) for `sentinel_premerge_ci` decisions in `matrix_plan`/`repair` and
 for the resulting Gateway CI run, native review and launcher merge on AI
