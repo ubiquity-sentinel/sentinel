@@ -1,4 +1,5 @@
 import { parseBudgetReservationV1 } from "../contracts/budget-reservation.ts";
+import { canonicalStringify } from "../contracts/canonical.ts";
 import type {
   BudgetReservationV1,
   ReservationOutcomeV1,
@@ -192,7 +193,47 @@ export class BudgetStateContext {
     }
   }
 
+  /**
+   * One settlement write, recomputed a bounded number of times after a CAS
+   * lost to a cooldown-only movement (#205). The durable cooldown gate writes
+   * `githubCooldowns` through the same store from concurrent reviewer
+   * requests, so a settlement can lose its CAS between its read and its push.
+   * Each retry rereads and continues only when every non-cooldown collection
+   * still equals the loaded state (the reservation it settles included); any
+   * other movement, an unchanged head or an unreadable state keeps the
+   * original `conflict`, so the caller still fails closed.
+   */
   protected async writeSettlement(
+    snapshot: RepairStateSnapshotV1,
+    expectedHead: GitSha,
+    now: number,
+    updated: BudgetReservationV1,
+  ): Promise<SettleModelStartResultV1> {
+    let base = snapshot;
+    let head = expectedHead;
+    for (let attempt = 1;; attempt++) {
+      const result = await this.writeSettlementOnce(base, head, now, updated);
+      if (
+        result.status !== "conflict" ||
+        attempt >= SETTLEMENT_CAS_ATTEMPTS ||
+        result.currentHead === null || result.currentHead === head
+      ) return result;
+      let fresh;
+      try {
+        fresh = await this.state.readRepair();
+      } catch {
+        return result;
+      }
+      if (
+        !fresh.ok || fresh.value.status !== "found" ||
+        !sameNonCooldownState(snapshot, fresh.value.snapshot)
+      ) return result;
+      base = fresh.value.snapshot;
+      head = fresh.value.head;
+    }
+  }
+
+  private async writeSettlementOnce(
     snapshot: RepairStateSnapshotV1,
     expectedHead: GitSha,
     now: number,
@@ -206,7 +247,8 @@ export class BudgetStateContext {
       ...snapshot,
       stateHead: expectedHead,
       sequence,
-      updatedAt: now,
+      // A cooldown write admitted on retry may carry a later instant.
+      updatedAt: Math.max(now, snapshot.updatedAt),
       reservations: snapshot.reservations.map((r) =>
         r.id === updated.id ? updated : r
       ),
@@ -260,4 +302,30 @@ export class BudgetStateContext {
     }
     return taskId as WorkItemId;
   }
+}
+
+/** Settlement writes attempted per call when only cooldowns moved (#205). */
+const SETTLEMENT_CAS_ATTEMPTS = 3;
+
+/**
+ * Canonical equality of every non-cooldown collection, the same comparison
+ * the repair loop's checkpoint uses (`sameNonCooldownContents`).
+ */
+function sameNonCooldownState(
+  a: RepairStateSnapshotV1,
+  b: RepairStateSnapshotV1,
+): boolean {
+  const pick = (value: RepairStateSnapshotV1) => ({
+    version: value.version,
+    kind: value.kind,
+    incidents: value.incidents,
+    evidence: value.evidence,
+    work: value.work,
+    reservations: value.reservations,
+    reviews: value.reviews,
+    replays: value.replays,
+    releaseRequests: value.releaseRequests,
+    attemptMemory: value.attemptMemory,
+  });
+  return canonicalStringify(pick(a)) === canonicalStringify(pick(b));
 }
