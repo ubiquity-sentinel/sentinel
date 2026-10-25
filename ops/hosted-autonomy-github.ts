@@ -29,7 +29,10 @@ import {
   REQUEST_TIMEOUT_MS,
   RUN_LISTING_PAGE_SIZE,
 } from "./hosted-autonomy-github-listing.ts";
-import { createHostedFollowUpIssues } from "./hosted-autonomy-github-issues.ts";
+import {
+  createHostedBaseRepairIssues,
+  createHostedFollowUpIssues,
+} from "./hosted-autonomy-github-issues.ts";
 import { createHostedRetryLabel } from "./hosted-autonomy-retry-label.ts";
 import {
   classifyTipChecks,
@@ -285,11 +288,11 @@ export function createHostedAutonomyGitHub(
       const reported = runs.map((run) => ({ name: String(run["name"]) }));
       return missingExpectedChecks(reported, expected).length === 0;
     },
-    async failedChecks(head: string) {
+    async failedChecks(head: string, conclusions: readonly string[]) {
       const runs = await readCompleteCheckRuns(head);
       if (runs === null) return null;
       // A job that never started (a billing stop) is no failing check.
-      return await jobReads.failedCheckNames(head, runs);
+      return await jobReads.failedCheckNames(head, runs, conclusions);
     },
     runNeverStarted: (id: number, head: string) =>
       jobReads.runNeverStarted(id, head),
@@ -680,6 +683,7 @@ export function createHostedAutonomyGitHub(
         .join("");
     },
     followUpIssues: createHostedFollowUpIssues(request, repository),
+    baseRepairIssues: createHostedBaseRepairIssues(request, repository),
     retryLabel: createHostedRetryLabel(request, repository),
     ciOutageTracker: createHostedOutageTracker(request, repository),
     async classifyTipStart(tip: string) {

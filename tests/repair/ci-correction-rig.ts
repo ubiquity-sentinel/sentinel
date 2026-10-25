@@ -60,6 +60,8 @@ export interface CiRigOptions {
   priorReviews?: RepairStateSnapshotV1["reviews"];
   /** Run the loop as a hosted (matrix) run does. */
   hosted?: boolean;
+  /** The task digest the clean review accepted (default: the blanket fake's). */
+  taskDigest?: string;
 }
 
 export async function ciRig(prefix: string, options: CiRigOptions) {
@@ -123,6 +125,14 @@ export async function ciRig(prefix: string, options: CiRigOptions) {
   });
   const receipt = completedReceipt(7, SHA3, SHA1, {
     id: await reviewReceiptId(reviewOperationKey(7, SHA3, rounds), SHA3),
+    ...(options.taskDigest === undefined ? {} : {
+      taskAcceptance: {
+        issueNumber: 1,
+        taskDigest: options.taskDigest,
+        verdict: "fulfilled",
+        evidence: ["the exact reviewed change implements the source issue"],
+      },
+    }),
   });
   const charges = [
     reservation("ci-impl-1", {

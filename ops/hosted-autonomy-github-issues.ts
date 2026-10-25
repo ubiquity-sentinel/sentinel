@@ -1,10 +1,11 @@
 /**
- * Launcher-only issue capability for review follow-ups in ONE target
- * repository, over the sentinel App token the maintenance job already holds.
- * It lives on the launcher's port, never in `src/github`, so neither the
- * runtime nor a model worker ever holds it. Only three endpoints are used:
- * the created-since issues listing, one issue read and one issue create.
- * Every answer must name exactly this repository; anything unproven is null.
+ * Launcher-only issue capabilities for review follow-ups and base-repair
+ * issues in ONE target repository, over the sentinel App token the
+ * maintenance job already holds. They live on the launcher's port, never in
+ * `src/github`, so neither the runtime nor a model worker ever holds them.
+ * Only four endpoints are used: the created-since issues listing, the
+ * App-created issues listing, one issue read and one issue create. Every
+ * answer must name exactly this repository; anything unproven is null.
  */
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import { HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR } from "./hosted-autonomy-policy.ts";
@@ -13,8 +14,11 @@ import {
   type createHostedAutonomyRequest,
   LISTING_PAGE_SIZE,
   MAX_COMPARE_RESPONSE_BYTES,
+  MAX_LISTING_PAGES,
 } from "./hosted-autonomy-github-listing.ts";
 import type {
+  HostedAppIssueV1,
+  HostedBaseRepairIssuesV1,
   HostedFollowUpIssuesV1,
   HostedIssueListingItemV1,
   HostedIssueOriginV1,
@@ -157,5 +161,61 @@ export function createHostedFollowUpIssues(
       ) return null;
       return item.number;
     },
+  };
+}
+
+/** Pages of the App-created listing one base-repair read may take. */
+export const BASE_REPAIR_LISTING_MAX_PAGES = MAX_LISTING_PAGES;
+
+/**
+ * The base-repair issue capability (`ops/hosted-autonomy-base-repair.ts`):
+ * the complete listing of every issue and pull request the sentinel App
+ * created here, open or closed, oldest first (a new item lands on the last
+ * page, so earlier pages do not shift under it), and a label-free create.
+ */
+export function createHostedBaseRepairIssues(
+  request: ReturnType<typeof createHostedAutonomyRequest>,
+  repository: RepositoryIdentityV1,
+): HostedBaseRepairIssuesV1 {
+  const scope = `${repository.owner}/${repository.name}`;
+  const repositoryUrl = `${API_BASE}/repos/${scope}`;
+  const creator = encodeURIComponent(HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR);
+  const followUps = createHostedFollowUpIssues(request, repository);
+  return {
+    async listAppAuthored() {
+      const items: HostedAppIssueV1[] = [];
+      const seen = new Set<number>();
+      for (let page = 1; page <= BASE_REPAIR_LISTING_MAX_PAGES; page++) {
+        const raw = await request(
+          "GET",
+          `/repos/${scope}/issues?creator=${creator}&state=all&sort=created&direction=asc&per_page=${LISTING_PAGE_SIZE}&page=${page}`,
+          undefined,
+          MAX_COMPARE_RESPONSE_BYTES,
+        );
+        if (!Array.isArray(raw) || raw.length > LISTING_PAGE_SIZE) return null;
+        for (const entry of raw) {
+          const item = parseIssueItem(entry, repositoryUrl);
+          const state = record(entry)?.["state"];
+          // A malformed item, another creator (the filter was not applied)
+          // or a repeat (the pages shifted) is not one complete listing.
+          if (
+            item === null ||
+            item.author !== HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR ||
+            seen.has(item.number) || (state !== "open" && state !== "closed")
+          ) return null;
+          seen.add(item.number);
+          items.push({
+            number: item.number,
+            state,
+            pullRequest: item.pullRequest,
+            firstLine: item.firstLine,
+          });
+        }
+        if (raw.length < LISTING_PAGE_SIZE) return items;
+      }
+      // A full last page at the bound proves nothing about the rest.
+      return null;
+    },
+    create: (input) => followUps.create(input),
   };
 }

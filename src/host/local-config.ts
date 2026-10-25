@@ -311,16 +311,19 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
       // The CI-first gate (owner decision 2026-10-16): a head is reviewed
       // only once its CI is green, a CI fix is charged and bounded, and the
       // launcher decides when a pre-review park or a legacy final round is
-      // re-admitted. A model-authored candidate must never weaken them.
+      // re-admitted. A model-authored candidate must never weaken them. The
+      // base-repair lane decides which task's red base is its own charged
+      // CI fix.
       "src/repair/ci-first-policy.ts",
       "src/repair/loop-ci-first.ts",
       "ops/hosted-autonomy-ci-first.ts",
+      "src/repair/base-repair.ts",
       // Spent-round delivery and its review follow-ups: merge admissibility
-      // and the latest-review rule, and the App-token issue filing. The
-      // delivery pass makes every launcher merge, the carried merge included
-      // (its gate, the merge-once bound and the bookkeeping), the Git tree
-      // read is the carried patch proof and the raw compare read its
-      // evidence.
+      // and the latest-review rule, and the App-token issue filing (review
+      // follow-ups and base-repair issues). The delivery pass makes every
+      // launcher merge, the carried merge included (its gate, the merge-once
+      // bound and the bookkeeping), the Git tree read is the carried patch
+      // proof and the raw compare read its evidence.
       "ops/hosted-autonomy-delivery-pass.ts",
       "ops/hosted-autonomy-github-trees.ts",
       "ops/hosted-autonomy-github-listing.ts",
@@ -328,6 +331,7 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
       "ops/hosted-autonomy-github-issues.ts",
       "ops/hosted-autonomy-follow-ups.ts",
       "ops/hosted-autonomy-follow-up-pass.ts",
+      "ops/hosted-autonomy-base-repair.ts",
       // The conflict resolution decides when a base-refresh conflict is
       // charged, exactly what the trusted host commits for it (the merge
       // committer and resolver) and when the launcher re-admits a conflict

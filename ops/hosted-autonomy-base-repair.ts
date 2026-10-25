@@ -1,64 +1,86 @@
 /**
- * Base-repair pass (2026-10-24 throughput redesign, stage 1; see
- * `src/repair/base-repair.ts`).
+ * Base-repair pass (2026-10-24 throughput redesign, stage 1; reworked
+ * 2026-10-25 after its review; see `src/repair/base-repair.ts`).
  *
- * Once per maintenance pass, for each foreign target with a record held in a
- * timed `backoff` at `work` (the CI-first `base_red` hold), the launcher reads
- * the target base branch's tip and the check runs on that exact commit. When a completed check failed there, every repair in the
- * repository is held behind it (`base_red`), so the pass makes sure one open
- * base-repair issue names the failing checks: it files one, labelled P0 with
- * the marker on its first line, unless an open issue already carries the
- * marker for that branch. It writes no state and never edits, closes or
- * comments on an existing issue; the runtime admits the issue like any other,
- * and its fix merges through the ordinary review and CI gates (its pull
- * request closes the issue). The self scope is left to self-observation.
+ * Once per maintenance pass, for each foreign target with records the
+ * CI-first gate holds on a red base (at `work` in a running red-base hold,
+ * `isRedBaseHold`), the launcher reads the base branch's tip. Only held
+ * records whose base IS that tip count (any other refreshes onto it first).
+ * It reads the tip's failed checks (`RED_BASE_CONCLUSIONS`, the runtime's
+ * red-base set) and those of the first `BASE_REPAIR_HEAD_READS` held heads
+ * (`CANDIDATE_CONCLUSIONS`, the only head failures a red base holds), both
+ * with the latest run of each name and without runs whose job never started.
+ * Only a check failing on both holds anything, so only those are listed, and
+ * nothing is filed when none does: a red check no pull request runs (a
+ * dispatch-only deploy job) files nothing.
  *
- * Only completed failures count (`failure`, `timed_out`, `startup_failure`):
- * a pending, cancelled, absent or unreadable listing files nothing.
+ * The issue is filed without a label, with `baseRepairMarker(branch, tip)`
+ * on its first line, after a complete, bounded listing of every issue the
+ * App created (open or closed) shows that no App issue already carries that
+ * marker; one issue is ever filed per red tip. While an App issue marked for
+ * an older tip of the branch is open, a new one is filed only once each of
+ * its records is parked or done. The pass writes no state and never edits,
+ * closes or comments on an issue; the runtime admits the issue like any
+ * other, and its fix merges through the ordinary review and CI gates (its
+ * pull request closes the issue). The self scope has no base-repair lane.
+ *
+ * Any unreadable tip, check listing or issue listing files nothing.
  */
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
-import { baseRepairMarker } from "../src/repair/base-repair.ts";
+import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
+import {
+  baseRepairMarker,
+  parseBaseRepairMarker,
+} from "../src/repair/base-repair.ts";
+import { isRedBaseHold } from "../src/repair/ci-first-policy.ts";
+import {
+  CANDIDATE_CONCLUSIONS,
+  RED_BASE_CONCLUSIONS,
+  trustedCheckName,
+} from "../src/repair/ci-rejection.ts";
 import { isHostedSelf } from "./hosted-autonomy-policy.ts";
 import { createHostedAutonomyScopes } from "./hosted-autonomy-scopes.ts";
 import { readRepairSafely } from "./hosted-autonomy-state.ts";
-import type { HostedAutonomyDepsV1 } from "./hosted-autonomy-types.ts";
+import type {
+  HostedAppIssueV1,
+  HostedAutonomyDepsV1,
+} from "./hosted-autonomy-types.ts";
 
 /**
- * Filing switch. Off until the review findings of 2026-10-25 are fixed (file
- * only for tip checks that hold records' heads, a tip-bound marker that
- * never refiles a closed issue for the same tip, a complete App-authored
- * listing, no label dependency); while off the pass reads and files nothing.
+ * Filing switch: on since every upheld review finding of 2026-10-25 is fixed
+ * (only checks that hold records' heads, a tip-bound marker over a complete
+ * App-created listing, no label dependency). Off, the pass reads and files
+ * nothing.
  */
 export const BASE_REPAIR_FILING_ENABLED = false;
 
 /** Wall-clock budget of the pass inside the maintenance pass. */
 export const BASE_REPAIR_PASS_BUDGET_MS = 60_000;
 
+/** Held heads one repository's pass reads the failed checks of. */
+export const BASE_REPAIR_HEAD_READS = 3;
+
 /** At most this many failing check names are listed in an issue. */
 const MAX_LISTED_CHECKS = 20;
 
-/** A check name as it may appear in an issue: printable, bounded. */
-function safeCheckName(name: string): string {
-  const printable = name.replace(/[^\x20-\x7e]/g, "?").replace(/`/g, "'");
-  return printable.length > 120 ? `${printable.slice(0, 117)}...` : printable;
-}
-
-/** The plain-language base-repair issue for `branch` at `tip`. */
+/**
+ * The plain-language base-repair issue for `branch` at `tip`, listing the
+ * failing checks by the runtime's trusted name shape (`trustedCheckName`).
+ */
 export function baseRepairIssue(
   branch: string,
   tip: string,
   failed: readonly string[],
-): { title: string; body: string; labels: string[] } {
-  const names = [...new Set(failed.map(safeCheckName))].sort();
+): { title: string; body: string } {
+  const names = [...new Set(failed.map(trustedCheckName))].sort();
   const listed = names.slice(0, MAX_LISTED_CHECKS);
   const more = names.length - listed.length;
   return {
     title: `CI is failing on ${branch}`,
-    labels: ["P0"],
     body: [
-      baseRepairMarker(branch),
+      baseRepairMarker(branch, tip),
       "",
-      `CI is failing on \`${branch}\` at ${tip}. Sentinel cannot merge any other repair in this repository until these checks pass again.`,
+      `CI is failing on \`${branch}\` at ${tip}. Sentinel's open repairs in this repository fail the same checks, so none of them can merge until these checks pass on \`${branch}\` again.`,
       "",
       "Failing checks:",
       ...listed.map((name) => `- \`${name}\``),
@@ -71,40 +93,79 @@ export function baseRepairIssue(
   };
 }
 
+const repositoryKey = (repository: RepositoryIdentityV1) =>
+  `${repository.installationId}/${repository.owner}/${repository.name}`;
+
 /**
- * Foreign repositories with a record the CI-first gate may be holding on a
- * red base: at `work` in a timed `backoff` (the `base_red` hold re-arms a
- * 30-minute one on every poll). Only those pay for a tip read; any other
- * timed backoff there costs one read and files nothing on a green tip.
+ * Foreign records the CI-first gate holds on a red base at `now` (at `work`
+ * with a published head, in a running red-base hold), by repository, each
+ * group in record-id order and the groups by repository name.
  */
-function heldForeignRepositories(
-  work: readonly {
-    repository: RepositoryIdentityV1;
-    nextStep: string;
-    wait: { reason: string; until: number | null } | null;
-  }[],
-): RepositoryIdentityV1[] {
-  const seen = new Map<string, RepositoryIdentityV1>();
+function heldForeignRecords(
+  work: readonly WorkRecordV1[],
+  now: number,
+): { repository: RepositoryIdentityV1; held: WorkRecordV1[] }[] {
+  const groups = new Map<
+    string,
+    { repository: RepositoryIdentityV1; held: WorkRecordV1[] }
+  >();
   for (const record of work) {
     if (
-      record.nextStep !== "work" || record.wait?.reason !== "backoff" ||
-      record.wait.until === null
+      record.nextStep !== "work" || record.target.head === null ||
+      !isRedBaseHold(record.wait, now) || isHostedSelf(record.repository)
     ) continue;
-    if (isHostedSelf(record.repository)) continue;
-    const key =
-      `${record.repository.installationId}/${record.repository.owner}/${record.repository.name}`;
-    if (!seen.has(key)) seen.set(key, record.repository);
+    const key = repositoryKey(record.repository);
+    const group = groups.get(key) ??
+      { repository: record.repository, held: [] };
+    group.held.push(record);
+    groups.set(key, group);
   }
-  return [...seen.values()].sort((a, b) =>
-    `${a.owner}/${a.name}` < `${b.owner}/${b.name}` ? -1 : 1
+  for (const group of groups.values()) {
+    group.held.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  }
+  return [...groups.values()].sort((a, b) =>
+    `${a.repository.owner}/${a.repository.name}` <
+        `${b.repository.owner}/${b.repository.name}`
+      ? -1
+      : 1
   );
+}
+
+/**
+ * The open App issue marked for an older tip of `branch` that still owns a
+ * live repair (a record of its issue neither parked nor done, or none yet),
+ * or null when there is none.
+ */
+function liveOlderIssue(
+  issues: readonly HostedAppIssueV1[],
+  work: readonly WorkRecordV1[],
+  repository: RepositoryIdentityV1,
+  branch: string,
+): number | null {
+  const key = repositoryKey(repository);
+  for (const issue of issues) {
+    if (issue.pullRequest || issue.state !== "open") continue;
+    if (parseBaseRepairMarker(issue.firstLine)?.branch !== branch) continue;
+    const records = work.filter((record) =>
+      repositoryKey(record.repository) === key &&
+      record.source.kind === "issue" &&
+      record.related.issueNumber === issue.number
+    );
+    if (
+      records.length === 0 ||
+      records.some((record) =>
+        record.nextStep !== "blocked" && record.nextStep !== "done"
+      )
+    ) return issue.number;
+  }
+  return null;
 }
 
 /** Run the base-repair pass; its actions only, never a state change. */
 export async function runHostedBaseRepairPass(
   deps: HostedAutonomyDepsV1,
   passDeadline: number = Number.POSITIVE_INFINITY,
-  /** Tests exercise the pass with filing on. */
+  /** Tests exercise the pass with filing off. */
   options: { filing?: boolean } = {},
 ): Promise<string[]> {
   const actions: string[] = [];
@@ -121,8 +182,9 @@ export async function runHostedBaseRepairPass(
   if (read === null || !read.ok || read.value.status !== "found") {
     return actions;
   }
+  const work = read.value.snapshot.work;
   const { scopeFor } = createHostedAutonomyScopes(deps);
-  for (const repository of heldForeignRepositories(read.value.snapshot.work)) {
+  for (const { repository, held } of heldForeignRecords(work, started)) {
     const tag = `base-repair:${repository.owner}/${repository.name}`;
     if (!inBudget()) {
       actions.push(`${tag}:deadline`);
@@ -133,47 +195,83 @@ export async function runHostedBaseRepairPass(
       const capable = deps.githubFor(repository);
       if (
         capable?.failedChecks === undefined ||
-        capable.selfObservation === undefined
+        capable.baseRepairIssues === undefined
       ) continue;
       const scope = await scopeFor(repository);
       const surface = scope.surface;
-      const issues = surface?.selfObservation;
+      const branch = scope.baseBranch;
+      const issues = surface?.baseRepairIssues;
       if (
-        surface === null || scope.baseBranch === null ||
+        surface === null || branch === null ||
         surface.failedChecks === undefined || issues === undefined
       ) continue;
-      const tip = await surface.readBaseTip(scope.baseBranch);
+      const tip = await surface.readBaseTip(branch);
       if (tip === null) {
         actions.push(`${tag}:tip_unreadable`);
         continue;
       }
-      const failed = await surface.failedChecks(tip);
-      if (failed === null) {
+      // A record on an older base refreshes onto the tip before it is held.
+      const heads = [
+        ...new Set(
+          held.filter((record) => record.target.base === tip)
+            .map((record) => record.target.head!),
+        ),
+      ].slice(0, BASE_REPAIR_HEAD_READS);
+      if (heads.length === 0) continue;
+      const tipFailed = await surface.failedChecks(tip, RED_BASE_CONCLUSIONS);
+      if (tipFailed === null) {
         actions.push(`${tag}:checks_unreadable`);
         continue;
       }
-      if (failed.length === 0) continue;
+      if (tipFailed.length === 0) continue;
+      const holding = new Set<string>();
+      let headsRead = true;
+      for (const head of heads) {
+        if (!inBudget()) break;
+        const failed = await surface.failedChecks(head, CANDIDATE_CONCLUSIONS);
+        if (failed === null) {
+          headsRead = false;
+          break;
+        }
+        for (const name of failed) holding.add(name);
+      }
       if (!inBudget()) {
         actions.push(`${tag}:deadline`);
         break;
       }
-      const marker = baseRepairMarker(scope.baseBranch);
-      const bodies = await issues.listOpenIssueBodies();
-      if (bodies === null) {
+      if (!headsRead) {
+        actions.push(`${tag}:head_checks_unreadable`);
+        continue;
+      }
+      // Only a check red on the tip AND on a held head holds a repair.
+      const listed = tipFailed.filter((name) => holding.has(name));
+      if (listed.length === 0) {
+        actions.push(`${tag}:no_held_check`);
+        continue;
+      }
+      const filed = await issues.listAppAuthored();
+      if (filed === null) {
         actions.push(`${tag}:issues_unreadable`);
         continue;
       }
-      if (bodies.some((body) => body.split(/\r?\n/, 1)[0] === marker)) {
-        actions.push(`${tag}:open`);
+      const marker = baseRepairMarker(branch, tip);
+      const same = filed.find((issue) =>
+        !issue.pullRequest && issue.firstLine === marker
+      );
+      if (same !== undefined) {
+        actions.push(`${tag}:filed_before=#${same.number}`);
+        continue;
+      }
+      const older = liveOlderIssue(filed, work, repository, branch);
+      if (older !== null) {
+        actions.push(`${tag}:open=#${older}`);
         continue;
       }
       if (!inBudget()) {
         actions.push(`${tag}:deadline`);
         break;
       }
-      const number = await issues.fileIssue(
-        baseRepairIssue(scope.baseBranch, tip, failed),
-      );
+      const number = await issues.create(baseRepairIssue(branch, tip, listed));
       actions.push(
         number === null ? `${tag}:file_failed` : `${tag}:filed=#${number}`,
       );

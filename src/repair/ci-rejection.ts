@@ -77,6 +77,27 @@ export function ciCorrectionRouteOpen(
   return deps.externalImplementations !== true || HOSTED_CI_CORRECTIONS;
 }
 
+/**
+ * Whether a HOSTED run may give a base-repair task's CI fix its own opening
+ * (`CI_BASE_REPAIR_FINDING_PREFIX`). A hosted fix runs as a matrix cell that
+ * a later run may consume under the rollback target's code, and a consumer
+ * (`matrix-artifact-wave.ts`) that does not recognise a cell's CI finding
+ * refuses it generically, failing every later repair run (the R79 precedent,
+ * tests/host/matrix-ci-first-gen79_test.ts). Runtimes before the 2026-10-25
+ * base-repair rework recognise only `CI_CORRECTION_FINDING_PREFIX`, so hosted
+ * runs keep that opening until the installed rollback target recognises both
+ * (a runtime at or after this change); in process the own opening is always
+ * used.
+ */
+export const HOSTED_BASE_REPAIR_FINDING = false;
+
+/** The base-repair CI fix opening may be used by this run. */
+export function baseRepairFindingOpen(
+  deps: { externalImplementations?: boolean },
+): boolean {
+  return deps.externalImplementations !== true || HOSTED_BASE_REPAIR_FINDING;
+}
+
 /** Bound on the failing checks one correction finding names. */
 export const MAX_CI_CORRECTION_CHECKS = 8;
 
@@ -105,10 +126,26 @@ export const CI_BASE_RED_DETAIL = "CI checks failed on the red reviewed base";
 export const CI_CORRECTION_FINDING_PREFIX =
   "Required CI checks failed on this candidate while the same checks passed on its base ";
 
-/** Head conclusions that can be the candidate's own failure. */
-const CANDIDATE_CONCLUSIONS: readonly string[] = ["failure", "timed_out"];
+/**
+ * Exact opening of the trusted CI fix finding of a base-repair task
+ * (`src/repair/base-repair.ts`): its head fails checks that are red on its
+ * base too, the red it was filed to fix, so the finding never claims they
+ * passed there. `isCiCorrectionFinding` recognises both openings; a hosted
+ * run uses it only once `HOSTED_BASE_REPAIR_FINDING` is set.
+ */
+export const CI_BASE_REPAIR_FINDING_PREFIX =
+  "Required CI checks failed on this candidate and on its red base ";
+
+/**
+ * Head conclusions that can be the candidate's own failure (and the only
+ * head failures a red base holds, `base_red`).
+ */
+export const CANDIDATE_CONCLUSIONS: readonly string[] = [
+  "failure",
+  "timed_out",
+];
 /** Base conclusions that make the reviewed base itself red. */
-const RED_BASE_CONCLUSIONS: readonly string[] = [
+export const RED_BASE_CONCLUSIONS: readonly string[] = [
   "failure",
   "timed_out",
   "action_required",
@@ -262,9 +299,13 @@ export function attributeFailedChecks(
   return attribution;
 }
 
-/** What the failed head checks prove, in precedence order. */
+/**
+ * What the failed head checks prove, in precedence order. `redBase` marks a
+ * base-repair task's own `base_red` (`ownBaseRed`): its checks are red on the
+ * base too, and its CI fix finding says so.
+ */
 export type CiDispositionV1 =
-  | { kind: "candidate"; checks: GitHubCheckV1[] }
+  | { kind: "candidate"; checks: GitHubCheckV1[]; redBase?: true }
   | { kind: "base_pending" }
   | { kind: "base_red" }
   | { kind: "unattributed"; checks: GitHubCheckV1[] };
@@ -364,7 +405,8 @@ export function baseRedDetail(checks: readonly GitHubCheckV1[]): string {
 
 /**
  * The unresolved P1-equivalent finding a correction must resolve. It names
- * only trusted failing check names and the green base. The failing jobs' log
+ * only trusted failing check names and the base: green, or red under a
+ * base-repair task's own opening (`redBase`). The failing jobs' log
  * evidence is never part of it (state and the digest-bound request keep this
  * short R80-parseable text): the trusted matrix cell attaches that evidence
  * at start time beside the request (`src/host/matrix-cell-ci-evidence.ts`).
@@ -372,24 +414,30 @@ export function baseRedDetail(checks: readonly GitHubCheckV1[]): string {
 export function ciCorrectionFinding(
   base: GitSha,
   checks: readonly GitHubCheckV1[],
+  /** A base-repair task's own red base (`CI_BASE_REPAIR_FINDING_PREFIX`). */
+  redBase = false,
 ): { severity: string; path: string | null; message: string } {
+  const prefix = redBase
+    ? CI_BASE_REPAIR_FINDING_PREFIX
+    : CI_CORRECTION_FINDING_PREFIX;
   return {
     severity: "P1",
     path: null,
     message:
-      `${CI_CORRECTION_FINDING_PREFIX}${base.slice(0, 12)}: ${
+      `${prefix}${base.slice(0, 12)}: ${
         labels(checks, (name, conclusion) => `${name} (${conclusion})`)
       }. Reproduce them with the repository's own test and check commands and ` +
       `fix the candidate so they pass.`,
   };
 }
 
-/** True for the trusted planner's CI correction finding. */
+/** True for the trusted planner's CI correction finding (either opening). */
 export function isCiCorrectionFinding(
   finding: { severity: string; path: string | null; message: string },
 ): boolean {
   return finding.severity === "P1" && finding.path === null &&
-    finding.message.startsWith(CI_CORRECTION_FINDING_PREFIX);
+    (finding.message.startsWith(CI_CORRECTION_FINDING_PREFIX) ||
+      finding.message.startsWith(CI_BASE_REPAIR_FINDING_PREFIX));
 }
 
 /**

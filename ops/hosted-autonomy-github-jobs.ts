@@ -4,10 +4,11 @@
  * (`src/github/never-started-job.ts`).
  *
  * - `failedCheckNames`: the base-repair read. Of a complete, head-bound
- *   check-run listing, the latest run of each name that completed
- *   `failure`, `timed_out` or `startup_failure`, without the failed Actions
- *   runs whose job never started (bounded job reads; an unreadable job keeps
- *   its run as a failure).
+ *   check-run listing, the latest run of each name that completed with one
+ *   of the caller's `conclusions` (the runtime's own sets: a tip's
+ *   `RED_BASE_CONCLUSIONS`, a held head's `CANDIDATE_CONCLUSIONS`), without
+ *   the failed Actions runs whose job never started (bounded job reads; an
+ *   unreadable job keeps its run as a failure).
  * - `runNeverStarted`: whether one completed workflow run's latest attempt
  *   failed only through jobs that never started (the CI resume pass); null
  *   when its job listing cannot be read completely and bound to the run.
@@ -18,9 +19,6 @@ import {
   neverStartedRunIndexes,
 } from "../src/github/never-started-job.ts";
 import type { createHostedAutonomyRequest } from "./hosted-autonomy-github-listing.ts";
-
-/** Conclusions that make a completed check run a failure on its commit. */
-const FAILED_CONCLUSIONS = new Set(["failure", "timed_out", "startup_failure"]);
 
 /** Jobs one run's latest attempt may list in the one page that is read. */
 const RUN_JOBS_PAGE = 100;
@@ -33,6 +31,7 @@ export function createHostedActionsJobReads(
     async failedCheckNames(
       head: string,
       runs: readonly Record<string, unknown>[],
+      conclusions: readonly string[],
     ): Promise<string[]> {
       const latest = latestRunIndexes(runs);
       const notStarted = await neverStartedRunIndexes(
@@ -43,7 +42,7 @@ export function createHostedActionsJobReads(
       return latest.filter((index, position) =>
         !notStarted.has(position) &&
         runs[index]["status"] === "completed" &&
-        FAILED_CONCLUSIONS.has(String(runs[index]["conclusion"]))
+        conclusions.includes(String(runs[index]["conclusion"]))
       ).map((index) => String(runs[index]["name"]));
     },
     async runNeverStarted(id: number, head: string): Promise<boolean | null> {

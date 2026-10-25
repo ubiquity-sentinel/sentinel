@@ -81,6 +81,11 @@ for (
     "ops/hosted-autonomy-maintenance.ts",
     "ops/hosted-autonomy-state.ts",
     "ops/hosted-autonomy-queue-booking.ts",
+    // The base-repair lane: the runtime half turns a base-repair task's red
+    // base into its own charged CI fix (the CI-first gate), and the launcher
+    // pass files its issue over the App token.
+    "src/repair/base-repair.ts",
+    "ops/hosted-autonomy-base-repair.ts",
   ]
 ) {
   Deno.test(`hosted authority: maintenance refuses ${path}`, () =>

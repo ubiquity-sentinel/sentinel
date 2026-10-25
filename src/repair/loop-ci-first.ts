@@ -48,12 +48,12 @@ import type { GitHubCheckV1 } from "../contracts/ports.ts";
 import type { WorkRecordV1, WorkWaitV1 } from "../contracts/work-record.ts";
 import {
   attributeFailedChecks,
+  baseRepairFindingOpen,
   checkPending,
   ciCorrectable,
   ciCorrectionFinding,
   ciCorrectionRouteOpen,
   ciFixExhaustedDetail,
-  decideCiDisposition,
   failedChecks,
   latestChecks,
   preReviewAbsentDetail,
@@ -277,9 +277,10 @@ export async function gateReviewOnCi(
   const disposition = await ownBaseRed(
     deps,
     record,
-    decideCiDisposition(attributeFailedChecks(failed, base.value.checks)),
-    failed,
+    attributeFailedChecks(failed, base.value.checks),
   );
+  // A base-repair recognition or tip read that is unavailable mutates nothing.
+  if (disposition === null) return UNAVAILABLE;
   switch (disposition.kind) {
     case "candidate":
       return routeCandidateFailure(
@@ -346,7 +347,11 @@ export async function confirmPreReviewCiFix(
     case "candidate":
       return {
         kind: "confirmed",
-        finding: ciCorrectionFinding(record.target.base, observed.checks),
+        finding: ciCorrectionFinding(
+          record.target.base,
+          observed.checks,
+          observed.redBase === true && baseRepairFindingOpen(deps),
+        ),
       };
     case "clean":
       return persistWork(deps, context, clearWait(record, now));

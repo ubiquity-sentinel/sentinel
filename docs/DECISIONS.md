@@ -3303,13 +3303,20 @@ standing approval above. Applied as follows.
 
 ## 2026-10-24: a red target base gets its own repair (base-repair lane)
 
-- 2026-10-25 status: filing ships off (`BASE_REPAIR_FILING_ENABLED = false`).
-  The lane's adversarial review upheld a P1 (it filed for any failing tip check,
-  including dispatch-only deploy jobs no pull request runs) and P2s (one
-  unfiltered page of 100 open issues, no author check, a closed issue refiled
-  for the same tip, a label Passport does not have). While off, the pass reads
-  and files nothing; the runtime half changes nothing until a marked issue
-  exists.
+- 2026-10-25 status: the review findings below are fixed; filing stays off
+  (`BASE_REPAIR_FILING_ENABLED = false`) until the reworked lane's own
+  adversarial re-review passes. The lane's adversarial review had upheld a P1
+  (it filed for any failing tip check, including Passport's dispatch-only
+  `Workers Standby Deploy` and `deploy-standby` jobs that no pull request runs,
+  so a charged task could loop), P2s (one unfiltered page of 100 open issues
+  with no author check; a closed issue refiled for the same tip; a stale open
+  issue suppressing every later one; a P0 label Passport does not have and
+  ai.ubq.fi does not use; the lane's files unprotected) and P3s (an unavailable
+  issue read read as "not a base-repair task", secondary cancelled checks and a
+  "passed on its base" claim in the fix finding, a conversion on a base that had
+  already moved, untrusted check names in the issue, a red set unlike the
+  runtime's, and a wrong note on the self scope). Filing was off from 027ecbbea0
+  until this change.
 
 - Finding (live state, 2026-10-24 23:00 UTC): all 39 Passport records at `work`
   were held by the CI-first gate's `base_red` rule. Their failing check is red
@@ -3317,23 +3324,67 @@ standing approval above. Applied as follows.
   Two of them held the delivery line for the 22 reviewed Passport PRs behind
   them. A red base can only move by a merge, and no merge passes a red base, so
   nothing in Sentinel was assigned to fix it and the whole target stayed wedged.
-- Decision: the launcher's maintenance pass reads the base tip of every foreign
-  target with a record held in a timed `backoff` at `work` (the CI-first
-  red-base hold), sharing the follow-up pass's one state read
+- Decision: the launcher's maintenance pass looks at every foreign target with a
+  record the CI-first gate holds on a red base (at `work` with a published head,
+  in a running red-base hold, `isRedBaseHold`), sharing the follow-up pass's one
+  state read
   ([ops/hosted-autonomy-base-repair.ts](../ops/hosted-autonomy-base-repair.ts)).
-  When a completed check on that exact commit failed (`failure`, `timed_out` or
-  `startup_failure`), it files one issue labelled P0, titled
-  `CI is failing on <branch>`, with `<!-- sentinel:base-repair:<branch> -->` as
-  the first body line and the failing check names, unless an open issue already
-  starts with that marker. It writes no state and never edits, closes or
-  comments on an existing issue. The self scope is left to self-observation.
-- The runtime admits the issue like any other; its P0 label selects it before
-  ordinary work. For that task alone (P0, open, authored by the App, marker on
-  the first line; `src/repair/base-repair.ts`), a `base_red` failure is the
-  candidate's own failure: its head still fails the checks it was filed to fix,
-  so it takes the ordinary charged CI fix route instead of the uncharged hold.
-  Every other record keeps the hold, and an ordinary record is never read for
-  it.
+  It reads the base tip; only held records whose base is that tip count (a
+  record on an older base refreshes onto the tip first). It reads the tip's
+  failed checks with the runtime's red-base conclusions (`RED_BASE_CONCLUSIONS`:
+  `failure`, `timed_out`, `action_required`) and the failed checks of the first
+  three such held heads in record-id order with the head conclusions a red base
+  can hold (`CANDIDATE_CONCLUSIONS`: `failure`, `timed_out`). Both reads take
+  the latest run of each name and leave out a job that never started. Only a
+  check failing on the tip and on a held head holds anything, so the issue lists
+  only those, through the runtime's trusted check-name shape
+  (`trustedCheckName`), and nothing is filed when there is none
+  (`base-repair:<repo>:no_held_check`). Any unreadable tip, head or listing
+  files nothing.
+- The issue is titled `CI is failing on <branch>`, carries no label, and its
+  first body line is `<!-- sentinel:base-repair:<branch>@<tip> -->`. Before
+  filing, the pass reads every issue the App created in that repository
+  (`GET /issues?creator=ubiquity-sentinel[bot]&state=all`, oldest first, up to
+  20 pages of 100; another creator, a repeated or malformed item, or a full page
+  at the bound refuses the whole listing). It files nothing when any App issue,
+  open or closed, already carries the marker for this tip, so a tip gets at most
+  one issue. While an App issue marked for an older tip of the branch (or with
+  the first, tip-less marker) is open, a new issue is filed only once every
+  record of that issue is parked or done; an issue with no record yet still
+  counts as live. The pass writes no state and never edits, closes or comments
+  on an issue. The self scope has no base-repair lane: the pass never reads or
+  files for it.
+- The runtime admits the issue like any other, at the ordinary priority of an
+  unlabelled issue. For that task alone (the issue the App authored with the
+  marker on its first body line; no label, no severity and no other check;
+  `src/repair/base-repair.ts`), a `base_red` failure is the candidate's own
+  failure on the current tip: its head still fails the checks it was filed to
+  fix, so it takes the ordinary charged CI fix route instead of the uncharged
+  hold. The fix names exactly the checks red on both (never a secondary
+  cancelled one). The issue is read only for a `base_red` disposition and once
+  per run. An unavailable issue read or tip read defers through the callers'
+  existing unavailable path without a write. A record whose base is no longer
+  the tip keeps `base_red`, so a moved base refreshes it first, uncharged
+  (before a refresh the delivery gate corrects only a candidate failure). A
+  closed issue is still refused before any charge, as every task is
+  (`readIssueForModel`).
+- The fix finding has its own opening,
+  `Required CI checks failed on this
+  candidate and on its red base`, which
+  `isCiCorrectionFinding` recognises beside the ordinary one, so it never claims
+  that the checks passed on the base. A hosted fix runs as a matrix cell that a
+  later run may consume under the rollback target's code, and a consumer that
+  does not recognise the opening refuses the cell generically, which fails every
+  later repair run (the R79 precedent). Hosted runs therefore keep the ordinary
+  opening until the installed rollback target is a runtime at or after this
+  change (`HOSTED_BASE_REPAIR_FINDING`, off); in process the own opening is
+  always used. Under a rollback to the previous runtime nothing else changes: it
+  recognises the task only with a P0 severity (a `P0` label), which the issue is
+  not filed with, so it keeps the uncharged hold; an issue a person labels P0
+  gets that runtime's earlier conversion with the ordinary opening.
+- `src/repair/base-repair.ts` (with the CI-first gate) and
+  `ops/hosted-autonomy-base-repair.ts` (with the App-token issue filing) are
+  protected paths, so a model-authored candidate never changes the lane.
 - Unchanged: current-head CI, native review, the P0 merge block, custody and
   accounting. The fix merges through the ordinary gates; its pull request closes
   the issue, and every held record then refreshes onto the green base.

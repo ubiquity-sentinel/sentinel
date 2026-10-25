@@ -154,14 +154,17 @@ export interface HostedAutonomyGitHubV1 {
   hasAllChecksGreen(head: string, base?: string): Promise<boolean | null>;
   /**
    * Base-repair read: the names of the check runs on the exact commit whose
-   * latest run of that name completed with `failure`, `timed_out` or
-   * `startup_failure`, leaving out a GitHub Actions run whose job never
-   * started (no step, no runner: a billing or spending-limit stop; bounded
-   * job reads, an unreadable job keeps its failure). Empty when none did,
-   * null when the complete listing cannot be read. Optional: a surface
-   * without it files no base-repair issue.
+   * latest run of that name completed with one of `conclusions`, leaving out
+   * a GitHub Actions run whose job never started (no step, no runner: a
+   * billing or spending-limit stop; bounded job reads, an unreadable job
+   * keeps its failure). Empty when none did, null when the complete listing
+   * cannot be read. Optional: a surface without it files no base-repair
+   * issue.
    */
-  failedChecks?(head: string): Promise<string[] | null>;
+  failedChecks?(
+    commit: string,
+    conclusions: readonly string[],
+  ): Promise<string[] | null>;
   /**
    * CI resume read: true when the latest attempt of completed workflow run
    * `id` on `head` failed only through jobs that never started (at least one
@@ -286,6 +289,12 @@ export interface HostedAutonomyGitHubV1 {
   followUpIssues?: HostedFollowUpIssuesV1;
 
   /**
+   * Optional trusted launcher capability: list the App's issues and file a
+   * base-repair issue in THIS repository. Absent means none is filed.
+   */
+  baseRepairIssues?: HostedBaseRepairIssuesV1;
+
+  /**
    * Optional trusted launcher capability: the owner's `sentinel:retry` label
    * on THIS repository's issues (`ops/hosted-autonomy-retry-label.ts`).
    * Absent means no label exit is read or taken.
@@ -331,6 +340,33 @@ export interface HostedIssueListingItemV1 {
   pullRequest: boolean;
   /** The body's first line (LF or CRLF), empty for an empty body. */
   firstLine: string;
+}
+
+/** One issue or pull request the sentinel App created. */
+export interface HostedAppIssueV1 {
+  number: number;
+  state: "open" | "closed";
+  /** True for a pull request (the issues listing returns both). */
+  pullRequest: boolean;
+  /** The body's first line (LF or CRLF), empty for an empty body. */
+  firstLine: string;
+}
+
+/** Launcher-only base-repair issues of ONE repository (the App token). */
+export interface HostedBaseRepairIssuesV1 {
+  /**
+   * Every issue and pull request of this repository the sentinel App
+   * created, open or closed, from one complete bounded listing; null when it
+   * cannot be proven complete, App-created and bound to this repository.
+   */
+  listAppAuthored(): Promise<readonly HostedAppIssueV1[] | null>;
+  /**
+   * Create one issue with exactly this title and body and no label: its
+   * number only when GitHub's answer is this repository's App-created issue
+   * echoing the exact text; otherwise null (the create may still have
+   * happened).
+   */
+  create(input: { title: string; body: string }): Promise<number | null>;
 }
 
 /** The creator and first body line of one existing issue (never a PR). */

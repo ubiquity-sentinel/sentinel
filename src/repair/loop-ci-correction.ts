@@ -24,12 +24,12 @@ import type { GitHubCheckV1 } from "../contracts/ports.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import {
   attributeFailedChecks,
+  baseRepairFindingOpen,
   ciCorrectable,
   ciCorrectionFinding,
   ciCorrectionRouteOpen,
   type CiDispositionV1,
   ciFixExhaustedDetail,
-  decideCiDisposition,
   failedChecks,
   unattributedDetail,
 } from "./ci-rejection.ts";
@@ -68,7 +68,8 @@ const UNAVAILABLE: StepResultV1 = {
 /**
  * Attribute the failed head checks through one base observation. The base read
  * is an ordinary GitHub read under the caller's cooldown gate; a failed read
- * attributes nothing (null).
+ * attributes nothing (null), and so does an unavailable base-repair
+ * recognition or tip read (`ownBaseRed`).
  */
 async function attributeAgainstBase(
   deps: RepairCycleDepsV1,
@@ -84,8 +85,7 @@ async function attributeAgainstBase(
   return ownBaseRed(
     deps,
     record,
-    decideCiDisposition(attributeFailedChecks(failed, base.value.checks)),
-    failed,
+    attributeFailedChecks(failed, base.value.checks),
   );
 }
 
@@ -273,7 +273,11 @@ export async function confirmCiCorrection(
   if (observed.kind === "candidate") {
     return {
       kind: "confirmed",
-      finding: ciCorrectionFinding(record.target.base, observed.checks),
+      finding: ciCorrectionFinding(
+        record.target.base,
+        observed.checks,
+        observed.redBase === true && baseRepairFindingOpen(deps),
+      ),
     };
   }
   const now = deps.clock.now();
