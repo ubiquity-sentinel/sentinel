@@ -3726,3 +3726,19 @@ standing approval above. Applied as follows.
   resolution, a retried implementation or a CI fix. The comment in
   `src/repair/ci-first-policy.ts` is corrected. Resetting such rows is an owner
   decision.
+
+## 2026-10-25: isolated CI workers
+
+The owner requested faster CI with lower runner use.
+
+- `modules` and the three host shards run four worker processes each.
+- `integration` keeps one worker.
+- Each worker gets a temporary `HOME` and `DENO_DIR`.
+- Every worker invokes `test-local.ts` for its assigned files.
+- The planner checks exactly-once file coverage and balances the file costs.
+- `SENTINEL_TEST_JOBS` selects the worker count.
+- The `test-local` aggregate keeps all existing quality and shard gates.
+- Superseded PR and non-development runs are cancelled.
+- A newer run does not cancel running `development` CI.
+
+PR #217 and its measured CI results are recorded in `build-status.md`.
