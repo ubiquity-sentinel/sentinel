@@ -7,6 +7,7 @@ import { ReviewOwnerChannelClient } from "./review-owner-channel.ts";
 import { reviewOwnerChildInput } from "./review-owner-child-input.ts";
 import { parseCarrier } from "./matrix-actions-shared.ts";
 import { cellCiEvidenceReader } from "./matrix-cell-ci-evidence.ts";
+import { hostBackupCi } from "./backup-ci-compose.ts";
 import {
   createTrustedGatewayCapabilities,
   isGatewayTarget,
@@ -151,10 +152,9 @@ export async function runActionsRepairHost(
     runOrigin,
     parseAppTokenNotAfterV1(readEnv(APP_TOKEN_NOT_AFTER_ENV)),
   );
-  // One bounded advisory line, emitted before any setup or credential read, so
-  // the hosted log records the exact window this run works on even when the
-  // setup that follows fails. It carries no `status` property, so the
-  // launcher's child-status scan can never read it as a child result.
+  // One bounded advisory line before any setup or credential read records the
+  // exact window this run works on even when the setup that follows fails. It
+  // has no `status` property: the child-status scan never reads it as a result.
   console.log(JSON.stringify({
     kind: "sentinel_run_window",
     originAt: runOrigin,
@@ -198,11 +198,10 @@ export async function runActionsRepairHost(
     selfInstallationId,
   } = readHostedAppCredentials(readEnv);
   // The model token is the route's key when the route names a key environment
-  // (read through the existing --allow-env mechanism), else the existing
-  // gateway token. The review client ALWAYS uses the gateway token: it is
-  // gateway-bound independently of the implementation route, so a
-  // DeepSeek-direct implementation route never pairs the gateway-only review
-  // model with the DeepSeek endpoint or key.
+  // (read through the existing --allow-env mechanism), else the gateway token.
+  // The review client ALWAYS uses the gateway token: it is gateway-bound apart
+  // from the implementation route, so a DeepSeek-direct implementation route
+  // never pairs the gateway-only review model with the DeepSeek endpoint/key.
   const gatewayToken = requireEnv(readEnv, "UOS_AI_TOKEN");
   const modelToken = modelRoute.apiKeyEnv === null
     ? gatewayToken
@@ -227,6 +226,7 @@ export async function runActionsRepairHost(
 
   await ensurePrivateDir(stateRoot);
   await ensurePrivateDir(scratch);
+  const backupCi = await hostBackupCi(readEnv, sourceDir, stateRoot, clock);
   const controllerSha = await readControllerSha(sourceDir, trustedPath);
 
   // The state store uses the same authenticated Git transport as publication,
@@ -303,10 +303,9 @@ export async function runActionsRepairHost(
   // The source mirror is private to this run. The SENTINEL mirror is seeded
   // from this run's own checkout (the exact runtime revision) and refreshed
   // here; a FOREIGN target cannot be served by it, because that mirror holds
-  // no object from the other repository at all. Each foreign target therefore
-  // gets its own mirror below, seeded from its own authenticated remote and
-  // fetched at its own base branch. The shared cooldown gate still governs
-  // every fetch.
+  // no object from the other repository. Each foreign target therefore gets
+  // its own mirror below, seeded from its own authenticated remote and fetched
+  // at its own base branch. The shared cooldown gate still governs each fetch.
   await prepareSourceRepository(sourcePath, hostInput, scratch);
   const baseSha = deps.refreshSelf === undefined
     ? await refreshDevelopment(sourcePath, hostInput, scratch, gate)
@@ -343,11 +342,10 @@ export async function runActionsRepairHost(
         `${config.repository.owner}-${config.repository.name}`,
       );
 
-  // The review client is configured independently of the implementation
-  // route: always the gateway provider and endpoint with the gateway token,
-  // so the gateway-bound structured reviewer never meets a DeepSeek-direct
-  // client config on the fallback path. The implementation route above is
-  // untouched.
+  // The review client is configured apart from the implementation route:
+  // always the gateway provider, endpoint and token, so the gateway-bound
+  // structured reviewer never meets a DeepSeek-direct client config on the
+  // fallback path; the implementation route above is untouched.
   await ensureReviewClient({
     reviewCheckout,
     reviewClientHome,
@@ -510,6 +508,7 @@ export async function runActionsRepairHost(
   const composeProductionGithub = (config: RepositoryConfigV1): GitHubPort => {
     const common: HostedAppGitHubInput = {
       queueMode,
+      backupCi,
       invocationId: nativeReviewOwner ? execution.id : crypto.randomUUID(),
       ...(nativeReviewOwner
         ? { ownerExecution: execution, ownerCustody: custodyFor() }
@@ -602,11 +601,10 @@ export async function runActionsRepairHost(
       executionLauncherSha: execution.launcherSha,
       trustedPath,
     }),
-    // Both capabilities resolve from the REQUESTED repository, not from the
-    // sentinel self-identity: the checkout and the candidate import must use
-    // the target's own mirror, and candidate restoration must read the
-    // target's own remote. A request for a repository the run did not commit
-    // as a target refuses instead of silently using sentinel's mirror.
+    // Both capabilities resolve from the REQUESTED repository, not the sentinel
+    // self-identity: checkout and candidate import use the target's own mirror,
+    // restoration reads the target's own remote, and a repository the run did
+    // not commit as a target refuses, never silently using sentinel's mirror.
     ensureCandidateObjects: (input) => {
       const slug = `${input.repository.owner}/${input.repository.name}`;
       const mirror = sourcePathBySlug.get(slug);
@@ -812,6 +810,7 @@ export async function runActionsRepairHost(
         token: writeToken,
         http,
         queueMode,
+        backupCi,
         deadline,
         purpose: execution.purpose,
         configs: targetConfigs,
@@ -932,6 +931,7 @@ export async function runActionsRepairHost(
                   clock,
                   token: tokenFor(config),
                   gate,
+                  backupCi,
                 }),
             }
             : {}),

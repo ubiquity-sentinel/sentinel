@@ -11,6 +11,7 @@ import type {
 } from "../contracts/ports.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import type { GitHubReviewWireV1 } from "./wire.ts";
+import type { BackupCiConsumerV1 } from "./backup-ci-observations.ts";
 
 export const MAX_OPEN_ISSUES = 10_000;
 
@@ -46,6 +47,12 @@ export interface GitHubApiClientOptionsV1 {
    * ignore abort signals still cannot block indefinitely.
    */
   requestDeadlineMs?: number;
+  /**
+   * Backup CI consumer (docs/backup-ci-spec.md §11.2): the receipt store
+   * reader and the lower-only mode. Absent, or mode `off`, the check read is
+   * exactly the native one.
+   */
+  backupCi?: BackupCiConsumerV1;
 }
 
 export type CreatePullWireV1 =

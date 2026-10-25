@@ -40,6 +40,13 @@ import {
 } from "./hosted-autonomy-outage-observation.ts";
 import { completedJobNeverStarted } from "../src/github/never-started-job.ts";
 import { createHostedActionsJobReads } from "./hosted-autonomy-github-jobs.ts";
+import type { BackupCiConsumerV1 } from "../src/github/backup-ci-observations.ts";
+import {
+  backupNeverStartedRemains,
+  failedNamesWithBackup,
+  type HostedBackupCiReadContextV1,
+  substituteBackupRuns,
+} from "./hosted-autonomy-backup-ci-read.ts";
 import { createMergeBaseTreeChanges } from "./hosted-autonomy-github-trees.ts";
 import {
   parseHostedAutonomyHeadPulls,
@@ -104,6 +111,8 @@ const PULL_FILE_PAGES = 30;
 export function createHostedAutonomyGitHub(
   token: string,
   repository: RepositoryIdentityV1,
+  /** Backup CI consumer (docs/backup-ci-spec.md §11.4); absent: native. */
+  backupCi?: BackupCiConsumerV1,
 ): HostedAutonomyGitHubV1 {
   const scope = `${repository.owner}/${repository.name}`;
 
@@ -187,6 +196,7 @@ export function createHostedAutonomyGitHub(
    */
   async function readCompleteCheckRuns(
     head: string,
+    substitute = true,
   ): Promise<Record<string, unknown>[] | null> {
     const runs = await readCompleteListing(
       (page) =>
@@ -206,7 +216,10 @@ export function createHostedAutonomyGitHub(
       const conclusion = run["conclusion"];
       if (conclusion !== null && typeof conclusion !== "string") return null;
     }
-    return runs;
+    // Verified backup CI stand-ins for never-started runs (spec §11.4).
+    return backup === null || !substitute
+      ? runs
+      : await substituteBackupRuns(backup, head, runs);
   }
 
   /** Complete workflow-run listing for exactly one commit. */
@@ -217,6 +230,32 @@ export function createHostedAutonomyGitHub(
       "workflow_runs",
       RUN_LISTING_PAGE_SIZE,
     );
+
+  /** The backup CI hook's reads, over this same token (spec §11.4). */
+  const backup: HostedBackupCiReadContextV1 | null = backupCi === undefined
+    ? null
+    : {
+      backupCi,
+      repository,
+      listAll: (head) =>
+        readCompleteListing(
+          (page) =>
+            `/repos/${scope}/commits/${head}/check-runs?filter=all&per_page=${LISTING_PAGE_SIZE}&page=${page}`,
+          "check_runs",
+          LISTING_PAGE_SIZE,
+        ),
+      listRuns: readHeadRuns,
+      listStatuses: (head) =>
+        readCompleteListing(
+          (page) =>
+            `/repos/${scope}/commits/${head}/status?per_page=${LISTING_PAGE_SIZE}&page=${page}`,
+          "statuses",
+          LISTING_PAGE_SIZE,
+        ),
+      readJob: (jobId) =>
+        request("GET", `/repos/${scope}/actions/jobs/${jobId}`),
+      verdicts: new Map(),
+    };
 
   return {
     mismatchDisposition: createHostedMismatchDispositionObservations(
@@ -268,6 +307,8 @@ export function createHostedAutonomyGitHub(
       // deterministic signal it can supply, so a head with no CI at all is
       // never delivered, and it is not red either (no CI ran).
       if (runs.length === 0) return null;
+      // A never-started run no backup result stands in for is no evidence.
+      if (backupNeverStartedRemains(runs)) return null;
       // Every run on that head must be completed and green (success, or a
       // job the workflow itself skipped or marked neutral), which excludes
       // anything pending, queued or failed — including a failure that only
@@ -291,8 +332,15 @@ export function createHostedAutonomyGitHub(
     async failedChecks(head: string, conclusions: readonly string[]) {
       const runs = await readCompleteCheckRuns(head);
       if (runs === null) return null;
-      // A job that never started (a billing stop) is no failing check.
-      return await jobReads.failedCheckNames(head, runs, conclusions);
+      // A job that never started (a billing stop) is no failing check; a
+      // red backup result standing in for one is (spec §11.5), within the
+      // conclusions the caller asks for.
+      return await failedNamesWithBackup(
+        head,
+        runs,
+        (h, r) => jobReads.failedCheckNames(h, r, conclusions),
+        conclusions,
+      );
     },
     runNeverStarted: (id: number, head: string) =>
       jobReads.runNeverStarted(id, head),
@@ -687,7 +735,8 @@ export function createHostedAutonomyGitHub(
     retryLabel: createHostedRetryLabel(request, repository),
     ciOutageTracker: createHostedOutageTracker(request, repository),
     async classifyTipStart(tip: string) {
-      const runs = await readCompleteCheckRuns(tip);
+      // The outage notice describes the target's own CI: native runs only.
+      const runs = await readCompleteCheckRuns(tip, false);
       if (runs === null) return null;
       return classifyTipChecks(
         runs.map((run) => ({

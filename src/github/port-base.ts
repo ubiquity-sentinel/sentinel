@@ -111,6 +111,7 @@ export abstract class GitHubPortBase {
       maxItems: options.maxItems,
       includeIssueRelations: options.includeIssueRelations,
       requestDeadlineMs: options.requestDeadlineMs,
+      backupCi: options.backupCi,
     });
   }
 

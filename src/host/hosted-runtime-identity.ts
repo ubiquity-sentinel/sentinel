@@ -80,6 +80,8 @@ export const HOSTED_RUNTIME_CHILD_ENV_KEYS = [
   // crosses only when the launcher was given a non-empty value.
   "SENTINEL_COOLDOWN_MODE",
   "SENTINEL_MERGE_QUEUE",
+  // Backup CI's lower-only mode (docs/backup-ci-spec.md §11.8).
+  "SENTINEL_BACKUP_CI",
   // The legacy review class's cutoff (`legacy-review-cutoff-env.ts`): set by
   // the launcher itself, only for the exact revision it pinned it for.
   "SENTINEL_LEGACY_REVIEW_CUTOFF",

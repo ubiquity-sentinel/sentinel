@@ -71,6 +71,7 @@ const OPTIONAL_CHILD_ENV_KEYS = [
   "SENTINEL_SELF_INSTALLATION_ID",
   "SENTINEL_COOLDOWN_MODE",
   "SENTINEL_MERGE_QUEUE",
+  "SENTINEL_BACKUP_CI",
   // Set by the launcher itself, only for a revision it pinned a cutoff for.
   "SENTINEL_LEGACY_REVIEW_CUTOFF",
   "SENTINEL_SELF_TOKEN",

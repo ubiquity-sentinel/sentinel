@@ -34,6 +34,10 @@ import {
   maintenanceFailureCategory,
 } from "./hosted-autonomy-state.ts";
 import { createHostedAutonomyGitHub } from "./hosted-autonomy-github.ts";
+import {
+  composeBackupCi,
+  readBackupCiMode,
+} from "../src/host/backup-ci-compose.ts";
 import { repeatFailureRouteIdentity } from "./hosted-autonomy-repeat-failure.ts";
 import {
   CURRENT_MATRIX_HISTORY_DEADLINE_MESSAGE,
@@ -230,6 +234,14 @@ export async function runHostedAutonomyMain(input?: {
         }
         return report(disposition);
       }
+      // One backup CI consumer for every surface (spec §11.4, §11.8): the
+      // lower-only mode and the committed targets; absent, all reads native.
+      const backupCi = await composeBackupCi({
+        mode: readBackupCiMode(env),
+        root: Deno.cwd(),
+        scratch: `${scratch}/backup-ci`,
+        clock: { now: () => Date.now() },
+      });
       // One surface per exact repository identity: the durable snapshot may
       // carry work for several repositories, and each record is delivered under
       // its OWN repository, never under the self repository.
@@ -243,6 +255,7 @@ export async function runHostedAutonomyMain(input?: {
         const created = createHostedAutonomyGitHub(
           isHostedSelf(repository) ? selfToken : apiToken,
           repository,
+          backupCi,
         );
         surfaces.set(key, created);
         return created;

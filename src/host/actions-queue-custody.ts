@@ -5,6 +5,7 @@ import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import { parseRepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import { createHostedAutonomyGitHub } from "../../ops/hosted-autonomy-github.ts";
+import type { BackupCiConsumerV1 } from "../github/backup-ci-observations.ts";
 import { readHostedMaintenanceQueueObservation } from "../../ops/hosted-autonomy-compatibility-queue.ts";
 import type { HostedExecutionIntentV1 } from "../contracts/hosted-supervisor.ts";
 import {
@@ -27,6 +28,8 @@ export async function prepareActionsQueueCustody(
       prepareTarget(config: RepositoryConfigV1): Promise<void>;
       /** The runtime's cached port with its actual same-token private principal. */
       composeGithub(config: RepositoryConfigV1): GitHubPort;
+      /** The runtime's backup CI consumer, for the native fact reads (§11.4). */
+      backupCi?: BackupCiConsumerV1;
     },
 ): Promise<boolean> {
   const report = (actions: readonly string[]) => {
@@ -92,7 +95,11 @@ export async function prepareActionsQueueCustody(
         let native = nativeReads.get(key);
         if (native === undefined) {
           // Native fact reads use the same App token; this is not a principal issuer.
-          native = createHostedAutonomyGitHub(input.token, repository);
+          native = createHostedAutonomyGitHub(
+            input.token,
+            repository,
+            input.backupCi,
+          );
           nativeReads.set(key, native);
         }
         return native;

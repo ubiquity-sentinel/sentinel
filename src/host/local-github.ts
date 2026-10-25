@@ -38,6 +38,7 @@ import {
   resolveQueueRuntimeConfiguration,
 } from "../github/queue-runtime-policy.ts";
 import type { HttpTransportV1 } from "../github/http.ts";
+import type { BackupCiConsumerV1 } from "../github/backup-ci-observations.ts";
 import { GitReviewSnapshot } from "../github/review-snapshot.ts";
 import { CodexStructuredReviewer } from "../github/codex-reviewer.ts";
 import { GitHubCodexReviewTransport } from "../github/codex-review-transport.ts";
@@ -174,6 +175,12 @@ export interface LocalGitHubInputV1 {
   selfMergeEnabled?: boolean;
   /** Trusted host selector can only lower the reviewed queue admission mode. */
   queueMode?: unknown;
+  /**
+   * Backup CI consumer (docs/backup-ci-spec.md §11.2) for every check read of
+   * this port: its client, the queue delivery reader and the review service
+   * share it. Absent, every read is native.
+   */
+  backupCi?: BackupCiConsumerV1;
   /** Trusted source capabilities; missing grants refuse takeover effects. */
   takeoverAuthority?: Pick<
     ExistingPrTakeoverHostInput,
@@ -245,6 +252,7 @@ export function composeLocalGitHub(
     cooldownGate: gate,
     clock: input.clock,
     includeIssueRelations: true,
+    ...(input.backupCi === undefined ? {} : { backupCi: input.backupCi }),
   }, queue.policy.workflowId);
   let takeoverPort: ExistingPrTakeoverPort | undefined;
   const queueReader = createQueueDeliveryReader({
@@ -413,6 +421,7 @@ export function composeLocalGitHub(
     ...(input.selfMergeEnabled === undefined
       ? {}
       : { selfMergeEnabled: input.selfMergeEnabled }),
+    ...(input.backupCi === undefined ? {} : { backupCi: input.backupCi }),
   });
   if (ensureCandidateObjects !== undefined) {
     // Wrap the SAME executor instance the port holds (never a parallel one):

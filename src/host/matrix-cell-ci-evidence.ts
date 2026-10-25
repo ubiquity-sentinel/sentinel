@@ -26,6 +26,7 @@ import {
 } from "../contracts/ports.ts";
 import { GitHubApiClient } from "../github/client.ts";
 import type { HttpTransportV1 } from "../github/http.ts";
+import type { BackupCiConsumerV1 } from "../github/backup-ci-observations.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import { OPERATION_MARGIN_MS } from "../repair/loop-bounds.ts";
@@ -60,9 +61,12 @@ export function cellCiEvidenceReader(input: {
   clock: Clock;
   token: string;
   gate: GitHubCooldownGateV1;
+  /** Backup CI receipts as the evidence of a red stand-in (spec §11.7). */
+  backupCi?: BackupCiConsumerV1;
 }): CiEvidenceReaderV1 {
   const { gate, token } = input;
   return new GitHubApiClient({
+    ...(input.backupCi === undefined ? {} : { backupCi: input.backupCi }),
     repository: input.repository,
     apiBaseUrl: "https://api.github.com",
     http: input.http,

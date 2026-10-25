@@ -50,6 +50,7 @@ import {
   type GitExecutorV1,
 } from "../github/git-executor.ts";
 import type { HttpTransportV1 } from "../github/http.ts";
+import type { BackupCiConsumerV1 } from "../github/backup-ci-observations.ts";
 import { createGitHubPort } from "../github/impl.ts";
 import type {
   HumanResolutionVerifierV1,
@@ -113,6 +114,11 @@ export interface GitHubHostOptionsV1 {
   includeIssueRelations?: boolean;
   /** Trusted native self merge; foreign and non-reserved scopes remain disabled. */
   selfMergeEnabled?: boolean;
+  /**
+   * Backup CI consumer (docs/backup-ci-spec.md §11.2), passed to the port's
+   * one client unchanged; absent, the port reads native CI only.
+   */
+  backupCi?: BackupCiConsumerV1;
 }
 
 /** The composed capability set a trusted repair host holds for GitHub. */
@@ -187,6 +193,7 @@ export function composeGitHubHost(
     ...(options.selfMergeEnabled === undefined
       ? {}
       : { selfMergeEnabled: options.selfMergeEnabled }),
+    ...(options.backupCi === undefined ? {} : { backupCi: options.backupCi }),
   });
 
   return { port, git };

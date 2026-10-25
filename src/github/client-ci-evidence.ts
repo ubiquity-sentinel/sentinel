@@ -42,6 +42,7 @@ import {
   type SignedLogReadV1,
 } from "./client-ci-evidence-log.ts";
 import { excerptFromLog } from "../repair/ci-evidence-excerpt.ts";
+import { applyBackupCiEvidence } from "./client-ci-evidence-backup.ts";
 import { classifyCheck, extractHints } from "../repair/ci-evidence-classify.ts";
 import { ciExcerptShare } from "../repair/ci-evidence-render.ts";
 import {
@@ -170,8 +171,7 @@ export abstract class GitHubClientCiEvidence extends GitHubClientNativeCi
     let logs = 0;
     for (const run of selected) {
       if (collection.deadline.fired() || collection.stopped !== null) {
-        // Out of time or rate limited: the checks not reached are counted,
-        // never invented.
+        // Out of time or rate limited: count the unreached checks, invent none.
         evidence.unavailable = collection.stopped ?? "timeout";
         evidence.omittedChecks += count - evidence.checks.length;
         return;
@@ -198,6 +198,14 @@ export abstract class GitHubClientCiEvidence extends GitHubClientNativeCi
       check.classificationReason = label.reason;
       evidence.checks.push(check);
     }
+    // A red backup stand-in's receipt evidence (docs/backup-ci-spec.md §11.7).
+    await applyBackupCiEvidence(
+      this.backupCiReads(),
+      input.head,
+      selected,
+      evidence,
+      collection.deadline,
+    );
     if (collection.stopped !== null) evidence.unavailable = collection.stopped;
   }
 

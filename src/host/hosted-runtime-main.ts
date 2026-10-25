@@ -55,12 +55,29 @@ export const HOSTED_RUNTIME_LAUNCHER_INPUT_KEYS = [
   "UOS_AI_TOKEN",
 ] as const;
 
+/**
+ * Lower-only launcher inputs a hosted-runtime step may not grant yet: the
+ * backup CI mode (docs/backup-ci-spec.md §11.8) arrives with its workflow
+ * advance. Each is read tolerantly: a step without the grant reads it as
+ * unset, which is its `off` default, instead of refusing the whole launch.
+ */
+export const HOSTED_RUNTIME_OPTIONAL_LAUNCHER_INPUT_KEYS = [
+  "SENTINEL_BACKUP_CI",
+] as const;
+
 /** Named reads of exactly the launcher inputs; the reader is a test seam. */
 export function readHostedLauncherInputs(
   read: (key: string) => string | undefined = (key) => Deno.env.get(key),
 ): Record<string, string | undefined> {
   const inputs: Record<string, string | undefined> = {};
   for (const key of HOSTED_RUNTIME_LAUNCHER_INPUT_KEYS) inputs[key] = read(key);
+  for (const key of HOSTED_RUNTIME_OPTIONAL_LAUNCHER_INPUT_KEYS) {
+    try {
+      inputs[key] = read(key);
+    } catch {
+      inputs[key] = undefined;
+    }
+  }
   return inputs;
 }
 

@@ -37,6 +37,10 @@ import { GitHubClientIssues } from "./client-issues.ts";
 import { parseWire, parseWith, repoPath } from "./client-response.ts";
 import { REVIEW_DECISION_QUERY } from "./client-issue-wire.ts";
 import { neverStartedRunIndexes } from "./never-started-job.ts";
+import {
+  applyBackupCiToChecks,
+  type BackupCiClientReadsV1,
+} from "./client-backup-ci.ts";
 
 /**
  * The commit statuses an unfiltered head CI read reports (sentinel issue
@@ -102,6 +106,30 @@ export abstract class GitHubClientReads extends GitHubClientIssues {
     } catch {
       return null;
     }
+  }
+
+  /** The backup CI consumer's reads over this client, or null (§11.2). */
+  protected backupCiReads(): BackupCiClientReadsV1 | null {
+    const backupCi = this.options.backupCi;
+    if (backupCi === undefined) return null;
+    return {
+      ...backupCi,
+      repository: this.repository,
+      pages: (path, query, key) =>
+        this.collectPages(
+          `/repos/${repoPath(this.repository)}${path}`,
+          { ...query, per_page: String(this.perPage) },
+          (body) =>
+            expectArray(
+              key === null ? body : expectRecord(body, "$")[key],
+              "$",
+              this.maxItems,
+              (v) => v,
+            ) as unknown[],
+        ),
+      readJob: (jobId) => this.readActionsJob(jobId),
+      verdicts: this.jobVerdicts,
+    };
   }
 
   /** Host-authored base-review jobs; unrelated supervisor jobs are not task CI. */
@@ -289,6 +317,20 @@ export abstract class GitHubClientReads extends GitHubClientIssues {
         "GitHub API checks collection size bound exceeded",
       );
     }
+    // Verified backup CI stand-ins for never-started runs, and peers, before
+    // the statuses are folded in (docs/backup-ci-spec.md §11.2).
+    checks.splice(
+      0,
+      checks.length,
+      ...await applyBackupCiToChecks(
+        this.backupCiReads(),
+        sha,
+        items,
+        checks,
+        statuses,
+        names !== undefined,
+      ),
+    );
     // A name-filtered read (the base attribution of given head failures)
     // judges no other check run of the commit: its statuses are as recorded.
     checks.push(
