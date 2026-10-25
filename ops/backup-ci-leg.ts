@@ -223,7 +223,14 @@ export async function legInstall(deps: BackupCiLegDepsV1): Promise<number> {
     deps.print("backup-ci: act extraction failed");
     return 1;
   }
-  await Deno.chmod(layout.paths.act, 0o755);
+  // The release archive carries act as 0755 and tar keeps the mode. No chmod:
+  // Deno refuses any write to a path granted in `--allow-run` (live leg,
+  // 2026-10-25), so the mode is checked with a read instead.
+  const mode = (await Deno.stat(layout.paths.act)).mode;
+  if (mode === null || (mode & 0o111) !== 0o111) {
+    deps.print("backup-ci: act is not executable");
+    return 1;
+  }
   const version = await deps.actVersion(layout.paths.act);
   if (version === null || !version.includes(pins.act.version.slice(1))) {
     deps.print("backup-ci: act version mismatch");
