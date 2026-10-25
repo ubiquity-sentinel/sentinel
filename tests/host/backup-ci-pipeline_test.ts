@@ -303,8 +303,10 @@ Deno.test("plan, dispatch, leg, ingest, store: a receipt the stand-in rule accep
     // 2. The leg, on its own "VM".
     const runTemp = `${repo.root}/leg`;
     const layout = backupCiLegLayout(runTemp);
-    await Deno.mkdir(layout.input, { recursive: true });
-    await Deno.copyFile(`${workDir}/trees/0.tar`, `${layout.input}/0.tar`);
+    // Where download-artifact by artifact id puts it: in/<artifact name>/.
+    const artifactDir = `${layout.input}/backup-tree-${unit.unitId}`;
+    await Deno.mkdir(artifactDir, { recursive: true });
+    await Deno.copyFile(`${workDir}/trees/0.tar`, `${artifactDir}/0.tar`);
     const launcher = `${repo.root}/launcher`;
     await Deno.mkdir(`${launcher}/ops`, { recursive: true });
     await Deno.mkdir(`${launcher}/tests/fixtures/backup-ci`, {

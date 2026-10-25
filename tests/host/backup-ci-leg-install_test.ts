@@ -38,7 +38,9 @@ async function archive(dir: string, mode: number): Promise<string> {
   await Deno.mkdir(src, { recursive: true });
   await Deno.writeTextFile(
     `${src}/act`,
-    "#!/bin/sh\necho 'act version 0.2.89'\n",
+    // Like the real act v0.2.89: fatal without HOME (cmd/dir.go init).
+    '#!/bin/sh\n[ -n "$HOME" ] || { echo "\$HOME is not defined" >&2; exit 1; }\n' +
+      "echo 'act version 0.2.89'\n",
   );
   await Deno.chmod(`${src}/act`, mode);
   await Deno.writeTextFile(`${src}/LICENSE`, "synthetic\n");

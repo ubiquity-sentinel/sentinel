@@ -32,7 +32,7 @@ export const BACKUP_CI_LEG_STEPS = [
   "Report the backup result",
 ] as const;
 /** Bump when leg semantics change: a new revision is a new runner id. */
-export const BACKUP_CI_LEG_REVISION = 1;
+export const BACKUP_CI_LEG_REVISION = 2;
 export const BACKUP_CI_MAX_PARALLEL = 2;
 export const BACKUP_CI_MAX_JOB_MINUTES = 60;
 export const BACKUP_CI_LEG_SETUP_MINUTES = 10;

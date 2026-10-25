@@ -211,8 +211,9 @@ export function buildSystemdRunArgv(input: BackupCiServiceInputV1): string[] {
     "--wait",
     "--collect",
     "--quiet",
+    // No --gid: the hosted image may have no `runner` group, and without a
+    // Group= systemd uses the user's primary group.
     "--uid=runner",
-    "--gid=runner",
     `--working-directory=${input.emptyCwd}`,
     "-p",
     `MemoryMax=${BACKUP_CI_RUNNER_LIMITS.memoryGiB}G`,

@@ -762,7 +762,7 @@ Download the pinned asset, check its sha256 against `ops/backup-ci-pins.json`, a
    - `git status --porcelain=v1 --untracked-files=all` is empty.
    
    Write the result to `observed.json`.
-6. Assert that `$HOME/.actrc` and `$HOME/.config/act` are absent and that `XDG_CONFIG_HOME` is unset. Create the empty files `$RUNNER_TEMP/backup-ci/empty/{env,secrets,vars,input}`, an empty cwd, the event file, and fresh action, cache and artifact directories.
+6. Assert that no act configuration file exists: `$HOME/.actrc`, `$HOME/.config/act/actrc`, and `$XDG_CONFIG_HOME/act/actrc` when `XDG_CONFIG_HOME` is absolute. (Corrected 2026-10-25: the hosted image always sets `XDG_CONFIG_HOME=$HOME/.config`, and act creates its config directory on every run, so the directory and the variable alone are not configuration.) Create the empty files `$RUNNER_TEMP/backup-ci/empty/{env,secrets,vars,input}`, an empty cwd, the event file, and fresh action, cache and artifact directories.
 7. **Self-test.** Copy `launcher/tests/fixtures/backup-ci/selftest/` into a temporary git repository with remote `https://github.com/ubiquity-sentinel/backup-ci-selftest`.
    - The fixture plants `.actrc` (`--env PROBE=planted`), `.env`, `.secrets`, `.vars` and `.input`.
    - It uses the same `actions/checkout` major version as the unit.
@@ -774,7 +774,7 @@ Download the pinned asset, check its sha256 against `ops/backup-ci-pins.json`, a
 act runs as a clean systemd service:
 ```
 sudo systemd-run --unit=sentinel-backup-act-<slot> --pipe --wait --collect --quiet
-  --uid=runner --gid=runner --working-directory=<emptyCwd>
+  --uid=runner --working-directory=<emptyCwd>
   -p MemoryMax=7G -p CPUQuota=200% -p TasksMax=8192 -p KillMode=control-group
   -p RuntimeMaxSec=<capMinutes*60> -p TimeoutStopSec=30
   --setenv=HOME=/home/runner --setenv=PATH=<node24 shim dir>:<PATH from /etc/environment>

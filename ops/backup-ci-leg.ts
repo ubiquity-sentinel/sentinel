@@ -269,10 +269,21 @@ async function prepare(deps: BackupCiLegDepsV1): Promise<void> {
   const layout = backupCiLegLayout(deps.runTemp);
   const treeSha = deps.env("BACKUP_TREE_SHA256") ?? "";
   if (!HEX64.test(treeSha)) refuse("tree input");
+  // download-artifact by artifact id writes `in/<artifact name>/<file>`: the
+  // input holds exactly the unit's own artifact directory with one tar.
+  const unitId = deps.env("BACKUP_UNIT") ?? "";
+  if (!HEX24.test(unitId)) refuse("unit inputs");
+  const entries: Deno.DirEntry[] = [];
+  for await (const entry of Deno.readDir(layout.input)) entries.push(entry);
+  if (
+    entries.length !== 1 || !entries[0].isDirectory ||
+    entries[0].name !== `backup-tree-${unitId}`
+  ) refuse("input dir");
+  const artifactDir = `${layout.input}/${entries[0].name}`;
   const tars: string[] = [];
-  for await (const entry of Deno.readDir(layout.input)) {
+  for await (const entry of Deno.readDir(artifactDir)) {
     if (!entry.isFile || !/^[01]\.tar$/.test(entry.name)) refuse("input dir");
-    tars.push(`${layout.input}/${entry.name}`);
+    tars.push(`${artifactDir}/${entry.name}`);
   }
   if (tars.length !== 1) refuse("input dir");
   if (await fileSha256(tars[0]) !== treeSha) refuse("tree digest mismatch");
@@ -351,10 +362,16 @@ async function prepare(deps: BackupCiLegDepsV1): Promise<void> {
       clean: true,
     }),
   );
+  // act reads `~/.actrc` and `$XDG_CONFIG_HOME/act/actrc` (default
+  // `~/.config/act/actrc`). The hosted image always sets XDG_CONFIG_HOME
+  // (`$HOME/.config`), and act creates its config directory on every run,
+  // so only an actual configuration file refuses.
+  const xdg = deps.env("XDG_CONFIG_HOME");
   if (
     await exists(`${deps.home}/.actrc`) ||
-    await exists(`${deps.home}/.config/act`) ||
-    deps.env("XDG_CONFIG_HOME") !== undefined
+    await exists(`${deps.home}/.config/act/actrc`) ||
+    (xdg !== undefined && xdg.startsWith("/") &&
+      await exists(`${xdg}/act/actrc`))
   ) refuse("act configuration in HOME");
   for (
     const dir of [

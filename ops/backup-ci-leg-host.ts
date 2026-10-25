@@ -68,10 +68,12 @@ export function productionLegDeps(git: BackupCiGitV1): BackupCiLegDepsV1 {
       return { code: status.code, elapsedMs: Date.now() - started };
     },
     async actVersion(act) {
+      // act exits fatally without HOME, and creates `$HOME/.config/act`:
+      // a scratch HOME under RUNNER_TEMP, never the runner's own.
       const out = await new Deno.Command(act, {
         args: ["--version"],
         clearEnv: true,
-        env: { PATH: SYSTEM_PATH },
+        env: { PATH: SYSTEM_PATH, HOME: `${runTemp}/backup-ci/act-home` },
         stdout: "piped",
         stderr: "null",
       }).output().catch(() => null);

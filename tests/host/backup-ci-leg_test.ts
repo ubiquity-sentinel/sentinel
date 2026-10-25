@@ -238,8 +238,10 @@ async function rig(options: {
   await bare.writeUnit(unit);
   const runTemp = `${root}/rt`;
   const layout = backupCiLegLayout(runTemp);
-  await Deno.mkdir(layout.input, { recursive: true });
-  const packed = await packBackupCiBare(bare, `${layout.input}/0.tar`, []);
+  // Where download-artifact by artifact id puts it: in/<artifact name>/.
+  const artifactDir = `${layout.input}/backup-tree-${unit.unitId}`;
+  await Deno.mkdir(artifactDir, { recursive: true });
+  const packed = await packBackupCiBare(bare, `${artifactDir}/0.tar`, []);
   assert(packed.ok);
   // A launcher root: the self-test fixture and a filled pin.
   const launcher = `${root}/launcher`;
@@ -496,9 +498,10 @@ const REFUSALS: [
     "unit digest mismatch",
   ],
   [
+    // Another unit's id names no artifact directory in the input.
     "unit id",
     () => Promise.resolve({ BACKUP_UNIT: "0".repeat(24) }),
-    "unit digest mismatch",
+    "input dir",
   ],
   [
     "HOME .actrc",
@@ -508,13 +511,19 @@ const REFUSALS: [
   ],
   [
     "HOME act config",
-    async (r) =>
-      await Deno.mkdir(`${r.root}/home/.config/act`, { recursive: true }),
+    async (r) => {
+      await Deno.mkdir(`${r.root}/home/.config/act`, { recursive: true });
+      await Deno.writeTextFile(`${r.root}/home/.config/act/actrc`, "-v\n");
+    },
     "act configuration in HOME",
   ],
   [
-    "XDG_CONFIG_HOME",
-    () => Promise.resolve({ XDG_CONFIG_HOME: "/x" }),
+    "XDG_CONFIG_HOME actrc",
+    async (r) => {
+      await Deno.mkdir(`${r.root}/xdg/act`, { recursive: true });
+      await Deno.writeTextFile(`${r.root}/xdg/act/actrc`, "-v\n");
+      return { XDG_CONFIG_HOME: `${r.root}/xdg` };
+    },
     "act configuration in HOME",
   ],
   [
@@ -539,6 +548,25 @@ Deno.test("prepare refuses bad inputs, HOME configuration and a used workspace",
     } finally {
       await r.close();
     }
+  }
+});
+
+Deno.test("prepare accepts the hosted image's XDG_CONFIG_HOME and act's own empty config directory", async () => {
+  // The ubuntu image sets XDG_CONFIG_HOME=$HOME/.config for every job, and
+  // act creates $HOME/.config/act on every run: neither is configuration.
+  const r = await rig();
+  try {
+    await Deno.mkdir(`${r.root}/home/.config/act`, { recursive: true });
+    assert.equal(
+      await legPrepare(
+        r.deps({ env: { XDG_CONFIG_HOME: `${r.root}/home/.config` } }),
+      ),
+      0,
+      r.printed.join("\n"),
+    );
+    assert.equal(r.services.length, 1, "the self-test ran");
+  } finally {
+    await r.close();
   }
 });
 

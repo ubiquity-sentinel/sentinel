@@ -3139,6 +3139,20 @@ standing approval above. Applied as follows.
   the first live passes (2026-10-25 03:57 UTC) planned nothing and logged
   nothing. A null observation read and an unreadable repository are now logged
   (`observations_unavailable`, `repository_unavailable`).
+- The first live legs failed in their install, and a hosted audit (six lenses
+  with three skeptics per finding, real act v0.2.89 and the real
+  download-artifact action) found the next failures before any further live
+  attempt. Fixed: the install no longer chmods the act path (Deno refuses writes
+  to a path granted in `--allow-run`), and `act --version` runs with a scratch
+  HOME (act exits fatally without HOME and creates `~/.config/act`). Prepare
+  reads the tree from `in/backup-tree-<unit>/`, where download-artifact by
+  artifact id puts it. Only an actual act configuration file refuses; the
+  image's `XDG_CONFIG_HOME` does not. The service drops `--gid=runner`; without
+  a Group= systemd uses the user's primary group. `BACKUP_CI_LEG_REVISION` is 2,
+  so the fixed leg is a new runner id: it calibrates afresh and inherits no
+  backoff from the failed legs. Open (minor): a `status_only` step skipped on a
+  green run leaves no act record (act logs skips at Debug), so such a green
+  reads `act_inconsistent`; Passport has no such step.
 
 ## 2026-10-24: the runtime never merges a tree no CI ran on (base compare-and-swap)
 

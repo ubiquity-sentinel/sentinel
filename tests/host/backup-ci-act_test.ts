@@ -139,7 +139,7 @@ Deno.test("the systemd service is clean, limited and kill-on-exit", () => {
     imageVersion: "20261020.1.0",
     actArgv: ["/act", "push"],
   });
-  assert.deepEqual(argv.slice(0, 29), [
+  assert.deepEqual(argv.slice(0, 28), [
     "systemd-run",
     "--unit=sentinel-backup-act-0",
     "--pipe",
@@ -147,7 +147,6 @@ Deno.test("the systemd service is clean, limited and kill-on-exit", () => {
     "--collect",
     "--quiet",
     "--uid=runner",
-    "--gid=runner",
     "--working-directory=/rt/backup-ci/cwd",
     "-p",
     "MemoryMax=7G",
@@ -170,7 +169,7 @@ Deno.test("the systemd service is clean, limited and kill-on-exit", () => {
     "--setenv=CI=true",
     "--setenv=JAVA_HOME_17_X64=/opt/java",
   ]);
-  assert.deepEqual(argv.slice(29), ["--", "/act", "push"]);
+  assert.deepEqual(argv.slice(28), ["--", "/act", "push"]);
   assert(
     !argv.some((a) => a.includes("GITHUB_TOKEN") || a.includes("RUNNER_TEMP")),
   );
