@@ -13,7 +13,9 @@
  * A GitHub Actions run whose job never started (`neverStarted`, a billing or
  * spending-limit stop) is no evidence on either side: it is pending on the
  * head (`checkPending`, never in `failedChecks`) and attributes nothing on the
- * base (neither red nor green there).
+ * base (neither red nor green there). A backup CI stand-in (`backup`, a
+ * verified receipt for a never-started check) is attributed only against
+ * backup evidence of the other side (`backupAttribution`).
  *
  * Nothing here is persisted. The generation-76 rollback contract forbids any
  * new state shape, so every consumer re-derives the attribution from live
@@ -194,6 +196,33 @@ export interface CiAttributionV1 {
   secondary: GitHubCheckV1[];
 }
 
+/**
+ * Backup CI attribution (docs/backup-ci-spec.md §11.3), or null when neither
+ * side is a backup stand-in and the native rules apply. Like is compared with
+ * like: a backup head red against the base's own stand-in or the base's
+ * backup peer, and a native head red against a backup base only through the
+ * head's backup peer. Without that evidence it is unattributed (never
+ * `baseRed`), and the backup planner schedules the missing unit.
+ */
+function backupAttribution(
+  head: GitHubCheckV1,
+  base: GitHubCheckV1 | undefined,
+): "candidate" | "baseRed" | "unattributed" | null {
+  const red = (conclusion: string | null | undefined) =>
+    RED_BASE_CONCLUSIONS.includes(conclusion ?? "");
+  if (head.backup !== undefined) {
+    const observed = base?.backup !== undefined
+      ? base.conclusion
+      : base?.backupPeer?.conclusion;
+    if (observed === "success") return "candidate";
+    return red(observed) ? "baseRed" : "unattributed";
+  }
+  if (base?.backup === undefined) return null;
+  if (!red(head.backupPeer?.conclusion)) return "unattributed";
+  if (base.conclusion === "success") return "candidate";
+  return red(base.conclusion) ? "baseRed" : "unattributed";
+}
+
 export function attributeFailedChecks(
   failed: readonly GitHubCheckV1[],
   baseChecks: readonly GitHubCheckV1[],
@@ -217,7 +246,10 @@ export function attributeFailedChecks(
       continue;
     }
     const observed = base.get(check.name);
-    if (observed === undefined || observed.neverStarted === true) {
+    const backed = backupAttribution(check, observed);
+    if (backed !== null) {
+      attribution[backed].push(check);
+    } else if (observed === undefined || observed.neverStarted === true) {
       attribution.unattributed.push(check);
     } else if (observed.status !== "completed") {
       attribution.basePending.push(check);

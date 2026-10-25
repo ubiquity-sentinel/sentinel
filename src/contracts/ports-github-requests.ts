@@ -1,3 +1,4 @@
+import type { BackupCiConclusionV1, BackupCiContextV1 } from "./backup-ci.ts";
 import type { GitSha, WorkItemId } from "./brands.ts";
 import type { SelfMergeProofV1 } from "./self-merge.ts";
 import type {
@@ -94,6 +95,27 @@ export interface GitHubCheckV1 {
    * and on every record or fixture written before it existed.
    */
   neverStarted?: true;
+  /**
+   * Present only on a backup CI stand-in for a never-started observation
+   * (docs/backup-ci-spec.md §11.1): the verified receipt whose conclusion this
+   * check now carries. Never persisted; absent on every native check.
+   */
+  backup?: GitHubCheckBackupV1;
+  /**
+   * A resolved backup result of a natively started check name, read only by
+   * CI attribution (`attributeFailedChecks`); inert everywhere else. Never
+   * persisted.
+   */
+  backupPeer?: { conclusion: BackupCiConclusionV1; receipt: string };
+}
+
+/** The backup CI receipt a stand-in check carries (never persisted). */
+export interface GitHubCheckBackupV1 {
+  receipt: string;
+  context: BackupCiContextV1;
+  runnerId: string;
+  legRunId: number;
+  legJobId: number;
 }
 
 export interface GitHubChecksV1 {
