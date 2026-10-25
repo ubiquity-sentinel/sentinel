@@ -221,7 +221,6 @@ export async function runHostedAutonomy(
       const [phase, pass, tag] of [
         ["base_repair", runHostedBaseRepairPass, "base-repair"],
         ["ci_resume", runHostedCiResumePass, "ci-resume"],
-        ["ci_outage", runOutagePass, "ci-outage"],
       ] as const
     ) {
       const finish = beginMaintenanceProgress(phase);
@@ -244,25 +243,6 @@ export async function runHostedAutonomy(
     await deps.onQueueCustodyReady?.(false);
     throw error;
   }
-}
-
-/**
- * The CI-outage notice pass over the surfaces' own capabilities: Sentinel's
- * tracker on the self scope and each target's tip start class.
- */
-function runOutagePass(
-  deps: HostedAutonomyDepsV1,
-  passDeadline: number,
-): Promise<string[]> {
-  // A host without Sentinel's tracker files nothing and reports nothing.
-  const tracker = deps.githubFor(HOSTED_AUTONOMY_SELF_SCOPE)?.ciOutageTracker;
-  if (tracker === undefined) return Promise.resolve([]);
-  return runHostedOutageObservationPass(deps, {
-    tracker,
-    classifyTip: (repository, tip) =>
-      deps.githubFor(repository)?.classifyTipStart?.(tip) ??
-        Promise.resolve(null),
-  }, passDeadline);
 }
 
 /**
@@ -504,6 +484,32 @@ async function runHostedAutonomyChain(
         now: deps.clock.now(),
       }),
     );
+    // The CI-outage notices live on the same tracker and follow the same
+    // rule: only a pass that wrote nothing touches the self scope, and a
+    // self surface without the tracker files nothing and reports nothing.
+    const tracker = selfSurface?.ciOutageTracker;
+    if (tracker !== undefined) {
+      const finishOutage = beginMaintenanceProgress("ci_outage");
+      try {
+        actions.push(
+          ...await runHostedOutageObservationPass(deps, {
+            tracker,
+            classifyTip: (repository, tip) => {
+              try {
+                return deps.githubFor(repository)?.classifyTipStart?.(tip) ??
+                  Promise.resolve(null);
+              } catch {
+                return Promise.resolve(null);
+              }
+            },
+          }, startedAt + HOSTED_AUTONOMY_PASS_DEADLINE_MS),
+        );
+      } catch {
+        actions.push("ci-outage:unexpected_error");
+      } finally {
+        finishOutage();
+      }
+    }
   } finally {
     finishObservation();
   }

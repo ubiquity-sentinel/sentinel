@@ -2997,7 +2997,7 @@ standing approval above. Applied as follows.
   charged.
 - The current-head review, CI and P0 gates are unchanged.
 
-## 2026-10-25: observability lines, target rotation, outage notice and wedge report (redesign C5)
+## 2026-10-25: observability lines, outage notice and wedge report (redesign C5)
 
 - Plan diagnostic: a zero-cell plan prints one `sentinel_matrix_plan_diagnostic`
   line after its carrier, with per-repository `skippedByReason` and
@@ -3017,11 +3017,10 @@ standing approval above. Applied as follows.
   at most 2,000 strictly re-parsed lines before the carrier and the terminal.
   The line has no `status` key, so the child-status scan never reads it, and a
   failed print is swallowed.
-- Target order: `runActionsTargetCycles` runs the targets in the setting order
-  rotated left by `runId % configs.length`, so Passport is not always last
-  behind two review drains. Without a native run id the setting order is kept.
-  `addressed` and `skipped` follow the rotated order, and the outcome is still
-  the last addressed cycle's.
+- Target order is unchanged (the setting order). A rotation by run id was built
+  and withdrawn the same day: the real bootstrap child and the matrix
+  review-window tests pin the setting order, and stage 4 runs targets
+  concurrently, which makes the rotation unnecessary.
 - CI outage notice: the state-free `ops/hosted-autonomy-outage-observation.ts`
   keeps one issue per foreign target on Sentinel's own tracker while that
   target's tip has only never-started checks. That means at least one
@@ -3035,12 +3034,14 @@ standing approval above. Applied as follows.
   - A pending or unreadable tip changes nothing.
   - The marker on someone else's issue prevents a duplicate and is never edited.
 - The outage pass takes the never-started classification as an injected
-  predicate (C2) and is wired into the maintenance runner separately (WP1.4 owns
-  the runner). Intake never admits a notice Sentinel filed (as the App, or with
-  the maintenance job's native-token fallback) as a repair task
-  (`isCiOutageNotice`), because no code change fixes billing; the same first
-  line on anyone else's issue is ordinary work. On recovery every notice
-  Sentinel filed for the target closes.
+  predicate (C2: the target surface's `classifyTipStart`). It runs with the
+  self-observation pass, only on a maintenance pass that wrote nothing, so a
+  pass that delivered never touches the self scope, and a self surface without
+  the tracker files nothing and reports nothing. Intake never admits a notice
+  Sentinel filed (as the App, or with the maintenance job's native-token
+  fallback) as a repair task (`isCiOutageNotice`), because no code change fixes
+  billing; the same first line on anyone else's issue is ordinary work. On
+  recovery every notice Sentinel filed for the target closes.
 - Wedge report v0: finalize reads the repair state once (advisory, with a
   60-second bound) and adds `wedges` to `hosted_runtime_run_summary`. It has
   three classes:

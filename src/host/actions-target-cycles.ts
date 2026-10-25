@@ -276,10 +276,7 @@ export interface ActionsTargetCyclesInputV1 {
 export interface ActionsTargetCyclesResultV1 {
   /** The LAST addressed cycle's outcome, or null when none was addressed. */
   readonly outcome: RepairCycleOutcomeV1 | null;
-  /**
-   * `owner/name` of every target whose cycle was started, in the pass's
-   * order (`rotateTargetConfigsV1`).
-   */
+  /** `owner/name` of every target whose cycle was started, in setting order. */
   readonly addressed: readonly string[];
   /** `owner/name` of every target not attempted because time ran out. */
   readonly skipped: readonly string[];
@@ -305,28 +302,9 @@ async function workSnapshot(
 }
 
 /**
- * The pass's target order (2026-10-25 redesign, C5.3): the setting order
- * rotated left by `runId % configs.length`, so the target last in the setting
- * is not always the one left behind earlier targets' review drains when the
- * deadline arrives. Without a native run identity the setting order is kept.
- */
-export function rotateTargetConfigsV1<T>(
-  configs: readonly T[],
-  runId: number | undefined,
-): readonly T[] {
-  if (
-    runId === undefined || !Number.isSafeInteger(runId) || runId < 0 ||
-    configs.length < 2
-  ) return configs;
-  const offset = runId % configs.length;
-  return [...configs.slice(offset), ...configs.slice(0, offset)];
-}
-
-/**
  * Run ONE separately targeted repair cycle per committed target repository,
  * sequentially, over the shared state store, cooldown gate, admission budget,
- * model port and absolute run deadline, in the rotated order of
- * `rotateTargetConfigsV1`.
+ * model port and absolute run deadline.
  *
  * The injected GitHub port targets one repository. The frozen
  * `GitHubIssueV1` carries no repository field, so each cycle associates its
@@ -344,17 +322,16 @@ export async function runActionsTargetCycles(
   const skipped: string[] = [];
   const failed: string[] = [];
   let outcome: RepairCycleOutcomeV1 | null = null;
-  const configs = rotateTargetConfigsV1(input.configs, input.host?.run.runId);
   /** Report every target not attempted because the absolute deadline ran out. */
   const skipFrom = (index: number): void => {
-    for (const remaining of configs.slice(index)) {
+    for (const remaining of input.configs.slice(index)) {
       skipped.push(
         `${remaining.repository.owner}/${remaining.repository.name}`,
       );
     }
   };
   try {
-    for (const [index, config] of configs.entries()) {
+    for (const [index, config] of input.configs.entries()) {
       if (!(input.clock.now() < input.deadline)) {
         // The deadline is absolute and the clock only moves forward: every
         // remaining target is reported as not attempted, and none is started.
