@@ -393,6 +393,53 @@ records; the repair snapshot contains **only** work records, budget reservations
 and release requests. These sets never cross; duplicate release ids are
 rejected.
 
+### DeliveryTrainManifestV1 (`kind: "delivery_train"`)
+
+`src/contracts/delivery-train.ts` (redesign 2026-10-25 C12, WP3.1). A Git
+artifact contract, not a state record: no snapshot holds it and no stored shape
+changes. A tested-tip delivery train lands the literal reviewed heads of its
+members onto one exact tip `T` as one octopus commit `C` with parents
+`[T, H_1..H_k]`.
+
+- Shape:
+  `{ version: "v1", kind: "delivery_train", repository: { owner, name },
+  branch, base, members }`.
+  Each member is exactly
+  `{ recordId, pr, head, reviewedBase, receiptId, issueNumber }`: `recordId` is
+  a `WorkItemId`, `receiptId` matches `^[A-Za-z0-9._:-]{1,256}$`, `pr` and
+  `issueNumber` are positive safe integers, and `head`, `reviewedBase` and
+  `base` are full 40-hex SHAs. `branch` is a landing branch name, never under
+  `sentinel-train/`.
+- `parseDeliveryTrainManifestV1` rejects unknown and missing keys at every
+  level. It requires 1..63 members, strictly ordered by `(pr, recordId)`, and
+  refuses a duplicate pull request, record, head or issue, as well as a member
+  head equal to `base` (C's parents would repeat `T`). 63 members plus `T` is
+  the parent bound. `deliveryTrainManifestV1` sorts members, then parses.
+- Identity: `trainId = sha256hex(canonical([domain, manifest]))` with domain
+  `"sentinel-delivery-train-v1"` (`deliveryTrainIdV1`, the §3 canonical form),
+  so the digest is stable across key order. It is a `DeliveryTrainId` brand,
+  distinct from all other digests. The ref is
+  `refs/heads/sentinel-train/<trainId>` (`deliveryTrainRefV1`, parsed back by
+  `parseDeliveryTrainRefV1`). Idempotency comes from this digest-named ref,
+  never from commit SHA determinism. A bisection probe `M[:j]` is the prefix
+  manifest (`deliveryTrainPrefixV1`) and has its own id.
+- Commit message (`deliveryTrainCommitMessageV1`), exactly:
+  `Sentinel delivery train <trainId[0:12]>`, a blank line, `Delivers #a, #b, …`
+  (member issues in order, never a closing keyword), a blank line,
+  `Sentinel-Train: <trainId>` and
+  `Sentinel-Train-Manifest: <unpadded base64url of the canonical manifest>`.
+  `parseDeliveryTrainCommitMessageV1` decodes canonical base64url only, requires
+  the decoded JSON to be the canonical form of the parsed manifest and requires
+  the whole message to equal the rebuilt one; it tolerates one trailing newline
+  and is bounded to 262,144 characters.
+- `hasDeliveryTrainParentsV1` checks a commit's parents are exactly
+  `[base, head_1..head_k]`.
+- Consumers (pure, in `src/repair/`): `train-overlay.ts` (inclusion and the
+  landing tree check `treeChanges(T, C) == ⊎R_m`), `train-plan.ts`
+  (`selectActiveTrainV1`), `train-bisect.ts` and `train-proof.ts`
+  (`verifyTrainLandingV1`). No launcher or runtime path calls them yet;
+  `deliveryTrainModeV1` and the launcher phases (WP3.3, WP3.4) are separate.
+
 ## 5. Ports and result semantics
 
 `src/contracts/ports.ts` declares the operational interfaces. Every method
