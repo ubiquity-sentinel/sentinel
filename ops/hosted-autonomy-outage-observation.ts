@@ -357,6 +357,9 @@ function parseNotice(
   return { number, author, body };
 }
 
+/** The opt-out label every runtime's intake honours. */
+export const CI_OUTAGE_SKIP_LABEL = "sentinel:skip";
+
 /**
  * Sentinel's own tracker over the launcher's App-token request: the open
  * issues listing, one issue create, one body update and one comment plus
@@ -393,9 +396,13 @@ export function createHostedOutageTracker(
       return null;
     },
     async file(input) {
+      // The skip label keeps the notice out of every runtime's intake, also
+      // one installed before `isCiOutageNotice` (a rollback or a pending
+      // install): a billing notice is never a repair task.
       const raw = await request("POST", `/repos/${scope}/issues`, {
         title: input.title,
         body: input.body,
+        labels: [CI_OUTAGE_SKIP_LABEL],
       });
       const created = parseNotice(raw, repositoryUrl);
       if (
@@ -415,17 +422,22 @@ export function createHostedOutageTracker(
     },
     async close(number, comment) {
       if (!Number.isSafeInteger(number) || number <= 0) return false;
-      // The comment explains the close; a failed comment never keeps it open.
-      await request("POST", `/repos/${scope}/issues/${number}/comments`, {
-        body: comment,
-      });
       const raw = await request("PATCH", `/repos/${scope}/issues/${number}`, {
         state: "closed",
         state_reason: "completed",
       });
       const closed = record(raw);
-      return closed !== null && closed["number"] === number &&
-        closed["state"] === "closed";
+      if (
+        closed === null || closed["number"] !== number ||
+        closed["state"] !== "closed"
+      ) return false;
+      // The comment explains a confirmed close only, so a close that keeps
+      // failing never adds a comment per pass; a failed comment never
+      // reopens it.
+      await request("POST", `/repos/${scope}/issues/${number}/comments`, {
+        body: comment,
+      });
+      return true;
     },
   };
 }

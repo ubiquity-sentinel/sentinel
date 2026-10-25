@@ -337,6 +337,8 @@ Deno.test("outage observation: the tracker adapter binds every answer to Sentine
     ...extra,
   });
   const calls: string[] = [];
+  const bodies: unknown[] = [];
+  let closeAnswer: unknown = { number: 1, state: "closed" };
   let listing: unknown = [
     item(1, ciOutageMarker(PASSPORT) + "\nbody"),
     item(2, "ordinary issue"),
@@ -345,15 +347,14 @@ Deno.test("outage observation: the tracker adapter binds every answer to Sentine
   const tracker = createHostedOutageTracker(
     (method, path, body) => {
       calls.push(`${method} ${path}`);
+      bodies.push(body);
       if (method === "GET") return Promise.resolve(listing);
       if (method === "POST" && path.endsWith("/issues")) {
         return Promise.resolve(
           item(9, String(body?.body), { title: body?.title }),
         );
       }
-      if (method === "PATCH") {
-        return Promise.resolve({ number: 1, state: "closed" });
-      }
+      if (method === "PATCH") return Promise.resolve(closeAnswer);
       return Promise.resolve({});
     },
     { owner: "ubiquity-sentinel", name: "sentinel" },
@@ -371,11 +372,24 @@ Deno.test("outage observation: the tracker adapter binds every answer to Sentine
     "a foreign item is unproven",
   );
   assert.equal(await tracker.file({ title: "t", body: "b" }), 9);
+  // Filed with the skip label every runtime's intake honours.
+  assert.deepEqual(bodies.at(-1), {
+    title: "t",
+    body: "b",
+    labels: ["sentinel:skip"],
+  });
+  // A close that fails adds no comment; a confirmed close comments after.
+  calls.length = 0;
+  closeAnswer = { number: 1, state: "open" };
+  assert.equal(await tracker.close(1, "recovered"), false);
+  assert.deepEqual(calls, ["PATCH /repos/ubiquity-sentinel/sentinel/issues/1"]);
+  calls.length = 0;
+  closeAnswer = { number: 1, state: "closed" };
   assert.equal(await tracker.close(1, "recovered"), true);
-  assert.ok(
-    calls.includes("POST /repos/ubiquity-sentinel/sentinel/issues/1/comments"),
-  );
-  assert.ok(calls.includes("PATCH /repos/ubiquity-sentinel/sentinel/issues/1"));
+  assert.deepEqual(calls, [
+    "PATCH /repos/ubiquity-sentinel/sentinel/issues/1",
+    "POST /repos/ubiquity-sentinel/sentinel/issues/1/comments",
+  ]);
 });
 
 Deno.test("outage observation: intake never admits the App's notice as a task", async () => {

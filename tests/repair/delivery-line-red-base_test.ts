@@ -7,9 +7,13 @@
  * every record whose merge could move it, so only the stall and idle rules
  * (12 non-advancing executions of a 30-minute backoff) ever released it.
  *
- * A contender on the tip held by its red base now holds nobody while the hold
- * runs (`src/repair/delivery-queue.ts`); a running CI wait, the CI fix marker,
- * the carried-merge marker and every record on a moved base stand as before.
+ * A contender on the tip with a round left, held by its red base, now holds
+ * nobody while the hold runs (`src/repair/delivery-queue.ts`). A spent or
+ * delivering head keeps standing `landing` and holds the line: releasing the
+ * records behind it would refresh each onto the red tip, where the carried
+ * gate's six-hour bound parks it for good (stage-1 review, 2026-10-25). A
+ * running CI wait, the CI fix marker, the carried-merge marker and every
+ * record on a moved base stand as before.
  */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -182,7 +186,7 @@ Deno.test("delivery line (live Passport 2026-10-24): heads on the tip held by th
   });
 });
 
-Deno.test("delivery line: a red-base hold on the tip holds nobody at any step while it runs", () => {
+Deno.test("delivery line: a red-base hold on the tip releases the line only for a head with a round left", () => {
   const spent = MAX_REVIEW_ROUNDS;
   const cases: [string, DeliveryLineStandingV1, WorkRecordV1][] = [
     [
@@ -213,7 +217,8 @@ Deno.test("delivery line: a red-base hold on the tip holds nobody at any step wh
     ],
   ];
   for (const [label, before, held] of cases) {
-    assert.equal(standing(held), "waiting", label);
+    const released = before === "re_review";
+    assert.equal(standing(held), released ? "waiting" : before, label);
     // Once the hold ends the record is due for its re-poll and stands as it
     // did: its own step re-arms the hold or moves on.
     assert.equal(standing(held, RED_BASE.until!), before, `${label}, due`);
@@ -222,12 +227,13 @@ Deno.test("delivery line: a red-base hold on the tip holds nobody at any step wh
       before,
       `${label}, no wait`,
     );
-    // A round-left record behind it is not held while the hold runs.
+    // A round-left record behind a head with a round left is not held
+    // while the hold runs; a spent or delivering head holds it.
     const behind = contender(30, 1);
     const snapshot = line([held, behind]);
     assert.equal(
-      deliveryQueueAhead(snapshot, behind, TIP, NOW, null),
-      null,
+      deliveryQueueAhead(snapshot, behind, TIP, NOW, null)?.id ?? null,
+      released ? null : held.id,
       label,
     );
     assert.equal(
@@ -286,5 +292,24 @@ Deno.test("delivery line: running CI, the CI fix marker, the carried-merge marke
   ];
   for (const [label, expected, record] of cases) {
     assert.equal(standing(record), expected, label);
+  }
+});
+
+Deno.test("delivery line: spent deliverable records stay behind a spent carried head under the red-base hold", () => {
+  // The review's scenario: S1 refreshed onto the red tip and holds its
+  // red-base backoff; S2..S4 (spent, clean, reviewed heads on a moved base)
+  // would each refresh onto the red tip and park there after six hours.
+  const holder = refreshedAt(contender(40, MAX_REVIEW_ROUNDS), TIP, RED_BASE);
+  const spentBehind = [41, 42, 43].map((issue) =>
+    contender(issue, MAX_REVIEW_ROUNDS)
+  );
+  const snapshot = line([holder, ...spentBehind]);
+  assert.equal(lineStanding(snapshot, holder, TIP, NOW, null), "landing");
+  for (const record of spentBehind) {
+    assert.equal(
+      deliveryQueueAhead(snapshot, record, TIP, NOW, null)?.id,
+      holder.id,
+      record.id,
+    );
   }
 });

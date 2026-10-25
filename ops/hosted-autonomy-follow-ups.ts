@@ -32,6 +32,7 @@ import {
   reviewBlocksMerge,
 } from "./hosted-autonomy-spent-delivery.ts";
 import { latestPullReview } from "../src/repair/carried-review.ts";
+import { MERGED_OFF_TIP_PREFIX } from "../src/repair/merge-off-tip.ts";
 import {
   REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX,
 } from "../src/repair/review-round-cap.ts";
@@ -122,20 +123,24 @@ export interface FollowUpCandidateV1 {
 
 const OFF_TIP_MERGE_RE = /^merge ([0-9a-f]{40}) has parents /;
 
-/** The trusted merge revision recorded by a carried off-tip park, or null. */
+/** Parks that record an off-tip merge with the same detail suffix. */
+const OFF_TIP_PARK_PREFIXES = [
+  REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX,
+  // The runtime's merge CAS park for any merge off its reviewed base.
+  MERGED_OFF_TIP_PREFIX,
+] as const;
+
+/** The trusted merge revision recorded by an off-tip park, or null. */
 function offTipParkMergeRevision(
   record: RepairStateSnapshotV1["work"][number],
 ): string | null {
-  if (
-    record.nextStep !== "blocked" || record.blocker?.kind !== "other" ||
-    !record.blocker.message.startsWith(
-      REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX,
-    )
-  ) return null;
-  const detail = record.blocker.message.slice(
-    REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX.length,
-  );
-  return OFF_TIP_MERGE_RE.exec(detail)?.[1] ?? null;
+  if (record.nextStep !== "blocked" || record.blocker?.kind !== "other") {
+    return null;
+  }
+  const message = record.blocker.message;
+  const prefix = OFF_TIP_PARK_PREFIXES.find((p) => message.startsWith(p));
+  if (prefix === undefined) return null;
+  return OFF_TIP_MERGE_RE.exec(message.slice(prefix.length))?.[1] ?? null;
 }
 
 /** Build the same candidate shape for a merge parked without a request. */

@@ -1,8 +1,11 @@
 /**
  * C6 prevention (redesign 2026-10-25): the implementer prompt names the exact
  * trusted protected path prefixes (sorted, at most 60) and tells the model to
- * make no change and say `OWNER_LANDING_REQUIRED: <paths>` when the fix needs
- * one. Without configured prefixes the prompt is byte-identical to before.
+ * fix the issue without them where it can, since a candidate that changes one
+ * is parked for the owner (the existing protected-path park and its
+ * `sentinel:retry` exit; a "make no change" instruction would land in the
+ * no-change base-review lane instead). Without configured prefixes the prompt
+ * is byte-identical to before.
  */
 import assert from "node:assert/strict";
 import { asWorkItemId } from "../../src/contracts/brands.ts";
@@ -10,7 +13,6 @@ import type { ModelRunRequestV1 } from "../../src/contracts/ports.ts";
 import {
   buildPrompt,
   MAX_PROMPT_PROTECTED_PATHS,
-  OWNER_LANDING_REQUIRED,
   renderProtectedPaths,
 } from "../../src/repair/model-port-prompt.ts";
 import { MAX_PROMPT_CHARS } from "../../src/repair/model-port-policy.ts";
@@ -41,11 +43,11 @@ const PATHS = [
 ];
 
 const SENTENCE =
-  ' The trusted repository configuration protects exactly these path prefixes (sorted): ".github/workflows/", "AGENTS.md", "deno.json", "ops/". If the fix requires one of these paths, make no change and say OWNER_LANDING_REQUIRED: <paths>.';
+  ' The trusted repository configuration protects exactly these path prefixes (sorted): ".github/workflows/", "AGENTS.md", "deno.json", "ops/". Fix the issue without changing them where you can; a candidate that changes one is parked for the repository owner to land.';
 
 /** SHA-256 of `buildPrompt(REQUEST, false, undefined, PATHS)` (pinned 2026-10-25). */
 const GOLDEN_HOSTED_PROTECTED =
-  "e031f9d1de16d5d00bdbb65c1d4d9a47a91f47c734b74f374958070113b4bcfc";
+  "a52514266f9d6fd9a9f34360bb686f7fa1b4de215e0b2e25129a6226a82b16ba";
 
 async function sha256(text: string): Promise<string> {
   const digest = await crypto.subtle.digest(
@@ -57,9 +59,10 @@ async function sha256(text: string): Promise<string> {
   ).join("");
 }
 
-Deno.test("the protected sentence names the exact prefixes sorted and deduplicated with the owner-landing marker", () => {
+Deno.test("the protected sentence names the exact prefixes sorted and deduplicated, with no no-change instruction", () => {
   assert.equal(renderProtectedPaths(PATHS), SENTENCE);
-  assert.equal(OWNER_LANDING_REQUIRED, "OWNER_LANDING_REQUIRED");
+  assert.ok(!SENTENCE.includes("make no change"));
+  assert.ok(!SENTENCE.includes("OWNER_LANDING_REQUIRED"));
   assert.equal(renderProtectedPaths([]), "");
 });
 
@@ -92,7 +95,7 @@ Deno.test("at most 60 prefixes are named and the rest are counted", () => {
 Deno.test("the prompt carries the sentence inside the role, and none without prefixes", async () => {
   const plain = buildPrompt(REQUEST, false);
   assert.equal(buildPrompt(REQUEST, false, undefined, []), plain);
-  assert.ok(!plain.includes(OWNER_LANDING_REQUIRED));
+  assert.ok(!plain.includes("protects exactly these"));
   const guarded = buildPrompt(REQUEST, false, undefined, PATHS);
   assert.equal(
     guarded,

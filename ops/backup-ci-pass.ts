@@ -254,7 +254,10 @@ async function planTarget(
   const runnerId = deps.runnerId!;
   const reads = deps.targetReads(repo.owner, repo.name);
   const info = await reads.repository();
-  if (info === null) return [];
+  if (info === null) {
+    deps.log(`backup-ci:${target.repository}:repository_unavailable`);
+    return [];
+  }
   if (info.id !== target.id) {
     deps.log(`backup-ci:${target.repository}:unsupported:repository_id`);
     return [];

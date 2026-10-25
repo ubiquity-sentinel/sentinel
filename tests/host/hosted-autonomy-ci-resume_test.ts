@@ -3,18 +3,25 @@
  * spending-limit stop, live Passport 2026-10-24) resumes by itself once
  * billing is restored. For each foreign target with a head Sentinel waits on
  * for CI (a live `ci_pending`/`backoff` wait or a pre-review CI park), the
- * pass re-runs the failed jobs of the newest run per workflow of the base tip
- * and of those heads when every failed job of its latest attempt never
- * started, at most once per run per 30 minutes (the run's own completion
- * time, no state) and within per-pass bounds. The pass writes no state.
+ * pass re-runs the failed jobs of every run of the base tip and of those
+ * heads when every failed job of its latest attempt never started, at most
+ * once per run per 30 minutes (the run's own completion time, no state) and
+ * within per-pass bounds. During a stop (no listed run ran a job recently)
+ * the wait doubles per attempt up to 12 hours, and a run at attempt 40 is
+ * never asked again, so GitHub's 50 re-runs per run are not spent (stage-1
+ * review, 2026-10-25). The pass writes no state.
  */
 import assert from "node:assert/strict";
 import {
+  ciResumeActive,
   ciResumeDue,
+  ciResumeInterval,
   ciResumeRuns,
   ciResumeTargets,
   HOSTED_CI_RESUME_INTERVAL_MS,
   HOSTED_CI_RESUME_MAX_ATTEMPT_MS,
+  HOSTED_CI_RESUME_MAX_BACKOFF_MS,
+  HOSTED_CI_RESUME_MAX_RUN_ATTEMPT,
   HOSTED_CI_RESUME_RERUNS_PER_PASS,
   runHostedCiResumePass,
 } from "../../ops/hosted-autonomy-ci-resume.ts";
@@ -104,7 +111,66 @@ Deno.test("CI resume: a run is due once its never-started attempt ended 30 minut
   assert.equal(ciResumeDue(run, Number.NaN), false);
 });
 
-Deno.test("CI resume: one run per workflow per head, the newest, only when due", () => {
+Deno.test("CI resume: during a stop the wait doubles per attempt and a run near GitHub's cap is never asked", () => {
+  const at = (runAttempt: number, active = false) =>
+    ciResumeInterval(headRun(1, TIP, { runAttempt }), active);
+  assert.deepEqual(
+    [1, 2, 3, 4, 5, 6, 7, 39].map((attempt) => at(attempt) / MINUTE),
+    [30, 60, 120, 240, 480, 720, 720, 720],
+  );
+  assert.equal(HOSTED_CI_RESUME_MAX_BACKOFF_MS, 12 * HOUR);
+  assert.equal(at(9, true), HOSTED_CI_RESUME_INTERVAL_MS, "Actions runs again");
+  const third = headRun(1, TIP, { runAttempt: 3 });
+  assert.equal(ciResumeDue(third, NOW), false, "ended 31 minutes ago");
+  assert.equal(ciResumeDue(third, ENDED + 2 * HOUR), true);
+  assert.equal(ciResumeDue(third, NOW, true), true);
+  for (const runAttempt of [HOSTED_CI_RESUME_MAX_RUN_ATTEMPT, 49, 50, 60]) {
+    const capped = headRun(1, TIP, { runAttempt });
+    assert.equal(ciResumeDue(capped, NOW, true), false, String(runAttempt));
+    assert.equal(ciResumeDue(capped, NOW + 24 * HOUR), false);
+  }
+  assert.equal(
+    ciResumeDue(headRun(1, TIP, { runAttempt: 39 }), NOW, true),
+    true,
+  );
+});
+
+Deno.test("CI resume: a run that ran a job recently shows Actions running", () => {
+  const ran = (startedAgo: number, endedAgo: number) =>
+    headRun(1, TIP, {
+      conclusion: "success",
+      attemptStartedAt: NOW - startedAgo,
+      updatedAt: NOW - endedAgo,
+    });
+  assert.equal(ciResumeActive(ran(10 * MINUTE, 5 * MINUTE), NOW), true);
+  assert.equal(
+    ciResumeActive(ran(3 * HOUR, 2 * HOUR), NOW),
+    false,
+    "a run from before the stop",
+  );
+  assert.equal(
+    ciResumeActive(headRun(1, TIP, { updatedAt: NOW - MINUTE }), NOW),
+    false,
+    "a never-started attempt",
+  );
+  assert.equal(
+    ciResumeActive(
+      headRun(1, TIP, {
+        status: "in_progress",
+        conclusion: null,
+        attemptStartedAt: NOW - 5 * MINUTE,
+      }),
+      NOW,
+    ),
+    true,
+  );
+  assert.equal(
+    ciResumeActive(headRun(1, TIP, { attemptStartedAt: null }), NOW),
+    false,
+  );
+});
+
+Deno.test("CI resume: every due run of a head, by id", () => {
   const runs = [
     headRun(10, TIP),
     headRun(11, TIP),
@@ -116,8 +182,8 @@ Deno.test("CI resume: one run per workflow per head, the newest, only when due",
   ];
   assert.deepEqual(
     ciResumeRuns(runs, TIP, NOW).map((run) => run.id),
-    [11, 13, 14],
-    "workflow 8 was re-run five minutes ago; its older run is superseded",
+    [9, 10, 11, 13, 14],
+    "run 12 was re-run five minutes ago; the other head's run is not listed",
   );
 });
 
@@ -213,7 +279,7 @@ Deno.test("CI resume pass: re-runs the never-started runs of the base tip and a 
   }, { 10: true, 21: true, 40: false, 50: null, 666: true, 70: true });
   const { actions, writes } = await resume([record, liveRecord(592)], fake);
   assert.deepEqual(fake.listed, [TIP, head], "the tip first, waiting heads");
-  assert.deepEqual(fake.judged, [10, 21, 40, 50, 666]);
+  assert.deepEqual(fake.judged, [10, 20, 21, 40, 50, 666]);
   assert.deepEqual(fake.reruns, [10, 21, 666]);
   assert.deepEqual(actions, [
     "ci-resume:ubiquity/ai.ubq.fi:run=10:sent",
@@ -235,16 +301,21 @@ Deno.test("CI resume pass: a run re-run less than 30 minutes ago is not asked ag
 });
 
 Deno.test("CI resume pass: re-run requests are bounded per pass", async () => {
-  // Every waiting record's head has its own due never-started run.
+  // Every waiting record's head has two due never-started runs.
   const issues = [592, 600, 618, 678, 698, 879, 112, 137, 263, 421, 595];
   const records = issues.map((issue) => waiting(issue));
   const runs: Record<string, HostedAutonomyHeadRunV1[]> = {};
   const verdicts: Record<number, boolean> = {};
   records.forEach((record, index) => {
-    runs[record.target.head!] = [headRun(100 + index, record.target.head!)];
-    verdicts[100 + index] = true;
+    const head = record.target.head!;
+    runs[head] = [
+      headRun(100 + 2 * index, head),
+      headRun(101 + 2 * index, head),
+    ];
+    verdicts[100 + 2 * index] = true;
+    verdicts[101 + 2 * index] = true;
   });
-  assert.ok(records.length > HOSTED_CI_RESUME_RERUNS_PER_PASS);
+  assert.ok(2 * records.length > HOSTED_CI_RESUME_RERUNS_PER_PASS);
   const fake = fakeSurface(runs, verdicts);
   const { actions } = await resume(records, fake);
   assert.equal(fake.reruns.length, HOSTED_CI_RESUME_RERUNS_PER_PASS);
@@ -394,4 +465,32 @@ Deno.test("CI resume surface: listHeadRuns reports the attempt times and workflo
   } finally {
     globalThis.fetch = original;
   }
+});
+
+Deno.test("CI resume pass: the base tip is the canary; once its re-run ran, waiting heads are asked at the plain interval", async () => {
+  const record = waiting(678);
+  const head = record.target.head!;
+  // The head's run is at attempt 3 and ended 31 minutes ago: not due during
+  // the stop (its wait is two hours).
+  const headRuns = [headRun(20, head, { runAttempt: 3 })];
+  const stopped = fakeSurface({
+    [TIP]: [headRun(10, TIP, { runAttempt: 3 })],
+    [head]: headRuns,
+  }, { 10: true, 20: true });
+  assert.deepEqual((await resume([record], stopped)).actions, []);
+  // The tip's re-run started and ran for ten minutes: billing is back.
+  const restored = fakeSurface({
+    [TIP]: [
+      headRun(10, TIP, {
+        runAttempt: 4,
+        conclusion: "success",
+        attemptStartedAt: NOW - 15 * MINUTE,
+        updatedAt: NOW - 5 * MINUTE,
+      }),
+    ],
+    [head]: headRuns,
+  }, { 20: true });
+  assert.deepEqual((await resume([record], restored)).actions, [
+    "ci-resume:ubiquity/ai.ubq.fi:run=20:sent",
+  ]);
 });

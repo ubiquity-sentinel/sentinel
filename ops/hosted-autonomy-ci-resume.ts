@@ -16,12 +16,21 @@
  * `hosted-autonomy-ci-rerun.ts`).
  *
  * Bounds, all stateless:
- * - one run per workflow per head: the newest run of that workflow (its other
- *   runs test the same commit and are superseded by the re-run);
- * - at most once per run per `HOSTED_CI_RESUME_INTERVAL_MS`: the run's own
- *   `updated_at` (for a completed run, the completion of its latest attempt)
- *   must be at least that old, so a re-run that never starts again waits a
- *   full interval before the next request;
+ * - every never-started run of a head, not only the newest per workflow: the
+ *   launcher's green read needs every check run of the head green, and a
+ *   Passport head has a pull_request run and two push runs of one workflow;
+ * - GitHub caps a run at 50 re-runs, so a stop longer than a day must not
+ *   spend them: a run at `HOSTED_CI_RESUME_MAX_RUN_ATTEMPT` or more is never
+ *   asked again, and while no run of the repository listed in this pass ran
+ *   a job recently (`ciResumeActive`), a run waits
+ *   `HOSTED_CI_RESUME_INTERVAL_MS` doubled per attempt, at most
+ *   `HOSTED_CI_RESUME_MAX_BACKOFF_MS`. The base tip is listed first and is
+ *   the canary: once its re-run starts again (billing restored), every
+ *   waiting head is asked at the plain interval;
+ * - at most once per run per interval: the run's own `updated_at` (for a
+ *   completed run, the completion of its latest attempt) must be at least
+ *   that old, so a re-run that never starts again waits before the next
+ *   request;
  * - only a run whose latest attempt took at most
  *   `HOSTED_CI_RESUME_MAX_ATTEMPT_MS` (a never-started attempt ends within
  *   seconds) costs a job listing read, and its failed jobs must all have no
@@ -53,56 +62,103 @@ import type {
 
 /** A run is asked again at most this often (its latest attempt's age). */
 export const HOSTED_CI_RESUME_INTERVAL_MS = 30 * 60_000;
+/** The longest wait between two requests for a run during a stop. */
+export const HOSTED_CI_RESUME_MAX_BACKOFF_MS = 12 * 60 * 60_000;
+/**
+ * A run at this attempt or later is never asked again: GitHub allows 50
+ * re-runs of a run, and the rest stay for after billing returns and for the
+ * once-per-head flake re-run.
+ */
+export const HOSTED_CI_RESUME_MAX_RUN_ATTEMPT = 40;
+/** A run whose job ran and ended within this long shows Actions running. */
+export const HOSTED_CI_RESUME_ACTIVE_WINDOW_MS = 60 * 60_000;
 /** Latest attempts longer than this ran something and are not read. */
 export const HOSTED_CI_RESUME_MAX_ATTEMPT_MS = 60_000;
 /** Job listings one pass may read. */
-export const HOSTED_CI_RESUME_JOB_READS_PER_PASS = 24;
+export const HOSTED_CI_RESUME_JOB_READS_PER_PASS = 32;
 /** Re-run requests one pass may send. */
-export const HOSTED_CI_RESUME_RERUNS_PER_PASS = 8;
+export const HOSTED_CI_RESUME_RERUNS_PER_PASS = 16;
 /** Wall-clock budget of the pass inside the maintenance pass. */
 export const HOSTED_CI_RESUME_PASS_BUDGET_MS = 60_000;
 
 type WorkRow = RepairStateSnapshotV1["work"][number];
 
 /**
- * True when `run` may be asked again at `now`: it completed `failure`, its
- * latest attempt ended at least `HOSTED_CI_RESUME_INTERVAL_MS` ago after at
- * most `HOSTED_CI_RESUME_MAX_ATTEMPT_MS`, and GitHub's re-run window is still
- * open. Any unknown time is never due.
+ * The wait before `run` is asked again: the plain interval while Actions runs
+ * jobs, else the interval doubled per attempt, at most
+ * `HOSTED_CI_RESUME_MAX_BACKOFF_MS`.
+ */
+export function ciResumeInterval(
+  run: HostedAutonomyHeadRunV1,
+  active: boolean,
+): number {
+  if (active) return HOSTED_CI_RESUME_INTERVAL_MS;
+  const doublings = Math.min(Math.max(run.runAttempt - 1, 0), 10);
+  return Math.min(
+    HOSTED_CI_RESUME_INTERVAL_MS * 2 ** doublings,
+    HOSTED_CI_RESUME_MAX_BACKOFF_MS,
+  );
+}
+
+/**
+ * True when `run` may be asked again at `now`: it completed `failure` below
+ * `HOSTED_CI_RESUME_MAX_RUN_ATTEMPT`, its latest attempt ended at least
+ * `ciResumeInterval` ago after at most `HOSTED_CI_RESUME_MAX_ATTEMPT_MS`, and
+ * GitHub's re-run window is still open. Any unknown time is never due.
+ * `active` is `ciResumeActive` of the repository's runs listed so far.
  */
 export function ciResumeDue(
   run: HostedAutonomyHeadRunV1,
   now: number,
+  active = false,
 ): boolean {
   const ended = run.updatedAt;
   const started = run.attemptStartedAt;
   return Number.isSafeInteger(now) && run.status === "completed" &&
     run.conclusion === "failure" &&
+    Number.isSafeInteger(run.runAttempt) &&
+    run.runAttempt < HOSTED_CI_RESUME_MAX_RUN_ATTEMPT &&
     typeof ended === "number" && Number.isSafeInteger(ended) &&
     typeof started === "number" && Number.isSafeInteger(started) &&
     ended >= started && ended - started <= HOSTED_CI_RESUME_MAX_ATTEMPT_MS &&
-    now - ended >= HOSTED_CI_RESUME_INTERVAL_MS && !ciRerunExpired(run, now);
+    now - ended >= ciResumeInterval(run, active) &&
+    !ciRerunExpired(run, now);
 }
 
 /**
- * The runs of `head` this pass may resume: of each workflow (a run without a
- * known workflow stands alone), the newest run, when it is due.
+ * True when `run` shows Actions running jobs for the repository at `now`: it
+ * is in progress, or its latest attempt ran longer than a never-started one
+ * and ended within `HOSTED_CI_RESUME_ACTIVE_WINDOW_MS`.
  */
+export function ciResumeActive(
+  run: HostedAutonomyHeadRunV1,
+  now: number,
+): boolean {
+  const ended = run.updatedAt;
+  const started = run.attemptStartedAt;
+  if (
+    !Number.isSafeInteger(now) || typeof started !== "number" ||
+    !Number.isSafeInteger(started)
+  ) return false;
+  if (run.status === "in_progress") {
+    return now - started <= HOSTED_CI_RESUME_ACTIVE_WINDOW_MS;
+  }
+  return run.status === "completed" && typeof ended === "number" &&
+    Number.isSafeInteger(ended) &&
+    ended - started > HOSTED_CI_RESUME_MAX_ATTEMPT_MS &&
+    now - ended <= HOSTED_CI_RESUME_ACTIVE_WINDOW_MS;
+}
+
+/** The runs of `head` this pass may resume, by run id, when due. */
 export function ciResumeRuns(
   runs: readonly HostedAutonomyHeadRunV1[],
   head: string,
   now: number,
+  active = false,
 ): HostedAutonomyHeadRunV1[] {
-  const newest = new Map<string, HostedAutonomyHeadRunV1>();
-  for (const run of runs) {
-    if (run.headSha !== head) continue;
-    const key = typeof run.workflowId === "number"
-      ? `workflow:${run.workflowId}`
-      : `run:${run.id}`;
-    const previous = newest.get(key);
-    if (previous === undefined || run.id > previous.id) newest.set(key, run);
-  }
-  return [...newest.values()].filter((run) => ciResumeDue(run, now));
+  return runs.filter((run) =>
+    run.headSha === head && ciResumeDue(run, now, active)
+  ).sort((a, b) => a.id - b.id);
 }
 
 function repositoryKey(repository: RepositoryIdentityV1): string {
@@ -208,6 +264,8 @@ export async function runHostedCiResumePass(
       const tip = await surface.readBaseTip(scope.baseBranch);
       // The base tip first: every waiting head is attributed against it.
       const heads = [...new Set([...(tip === null ? [] : [tip]), ...waiting])];
+      // Any run listed so far that ran a job recently shows Actions running.
+      let active = false;
       for (const head of heads) {
         if (jobReads <= 0 || reruns <= 0) break;
         if (!inBudget()) {
@@ -221,7 +279,8 @@ export async function runHostedCiResumePass(
           runs = null;
         }
         if (runs === null) continue;
-        for (const run of ciResumeRuns(runs, head, deps.clock.now())) {
+        active ||= runs.some((run) => ciResumeActive(run, deps.clock.now()));
+        for (const run of ciResumeRuns(runs, head, deps.clock.now(), active)) {
           if (jobReads <= 0 || reruns <= 0 || !inBudget()) break;
           jobReads--;
           let notStarted: boolean | null;

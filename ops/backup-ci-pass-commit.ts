@@ -128,7 +128,15 @@ export async function planBackupCiCommit(
   const now = deps.now();
   const commit = candidate.commit;
   const obs = await readBackupCiObservations(reads, commit);
-  if (obs === null) return [];
+  if (obs === null) {
+    // A read refused or failed: nothing is planned, and the pass says so.
+    deps.log(
+      `backup-ci:${repo.owner}/${repo.name}@${
+        commit.slice(0, 12)
+      }:observations_unavailable`,
+    );
+    return [];
+  }
   if (
     candidate.purpose === "stand_in" &&
     !obs.latest.some((o) => o.notStarted === true)

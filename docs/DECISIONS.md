@@ -3030,7 +3030,12 @@ standing approval above. Applied as follows.
   never-started count, the records waiting and one owner action: "restore
   Actions billing or raise the spending limit for <owner>".
   - The same facts write nothing, and changed facts update the body.
-  - A started check closes the issue with one comment.
+  - A started check closes the issue, then adds one comment once the close is
+    confirmed, so a close that keeps failing adds no comment per pass.
+  - The notice is filed with the `sentinel:skip` label, which every runtime's
+    intake honours, so a runtime installed before `isCiOutageNotice` (a rollback
+    or a pending install) never admits it as a repair task (stage-1 review,
+    2026-10-25).
   - A pending or unreadable tip changes nothing.
   - The marker on someone else's issue prevents a duplicate and is never edited.
 - The outage pass takes the never-started classification as an injected
@@ -3064,12 +3069,18 @@ standing approval above. Applied as follows.
   paths" without naming them, and no rule could ever re-admit such a park.
 - The implementer prompt's role paragraph now names the exact trusted configured
   prefixes of the requested repository (deduplicated, sorted, JSON-quoted, at
-  most 60 within 4,000 characters, the rest counted) and says: if the fix
-  requires one of these paths, make no change and say
-  `OWNER_LANDING_REQUIRED: <paths>`. The list reaches the port through the
-  host's trusted target configs, never through the request, its digest or a
-  receipt. A repository without configured prefixes gets the earlier prompt byte
-  for byte. The candidate's own protected-path check stays the enforcement.
+  most 60 within 4,000 characters, the rest counted) and says to fix the issue
+  without changing them where it can, since a candidate that changes one is
+  parked for the repository owner to land. (Corrected 2026-10-25 by the stage-1
+  review: the first wording, "make no change and say
+  `OWNER_LANDING_REQUIRED:
+  <paths>`", sent a compliant run into the no-change
+  base-review lane, which has no exit: Passport deferred forever and ai.ubq.fi
+  and Sentinel parked outside the `sentinel:retry` exit. Nothing read the
+  marker.) The list reaches the port through the host's trusted target configs,
+  never through the request, its digest or a receipt. A repository without
+  configured prefixes gets the earlier prompt byte for byte. The candidate's own
+  protected-path check stays the enforcement.
 - Owner exit: the launcher retry pass lists each target's open issues labelled
   `sentinel:retry` once per pass. For a record blocked with exactly that
   message, in the fresh park shape (no PR, no published head, no review), whose
@@ -3123,6 +3134,11 @@ standing approval above. Applied as follows.
   result stands in until the runner has at least five agreements with native CI,
   one of them a failure, no false green and at most one false red. A false green
   suspends the runner automatically.
+- The pass's target read token now also has `statuses: read`. Without it the
+  combined status read failed, so every commit's observations read as null and
+  the first live passes (2026-10-25 03:57 UTC) planned nothing and logged
+  nothing. A null observation read and an unreadable repository are now logged
+  (`observations_unavailable`, `repository_unavailable`).
 
 ## 2026-10-24: the runtime never merges a tree no CI ran on (base compare-and-swap)
 
@@ -3206,14 +3222,22 @@ standing approval above. Applied as follows.
   ([ops/hosted-autonomy-ci-resume.ts](../ops/hosted-autonomy-ci-resume.ts)). For
   each foreign target with a head waiting on CI (a live `ci_pending` or
   `backoff` wait, or a pre-review CI park, outside merge queue custody), it
-  looks at the base tip and those heads. Of each workflow it takes the newest
-  run, and re-runs its failed jobs (the flake pass's existing
-  `rerun-failed-jobs` request) when every failed job of its latest attempt never
-  started. A run is asked at most once per 30 minutes: its `updated_at` must be
-  that old. Only a latest attempt that took at most 60 seconds costs a job
-  listing read. One pass reads at most 24 job listings and sends at most 8
-  re-runs, inside 60 seconds, and never past GitHub's 30-day re-run window. It
-  writes no state.
+  looks at the base tip and those heads. It re-runs the failed jobs of every run
+  of a head (the flake pass's existing `rerun-failed-jobs` request) whose failed
+  jobs of its latest attempt all never started. A run is asked at most once per
+  30 minutes: its `updated_at` must be that old. Only a latest attempt that took
+  at most 60 seconds costs a job listing read. One pass reads at most 32 job
+  listings and sends at most 16 re-runs, inside 60 seconds, and never past
+  GitHub's 30-day re-run window. Corrected 2026-10-25 by the stage-1 review:
+  GitHub allows 50 re-runs per run, and a stop longer than about a day would
+  have spent them all, so CI could never resume. A run at attempt 40 or more is
+  now never asked again. While no run of the repository listed in the pass ran a
+  job within the last hour, the wait doubles per attempt (30 minutes up to 12
+  hours). The base tip is listed first and is the canary: once its re-run starts
+  again, every waiting head is asked at the plain 30 minutes. Every run of a
+  head is now re-run, not only the newest per workflow, because the launcher's
+  green read needs every check run green and a Passport head has a pull_request
+  run and two push runs of one workflow. It writes no state.
 - Unchanged: the merge gate's required-check verdict (`requiredChecksState`, a
   protected path) still never treats a never-started run as green; the
   launcher's green read (`hasAllChecksGreen`) is unchanged; every CI fix is
@@ -3290,10 +3314,15 @@ standing approval above. Applied as follows.
 - Decision: a contender on the tip whose wait is a red base's hold still running
   (`isRedBaseHold`: a `backoff` that rechecks `RED_BASE_RECHECK_MS` or more
   after its start, which only the red-base holds of the CI-first gate, the
-  pre-review fix, the pre-merge correction and the carried gate write) stands
-  `waiting` and holds nobody, at any step. Once the hold is due it stands as
-  before until its own step re-arms the hold or moves on
-  ([src/repair/delivery-queue.ts](../src/repair/delivery-queue.ts)).
+  pre-review fix, the pre-merge correction and the carried gate write) and that
+  would otherwise stand `re_review` (a round left) stands `waiting` and holds
+  nobody. Once the hold is due it stands as before until its own step re-arms
+  the hold or moves on
+  ([src/repair/delivery-queue.ts](../src/repair/delivery-queue.ts)). Corrected
+  2026-10-25 by the stage-1 review: a spent carried head or a delivering head
+  keeps standing `landing` under the hold. Releasing the records behind it would
+  refresh each spent deliverable record onto the red tip, where the carried
+  gate's six-hour bound parks it for good.
 - A running CI wait (`ci_pending`) keeps holding: the wait records neither the
   checks nor whether its jobs started, so one whose jobs never started cannot be
   told from running CI, and the line on the tip must keep holding behind running

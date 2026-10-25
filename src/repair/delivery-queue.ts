@@ -196,16 +196,15 @@ export function lineStanding(
     return spent ? "landing" : "re_review";
   }
   if (other.target.base === tip) {
-    // Held by the tip's own red check: only a merge moves the tip, and this
-    // record holds every record whose merge could (see the module).
-    if (isRedBaseHold(other.wait, now)) return "waiting";
-    if (other.nextStep === "delivery") return "landing";
-    if (other.nextStep === "review") return "re_review";
-    // At `work`: a refreshed head heading for its carried merge or for its
-    // next review; a reviewed head here awaits its CI fix or correction.
-    if (ownReview) return "waiting";
-    if (spent) return clean ? "landing" : "waiting";
-    return "re_review";
+    const standing = tipStanding(other, spent, clean, ownReview);
+    // Held by the tip's own red check with a round left: only a merge moves
+    // the tip, and this record would hold every record whose merge could
+    // (see the module). A spent or delivering head keeps standing `landing`:
+    // releasing the records behind it would only refresh them onto the red
+    // tip, where the carried gate's six-hour bound parks each one for good.
+    return standing === "re_review" && isRedBaseHold(other.wait, now)
+      ? "waiting"
+      : standing;
   }
   if (!spent) return other.nextStep === "delivery" ? "reviewed" : "waiting";
   if (!clean) return "waiting";
@@ -217,6 +216,22 @@ export function lineStanding(
       : "waiting";
   }
   return other.nextStep === "work" && !ownReview ? "ready" : "waiting";
+}
+
+/** A contender's standing on the tip (`lineStanding`, before a red base). */
+function tipStanding(
+  other: WorkRecordV1,
+  spent: boolean,
+  clean: boolean,
+  ownReview: boolean,
+): DeliveryLineStandingV1 {
+  if (other.nextStep === "delivery") return "landing";
+  if (other.nextStep === "review") return "re_review";
+  // At `work`: a refreshed head heading for its carried merge or for its
+  // next review; a reviewed head here awaits its CI fix or correction.
+  if (ownReview) return "waiting";
+  if (spent) return clean ? "landing" : "waiting";
+  return "re_review";
 }
 
 /** Precedence of the contenders that hold a record, for the deferral. */

@@ -192,3 +192,25 @@ Deno.test("the backup targets are committed targets with ids, never the self tar
     parseBackupCiTargets([{ repository: "ubiquity/passport.ubq.fi" }])
   );
 });
+
+Deno.test("the target read token can read commit statuses, checks, runs and pulls", async () => {
+  const mint = steps(jobs(await workflow("backup-ci.yml")).backup_ci).find((
+    s,
+  ) => s.name === "Mint the target read token");
+  assert(mint !== undefined);
+  const grant = Object.fromEntries(
+    Object.entries(mint.with as Obj).filter(([key]) =>
+      key.startsWith("permission-")
+    ),
+  );
+  // The planner's combined status read needs `statuses`; without it every
+  // commit's observations read null and nothing is planned (live,
+  // 2026-10-25).
+  assert.deepEqual(grant, {
+    "permission-contents": "read",
+    "permission-pull-requests": "read",
+    "permission-checks": "read",
+    "permission-statuses": "read",
+    "permission-actions": "read",
+  });
+});

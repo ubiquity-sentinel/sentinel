@@ -61,6 +61,9 @@ jobs:
           permission-contents: read
           permission-pull-requests: read
           permission-checks: read
+          # The planner reads each commit's combined status (a status context
+          # is a check it cannot stand in for); without it every read is null.
+          permission-statuses: read
           permission-actions: read
       - name: Ingest finished legs and plan new units
         id: pass

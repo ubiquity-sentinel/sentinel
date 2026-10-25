@@ -14,8 +14,6 @@ import { renderCiEvidenceUnavailable } from "./ci-evidence-render.ts";
 export const MAX_PROMPT_PROTECTED_PATHS = 60;
 /** Bound on the named prefixes' rendered characters (the role stays intact). */
 export const MAX_PROMPT_PROTECTED_PATH_CHARS = 4_000;
-/** The exact marker a run that needs a protected path reports instead. */
-export const OWNER_LANDING_REQUIRED = "OWNER_LANDING_REQUIRED";
 
 /**
  * The role's protected-path sentence (C6): the exact trusted configured
@@ -24,8 +22,11 @@ export const OWNER_LANDING_REQUIRED = "OWNER_LANDING_REQUIRED";
  * `MAX_PROMPT_PROTECTED_PATH_CHARS`; the rest are counted, never dropped
  * silently. Empty without configured prefixes, so a prompt for a repository
  * with none is byte-identical to the earlier one. The candidate's own
- * protected-path check stays the enforcement: this only lets the model stop
- * before it spends a run on a candidate that can never publish.
+ * protected-path check stays the enforcement: this only steers the model to
+ * a fix outside them. A candidate that still changes one parks as `candidate
+ * touches a protected path` (its owner comment and `sentinel:retry` exit). An
+ * instruction to make no change instead would land in the no-change
+ * base-review lane, which has no such exit.
  */
 export function renderProtectedPaths(paths: readonly string[]): string {
   const unique = [...new Set(paths)].sort();
@@ -49,8 +50,8 @@ export function renderProtectedPaths(paths: readonly string[]): string {
       : ` (and ${rest} more protected prefix${
         rest === 1 ? "" : "es"
       } not listed here)`) +
-    ". If the fix requires one of these paths, make no change and say " +
-    `${OWNER_LANDING_REQUIRED}: <paths>.`;
+    ". Fix the issue without changing them where you can; a candidate that " +
+    "changes one is parked for the repository owner to land.";
 }
 
 /**
