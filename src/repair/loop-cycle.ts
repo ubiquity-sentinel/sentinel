@@ -35,6 +35,7 @@ import type {
 } from "./loop-types.ts";
 import { executeStep } from "./loop-work.ts";
 import { rankEligibleWork, rankReviewDrain } from "./selection.ts";
+import { createStepLog } from "./step-line.ts";
 import { setWait } from "./transitions.ts";
 
 /** One run of the bounded repair loop. */
@@ -83,6 +84,8 @@ export async function runRepairCycle(
   // iteration must never re-poll the sources: subsequent loop iterations reuse
   // the run-local deferral tracking instead of repeating intake reads.
   let intakePolled = false;
+  // One bounded advisory `sentinel_step` line per selected step (C5.2).
+  const logStep = createStepLog();
 
   registerPostDrain?.(
     createPostDrainContinuation(deps, bounds, stepLimit, tracking),
@@ -361,8 +364,15 @@ export async function runRepairCycle(
     }
 
     context.executionBaseline = selected;
+    // Monotonic wall time: the injected run clock is never read for the log.
+    const stepStartedAt = performance.now();
     const result = await executeStep(deps, context, selected);
     context.executionBaseline = null;
+    logStep(
+      selected,
+      result.kind,
+      Math.round(performance.now() - stepStartedAt),
+    );
     if (result.kind === "deferred") {
       deferred.add(selected.id);
       continue;

@@ -159,8 +159,13 @@ export function emitHostedRuntimeCliResult(
   for (const settlement of result.reviewOwnerSettlements ?? []) {
     console.log(JSON.stringify(settlement));
   }
+  // Advisory step lines, in child order, before the carrier and terminal.
+  for (const step of result.stepLines ?? []) console.log(JSON.stringify(step));
   if (result.matrixCarrier !== undefined) {
     console.log(JSON.stringify(result.matrixCarrier));
+  }
+  if (result.matrixPlanDiagnostic !== undefined) {
+    console.log(JSON.stringify(result.matrixPlanDiagnostic));
   }
   if (result.earlyFailure !== undefined) {
     console.log(JSON.stringify(result.earlyFailure));

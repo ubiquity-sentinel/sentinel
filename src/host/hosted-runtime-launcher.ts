@@ -74,6 +74,8 @@ import type { ExistingPrRuntimeCapability } from "./existing-pr-runtime-capabili
 import { retainVerifiedHostedAppGrant } from "./hosted-runtime-principal-handoff.ts";
 import { needsHostedLegacyStateView } from "./hosted-runtime-rollback-state.ts";
 import { HOSTED_RUNTIME_ROLLBACK_ENTRYPOINT } from "./hosted-runtime-rollback.ts";
+import { scanPlanDiagnostic } from "./matrix-plan-diagnostic.ts";
+import { scanStepLines } from "../repair/step-line.ts";
 
 /**
  * Verify the launcher and runtime checkouts as clean worktrees at their exact
@@ -254,7 +256,15 @@ async function launchHostedRuntime(
     return unavailableResult();
   }
   if (identity.job === "matrix_plan" || identity.job === "matrix_cell") {
-    return resolveMatrixLauncherResult(run, execution, identity.job, stdin);
+    const matrix = resolveMatrixLauncherResult(
+      run,
+      execution,
+      identity.job,
+      stdin,
+    );
+    return identity.job === "matrix_plan"
+      ? attachPlanDiagnostic(matrix, run, execution)
+      : matrix;
   }
   const resolved = resolveLauncherResult({
     run,
@@ -414,8 +424,39 @@ function attachDiagnostics(
   } catch {
     // Advisory parsing cannot change the resolved child result.
   }
-  if (earlyFailure === null) return withTerminals;
-  return { ...withTerminals, earlyFailure };
+  let withSteps = withTerminals;
+  try {
+    const stepLines = scanStepLines(new TextDecoder().decode(run.stdout));
+    if (stepLines.length > 0) withSteps = { ...withTerminals, stepLines };
+  } catch {
+    // Advisory parsing cannot change the resolved child result.
+  }
+  if (earlyFailure === null) return withSteps;
+  return { ...withSteps, earlyFailure };
+}
+
+/**
+ * The accepted planner carrier's sanitized plan diagnostic (C5.1), re-parsed
+ * from the same settled capture; a rejected carrier carries none, and a scan
+ * that throws is no diagnostic.
+ */
+function attachPlanDiagnostic(
+  result: HostedRuntimeLauncherResultV1,
+  run: ReplayCommandResultV1,
+  execution: HostedExecutionIntentV1,
+): HostedRuntimeLauncherResultV1 {
+  if (result.matrixCarrier === undefined) return result;
+  try {
+    const diagnostic = scanPlanDiagnostic(
+      new TextDecoder().decode(run.stdout),
+      execution,
+    );
+    return diagnostic === null
+      ? result
+      : { ...result, matrixPlanDiagnostic: diagnostic };
+  } catch {
+    return result;
+  }
 }
 
 /**

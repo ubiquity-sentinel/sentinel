@@ -2997,6 +2997,64 @@ standing approval above. Applied as follows.
   charged.
 - The current-head review, CI and P0 gates are unchanged.
 
+## 2026-10-25: observability lines, target rotation, outage notice and wedge report (redesign C5)
+
+- Plan diagnostic: a zero-cell plan prints one `sentinel_matrix_plan_diagnostic`
+  line after its carrier, with per-repository `skippedByReason` and
+  `notReadyByReason` counts. The keys are a closed vocabulary: an intent is
+  named by its key family only (`intent=impl`, never its reservation id), and an
+  unknown reason counts as `other`. The launcher re-parses the line against the
+  verified wave and keeps only known keys with non-negative integer counts. A
+  foreign, duplicated or malformed line is dropped, a rejected carrier carries
+  none, and the sanitized line is re-emitted after the carrier. The carrier, its
+  exact keys and its readers are unchanged. The queue-custody empty plan prints
+  one with `cause: "queue_custody_idle"`; a plan with cells prints none, because
+  the planner keeps a diagnostic only for zero cells.
+- Step line: `runRepairCycle` prints one advisory `sentinel_step` line per
+  selected step: `recordId`, `step` (the record's `nextStep`), `outcome` (the
+  step result kind) and `elapsedMs` (monotonic wall time; the injected run clock
+  is never read). A cycle prints at most 1,000 lines and the launcher re-emits
+  at most 2,000 strictly re-parsed lines before the carrier and the terminal.
+  The line has no `status` key, so the child-status scan never reads it, and a
+  failed print is swallowed.
+- Target order: `runActionsTargetCycles` runs the targets in the setting order
+  rotated left by `runId % configs.length`, so Passport is not always last
+  behind two review drains. Without a native run id the setting order is kept.
+  `addressed` and `skipped` follow the rotated order, and the outcome is still
+  the last addressed cycle's.
+- CI outage notice: the state-free `ops/hosted-autonomy-outage-observation.ts`
+  keeps one issue per foreign target on Sentinel's own tracker while that
+  target's tip has only never-started checks. That means at least one
+  never-started failure, nothing started and nothing undetermined; skipped and
+  cancelled checks count nowhere. The first body line is
+  `<!-- sentinel:ci-outage:<owner>/<repo> -->`. The body names the tip, the
+  never-started count, the records waiting and one owner action: "restore
+  Actions billing or raise the spending limit for <owner>".
+  - The same facts write nothing, and changed facts update the body.
+  - A started check closes the issue with one comment.
+  - A pending or unreadable tip changes nothing.
+  - The marker on someone else's issue prevents a duplicate and is never edited.
+- The outage pass takes the never-started classification as an injected
+  predicate (C2) and is wired into the maintenance runner separately (WP1.4 owns
+  the runner). Intake never admits a notice Sentinel filed (as the App, or with
+  the maintenance job's native-token fallback) as a repair task
+  (`isCiOutageNotice`), because no code change fixes billing; the same first
+  line on anyone else's issue is ordinary work. On recovery every notice
+  Sentinel filed for the target closes.
+- Wedge report v0: finalize reads the repair state once (advisory, with a
+  60-second bound) and adds `wedges` to `hosted_runtime_run_summary`. It has
+  three classes:
+  - `holder_not_runnable`: a `holdsDeliveryLine` record that cannot move now (an
+    unexpired wait other than `ci_pending`, or an implementation in flight)
+    while another published record of its repository waits;
+  - `open_ended_wait`: `until: null` on a live row outside the allowlist
+    (`backoff` at any step; `unavailable` at `delivery`);
+  - `stalled`: `counters.stalled >= 24`, except a row whose release request is
+    recorded (the disabled release path is its named exit).
+- Healthy jobs with any wedge make the run `degraded`; `failed` and
+  `unavailable` keep precedence. An unreadable state gives `wedges: null` and
+  changes nothing. The report decides nothing.
+
 ## 2026-10-24: backup CI in the ubiquity-sentinel org (owner decision)
 
 - Owner decision (2026-10-24): "primary path is to use the org's own ci but

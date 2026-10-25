@@ -250,6 +250,9 @@ export async function runHostedSupervisorHost(
         ...input.runSummary,
         readJobs: (runId, runAttempt, select) =>
           client.readRunJobSummaries(runId, runAttempt, select),
+        // The wedge report v0 (C5.5): one bounded advisory repair-state read.
+        readRepair: () => input.state.readRepair(),
+        now: () => input.clock.now(),
       }, { runId: identity.runId, runAttempt: identity.runAttempt });
     }
     return {

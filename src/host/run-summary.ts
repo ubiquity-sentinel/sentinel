@@ -11,8 +11,20 @@
  * Advisory only: it grants no health, accounting or admission authority, an
  * unknown count stays null, and a failed read never changes the finalize
  * outcome.
+ *
+ * With a repair-state read it also carries the wedge report v0
+ * (`run-summary-wedges.ts`, C5.5): a run whose jobs were healthy while a
+ * record sat wedged is `degraded`, and the next action names the wedges.
  */
-import type { PortResultV1 } from "../contracts/ports.ts";
+import type { PortResultV1, StateReadResultV1 } from "../contracts/ports.ts";
+import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
+import { createDeadline } from "../github/http.ts";
+import {
+  detectWedgesV0,
+  WEDGE_CLASSES,
+  type WedgeReportV0,
+  wedgeSentence,
+} from "./run-summary-wedges.ts";
 
 /** The fields of one child's `hosted_runtime_summary` this summary reads. */
 export interface ChildRuntimeSummaryV1 {
@@ -64,10 +76,16 @@ export interface HostedRuntimeRunSummaryV1 {
   admittedWorkCount: number | null;
   modelStarts: number | null;
   prsTouched: { repository: string; number: number; action: string }[];
-  outcome: "healthy" | "failed" | "unavailable";
+  /** `degraded`: every job was healthy, but the wedge report is not empty. */
+  outcome: "healthy" | "degraded" | "failed" | "unavailable";
+  /** The wedge report v0, or null when the repair state was not read. */
+  wedges: WedgeReportV0 | null;
   explanation: string;
   nextAction: string;
 }
+
+/** The finalize repair-state read is advisory and bounded. */
+export const RUN_SUMMARY_STATE_READ_MS = 60_000;
 
 const SUMMARY_KIND = '"kind":"hosted_runtime_summary"';
 const MAX_JOBS = 300;
@@ -162,6 +180,7 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 export function aggregateRunSummary(
   run: { runId: number; runAttempt: number },
   jobs: readonly RunJobSummaryV1[],
+  wedges: WedgeReportV0 | null = null,
 ): HostedRuntimeRunSummaryV1 {
   const listed = jobs.slice(0, MAX_JOBS);
   const summaries = listed.flatMap((job) =>
@@ -206,6 +225,8 @@ export function aggregateRunSummary(
     : summaries.length === 0 ||
         summaries.some((summary) => summary.outcome !== "healthy")
     ? "unavailable"
+    : wedges !== null && wedges.total > 0
+    ? "degraded"
     : "healthy";
   const generation = agreed(summaries.map((summary) => summary.generation));
   const purpose = agreed(summaries.map((summary) => summary.purpose));
@@ -234,6 +255,8 @@ export function aggregateRunSummary(
         ? "the run"
         : unreadable.map((job) => job.name).slice(0, 5).join(", ")
     }; their runtime summary was missing or not healthy.`
+    : outcome === "degraded" && wedges !== null
+    ? `Inspect the wedge report: ${wedgeSentence(wedges)}.`
     : "None; the next scheduled run continues.";
   return {
     version: "v1",
@@ -255,6 +278,7 @@ export function aggregateRunSummary(
     modelStarts,
     prsTouched,
     outcome,
+    wedges,
     explanation,
     nextAction,
   };
@@ -285,6 +309,20 @@ export function runSummaryMarkdown(summary: HostedRuntimeRunSummaryV1): string {
       "",
     );
   }
+  if (summary.wedges !== null && summary.wedges.total > 0) {
+    const wedges = summary.wedges;
+    lines.push(
+      "| Wedge | Records | Examples |",
+      "| --- | --- | --- |",
+      ...WEDGE_CLASSES.filter((name) => wedges.classes[name].count > 0).map(
+        (name) =>
+          `| ${name} | ${wedges.classes[name].count} | ${
+            cell(wedges.classes[name].samples.join(", "))
+          } |`,
+      ),
+      "",
+    );
+  }
   if (summary.prsTouched.length > 0) {
     lines.push(
       "Pull requests touched:",
@@ -305,6 +343,15 @@ export interface RunSummaryDepsV1 {
     select: (log: string) => ChildRuntimeSummaryV1 | null,
   ): Promise<PortResultV1<RunJobSummaryV1[]>>;
   log?: (line: string) => void;
+  /**
+   * The repair state for the wedge report; absent, unreadable or past
+   * `RUN_SUMMARY_STATE_READ_MS`, the summary carries `wedges: null`.
+   */
+  readRepair?: () => Promise<
+    PortResultV1<StateReadResultV1<RepairStateSnapshotV1>>
+  >;
+  /** The instant the wedge report is judged at; defaults to `Date.now`. */
+  now?: () => number;
   /** `GITHUB_STEP_SUMMARY`, appended to when present. */
   stepSummaryPath?: string;
   appendFile?: (path: string, text: string) => Promise<void>;
@@ -317,12 +364,11 @@ export async function emitRunSummary(
 ): Promise<HostedRuntimeRunSummaryV1 | null> {
   const log = deps.log ?? ((line: string) => console.log(line));
   try {
-    const jobs = await deps.readJobs(
-      run.runId,
-      run.runAttempt,
-      lastRuntimeSummary,
-    );
-    const summary = aggregateRunSummary(run, jobs.ok ? jobs.value : []);
+    const [jobs, wedges] = await Promise.all([
+      deps.readJobs(run.runId, run.runAttempt, lastRuntimeSummary),
+      readWedges(deps),
+    ]);
+    const summary = aggregateRunSummary(run, jobs.ok ? jobs.value : [], wedges);
     if (!jobs.ok) {
       summary.nextAction =
         "The run's job list was unreadable; open the run's job logs.";
@@ -341,5 +387,24 @@ export async function emitRunSummary(
     return summary;
   } catch {
     return null;
+  }
+}
+
+/** The wedge report of a bounded advisory state read, or null. */
+async function readWedges(
+  deps: Pick<RunSummaryDepsV1, "readRepair" | "now">,
+): Promise<WedgeReportV0 | null> {
+  if (deps.readRepair === undefined) return null;
+  const deadline = createDeadline(RUN_SUMMARY_STATE_READ_MS);
+  try {
+    const read = await deadline.race(
+      Promise.resolve().then(() => deps.readRepair!()),
+    );
+    if (!read.ok || read.value.status !== "found") return null;
+    return detectWedgesV0(read.value.snapshot, (deps.now ?? Date.now)());
+  } catch {
+    return null;
+  } finally {
+    deadline.dispose();
   }
 }
