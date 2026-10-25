@@ -3019,6 +3019,52 @@ standing approval above. Applied as follows.
   in for exactly that never-started check. A check that ran and failed is never
   overridden, and missing, stale or unverifiable backup evidence never passes.
 
+## 2026-10-24: the runtime never merges a tree no CI ran on (base compare-and-swap)
+
+- Finding (live state and GitHub, 2026-10-24): the runtime merged two Passport
+  pull requests off their reviewed bases. PR 154 (record
+  `issue-ubiquity-passport.ubq.fi-49`) was reviewed on `7194280c` and its merge
+  commit `862a9162` has parents `95765554`,`8dbaa9fc`; PR 171 (record
+  `issue-ubiquity-passport.ubq.fi-77`) was reviewed on `95765554` and merged 26
+  seconds later onto PR 154's merge (`2cf5050f`, parents `862a9162`,`aa11683f`).
+  Both were booked as delivered. GitHub's merge API guards only the head, the
+  pull request's reported base is not updated when the base branch moves, and
+  since branch rules stopped gating merges (owner directive 2026-10-24) nothing
+  checked that the base still was the reviewed base at the merge call. The
+  post-drain continuation (`src/repair/loop-post-drain.ts`) also called
+  `executeMerge` without the moved-base refresh guard the ordinary delivery step
+  runs first. The launcher already refused this (`merged_off_tip`, #156).
+- Decision: the port's REST merge path (`src/github/port-merge.ts`) re-reads the
+  base branch tip, uncached, as the last read before the merge call and returns
+  the existing blocked `base_mismatch` outcome, with no merge call, unless it is
+  exactly the reviewed base; an unreadable tip is a typed error, never a merge.
+  The REST merge makes a merge commit (Passport allows it and merges that way),
+  so after a merge, and when a pull request is found already merged, the port
+  reads the merge commit's parents and returns `merged` only on exactly
+  [reviewed base, reviewed head]. Any other landing is the new `merged_off_tip`
+  outcome (merge SHA and parents), and an unreadable commit is `ambiguous`. A
+  merge this call did not make on the native queue target keeps the queue's own
+  proof, as before.
+- The loop parks a `merged_off_tip` outcome with its intent cleared, blocked
+  `other` with the fixed `MERGED_OFF_TIP_PREFIX` message naming the merge SHA,
+  its parents and the expected [base, head] pair; nothing is booked, no release
+  request is written and Sentinel does not close the issue. Merge-intent
+  reconciliation applies the same proof to a pull request it observes merged
+  (`src/repair/merge-off-tip.ts`, through the optional `readCommitParents`; an
+  unreadable commit waits one poll with the intent kept). A `base_mismatch`
+  keeps its existing path: the merge intent backs off one poll and the next
+  run's reconciliation replaces it with the durable base refresh.
+- The post-drain continuation's fresh merge now passes the same moved-base guard
+  as the delivery step (`refreshMovedBaseBeforeMerge` in
+  `src/repair/loop-work.ts`): a moved base persists the refresh intent, which a
+  later run executes; the continuation still never executes a refresh.
+- Unchanged: current-head native review, the P0 merge block, current-head CI,
+  task acceptance, custody, durable accounting and the self path's source CAS.
+  No state shape changes (the outcome is a port result, never persisted; the
+  park is an existing blocked transition), and the pinned generation-80 parser,
+  generation 81's rollback target, parses the parked records in the tests. The
+  two merges already booked stay booked; this changes no historical record.
+
 ## 2026-10-24: a red target base gets its own repair (base-repair lane)
 
 - Finding (live state, 2026-10-24 23:00 UTC): all 39 Passport records at `work`

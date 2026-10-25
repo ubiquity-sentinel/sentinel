@@ -200,10 +200,16 @@ Deno.test("existing PR effects: actual review admission then exact-head direct m
       expectedBase: r.ctx.base,
       review: receipt,
     };
+    // A merge commit on exactly [reviewed base, head]: the only bookable one.
+    const mergeSha = "e".repeat(40);
     r.nativeControls.replies.set(`PUT ${prefix}/pulls/7/merge`, {
       merged: true,
-      sha: r.ctx.head,
+      sha: mergeSha,
       message: "Merged",
+    });
+    r.nativeControls.replies.set(`GET ${prefix}/git/commits/${mergeSha}`, {
+      sha: mergeSha,
+      parents: [{ sha: r.ctx.base }, { sha: r.ctx.head }],
     });
     const missing = await r.host.port.mergePullRequest(merge);
     assert.ok(!missing.ok || missing.value.outcome !== "merged");

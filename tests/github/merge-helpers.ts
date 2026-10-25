@@ -10,12 +10,14 @@ import {
   nonFastForwardRuleWire,
   pullRequestRuleWire,
   pullWire,
+  refWire,
   REPO,
   reviewDecisionGraphqlWire,
   REVIEWER,
   rulesetWire,
   SHA1,
   SHA2,
+  SHA3,
   SHA4,
   statusChecksRuleWire,
   statusesPageWire,
@@ -176,8 +178,47 @@ export function checksRead(
   ];
 }
 
+export const BASE_REF_PATH =
+  "/repos/ubiquity-sentinel/sentinel/git/ref/heads/development";
+
+export function commitPath(sha: GitSha): string {
+  return `/repos/ubiquity-sentinel/sentinel/git/commits/${sha}`;
+}
+
+/** The base branch tip the port re-reads immediately before the merge call. */
+export function baseTipRead(sha: GitSha = SHA2): ScriptEntry {
+  return {
+    ...httpRespond(
+      "GET",
+      BASE_REF_PATH,
+      200,
+      refWire(sha, "refs/heads/development"),
+    ),
+    repeat: true,
+  };
+}
+
+/** The exact parents of one merge commit, as the port reads them. */
+export function mergeParentsRead(
+  mergeSha: GitSha = SHA3,
+  parents: readonly GitSha[] = [SHA2, SHA1],
+): ScriptEntry {
+  return {
+    ...httpRespond("GET", commitPath(mergeSha), 200, {
+      sha: mergeSha,
+      tree: { sha: SHA4 },
+      parents: parents.map((sha) => ({ sha })),
+    }),
+    repeat: true,
+  };
+}
+
 export interface HappyOptions {
   pulls?: ScriptEntry[];
+  /** Base branch tip at merge time (default: the reviewed base SHA2). */
+  baseTip?: ScriptEntry;
+  /** Merge commit parents (default: SHA3 on exactly [SHA2, SHA1]). */
+  parents?: ScriptEntry;
   rules?: unknown[];
   rulesets?: unknown[];
   checks?: unknown[];
@@ -209,6 +250,8 @@ export function happyScript(options: HappyOptions = {}): ScriptEntry[] {
       ),
       repeat: true,
     },
+    options.baseTip ?? baseTipRead(),
+    options.parents ?? mergeParentsRead(),
     ...(options.extra ?? []),
   ];
 }

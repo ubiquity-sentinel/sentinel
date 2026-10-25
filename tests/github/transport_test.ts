@@ -28,6 +28,7 @@ import {
   makePort,
   pullRequestRuleWire,
   pullWire,
+  refWire,
   REPO,
   REVIEWER,
   rulesetWire,
@@ -183,6 +184,13 @@ function mergeHappyScript(
       `/repos/ubiquity-sentinel/sentinel/commits/${SHA1}/statuses?per_page=100&page=1`,
       200,
       statusesPageWire([]),
+    ),
+    // The base tip re-read immediately before the merge PUT: unmoved.
+    httpRespond(
+      "GET",
+      "/repos/ubiquity-sentinel/sentinel/git/ref/heads/development",
+      200,
+      refWire(SHA2, "refs/heads/development"),
     ),
     // Reconcile read after the lost merge PUT: PR still open.
     pullEntry(),

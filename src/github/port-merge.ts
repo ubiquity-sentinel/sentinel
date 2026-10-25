@@ -5,7 +5,10 @@ import type {
   MergeRequestV1,
   PortResultV1,
 } from "../contracts/ports.ts";
+import type { GitSha } from "../contracts/brands.ts";
 import type { SelfMergeExecutionV1 } from "../contracts/self-merge.ts";
+import { isNativeQueueTarget } from "./native-queue-guard.ts";
+import { mergedExactlyOnBase } from "../repair/merge-off-tip.ts";
 import type { GitHubEffectiveProtectionsV1 } from "./port-contracts.ts";
 import type { TakeoverEffectAuthorization } from "../contracts/existing-pr-takeover.ts";
 import { executeSelfMerge } from "./port-self-merge.ts";
@@ -108,11 +111,7 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
         request: merge,
       }, takeover);
       if (!custody.ok) return custody;
-      return portOk({
-        outcome: "merged",
-        head: pull.value.head,
-        mergeSha: pull.value.mergeSha!,
-      });
+      return await this.landedMerge(merge, pull.value.mergeSha!, true);
     }
     if (pull.value.state === "closed") {
       return blocked("conflict", pull.value.head);
@@ -253,9 +252,15 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
       return blocked("review_required", pull.value.head);
     }
     if (conditionalSelf) return native();
-    // 8. Expected-head merge. REST has no atomic base CAS: the strict
-    // up-to-date protection is what rejects a base movement after this last
-    // precheck; a rejection is reconciled against the re-observed PR.
+    // 8. Expected-head merge with a base compare-and-swap. GitHub's merge API
+    // guards only the head, the pull request's reported base is not updated
+    // when the base branch moves, and branch rules no longer gate a merge
+    // (owner directive 2026-10-24): nothing else refuses a base that moved
+    // after the review (live: Passport PRs 154 and 171 merged off their
+    // reviewed bases). The base branch tip is re-read, uncached, as the last
+    // read before the merge call and must still be the reviewed base; the
+    // merge commit's parents are then proven below. A rejection is reconciled
+    // against the re-observed PR.
     const beforeMerge = await this.queueEffect(queueInput);
     if (!beforeMerge.ok) return beforeMerge;
     const custody = await this.takeoverEffect(
@@ -263,6 +268,11 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
       takeover,
     );
     if (!custody.ok) return custody;
+    const tip = await this.client.readRef(`refs/heads/${pull.value.baseRef}`);
+    if (!tip.ok) return tip;
+    if (tip.value === null || tip.value.sha !== merge.expectedBase) {
+      return blocked("base_mismatch", pull.value.head);
+    }
     const merged = await this.client.mergePull(
       merge.pullRequestNumber,
       merge.expectedHead,
@@ -271,11 +281,7 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
     if (merged.value.status === "merged") {
       const afterQueue = await this.queueEffect(queueInput);
       if (!afterQueue.ok) return afterQueue;
-      return portOk({
-        outcome: "merged",
-        head: merge.expectedHead,
-        mergeSha: merged.value.mergeSha,
-      });
+      return await this.landedMerge(merge, merged.value.mergeSha, false);
     }
     if (merged.value.status === "ambiguous") {
       // The merge response was lost; report ambiguous unless the exact PR
@@ -292,11 +298,7 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
       ) {
         const afterQueue = await this.queueEffect(queueInput);
         if (!afterQueue.ok) return afterQueue;
-        return portOk({
-          outcome: "merged",
-          head: check.value.head,
-          mergeSha: check.value.mergeSha!,
-        });
+        return await this.landedMerge(merge, check.value.mergeSha!, false);
       }
       return portOk({ outcome: "ambiguous", head: null, mergeSha: null });
     }
@@ -309,11 +311,7 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
       }
       const afterQueue = await this.queueEffect(queueInput);
       if (!afterQueue.ok) return afterQueue;
-      return portOk({
-        outcome: "merged",
-        head: after.value.head,
-        mergeSha: after.value.mergeSha!,
-      });
+      return await this.landedMerge(merge, after.value.mergeSha!, true);
     }
     if (after.value.state === "closed") {
       return blocked("conflict", after.value.head);
@@ -340,6 +338,35 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
     // A rejection no readable rule, check or review explains: report it as a
     // conflict with the live pull request, never as a missing protection.
     return blocked("conflict", after.value.head);
+  }
+
+  /**
+   * The bookable outcome of one merge commit: `merged` only when its parents
+   * are exactly [reviewed base, reviewed head] (the REST merge makes a merge
+   * commit, so that is the tree the review and CI saw), `merged_off_tip`
+   * otherwise, and `ambiguous` when the commit cannot be read (the next run
+   * reconciles; never booked unproven). `observed` marks a merge this call did
+   * not make: on a native queue target that is the queue's merge, which has
+   * the queue's parents and keeps its own proof, so it is left as before.
+   */
+  private async landedMerge(
+    merge: MergeRequestV1,
+    mergeSha: GitSha,
+    observed: boolean,
+  ): Promise<PortResultV1<MergeOutcomeV1>> {
+    const head = merge.expectedHead;
+    if (observed && isNativeQueueTarget(this.repository)) {
+      return portOk({ outcome: "merged", head, mergeSha });
+    }
+    const parents = await this.client.readCommitParents(mergeSha);
+    if (!parents.ok || parents.value === null) {
+      return portOk({ outcome: "ambiguous", head, mergeSha });
+    }
+    return portOk(
+      mergedExactlyOnBase(parents.value, merge.expectedBase, head)
+        ? { outcome: "merged", head, mergeSha }
+        : { outcome: "merged_off_tip", head, mergeSha, parents: parents.value },
+    );
   }
 
   private async authorizeSelfMerge(

@@ -24,6 +24,7 @@ import {
 import assert from "node:assert/strict";
 import type { ScriptEntry } from "./helpers.ts";
 import {
+  baseTipRead,
   blockedReason,
   checksRead,
   CLEAN_COMPLETION,
@@ -33,6 +34,7 @@ import {
   happyScript,
   type mergeCall,
   mergedPort,
+  mergeParentsRead,
   mergeRequest,
   pullEntry,
   putCount,
@@ -602,7 +604,8 @@ Deno.test("mergePullRequest: base movement after the last precheck is reconciled
     commentsRead([]),
     ...rulesRead(),
     ...checksRead(),
-    // The base moved between the precheck and the merge PUT.
+    baseTipRead(),
+    // The base moved between the last base read and the merge PUT.
     httpRespond(
       "PUT",
       "/repos/ubiquity-sentinel/sentinel/pulls/1/merge",
@@ -670,6 +673,7 @@ Deno.test("mergePullRequest: lost merge response reconciles exactly", async () =
     commentsRead([]),
     ...rulesRead(),
     ...checksRead(),
+    baseTipRead(),
     {
       kind: "throw",
       method: "PUT",
@@ -719,6 +723,7 @@ Deno.test("mergePullRequest: malformed merge response is invalid, rejected maps 
     commentsRead([]),
     ...rulesRead(),
     ...checksRead(),
+    baseTipRead(),
     httpRespond(
       "PUT",
       "/repos/ubiquity-sentinel/sentinel/pulls/1/merge",
@@ -744,6 +749,7 @@ Deno.test("mergePullRequest: unreadable rules do not block; the merge proceeds w
     200,
     mergeResponseWire(SHA3),
   );
+  const tipThenMerge = [baseTipRead(), mergeParentsRead(), mergePut];
   const expectMerged = (
     name: string,
     result: Awaited<ReturnType<typeof mergeCall>>,
@@ -769,7 +775,7 @@ Deno.test("mergePullRequest: unreadable rules do not block; the merge proceeds w
     },
     httpRespond("GET", RULESETS_PATH, 200, [rulesetWire()]),
     ...checksRead(),
-    mergePut,
+    ...tipThenMerge,
   ]);
   expectMerged(
     "malformed",
@@ -791,7 +797,7 @@ Deno.test("mergePullRequest: unreadable rules do not block; the merge proceeds w
     },
     httpRespond("GET", RULESETS_PATH, 200, [rulesetWire()]),
     ...checksRead(),
-    mergePut,
+    ...tipThenMerge,
   ]);
   expectMerged(
     "rate-limited",
@@ -816,7 +822,7 @@ Deno.test("mergePullRequest: unreadable rules do not block; the merge proceeds w
     ]),
     httpRespond("GET", RULESETS_PATH, 200, [rulesetWire()]),
     ...checksRead(),
-    mergePut,
+    ...tipThenMerge,
   ]);
   expectMerged(
     "bad-params",

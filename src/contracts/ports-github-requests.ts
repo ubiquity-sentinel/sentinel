@@ -350,6 +350,17 @@ export type MergeOutcomeV1 =
     selfMerge?: SelfMergeProofV1;
   }
   | { outcome: "ambiguous"; head: GitSha | null; mergeSha: GitSha | null }
+  /**
+   * The pull request merged, but its merge commit's parents are not exactly
+   * [the reviewed base, the reviewed head]: the merged tree is one no CI ran
+   * on. Never booked as a delivery; the loop parks the record.
+   */
+  | {
+    outcome: "merged_off_tip";
+    head: GitSha;
+    mergeSha: GitSha;
+    parents: GitSha[];
+  }
   | {
     outcome: "blocked";
     reason:
@@ -370,11 +381,12 @@ export type MergeOutcomeV1 =
  *
  * REST has no atomic base CAS: `expectedBase` is a precondition the adapter
  * re-validates immediately before an expected-head merge, not an API
- * guarantee. Effective strict server-enforced protections (requiring up-to-
- * date branches with no applicable token bypass) plus candidate ancestry
- * containing `expectedBase` are required; a moved base then makes the
- * candidate outdated and the server blocks the merge (base_mismatch) until
- * the exact current base is integrated and validated again. The review
+ * guarantee. Branch rules are not a merge requirement (owner directive
+ * 2026-10-24), so the adapter re-reads the base branch tip as the last read
+ * before the merge call and refuses (base_mismatch) unless it is exactly
+ * `expectedBase`; candidate ancestry containing `expectedBase` is required,
+ * and a merge whose commit's parents are not exactly [`expectedBase`,
+ * `expectedHead`] is reported `merged_off_tip`, never `merged`. The review
  * receipt is identity/cleanliness evidence only — it is never current CI,
  * protection or authenticity evidence, so the adapter must re-observe the
  * authoritative review by exact identifiers and verify trusted resolution
