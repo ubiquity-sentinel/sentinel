@@ -5,6 +5,7 @@ import {
   maintenanceFailureCategory,
   readReleaseSafely,
   readRepairSafely,
+  shareRepairRead,
   skipped,
 } from "./hosted-autonomy-state.ts";
 import {
@@ -197,10 +198,12 @@ export async function runHostedAutonomy(
     if (result.status === "failed") return result;
     let followUps: string[];
     let followUpComplete = true;
+    // The read-only passes after the chain share one state read.
+    const readOnly = { ...scoped, state: shareRepairRead(scoped.state) };
     const finishFollowup = beginMaintenanceProgress("followup");
     try {
       followUps = await runHostedFollowUpPass(
-        scoped,
+        readOnly,
         startedAt + HOSTED_AUTONOMY_PASS_DEADLINE_MS,
       );
     } catch {
@@ -214,7 +217,7 @@ export async function runHostedAutonomy(
       followUps = [
         ...followUps,
         ...await runHostedBaseRepairPass(
-          scoped,
+          readOnly,
           startedAt + HOSTED_AUTONOMY_PASS_DEADLINE_MS,
         ),
       ];

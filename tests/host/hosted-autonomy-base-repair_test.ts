@@ -2,8 +2,9 @@
  * The launcher's base-repair pass (2026-10-24 throughput redesign, stage 1):
  * a foreign target whose base tip has a completed failing check gets exactly
  * one open, P0, marked base-repair issue naming the failing checks; an open
- * marked issue, a green, pending or unreadable tip, and a target without live
- * work file nothing. The pass writes no state.
+ * marked issue, a green, pending or unreadable tip, and a target with no
+ * record held in a timed backoff at `work` file nothing. The pass writes no
+ * state.
  */
 import assert from "node:assert/strict";
 import { baseRepairMarker } from "../../src/repair/base-repair.ts";
@@ -27,15 +28,23 @@ interface Filed {
   labels?: string[];
 }
 
+/** The CI-first gate's red-base hold, as a live poll re-arms it. */
+const HELD = { reason: "backoff", since: NOW - 60_000, until: NOW + 1_740_000 };
+
 async function pass(options: {
   failed: string[] | null;
   openBodies?: string[] | null;
   nextStep?: string;
+  wait?: unknown;
 }) {
-  // The live record is parked; a live one is the same row at `work`.
+  // The live record is parked; a held one is the same row at `work`.
   const record = options.nextStep === "blocked"
     ? liveRecord(618)
-    : liveRecord(618, { nextStep: "work", blocker: null, wait: null });
+    : liveRecord(618, {
+      nextStep: "work",
+      blocker: null,
+      wait: options.wait === undefined ? HELD : options.wait,
+    });
   assert.equal(record.nextStep, options.nextStep ?? "work");
   const { surface: base } = liveSurface({ tip: TIP });
   const filed: Filed[] = [];
@@ -95,6 +104,8 @@ Deno.test("base repair pass: an open marked issue, a green or unreadable tip and
       "base-repair:ubiquity/ai.ubq.fi:issues_unreadable",
     ]],
     [{ failed: ["validate"], nextStep: "blocked" }, []],
+    // Live work that no red-base hold waits on pays for no tip read.
+    [{ failed: ["validate"], wait: null }, []],
   ];
   for (const [options, expected] of cases) {
     const { actions, filed } = await pass(options);

@@ -2,9 +2,9 @@
  * Base-repair pass (2026-10-24 throughput redesign, stage 1; see
  * `src/repair/base-repair.ts`).
  *
- * Once per maintenance pass, for each foreign target with live work, the
- * launcher reads the target base branch's tip and the check runs on that
- * exact commit. When a completed check failed there, every repair in the
+ * Once per maintenance pass, for each foreign target with a record held in a
+ * timed `backoff` at `work` (the CI-first `base_red` hold), the launcher reads
+ * the target base branch's tip and the check runs on that exact commit. When a completed check failed there, every repair in the
  * repository is held behind it (`base_red`), so the pass makes sure one open
  * base-repair issue names the failing checks: it files one, labelled P0 with
  * the marker on its first line, unless an open issue already carries the
@@ -63,16 +63,25 @@ export function baseRepairIssue(
   };
 }
 
-/** Foreign repositories with at least one live (not done, not parked) record. */
-function liveForeignRepositories(
+/**
+ * Foreign repositories with a record the CI-first gate may be holding on a
+ * red base: at `work` in a timed `backoff` (the `base_red` hold re-arms a
+ * 30-minute one on every poll). Only those pay for a tip read; any other
+ * timed backoff there costs one read and files nothing on a green tip.
+ */
+function heldForeignRepositories(
   work: readonly {
     repository: RepositoryIdentityV1;
     nextStep: string;
+    wait: { reason: string; until: number | null } | null;
   }[],
 ): RepositoryIdentityV1[] {
   const seen = new Map<string, RepositoryIdentityV1>();
   for (const record of work) {
-    if (record.nextStep === "done" || record.nextStep === "blocked") continue;
+    if (
+      record.nextStep !== "work" || record.wait?.reason !== "backoff" ||
+      record.wait.until === null
+    ) continue;
     if (isHostedSelf(record.repository)) continue;
     const key =
       `${record.repository.installationId}/${record.repository.owner}/${record.repository.name}`;
@@ -102,7 +111,7 @@ export async function runHostedBaseRepairPass(
     return actions;
   }
   const { scopeFor } = createHostedAutonomyScopes(deps);
-  for (const repository of liveForeignRepositories(read.value.snapshot.work)) {
+  for (const repository of heldForeignRepositories(read.value.snapshot.work)) {
     const tag = `base-repair:${repository.owner}/${repository.name}`;
     if (!inBudget()) {
       actions.push(`${tag}:deadline`);
