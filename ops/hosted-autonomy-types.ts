@@ -98,6 +98,12 @@ export interface HostedAutonomyHeadPullV1 {
  * `createdAt` is the run's first-attempt creation time (GitHub's `created_at`,
  * epoch milliseconds), where GitHub's re-run window starts; null when GitHub
  * did not report it as a strict UTC timestamp (an unknown age).
+ *
+ * The optional fields serve only the CI resume pass
+ * (`hosted-autonomy-ci-resume.ts`); absent or null is unknown, which never
+ * re-runs anything: `updatedAt` (GitHub's `updated_at`, for a completed run
+ * the completion of its latest attempt), `attemptStartedAt` (`run_started_at`,
+ * the latest attempt's start) and `workflowId` (`workflow_id`).
  */
 export interface HostedAutonomyHeadRunV1 {
   id: number;
@@ -106,6 +112,9 @@ export interface HostedAutonomyHeadRunV1 {
   conclusion: string | null;
   runAttempt: number;
   createdAt: number | null;
+  updatedAt?: number | null;
+  attemptStartedAt?: number | null;
+  workflowId?: number | null;
 }
 
 export interface HostedAutonomyGitHubV1 {
@@ -144,12 +153,23 @@ export interface HostedAutonomyGitHubV1 {
    */
   hasAllChecksGreen(head: string, base?: string): Promise<boolean | null>;
   /**
-   * Base-repair read: the names of the check runs on the exact commit that
-   * completed with `failure`, `timed_out` or `startup_failure` (empty when
-   * none did), or null when the complete listing cannot be read. Optional:
-   * a surface without it files no base-repair issue.
+   * Base-repair read: the names of the check runs on the exact commit whose
+   * latest run of that name completed with `failure`, `timed_out` or
+   * `startup_failure`, leaving out a GitHub Actions run whose job never
+   * started (no step, no runner: a billing or spending-limit stop; bounded
+   * job reads, an unreadable job keeps its failure). Empty when none did,
+   * null when the complete listing cannot be read. Optional: a surface
+   * without it files no base-repair issue.
    */
   failedChecks?(head: string): Promise<string[] | null>;
+  /**
+   * CI resume read: true when the latest attempt of completed workflow run
+   * `id` on `head` failed only through jobs that never started (at least one
+   * failed job, each with no step and no runner), false when a failed job
+   * ran, null when its job listing cannot be read completely and bound to
+   * that run and head. Optional: a surface without it resumes nothing.
+   */
+  runNeverStarted?(id: number, head: string): Promise<boolean | null>;
   /**
    * `baseBranch` is the branch the merge must be integrated into; a merged
    * pull whose integration cannot be verified without it reads as null.

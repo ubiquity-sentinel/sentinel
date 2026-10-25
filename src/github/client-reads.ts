@@ -36,6 +36,7 @@ import type {
 import { GitHubClientIssues } from "./client-issues.ts";
 import { parseWire, parseWith, repoPath } from "./client-response.ts";
 import { REVIEW_DECISION_QUERY } from "./client-issue-wire.ts";
+import { neverStartedRunIndexes } from "./never-started-job.ts";
 
 /**
  * The commit statuses an unfiltered head CI read reports (sentinel issue
@@ -86,6 +87,23 @@ function headStatuses(
 const COMMIT_PARENTS_MAX = 64;
 
 export abstract class GitHubClientReads extends GitHubClientIssues {
+  /** Never-started verdicts of completed Actions jobs (`never-started-job.ts`). */
+  private readonly jobVerdicts = new Map<string, boolean>();
+
+  /** One Actions job's parsed body, or null for any unreadable answer. */
+  private async readActionsJob(jobId: number): Promise<unknown> {
+    const response = await this.request(
+      "GET",
+      `/repos/${repoPath(this.repository)}/actions/jobs/${jobId}`,
+    );
+    if (!response.ok || response.value.status !== 200) return null;
+    try {
+      return JSON.parse(response.value.bodyText);
+    } catch {
+      return null;
+    }
+  }
+
   /** Host-authored base-review jobs; unrelated supervisor jobs are not task CI. */
   async readBaseReviewChecks(
     sha: GitSha,
@@ -215,7 +233,8 @@ export abstract class GitHubClientReads extends GitHubClientIssues {
         : undefined;
       return typeof raw === "string" && names.has(raw);
     };
-    const checks = [];
+    const checks: GitHubCheckV1[] = [];
+    const items: unknown[] = [];
     for (const item of collected.value) {
       if (!wanted(item, "name")) continue;
       const parsed = parseWith(item, (v) => parseCheckRunWire(v, "$"));
@@ -230,6 +249,18 @@ export abstract class GitHubClientReads extends GitHubClientIssues {
         );
       }
       checks.push(parsed.value);
+      items.push(item);
+    }
+    // A failed Actions run whose job never started is marked (bounded job
+    // reads; an unreadable job keeps the run as reported).
+    const neverStarted = await neverStartedRunIndexes(
+      items,
+      sha,
+      (jobId) => this.readActionsJob(jobId),
+      this.jobVerdicts,
+    );
+    for (const index of neverStarted) {
+      checks[index] = { ...checks[index], neverStarted: true };
     }
     const statusesCollected = await this.collectPages(
       `/repos/${repoPath(this.repository)}/commits/${sha}/statuses`,

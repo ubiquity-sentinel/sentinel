@@ -86,6 +86,14 @@ export interface GitHubCheckV1 {
   head: GitSha;
   startedAt: number | null;
   completedAt: number | null;
+  /**
+   * Present (always `true`) only on a GitHub Actions check run that completed
+   * `failure` while its job never started: the job reports no step and no
+   * runner (a billing or spending-limit stop). Such a run is no CI evidence
+   * either way (`failedChecks`, `decideCiGate`). Absent on every other check
+   * and on every record or fixture written before it existed.
+   */
+  neverStarted?: true;
 }
 
 export interface GitHubChecksV1 {

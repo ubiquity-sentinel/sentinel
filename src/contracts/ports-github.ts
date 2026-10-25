@@ -62,7 +62,10 @@ export interface GitHubPort {
    * runs over the label bound) never refuses the read. Without `names`, a
    * status context whose latest status is pending is advisory and left out
    * once at least one check run exists and every check run has completed
-   * (sentinel issue #192).
+   * (sentinel issue #192). A GitHub Actions run that completed `failure`
+   * while its job never started (no step, no runner) carries `neverStarted`
+   * (`src/github/never-started-job.ts`: bounded job reads, an unreadable job
+   * keeps the run as reported).
    */
   readChecks(
     head: GitSha,

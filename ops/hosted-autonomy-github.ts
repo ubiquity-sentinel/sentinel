@@ -3,9 +3,6 @@ import {
   reviewTaskStatementDigest,
 } from "../src/contracts/review-receipt.ts";
 import { isGreenConclusion } from "../src/repair/ci-rejection.ts";
-
-/** Conclusions that make a completed check run a failure on its commit. */
-const FAILED_CONCLUSIONS = new Set(["failure", "timed_out", "startup_failure"]);
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import {
   type CoverageCheckV1,
@@ -33,6 +30,7 @@ import {
   RUN_LISTING_PAGE_SIZE,
 } from "./hosted-autonomy-github-listing.ts";
 import { createHostedFollowUpIssues } from "./hosted-autonomy-github-issues.ts";
+import { createHostedActionsJobReads } from "./hosted-autonomy-github-jobs.ts";
 import { createMergeBaseTreeChanges } from "./hosted-autonomy-github-trees.ts";
 import {
   parseHostedAutonomyHeadPulls,
@@ -101,6 +99,7 @@ export function createHostedAutonomyGitHub(
   const scope = `${repository.owner}/${repository.name}`;
 
   const request = createHostedAutonomyRequest(token);
+  const jobReads = createHostedActionsJobReads(request, scope);
   const effect = createHostedAutonomyEffect(token);
   const rawRead = createHostedAutonomyRawRead(token);
   async function readPull(
@@ -283,11 +282,11 @@ export function createHostedAutonomyGitHub(
     async failedChecks(head: string) {
       const runs = await readCompleteCheckRuns(head);
       if (runs === null) return null;
-      return runs.filter((run) =>
-        run["status"] === "completed" &&
-        FAILED_CONCLUSIONS.has(String(run["conclusion"]))
-      ).map((run) => String(run["name"]));
+      // A job that never started (a billing stop) is no failing check.
+      return await jobReads.failedCheckNames(head, runs);
     },
+    runNeverStarted: (id: number, head: string) =>
+      jobReads.runNeverStarted(id, head),
     readPull,
     async listPullsByHeadRef(branch: string) {
       // One bounded page filtered by GitHub to this repository's exact head
@@ -375,6 +374,11 @@ export function createHostedAutonomyGitHub(
           attempt < 1 || typeof status !== "string" ||
           (conclusion !== null && typeof conclusion !== "string")
         ) return null;
+        // Only the CI resume pass reads these; each is present only when
+        // GitHub reported it strictly (absent is unknown).
+        const updatedAt = runCreatedAt(run["updated_at"]);
+        const attemptStartedAt = runCreatedAt(run["run_started_at"]);
+        const workflow = run["workflow_id"];
         parsed.push({
           id: run["id"] as number,
           headSha: head,
@@ -382,6 +386,12 @@ export function createHostedAutonomyGitHub(
           conclusion,
           runAttempt: attempt,
           createdAt: runCreatedAt(run["created_at"]),
+          ...(updatedAt === null ? {} : { updatedAt }),
+          ...(attemptStartedAt === null ? {} : { attemptStartedAt }),
+          ...(typeof workflow === "number" && Number.isSafeInteger(workflow) &&
+              workflow > 0
+            ? { workflowId: workflow }
+            : {}),
         });
       }
       return parsed;

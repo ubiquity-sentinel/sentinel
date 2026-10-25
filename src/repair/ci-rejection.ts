@@ -10,6 +10,10 @@
  * base that never ran the check, or ended it skipped/neutral/cancelled/stale,
  * proves nothing. Skipped/cancelled/neutral head conclusions are secondary:
  * they never open a charged round and never block a deferral on their own.
+ * A GitHub Actions run whose job never started (`neverStarted`, a billing or
+ * spending-limit stop) is no evidence on either side: it is pending on the
+ * head (`checkPending`, never in `failedChecks`) and attributes nothing on the
+ * base (neither red nor green there).
  *
  * Nothing here is persisted. The generation-76 rollback contract forbids any
  * new state shape, so every consumer re-derives the attribution from live
@@ -150,12 +154,25 @@ export function isGreenConclusion(conclusion: string | null): boolean {
   return conclusion !== null && GREEN_CONCLUSIONS.includes(conclusion);
 }
 
-/** Deduped checks that completed with a non-green conclusion. */
+/**
+ * A check that has not produced evidence yet: still queued or running, or a
+ * GitHub Actions run whose job never started (completed `failure` without a
+ * step or a runner, a billing or spending-limit stop). Nothing of the
+ * repository ran in either case, so it is awaited, never judged.
+ */
+export function checkPending(check: GitHubCheckV1): boolean {
+  return check.status !== "completed" || check.neverStarted === true;
+}
+
+/**
+ * Deduped checks that completed with a non-green conclusion. A run whose job
+ * never started is not one: it is pending (`checkPending`).
+ */
 export function failedChecks(
   checks: readonly GitHubCheckV1[],
 ): GitHubCheckV1[] {
   return latestChecks(checks).filter((check) =>
-    check.status === "completed" && !isGreenConclusion(check.conclusion)
+    !checkPending(check) && !isGreenConclusion(check.conclusion)
   );
 }
 
@@ -167,9 +184,13 @@ export interface CiAttributionV1 {
   baseRed: GitHubCheckV1[];
   /** Head failure/timed_out, still running on the base. */
   basePending: GitHubCheckV1[];
-  /** Head failure/timed_out with no usable base evidence. */
+  /**
+   * Head failure/timed_out with no usable base evidence (the base never ran
+   * the check, ended it skipped/neutral/cancelled/stale, or its job never
+   * started).
+   */
   unattributed: GitHubCheckV1[];
-  /** Head cancelled/action_required: never attributed. */
+  /** Head cancelled/action_required (or never started): never attributed. */
   secondary: GitHubCheckV1[];
 }
 
@@ -188,13 +209,17 @@ export function attributeFailedChecks(
     secondary: [],
   };
   for (const check of failed) {
-    if (!CANDIDATE_CONCLUSIONS.includes(check.conclusion ?? "")) {
+    if (
+      check.neverStarted === true ||
+      !CANDIDATE_CONCLUSIONS.includes(check.conclusion ?? "")
+    ) {
       attribution.secondary.push(check);
       continue;
     }
     const observed = base.get(check.name);
-    if (observed === undefined) attribution.unattributed.push(check);
-    else if (observed.status !== "completed") {
+    if (observed === undefined || observed.neverStarted === true) {
+      attribution.unattributed.push(check);
+    } else if (observed.status !== "completed") {
       attribution.basePending.push(check);
     } else if (observed.conclusion === "success") {
       attribution.candidate.push(check);
@@ -252,15 +277,18 @@ function labels(
 }
 
 /**
- * Bounded `name(conclusion)` labels of completed checks and `name(status)`
- * labels of running ones, over trusted names only; a head with no check runs
- * at all reads `no checks reported`.
+ * Bounded `name(conclusion)` labels of completed checks, `name(status)`
+ * labels of running ones and `name(not_started)` labels of runs whose job
+ * never started, over trusted names only; a head with no check runs at all
+ * reads `no checks reported`.
  */
 export function ciCheckLabels(checks: readonly GitHubCheckV1[]): string {
   if (checks.length === 0) return "no checks reported";
   const seen = new Set<string>();
   for (const check of checks) {
-    const state = check.status === "completed"
+    const state = check.neverStarted === true
+      ? "not_started"
+      : check.status === "completed"
       ? check.conclusion ?? "unknown"
       : check.status;
     seen.add(`${trustedCheckName(check.name)}(${state})`);

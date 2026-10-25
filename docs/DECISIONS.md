@@ -3065,6 +3065,59 @@ standing approval above. Applied as follows.
   generation 81's rollback target, parses the parked records in the tests. The
   two merges already booked stay booked; this changes no historical record.
 
+## 2026-10-24: a GitHub Actions job that never started is not CI evidence
+
+- Finding (live, 2026-10-24): Passport is private and its Actions payments
+  failed, so GitHub has started no Passport job since 06:40 UTC. Every check run
+  still appears and completes about a second later with conclusion `failure`,
+  runner id 0, an empty runner name, no step and the annotation "The job was not
+  started because recent account payments have failed or your spending limit
+  needs to be increased". Sentinel read these as real red checks: head and base
+  were both red, so every Passport record waited in the CI-first gate's
+  `base_red` backoff with no end. Once billing returns and only the base re-runs
+  green, the head's stale failure would be attributed to the candidate and
+  charge a CI fix round. The new base-repair pass would also have filed a P0
+  code-fix issue for a billing stop.
+- Decision: a GitHub Actions check run that completed `failure` while its job
+  (`GET /actions/jobs/{id}`; an Actions check run's id is its job's id) reports
+  no step and a runner id of 0 or null, on the exact job id and commit, never
+  started
+  ([src/github/never-started-job.ts](../src/github/never-started-job.ts)). The
+  runtime check read (`readChecks`) marks such a run with an optional
+  `neverStarted` flag. Only failed Actions runs are read, the latest run of each
+  name first and at most 8 per check read; a client keeps each completed job's
+  verdict, and an unreadable or mismatched job keeps the run exactly as before.
+- A never-started run is no evidence on either side: it is pending on the head
+  (`checkPending`, never in `failedChecks`) and attributes nothing on the base
+  (`unattributed`, never `base_red` and never `candidate`). The CI-first gate
+  therefore waits on it in the existing bounded, uncharged `ci_pending` path and
+  parks it after six hours under the pending prefix (`deno(not_started)`), which
+  the launcher's re-run and green rules already re-admit. A CI fix marker on
+  such a head is dropped uncharged at admission.
+- The launcher's base-repair read (`failedChecks`) applies the same job rule,
+  and judges only the latest run of each name, so a billing stop files no
+  base-repair issue.
+- A new maintenance pass resumes the CI by itself
+  ([ops/hosted-autonomy-ci-resume.ts](../ops/hosted-autonomy-ci-resume.ts)). For
+  each foreign target with a head waiting on CI (a live `ci_pending` or
+  `backoff` wait, or a pre-review CI park, outside merge queue custody), it
+  looks at the base tip and those heads. Of each workflow it takes the newest
+  run, and re-runs its failed jobs (the flake pass's existing
+  `rerun-failed-jobs` request) when every failed job of its latest attempt never
+  started. A run is asked at most once per 30 minutes: its `updated_at` must be
+  that old. Only a latest attempt that took at most 60 seconds costs a job
+  listing read. One pass reads at most 24 job listings and sends at most 8
+  re-runs, inside 60 seconds, and never past GitHub's 30-day re-run window. It
+  writes no state.
+- Unchanged: the merge gate's required-check verdict (`requiredChecksState`, a
+  protected path) still never treats a never-started run as green; the
+  launcher's green read (`hasAllChecksGreen`) is unchanged; every CI fix is
+  still charged only at its own admission after the failure is re-derived from
+  live checks. A run the resume pass re-runs is past attempt 1, which the
+  once-per-head flake re-run already reads as re-run, whoever re-ran it. Nothing
+  new is persisted, so the generation-80 and 81 rollback readers parse every
+  state this writes.
+
 ## 2026-10-24: a red target base gets its own repair (base-repair lane)
 
 - Finding (live state, 2026-10-24 23:00 UTC): all 39 Passport records at `work`

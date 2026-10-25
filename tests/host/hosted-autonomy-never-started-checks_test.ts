@@ -1,0 +1,229 @@
+/**
+ * A GitHub Actions job that never started is not CI evidence, in the
+ * launcher too (live Passport, 2026-10-24: a failed payment stopped every
+ * Actions job from 06:40 UTC; each check run completed `failure` within a
+ * second, with no step and runner id 0). The base-repair read
+ * (`failedChecks`) used to list such a run as a failing check, so a billing
+ * stop on a target base would have filed a P0 code-fix issue no code change
+ * can satisfy. It now reads the job of each failed Actions check run (bounded,
+ * the latest run of each name) and leaves out a job with no step and no
+ * runner; an unreadable job keeps the run as a failure, as before.
+ *
+ * The REAL surface runs over a stubbed `fetch`; the REAL base-repair pass
+ * then files nothing for a base whose only failure never started.
+ */
+import assert from "node:assert/strict";
+import { createHostedAutonomyGitHub } from "../../ops/hosted-autonomy-github.ts";
+import { runHostedBaseRepairPass } from "../../ops/hosted-autonomy-base-repair.ts";
+import type { HostedAutonomyGitHubV1 } from "../../ops/hosted-autonomy-types.ts";
+import {
+  GATEWAY,
+  liveRecord,
+  liveRig,
+  liveSnapshot,
+  liveSurface,
+  NOW,
+  TIP,
+} from "./hosted-autonomy-spent-fixtures.ts";
+
+const SCOPE = `/repos/${GATEWAY.owner}/${GATEWAY.name}`;
+const ACTIONS = { id: 15368, slug: "github-actions" };
+const JOB = 120993841213;
+
+function run(
+  id: number,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    id,
+    name: "deno",
+    head_sha: TIP,
+    status: "completed",
+    conclusion: "failure",
+    started_at: "2026-10-24T21:33:47Z",
+    completed_at: "2026-10-24T21:33:48Z",
+    app: ACTIONS,
+    ...overrides,
+  };
+}
+
+function job(
+  id: number,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    id,
+    run_id: 40134771282,
+    head_sha: TIP,
+    status: "completed",
+    conclusion: "failure",
+    steps: [],
+    runner_id: 0,
+    runner_name: "",
+    ...overrides,
+  };
+}
+
+/** A route answer: a JSON body, or a bare HTTP status. */
+type Answer = unknown;
+
+/**
+ * Runs `body` with `fetch` answering the check-run listing of TIP with
+ * `runs` and each job read from `jobs` (anything else is a 404).
+ */
+async function withFetch<T>(
+  runs: Record<string, unknown>[],
+  jobs: Record<number, Answer>,
+  body: () => Promise<T>,
+  requested: string[] = [],
+): Promise<T> {
+  const original = globalThis.fetch;
+  globalThis.fetch = ((input: string | URL | Request) => {
+    const url = String(input instanceof Request ? input.url : input);
+    requested.push(url);
+    let answer: Answer = 404;
+    if (url.includes(`${SCOPE}/commits/${TIP}/check-runs?`)) {
+      answer = { total_count: runs.length, check_runs: runs };
+    }
+    const match = /\/actions\/jobs\/(\d+)$/.exec(url);
+    if (match !== null) answer = jobs[Number(match[1])] ?? 404;
+    return Promise.resolve(
+      typeof answer === "number"
+        ? new Response("{}", { status: answer })
+        : new Response(JSON.stringify(answer), { status: 200 }),
+    );
+  }) as typeof fetch;
+  try {
+    return await body();
+  } finally {
+    globalThis.fetch = original;
+  }
+}
+
+const surface = () => createHostedAutonomyGitHub("token", GATEWAY);
+
+Deno.test("launcher failedChecks: a never-started Actions failure is no failing check", async () => {
+  const requested: string[] = [];
+  const failed = await withFetch(
+    [run(JOB)],
+    { [JOB]: job(JOB) },
+    () => surface().failedChecks!(TIP),
+    requested,
+  );
+  assert.deepEqual(failed, []);
+  assert.deepEqual(
+    requested.filter((url) => url.includes("/actions/jobs/")),
+    [`https://api.github.com${SCOPE}/actions/jobs/${JOB}`],
+  );
+});
+
+Deno.test("launcher failedChecks: a job that ran, an unreadable job and another app keep their failure", async () => {
+  const cases: [Record<string, unknown>[], Record<number, Answer>, string[]][] =
+    [
+      [[run(JOB)], {
+        [JOB]: job(JOB, { steps: [{ number: 1, name: "Set up job" }] }),
+      }, ["deno"]],
+      [[run(JOB)], { [JOB]: job(JOB, { runner_id: 3 }) }, ["deno"]],
+      [[run(JOB)], { [JOB]: 404 }, ["deno"]],
+      [[run(JOB)], { [JOB]: job(JOB, { head_sha: "f".repeat(40) }) }, [
+        "deno",
+      ]],
+      [[run(JOB, { name: "lint", app: { id: 9, slug: "ci-bot" } })], {}, [
+        "lint",
+      ]],
+      [[run(JOB, { conclusion: "timed_out" })], {}, ["deno"]],
+    ];
+  for (const [runs, jobs, expected] of cases) {
+    const requested: string[] = [];
+    const failed = await withFetch(
+      runs,
+      jobs,
+      () => surface().failedChecks!(TIP),
+      requested,
+    );
+    assert.deepEqual(failed, expected, JSON.stringify(runs));
+    if (Object.keys(jobs).length === 0) {
+      assert.ok(
+        !requested.some((url) => url.includes("/actions/jobs/")),
+        "no job read for a run that is not a failed Actions run",
+      );
+    }
+  }
+});
+
+Deno.test("launcher failedChecks: only the latest run of a name decides it", async () => {
+  // The push run failed for real an hour ago; its re-run never started.
+  const failed = await withFetch(
+    [
+      run(JOB - 1, {
+        started_at: "2026-10-24T20:00:00Z",
+        completed_at: "2026-10-24T20:05:00Z",
+      }),
+      run(JOB),
+    ],
+    { [JOB]: job(JOB) },
+    () => surface().failedChecks!(TIP),
+  );
+  assert.deepEqual(failed, []);
+});
+
+Deno.test("base repair pass: a base whose only failure never started files nothing", async () => {
+  // Held as the CI-first red-base hold leaves it (the pass reads only held
+  // targets).
+  const record = liveRecord(618, {
+    nextStep: "work",
+    blocker: null,
+    wait: { reason: "backoff", since: NOW - 60_000, until: NOW + 1_740_000 },
+  });
+  const filed: unknown[] = [];
+  const { surface: base } = liveSurface({ tip: TIP });
+  const real = surface();
+  const combined: HostedAutonomyGitHubV1 = {
+    ...base,
+    failedChecks: real.failedChecks,
+    selfObservation: {
+      listRuns: () => Promise.resolve([]),
+      listJobs: () => Promise.resolve([]),
+      readJobLog: () => Promise.resolve(null),
+      listOpenIssueBodies: () => Promise.resolve([]),
+      fileIssue: (input) => {
+        filed.push(input);
+        return Promise.resolve(4242);
+      },
+    },
+  };
+  const rig = await liveRig(
+    "never-started-base",
+    liveSnapshot([record], []),
+    combined,
+  );
+  try {
+    const actions = await withFetch(
+      [run(JOB)],
+      { [JOB]: job(JOB) },
+      () =>
+        runHostedBaseRepairPass({
+          state: rig.state,
+          githubFor: rig.githubFor,
+          clock: { now: () => NOW },
+        }),
+    );
+    assert.deepEqual(actions, []);
+    assert.deepEqual(filed, [], "a billing stop is no code-fix issue");
+    // The same base with a job that ran still files its issue.
+    const ran = await withFetch(
+      [run(JOB)],
+      { [JOB]: job(JOB, { steps: [{ number: 1, name: "test" }] }) },
+      () =>
+        runHostedBaseRepairPass({
+          state: rig.state,
+          githubFor: rig.githubFor,
+          clock: { now: () => NOW },
+        }),
+    );
+    assert.deepEqual(ran, ["base-repair:ubiquity/ai.ubq.fi:filed=#4242"]);
+    assert.equal(filed.length, 1);
+  } finally {
+    await Deno.remove(rig.tmp, { recursive: true });
+  }
+});

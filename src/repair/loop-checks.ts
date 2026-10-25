@@ -2,7 +2,7 @@
 import type { GitHubCheckV1 } from "../contracts/ports.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { missingExpectedChecks } from "./ci-coverage.ts";
-import { failedChecks, latestChecks } from "./ci-rejection.ts";
+import { checkPending, failedChecks, latestChecks } from "./ci-rejection.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
 import { routeFailedDeliveryChecks } from "./loop-ci-correction.ts";
 import { isSelfScopeZero } from "./loop-legacy-loss.ts";
@@ -24,7 +24,9 @@ const SELF_AGGREGATE_CHECK = "test-local";
 /**
  * Pure CI gate decision. Returns "proceed" only when every (deduped by name)
  * check is completed with `success` conclusion. Returns "wait" when any check
- * is still running or when no checks are recorded (no evidence CI ran).
+ * is still running, when a GitHub Actions run's job never started (a billing
+ * or spending-limit stop, `checkPending`), or when no checks are recorded (no
+ * evidence CI ran).
  * Returns a block detail when any check completed non-green (failure,
  * timed_out, cancelled, action_required, stale; skipped and neutral are green,
  * matching requiredChecksState semantics). Exported for focused testing.
@@ -52,7 +54,7 @@ export function decideCiGate(
     ).join(", ");
     return { blocked: `CI checks failed: ${names}` };
   }
-  const pending = deduped.some((check) => check.status !== "completed");
+  const pending = deduped.some(checkPending);
   if (pending) return "wait";
   return "proceed";
 }

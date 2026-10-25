@@ -15,7 +15,9 @@
  *   #154): GitHub creates a `needs:` job's check run only once its
  *   dependencies finish, so green existing runs alone are not green CI;
  * - running, absent or not yet created checks (or a base whose runs cannot
- *   be read to tell), a failed check still running on the base, or a failure
+ *   be read to tell), an Actions run whose job never started (a billing or
+ *   spending-limit stop, on the head or the base: no evidence either way),
+ *   a failed check still running on the base, or a failure
  *   no base evidence attributes (the base check was cancelled, absent or
  *   inconclusive, or the head's own check never concluded): a bounded
  *   `ci_pending` wait (`since` kept across polls) and, for a never-reviewed
@@ -46,6 +48,7 @@ import type { GitHubCheckV1 } from "../contracts/ports.ts";
 import type { WorkRecordV1, WorkWaitV1 } from "../contracts/work-record.ts";
 import {
   attributeFailedChecks,
+  checkPending,
   ciCorrectable,
   ciCorrectionFinding,
   ciCorrectionRouteOpen,
@@ -258,7 +261,7 @@ export async function gateReviewOnCi(
       deps,
       context,
       record,
-      latestChecks(checks).filter((check) => check.status !== "completed"),
+      latestChecks(checks).filter(checkPending),
       now,
     );
   }

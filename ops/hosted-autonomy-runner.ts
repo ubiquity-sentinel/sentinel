@@ -42,6 +42,7 @@ import {
 } from "./hosted-autonomy-continuation.ts";
 import { runHostedFollowUpPass } from "./hosted-autonomy-follow-up-pass.ts";
 import { runHostedBaseRepairPass } from "./hosted-autonomy-base-repair.ts";
+import { runHostedCiResumePass } from "./hosted-autonomy-ci-resume.ts";
 import { runHostedQueueCustody } from "./hosted-autonomy-queue-pass.ts";
 import { protectQueueState } from "./hosted-autonomy-queue-state.ts";
 import type {
@@ -212,19 +213,25 @@ export async function runHostedAutonomy(
     } finally {
       finishFollowup();
     }
-    const finishBaseRepair = beginMaintenanceProgress("base_repair");
-    try {
-      followUps = [
-        ...followUps,
-        ...await runHostedBaseRepairPass(
-          readOnly,
-          startedAt + HOSTED_AUTONOMY_PASS_DEADLINE_MS,
-        ),
-      ];
-    } catch {
-      followUps = [...followUps, "base-repair:unexpected_error"];
-    } finally {
-      finishBaseRepair();
+    // Base CI passes: a red base's repair issue, then re-runs of the CI that
+    // GitHub never started (billing), each failing alone.
+    for (
+      const [phase, pass, tag] of [
+        ["base_repair", runHostedBaseRepairPass, "base-repair"],
+        ["ci_resume", runHostedCiResumePass, "ci-resume"],
+      ] as const
+    ) {
+      const finish = beginMaintenanceProgress(phase);
+      try {
+        followUps = [
+          ...followUps,
+          ...await pass(readOnly, startedAt + HOSTED_AUTONOMY_PASS_DEADLINE_MS),
+        ];
+      } catch {
+        followUps = [...followUps, `${tag}:unexpected_error`];
+      } finally {
+        finish();
+      }
     }
     await deps.onQueueCustodyReady?.(followUpComplete && !degraded);
     return followUps.length === 0
