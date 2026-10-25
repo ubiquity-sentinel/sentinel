@@ -1,0 +1,32 @@
+# Backup CI leg self-test (docs/backup-ci-spec.md §10.2 step 7). The leg
+# substitutes __CHECKOUT__ (the unit's own actions/checkout reference) and
+# __RUNS_ON__ (the unit's runner label), plants .actrc, .env, .secrets, .vars
+# and .input with PROBE=planted at the root, and adds the untracked marker
+# local-only.txt. Every step must succeed for the leg to run the target job.
+name: backup-ci-selftest
+on: pull_request
+jobs:
+  selftest:
+    runs-on: __RUNS_ON__
+    timeout-minutes: 10
+    steps:
+      - id: checkout
+        uses: __CHECKOUT__
+        with:
+          persist-credentials: false
+      - id: local
+        run: test -f local-only.txt
+      - id: env
+        run: test -z "${PROBE:-}"
+      - id: secret
+        run: test -z "${{ secrets.PROBE }}"
+      - id: var
+        run: test -z "${{ vars.PROBE }}"
+      - id: exec
+        run: ./probe.sh
+      - id: head
+        run: test -n "$(git rev-parse HEAD)"
+      - id: repository
+        run: test "$GITHUB_REPOSITORY" = "ubiquity-sentinel/backup-ci-selftest"
+      - id: event
+        run: test "$GITHUB_EVENT_NAME" = "pull_request"

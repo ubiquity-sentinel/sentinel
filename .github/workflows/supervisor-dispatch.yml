@@ -98,3 +98,13 @@ jobs:
           --allow-net=api.github.com
           --allow-env=GH_TOKEN,SENTINEL_FOLLOW_SHA,SENTINEL_FOLLOW_READY
           src/host/supervisor-dispatch.ts
+      # Backup CI (docs/backup-ci-spec.md §8.4): one trusted pass per
+      # five-minute dispatch, only while the mode is shadow or on. Its failure
+      # never fails the supervisor dispatch.
+      - name: Dispatch the backup CI pass
+        if: vars.SENTINEL_BACKUP_CI == 'shadow' || vars.SENTINEL_BACKUP_CI == 'on'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run backup-ci.yml --ref sentinel-supervisor

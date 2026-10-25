@@ -1,0 +1,108 @@
+# Trusted backup CI pass (docs/backup-ci-spec.md §3, §8.1, §9).
+#
+# When a target's own GitHub Actions job never started (an account billing
+# stop), this job plans that job of the target's committed workflow as a
+# backup unit, ships the target tree to one UNTRUSTED leg run per unit
+# (backup-ci-leg.yml at refs/heads/sentinel-backup-legs) and ingests the
+# legs' results into the receipt store (refs/heads/sentinel-backup-ci).
+#
+# It runs only launcher code. Target bytes are read as data through git
+# plumbing on a bare repository and a bounded YAML parse; no target code ever
+# runs here. The ref and attempt guards make a dispatch at any other ref, or a
+# re-run, a no-op, and the mode switch (vars.SENTINEL_BACKUP_CI: off unless
+# exactly `shadow` or `on`) disables dispatch, planning and consumption.
+# No cache is restored anywhere in this workflow.
+name: sentinel-backup-ci
+
+on:
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: sentinel-backup-ci
+  cancel-in-progress: false
+
+jobs:
+  backup_ci:
+    if: >-
+      github.ref == 'refs/heads/sentinel-supervisor' && github.run_attempt == 1 &&
+      (vars.SENTINEL_BACKUP_CI == 'shadow' || vars.SENTINEL_BACKUP_CI == 'on')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: sentinel-supervisor
+    permissions:
+      contents: write # store branch and legs ref, native token (like sentinel-state writes)
+      actions: write # dispatch/cancel legs; read leg runs, jobs, logs, artifacts
+    steps:
+      - name: Check out the launcher
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.9.7
+      - name: Read the backup targets
+        id: targets
+        run: echo "repositories=$(jq -r '[.[].repository|select(startswith("ubiquity/"))|split("/")[1]]|join(",")' sentinel.backup-ci-targets.json)" >> "$GITHUB_OUTPUT"
+      - name: Mint the target read token
+        id: target-token
+        if: steps.targets.outputs.repositories != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: Iv23liHUJNXds9mU3j7Q
+          private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
+          owner: ubiquity
+          repositories: ${{ steps.targets.outputs.repositories }}
+          permission-contents: read
+          permission-pull-requests: read
+          permission-checks: read
+          permission-actions: read
+      - name: Ingest finished legs and plan new units
+        id: pass
+        if: steps.targets.outputs.repositories != ''
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SENTINEL_TARGET_READ_TOKEN: ${{ steps.target-token.outputs.token }}
+          SENTINEL_BACKUP_CI: ${{ vars.SENTINEL_BACKUP_CI }}
+        run: >-
+          deno run --no-lock --allow-read --allow-write --allow-run=git,tar
+          --allow-net="api.github.com,github.com,raw.githubusercontent.com,*.blob.core.windows.net"
+          --allow-env=HOME,PATH,RUNNER_TEMP,GITHUB_OUTPUT,GITHUB_STEP_SUMMARY,GITHUB_TOKEN,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_WORKFLOW_REF,GITHUB_JOB,SENTINEL_TARGET_READ_TOKEN,SENTINEL_BACKUP_CI
+          ops/backup-ci-main.ts pass
+      - name: Upload unit tree 0
+        id: tree0
+        if: steps.pass.outputs.slot0 == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: backup-tree-${{ steps.pass.outputs.unit0 }}
+          path: ${{ runner.temp }}/backup-ci/trees/0.tar
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+      - name: Upload unit tree 1
+        id: tree1
+        if: steps.pass.outputs.slot1 == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: backup-tree-${{ steps.pass.outputs.unit1 }}
+          path: ${{ runner.temp }}/backup-ci/trees/1.tar
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+      - name: Record results and dispatch legs
+        if: steps.pass.outputs.hasWork == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SENTINEL_BACKUP_CI: ${{ vars.SENTINEL_BACKUP_CI }}
+          SENTINEL_BACKUP_PASS_DIGEST: ${{ steps.pass.outputs.passDigest }}
+          SENTINEL_BACKUP_TREE0: ${{ steps.tree0.outputs.artifact-id }}
+          SENTINEL_BACKUP_TREE1: ${{ steps.tree1.outputs.artifact-id }}
+        run: >-
+          deno run --no-lock --allow-read --allow-write --allow-run=git
+          --allow-net=api.github.com,github.com
+          --allow-env=HOME,PATH,RUNNER_TEMP,GITHUB_STEP_SUMMARY,GITHUB_TOKEN,GITHUB_RUN_ID,GITHUB_REPOSITORY,GITHUB_SHA,SENTINEL_BACKUP_CI,SENTINEL_BACKUP_PASS_DIGEST,SENTINEL_BACKUP_TREE0,SENTINEL_BACKUP_TREE1
+          ops/backup-ci-main.ts commit

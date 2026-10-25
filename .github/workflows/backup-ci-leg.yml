@@ -1,0 +1,106 @@
+# UNTRUSTED backup CI leg (docs/backup-ci-spec.md §3, §8.2, §10, §13).
+#
+# One run per backup unit, dispatched by the trusted backup_ci job at the
+# dedicated ref refs/heads/sentinel-backup-legs. It runs the target's own
+# workflow job with act in host mode, inside a clean systemd service on this
+# VM, from the tree the trusted job materialized. The VM holds nothing of
+# value: no environment, no secrets, no target token, and a native token of
+# contents: read / actions: read on the public Sentinel repository. Its
+# result is re-verified by the trusted ingest; it never writes the store.
+# No cache is restored. A re-run (attempt > 1) or any other ref is a no-op.
+name: sentinel-backup-ci-leg
+run-name: sentinel-backup-ci-leg ${{ inputs.unit }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      unit:
+        type: string
+        required: true
+      unit_digest:
+        type: string
+        required: true
+      plan_run:
+        type: string
+        required: true
+      tree_artifact:
+        type: string
+        required: true
+      tree_sha256:
+        type: string
+        required: true
+      runs_on:
+        type: choice
+        required: true
+        options: [ubuntu-latest, ubuntu-24.04, ubuntu-22.04]
+      job_minutes:
+        type: number
+        required: true
+
+permissions: {}
+
+jobs:
+  leg:
+    if: >-
+      github.ref == 'refs/heads/sentinel-backup-legs' && github.run_attempt == 1 &&
+      contains(fromJSON('["ubuntu-latest","ubuntu-24.04","ubuntu-22.04"]'), inputs.runs_on)
+    runs-on: ${{ inputs.runs_on }}
+    # Unit cap + 10 (at most 70); hosted assertion 15.8 falls back to 70.
+    timeout-minutes: ${{ fromJSON(inputs.job_minutes) }}
+    permissions:
+      contents: read
+      actions: read
+    env:
+      BACKUP_UNIT: ${{ inputs.unit }}
+      BACKUP_UNIT_DIGEST: ${{ inputs.unit_digest }}
+      BACKUP_TREE_SHA256: ${{ inputs.tree_sha256 }}
+    steps:
+      - name: Check out the launcher
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          path: launcher
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.9.7
+      # act's JS-action runtime only.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      - name: Install the pinned act
+        working-directory: launcher
+        run: >-
+          deno run --no-lock --allow-read --allow-write="$RUNNER_TEMP"
+          --allow-net=github.com,objects.githubusercontent.com,release-assets.githubusercontent.com
+          --allow-run=tar,"$RUNNER_TEMP/backup-ci/bin/act" --allow-env=RUNNER_TEMP,HOME,PATH
+          ops/backup-ci-leg.ts install
+      - name: Download the unit tree
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ inputs.tree_artifact }}
+          run-id: ${{ inputs.plan_run }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/backup-ci/in
+      - name: Prepare and verify the unit
+        working-directory: launcher
+        run: deno run --no-lock --allow-read --allow-write="$RUNNER_TEMP" --allow-run=git,tar,sudo --allow-env ops/backup-ci-leg.ts prepare
+      - name: Run the target job
+        working-directory: launcher
+        run: deno run --no-lock --allow-read --allow-write="$RUNNER_TEMP" --allow-run=sudo,git --allow-env ops/backup-ci-leg.ts run
+      - name: Upload the backup result
+        id: result
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: backup-result-${{ inputs.unit }}
+          path: ${{ runner.temp }}/backup-ci/out/result.json
+          retention-days: 7
+          if-no-files-found: error
+      - name: Report the backup result
+        if: ${{ !cancelled() }}
+        working-directory: launcher
+        env:
+          BACKUP_RESULT_ARTIFACT: ${{ steps.result.outputs.artifact-id }}
+        run: deno run --no-lock --allow-read="$RUNNER_TEMP" --allow-env ops/backup-ci-leg.ts marker

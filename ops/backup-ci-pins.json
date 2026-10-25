@@ -1,0 +1,9 @@
+{
+  "act": {
+    "version": "UNFILLED-primary-records-the-act-release-tag",
+    "releasedAt": "UNFILLED-YYYY-MM-DD",
+    "asset": "act_Linux_x86_64.tar.gz",
+    "sha256": "UNFILLED-sha256-of-the-asset-from-the-release-checksums-txt"
+  },
+  "node": "24.19.0"
+}
