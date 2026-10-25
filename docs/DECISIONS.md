@@ -3165,7 +3165,11 @@ standing approval above. Applied as follows.
   [reviewed base, reviewed head]. Any other landing is the new `merged_off_tip`
   outcome (merge SHA and parents), and an unreadable commit is `ambiguous`. A
   merge this call did not make on the native queue target keeps the queue's own
-  proof, as before.
+  proof only while the queue can merge (queue mode ceiling not `off`, or queue
+  delivery proof activated; `queueMayHaveMerged`). Corrected 2026-10-25 by the
+  stage-1 review: with both off, Sentinel merges ai.ubq.fi through the REST
+  path, so an off-tip merge whose response was lost was otherwise booked on
+  reconciliation.
 - The loop parks a `merged_off_tip` outcome with its intent cleared, blocked
   `other` with the fixed `MERGED_OFF_TIP_PREFIX` message naming the merge SHA,
   its parents and the expected [base, head] pair; nothing is booked, no release

@@ -13,12 +13,32 @@ import type { GitSha } from "../contracts/brands.ts";
 import type { MergeOutcomeV1 } from "../contracts/ports.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { isNativeQueueTarget } from "../github/native-queue-guard.ts";
+import {
+  QUEUE_MODE_CEILING,
+  QUEUE_PROOF_ACTIVATED,
+} from "../github/queue-runtime-policy.ts";
 import type { RepairCycleDepsV1 } from "./loop-types.ts";
 
 /** Park message prefix of a merge that landed off its reviewed base. */
 export const MERGED_OFF_TIP_PREFIX = "the merge landed off its reviewed base: ";
 
 type OffTipOutcome = Extract<MergeOutcomeV1, { outcome: "merged_off_tip" }>;
+
+/**
+ * Whether a merge observed on `repository` may be the native queue's own
+ * merge, which has the queue's parents and keeps its own proof: only on a
+ * native queue target while the queue can merge or its delivery proof is
+ * activated. With both off (the shipped configuration) Sentinel merges there
+ * through the REST path like anywhere else, so the parents are checked
+ * (stage-1 review, 2026-10-25: a lost response after an off-tip merge was
+ * otherwise booked).
+ */
+export function queueMayHaveMerged(
+  repository: WorkRecordV1["repository"],
+): boolean {
+  return isNativeQueueTarget(repository) &&
+    (QUEUE_MODE_CEILING !== "off" || QUEUE_PROOF_ACTIVATED);
+}
 
 /** True only for a merge commit on exactly [base, head]. */
 export function mergedExactlyOnBase(
@@ -43,9 +63,9 @@ export function mergedOffTipMessage(
  * How a pull request the loop observed merged (merge-intent reconciliation)
  * landed: the bookable `merged` outcome on exactly [reviewed base, head], the
  * `merged_off_tip` outcome otherwise, or `unavailable` when the merge commit
- * cannot be read (a bounded wait; never booked unproven). A native queue
- * target (a queue merge has the queue's parents and keeps its own proof) and a
- * host without the read capability keep the observed merge as before.
+ * cannot be read (a bounded wait; never booked unproven). A merge the native
+ * queue may have made (`queueMayHaveMerged`) and a host without the read
+ * capability keep the observed merge as before.
  */
 export async function observedMergeLanding(
   deps: RepairCycleDepsV1,
@@ -55,7 +75,7 @@ export async function observedMergeLanding(
 ): Promise<MergeOutcomeV1 | "unavailable"> {
   const merged: MergeOutcomeV1 = { outcome: "merged", head, mergeSha };
   const read = deps.github.readCommitParents;
-  if (read === undefined || isNativeQueueTarget(record.repository)) {
+  if (read === undefined || queueMayHaveMerged(record.repository)) {
     return merged;
   }
   let parents;

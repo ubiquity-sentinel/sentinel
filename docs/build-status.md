@@ -23,9 +23,9 @@ ownership, authority or acceptance.
   line rule for spent heads, the CI resume attempt bound and canary with every
   never-started run re-run, the outage notice's `sentinel:skip` label, close
   ordering and the follow-ups prefix. The per-repository merge bound claim is
-  corrected in DECISIONS. Open, narrow (P3): the ai.ubq.fi parent-proof
-  exemption on an observed merge, and an unreadable job read counted as a real
-  failure.
+  corrected in DECISIONS. The ai.ubq.fi parent-proof exemption on an observed
+  merge now applies only while the queue can merge. Open, narrow (P3): an
+  unreadable job read is counted as a real failure.
 - Landed by hand: #207 (PR 211's diagnostic, `308b665dba`); #214 closed (one red
   CI run on a development push).
 - Remaining parks needing the owner or the other ai.ubq.fi/Passport agent:

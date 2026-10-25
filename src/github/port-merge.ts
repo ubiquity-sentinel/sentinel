@@ -7,8 +7,10 @@ import type {
 } from "../contracts/ports.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import type { SelfMergeExecutionV1 } from "../contracts/self-merge.ts";
-import { isNativeQueueTarget } from "./native-queue-guard.ts";
-import { mergedExactlyOnBase } from "../repair/merge-off-tip.ts";
+import {
+  mergedExactlyOnBase,
+  queueMayHaveMerged,
+} from "../repair/merge-off-tip.ts";
 import type { GitHubEffectiveProtectionsV1 } from "./port-contracts.ts";
 import type { TakeoverEffectAuthorization } from "../contracts/existing-pr-takeover.ts";
 import { executeSelfMerge } from "./port-self-merge.ts";
@@ -346,7 +348,7 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
    * commit, so that is the tree the review and CI saw), `merged_off_tip`
    * otherwise, and `ambiguous` when the commit cannot be read (the next run
    * reconciles; never booked unproven). `observed` marks a merge this call did
-   * not make: on a native queue target that is the queue's merge, which has
+   * not make: one the native queue may have made (`queueMayHaveMerged`) has
    * the queue's parents and keeps its own proof, so it is left as before.
    */
   private async landedMerge(
@@ -355,7 +357,7 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
     observed: boolean,
   ): Promise<PortResultV1<MergeOutcomeV1>> {
     const head = merge.expectedHead;
-    if (observed && isNativeQueueTarget(this.repository)) {
+    if (observed && queueMayHaveMerged(this.repository)) {
       return portOk({ outcome: "merged", head, mergeSha });
     }
     const parents = await this.client.readCommitParents(mergeSha);
