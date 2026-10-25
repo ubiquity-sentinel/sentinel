@@ -3302,6 +3302,14 @@ standing approval above. Applied as follows.
 
 ## 2026-10-24: a red target base gets its own repair (base-repair lane)
 
+- 2026-10-25 status: filing ships off (`BASE_REPAIR_FILING_ENABLED = false`).
+  The lane's adversarial review upheld a P1 (it filed for any failing tip check,
+  including dispatch-only deploy jobs no pull request runs) and P2s (one
+  unfiltered page of 100 open issues, no author check, a closed issue refiled
+  for the same tip, a label Passport does not have). While off, the pass reads
+  and files nothing; the runtime half changes nothing until a marked issue
+  exists.
+
 - Finding (live state, 2026-10-24 23:00 UTC): all 39 Passport records at `work`
   were held by the CI-first gate's `base_red` rule. Their failing check is red
   on Passport `main` too, so they back off uncharged until "a later base move".

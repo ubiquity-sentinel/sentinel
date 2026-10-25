@@ -202,11 +202,15 @@ Deno.test("base repair pass: a base whose only failure never started files nothi
       [run(JOB)],
       { [JOB]: job(JOB) },
       () =>
-        runHostedBaseRepairPass({
-          state: rig.state,
-          githubFor: rig.githubFor,
-          clock: { now: () => NOW },
-        }),
+        runHostedBaseRepairPass(
+          {
+            state: rig.state,
+            githubFor: rig.githubFor,
+            clock: { now: () => NOW },
+          },
+          undefined,
+          { filing: true },
+        ),
     );
     assert.deepEqual(actions, []);
     assert.deepEqual(filed, [], "a billing stop is no code-fix issue");
@@ -215,11 +219,15 @@ Deno.test("base repair pass: a base whose only failure never started files nothi
       [run(JOB)],
       { [JOB]: job(JOB, { steps: [{ number: 1, name: "test" }] }) },
       () =>
-        runHostedBaseRepairPass({
-          state: rig.state,
-          githubFor: rig.githubFor,
-          clock: { now: () => NOW },
-        }),
+        runHostedBaseRepairPass(
+          {
+            state: rig.state,
+            githubFor: rig.githubFor,
+            clock: { now: () => NOW },
+          },
+          undefined,
+          { filing: true },
+        ),
     );
     assert.deepEqual(ran, ["base-repair:ubiquity/ai.ubq.fi:filed=#4242"]);
     assert.equal(filed.length, 1);

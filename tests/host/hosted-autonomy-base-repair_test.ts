@@ -67,11 +67,15 @@ async function pass(options: {
   };
   const rig = await liveRig("base-repair", liveSnapshot([record], []), surface);
   try {
-    const actions = await runHostedBaseRepairPass({
-      state: rig.state,
-      githubFor: rig.githubFor,
-      clock: { now: () => NOW },
-    });
+    const actions = await runHostedBaseRepairPass(
+      {
+        state: rig.state,
+        githubFor: rig.githubFor,
+        clock: { now: () => NOW },
+      },
+      undefined,
+      { filing: true },
+    );
     return { actions, filed, writes: rig.writes };
   } finally {
     await Deno.remove(rig.tmp, { recursive: true });
@@ -121,6 +125,33 @@ Deno.test("base repair pass: a marker elsewhere than the first line is not this 
   });
   assert.deepEqual(actions, ["base-repair:ubiquity/ai.ubq.fi:filed=#4242"]);
   assert.equal(filed.length, 1);
+});
+
+Deno.test("base repair pass: filing ships off and then reads nothing", async () => {
+  const record = liveRecord(618, {
+    nextStep: "work",
+    blocker: null,
+    wait: HELD,
+  });
+  let reads = 0;
+  const rig = await liveRig("base-repair-off", liveSnapshot([record], []), {
+    ...liveSurface({ tip: TIP }).surface,
+    failedChecks: () => {
+      reads++;
+      return Promise.resolve(["validate"]);
+    },
+  });
+  try {
+    const actions = await runHostedBaseRepairPass({
+      state: rig.state,
+      githubFor: rig.githubFor,
+      clock: { now: () => NOW },
+    });
+    assert.deepEqual(actions, []);
+    assert.equal(reads, 0);
+  } finally {
+    await Deno.remove(rig.tmp, { recursive: true });
+  }
 });
 
 Deno.test("base repair pass: check names are printable and bounded in the issue", () => {

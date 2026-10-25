@@ -23,6 +23,14 @@ import { createHostedAutonomyScopes } from "./hosted-autonomy-scopes.ts";
 import { readRepairSafely } from "./hosted-autonomy-state.ts";
 import type { HostedAutonomyDepsV1 } from "./hosted-autonomy-types.ts";
 
+/**
+ * Filing switch. Off until the review findings of 2026-10-25 are fixed (file
+ * only for tip checks that hold records' heads, a tip-bound marker that
+ * never refiles a closed issue for the same tip, a complete App-authored
+ * listing, no label dependency); while off the pass reads and files nothing.
+ */
+export const BASE_REPAIR_FILING_ENABLED = false;
+
 /** Wall-clock budget of the pass inside the maintenance pass. */
 export const BASE_REPAIR_PASS_BUDGET_MS = 60_000;
 
@@ -96,8 +104,11 @@ function heldForeignRepositories(
 export async function runHostedBaseRepairPass(
   deps: HostedAutonomyDepsV1,
   passDeadline: number = Number.POSITIVE_INFINITY,
+  /** Tests exercise the pass with filing on. */
+  options: { filing?: boolean } = {},
 ): Promise<string[]> {
   const actions: string[] = [];
+  if (!(options.filing ?? BASE_REPAIR_FILING_ENABLED)) return actions;
   const started = deps.clock.now();
   if (!Number.isSafeInteger(started)) return actions;
   const deadline = Math.min(started + BASE_REPAIR_PASS_BUDGET_MS, passDeadline);
