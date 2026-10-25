@@ -229,11 +229,15 @@ Deno.test("base repair pass: a base whose only failure never started files nothi
     steps: [{ number: 1, name: "test" }],
   });
   const runPass = () =>
-    runHostedBaseRepairPass({
-      state: rig.state,
-      githubFor: rig.githubFor,
-      clock: { now: () => NOW },
-    });
+    runHostedBaseRepairPass(
+      {
+        state: rig.state,
+        githubFor: rig.githubFor,
+        clock: { now: () => NOW },
+      },
+      undefined,
+      { filing: true },
+    );
   try {
     const actions = await withFetch(
       { [TIP]: [run(JOB)], [HEAD]: headRuns },

@@ -126,7 +126,8 @@ async function pass(options: PassOptions) {
         clock: { now: () => NOW },
       },
       undefined,
-      options.filing === undefined ? {} : { filing: options.filing },
+      // The lane ships with filing off; the pass is exercised with it on.
+      { filing: options.filing ?? true },
     );
     return { actions, filed, reads, listings, writes: rig.writes };
   } finally {
