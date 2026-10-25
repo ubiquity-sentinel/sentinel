@@ -575,7 +575,7 @@ Deno.test("an unsupported job and a root act config file are final refusals", as
   }
 });
 
-Deno.test("the pass bounds commit reads and writes the selected unit's tree", async () => {
+Deno.test("the pass bounds commit reads but still reaches a later never-started head", async () => {
   const w = await world();
   try {
     const records = Array.from({ length: 20 }, (_, i) =>
@@ -602,16 +602,16 @@ Deno.test("the pass bounds commit reads and writes the selected unit's tree", as
       reviews: [],
       releaseRequests: [],
     } as unknown as RepairStateSnapshotV1;
-    const pass = await runBackupCiPass(passDeps(w, { snapshot }));
+    const pass = await runBackupCiPass(
+      passDeps(w, { snapshot, runId: 9009 }),
+    );
     const latest = w.calls.filter((c) => c.startsWith("checkRuns:latest"));
     assert.equal(latest.length, 12, latest.join(" "));
-    // Run 9001 rotates the head class to start at r1: the base tip and 11
-    // heads (r1, r10-r19) are read, r9 (the never-started head) is not.
-    assert.equal(
-      pass.units.length,
-      0,
-      "the never-started head is beyond the read bound",
-    );
+    // Run 9009 starts the work class at r9, which the old fixed head rotation
+    // could not reach: the fair scan still reads only 12 commits but reaches
+    // the never-started head instead of starving behind the other 19.
+    assert.equal(pass.units.length, 1);
+    assert.equal(pass.units[0].unit.commit, w.head);
     // With the head first in line, one unit is planned and tarred into slot 0.
     w.calls.length = 0;
     const one = await runBackupCiPass(passDeps(w, {

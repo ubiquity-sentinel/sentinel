@@ -689,7 +689,7 @@ The last three are exported unchanged into a new `ops/hosted-autonomy-green-read
 | 4 | Peers. **Base peer:** head has a final backup red for (P,N), base has native started N and no peer result. **Head peer:** head has native started red N, base has only a backup stand-in for (P,N). | Base: the base observation's event. Head: `pull_request` if a PR is open, else push. Purpose `peer`. |
 | 5–8 | Heads at delivery (5), review (6), work (7), blocked re-admission candidates (8); ties by `wait.since` ascending, then record id | `pull_request` when the PR is open (one unit covers its push observations too); otherwise push |
 
-**Per commit** (stop scanning a target after `MAX_COMMITS_READ_PER_TARGET`, with a cursor rotated by `GITHUB_RUN_ID`, or once 2×free units are found):
+**Per commit** (stop scanning a target after `MAX_COMMITS_READ_PER_TARGET`, or once 2×free units are found):
 1. List check runs (`filter=latest`). If nothing is never-started (WP0 classifier) and the purpose is not peer or calibration, skip.
 2. List check runs with `filter=all`, then `GET /actions/runs?head_sha=` (suite → path, event, head_branch). Group by (path, name), and apply the §5 observation rules and the annotation check.
 3. **Pull-request context:**
@@ -702,6 +702,15 @@ The last three are exported unchanged into a new `ops/hosted-autonomy-green-read
    - a `dispatched` entry whose leg is queued or in progress, or which is younger than 30 min;
    - a `no_evidence` entry with `nextAt > now`;
    - a final `unsupported` entry.
+
+**Scan fairness.** The read bound applies to a round-robin over the present
+priority classes, not to their plain concatenation. Each round takes one
+candidate from every present class in ascending priority, and each class's
+start cursor advances with `GITHUB_RUN_ID`. This keeps p0/p1 precedence while
+preventing a large class that needs no unit from consuming all 12 reads. Live
+Passport on 2026-10-25 had 17 green delivery heads ahead of 53 blocked
+pre-review parks; the old order examined only delivery heads and every backup
+pass planned zero units.
 
 **Free slots.**
 - `inflight` = leg runs queued plus in progress (`GET /actions/workflows/backup-ci-leg.yml/runs?status=queued` and `?status=in_progress`).

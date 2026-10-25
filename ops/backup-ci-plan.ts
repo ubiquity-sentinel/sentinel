@@ -10,6 +10,13 @@
  * pass); 2 the live base tip; 3 record bases a backed-up head needs for
  * attribution; 4 peers; 5-8 heads at delivery, review, work and blocked
  * re-admission candidates (ties by `wait.since`, then record id).
+ *
+ * The read bound is applied to a fair scan (`backupCiScanOrder`), not to the
+ * plain concatenation: a large class that needs no unit (17 green delivery
+ * heads on live Passport, 2026-10-25) consumed all 12 reads and starved the
+ * 53 blocked pre-review parks behind it. The scan takes one candidate from
+ * each present class per round, with that class's cursor advanced by the run
+ * id, so every class is examined without losing the per-round priority order.
  */
 import type { GitSha } from "../src/contracts/brands.ts";
 import {
@@ -131,8 +138,6 @@ export interface BackupCiCandidateInputV1 {
   files: ReadonlyMap<string, BackupCiCommitFileV1 | null>;
   mode: "shadow" | "on";
   runnerId: string;
-  /** `GITHUB_RUN_ID`: rotates the head classes so none starves. */
-  runId: number;
 }
 
 /** Every candidate commit of one target, in priority order. */
@@ -223,11 +228,7 @@ export function backupCiCandidates(
     (a.record.wait?.since ?? 0) - (b.record.wait?.since ?? 0) ||
     (a.record.id < b.record.id ? -1 : a.record.id > b.record.id ? 1 : 0)
   );
-  const rotated = heads.length === 0 ? heads : [
-    ...heads.slice(input.runId % heads.length),
-    ...heads.slice(0, input.runId % heads.length),
-  ].sort((a, b) => a.priority - b.priority);
-  for (const { record, priority } of rotated) {
+  for (const { record, priority } of heads) {
     out.push(base(priority, record.target.head!, "stand_in", {
       recordId: record.id,
       pullRequest: record.target.pr,
@@ -242,6 +243,53 @@ export function backupCiCandidates(
     seen.add(id);
     return true;
   });
+}
+
+/**
+ * The fair scan order over already-prioritized candidates: one candidate from
+ * each present priority class per round, starting each class at
+ * `runId % class.length`. The read bound is applied to this order, so a class
+ * whose candidates need no unit cannot consume every read and starve a lower
+ * class forever. Priorities still decide the order within each round.
+ */
+export function backupCiScanOrder<T extends { priority: BackupCiPriorityV1 }>(
+  candidates: readonly T[],
+  runId: number,
+  limit: number,
+): T[] {
+  if (limit <= 0 || candidates.length === 0) return [];
+  const groups = new Map<BackupCiPriorityV1, T[]>();
+  for (const candidate of candidates) {
+    const group = groups.get(candidate.priority) ?? [];
+    group.push(candidate);
+    groups.set(candidate.priority, group);
+  }
+  const priorities = [...groups.keys()].sort((a, b) => a - b);
+  const offset = Number.isSafeInteger(runId) && runId >= 0 ? runId : 0;
+  const starts = new Map<BackupCiPriorityV1, number>(
+    priorities.map((priority) => [
+      priority,
+      offset % groups.get(priority)!.length,
+    ]),
+  );
+  const taken = new Map<BackupCiPriorityV1, number>(
+    priorities.map((priority) => [priority, 0]),
+  );
+  const out: T[] = [];
+  while (out.length < limit) {
+    let progressed = false;
+    for (const priority of priorities) {
+      if (out.length >= limit) break;
+      const group = groups.get(priority)!;
+      const count = taken.get(priority)!;
+      if (count >= group.length) continue;
+      out.push(group[(starts.get(priority)! + count) % group.length]);
+      taken.set(priority, count + 1);
+      progressed = true;
+    }
+    if (!progressed) break;
+  }
+  return out;
 }
 
 /** One observation as the planner reads it (raw check run plus job verdict). */

@@ -1,7 +1,7 @@
 /**
  * The planner's pure rules (docs/backup-ci-spec.md §9.3): the record set
  * through `greenReadmissionCandidate`; priority classes p0-p8 with the
- * head-class rotation; the §5 observation groups; dedupe (final, in flight,
+ * fair class scan cursor; the §5 observation groups; dedupe (final, in flight,
  * backoff, unsupported) with shadow results absent in `on`; free slots
  * (`p - inflight`, p from supervisor matrix cells read through the Actions
  * API); and the round-robin across targets. All synthetic.
@@ -19,6 +19,7 @@ import {
   backupCiGroups,
   type BackupCiPlanObservationV1,
   backupCiRecords,
+  backupCiScanOrder,
   unconfirmedReds,
 } from "../../ops/backup-ci-plan.ts";
 import type { BackupCiApiV1 } from "../../ops/backup-ci-plan-reads.ts";
@@ -110,7 +111,7 @@ Deno.test("the record set: published heads in flight and green re-admission cand
   assert.deepEqual(ids, ["w", "r", "d", "parked"]);
 });
 
-Deno.test("candidates come in priority order p0 to p8, heads rotated by run id", () => {
+Deno.test("candidates come in priority order p0 to p8", () => {
   const tip = sha("c");
   const records = [
     rec("w", {
@@ -145,7 +146,6 @@ Deno.test("candidates come in priority order p0 to p8, heads rotated by run id",
     files,
     mode: "on",
     runnerId: RUNNER,
-    runId: 0,
   });
   const view = candidates.map((
     c,
@@ -189,7 +189,6 @@ Deno.test("candidates come in priority order p0 to p8, heads rotated by run id",
     files: new Map(),
     mode: "on",
     runnerId: RUNNER,
-    runId: 0,
   });
   assert.deepEqual(calibrated.map((c) => c.purpose), ["stand_in"]);
   // Commits the runner settled or has in flight give way to later ones; a
@@ -221,29 +220,36 @@ Deno.test("candidates come in priority order p0 to p8, heads rotated by run id",
     files: calibrationFiles,
     mode: "on",
     runnerId: RUNNER,
-    runId: 0,
   }).filter((c) => c.purpose === "calibration");
   assert.deepEqual(later.map((c) => c.commit.slice(0, 1)), ["d", "e"]);
-  // Rotation moves the start within the head classes only.
-  const heads = (runId: number) =>
-    backupCiCandidates({
-      records: [
-        rec("a", { nextStep: "work", target: { head: sha("1"), base: tip } }),
-        rec("b", { nextStep: "work", target: { head: sha("2"), base: tip } }),
-        rec("c", { nextStep: "work", target: { head: sha("3"), base: tip } }),
-      ],
-      baseTip: null,
-      defaultBranch: "main",
-      calibrationCommits: [],
-      calibrated: true,
-      files: new Map(),
-      mode: "on",
-      runnerId: RUNNER,
-      runId,
-    }).map((c) => c.commit.slice(0, 1));
-  assert.deepEqual(heads(0), ["1", "2", "3"]);
-  assert.deepEqual(heads(1), ["2", "3", "1"]);
-  assert.deepEqual(heads(5), ["3", "1", "2"]);
+});
+
+Deno.test("scan cursor interleaves classes and reaches a blocked head behind 17 delivery heads", () => {
+  const group = (priority: 5 | 8, prefix: string, count: number) =>
+    Array.from({ length: count }, (_, i) => ({
+      priority,
+      label: `${prefix}${i}`,
+    }));
+  const candidates = [
+    ...group(5, "delivery-", 17),
+    ...group(8, "blocked-", 53),
+  ];
+  const first = backupCiScanOrder(candidates, 0, 12);
+  assert.equal(first.length, 12);
+  assert.deepEqual(first.slice(0, 4).map((c) => c.label), [
+    "delivery-0",
+    "blocked-0",
+    "delivery-1",
+    "blocked-1",
+  ]);
+  assert.equal(first.filter((c) => c.priority === 8).length, 6);
+  const next = backupCiScanOrder(candidates, 1, 12);
+  assert.deepEqual(next.slice(0, 4).map((c) => c.label), [
+    "delivery-1",
+    "blocked-1",
+    "delivery-2",
+    "blocked-2",
+  ]);
 });
 
 Deno.test("only reds of the mode class and runner without an attempt 2 are confirmed", () => {

@@ -46,6 +46,7 @@ import {
   backupCiFairSelect,
   backupCiFreeSlots,
   backupCiRecords,
+  backupCiScanOrder,
 } from "./backup-ci-plan.ts";
 import type { BackupCiTargetReadsV1 } from "./backup-ci-plan-reads.ts";
 import {
@@ -293,15 +294,16 @@ async function planTarget(
     files,
     mode: deps.mode,
     runnerId,
-    runId: deps.runId,
   });
   const out: BackupCiPlannedUnitV1[] = [];
-  let read = 0;
-  for (const candidate of candidates) {
-    if (read >= BACKUP_CI_MAX_COMMITS_READ_PER_TARGET || out.length >= want) {
-      break;
-    }
-    read++;
+  for (
+    const candidate of backupCiScanOrder(
+      candidates,
+      deps.runId,
+      BACKUP_CI_MAX_COMMITS_READ_PER_TARGET,
+    )
+  ) {
+    if (out.length >= want) break;
     try {
       out.push(
         ...await planBackupCiCommit({

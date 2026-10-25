@@ -3139,6 +3139,18 @@ standing approval above. Applied as follows.
   the first live passes (2026-10-25 03:57 UTC) planned nothing and logged
   nothing. A null observation read and an unreadable repository are now logged
   (`observations_unavailable`, `repository_unavailable`).
+- Planner fairness (finding 2026-10-25): every backup pass on launcher
+  `e5a888244c` reported `backup-ci:plan:p=2:free=2` and planned zero units
+  although runner `916ad9eaff49fe9d` was calibrated at 7 agreements. The live
+  state held 17 Passport delivery heads and 53 blocked pre-review parks. The old
+  planner concatenated candidates by priority and stopped after 12 reads, so the
+  delivery class consumed the bound and no blocked head was examined; its
+  per-head rotation was erased by the following priority/id sort. The planner
+  now applies the bound to a round-robin over present priority classes
+  (`backupCiScanOrder`), one candidate per class per round, with each class's
+  cursor advanced by `GITHUB_RUN_ID`. p0/p1 still lead each round; no store,
+  state or gate shape changes. This is a fair-scan fix, not permission to merge
+  without the current-head CI, review or P0 gates.
 - The first live legs failed in their install, and a hosted audit (six lenses
   with three skeptics per finding, real act v0.2.89 and the real
   download-artifact action) found the next failures before any further live
