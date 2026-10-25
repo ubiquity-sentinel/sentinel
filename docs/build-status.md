@@ -7,7 +7,23 @@ grant. Muse ownership is retired. Current policy belongs in
 checkpoints below retain their original text and do not establish current
 ownership, authority or acceptance.
 
-## Latest checkpoint (2026-10-25 04:15 UTC)
+## Latest checkpoint (2026-10-25 05:45 UTC, handoff)
+
+- Handoff:
+  [handoff/2026-10-25-unblock/README.md](../handoff/2026-10-25-unblock/README.md)
+  (state, ordered next actions, owner actions, saved unreviewed patches). The
+  session stopped at the owner's request.
+- Installed: launcher, legs ref and runtime at `e5a888244c`; 39 consecutive
+  green supervisor runs. Backup CI is live: the legs reproduce Passport's CI (a
+  green commit green, a red commit red at the same step). Calibration of runner
+  `916ad9eaff49fe9d` is at 4 of 5 agreements, 1 of them a failure; stand-ins
+  start once it reaches 5.
+- Not met yet: Passport delivery (waits on calibration), ai.ubq.fi (its Gateway
+  CI is `disabled_manually`), and automatic launcher advance
+  (`SENTINEL_AUTO_FOLLOW` is `off`; an owner action). The delivery train and the
+  base-repair fixes are unreviewed patches in the handoff.
+
+## Prior checkpoint (2026-10-25 04:15 UTC)
 
 - Owner directive: "Get them unstuck". Open work: Sentinel 15 issues (10
   `sentinel:skip` or owner actions), ai.ubq.fi 9, Passport 71 (61 waiting on CI

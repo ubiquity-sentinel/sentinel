@@ -1,0 +1,1281 @@
+diff --git a/docs/DECISIONS.md b/docs/DECISIONS.md
+index b5bd53b5bc..8d85f52b94 100644
+--- a/docs/DECISIONS.md
++++ b/docs/DECISIONS.md
+@@ -2781,3 +2781,52 @@ standing approval above. Applied as follows.
+   protected-write authority (#188).
+ - Live, the read failed on every maintenance pass from 16:43 UTC, so no closure,
+   retry, delivery or follow-up pass ran for any target.
++
++## 2026-10-24: event-scoped CI failures are CI configuration, not the candidate's (#177)
++
++- CI attribution compares like for like by workflow event where both sides carry
++  one. A failed head check is judged by the base run of the same name and event
++  when the base has one. A head failure or timeout whose only green base
++  evidence ran under a different event (`push` on the base, `pull_request` or
++  `workflow_dispatch` on the head) is the `configuration` disposition
++  (`src/repair/ci-rejection.ts`). On 2026-10-20 every ai.ubq.fi repair PR failed
++  `rust-native`, `rust-wasm` and `validate` this way: the workflow scoped its
++  jobs by event and aborted on the head with "No Rust work selected" before any
++  test ran. Each CI fix then edited the protected workflow, was refused and
++  spent a charged retry.
++- A `configuration` disposition charges no CI fix or correction and starts no
++  model. The pre-review gate, the CI fix admission re-derivation and the
++  reviewed head's delivery gate park the record with an `other` blocker. Its
++  message is `CI_CONFIGURATION_PREFIX` followed by
++  `<check>(<conclusion> on <head event>; base success only on <base event>)`
++  entries. The detail names at most eight trusted check names and webhook event
++  names and says owner action is required on the target's CI workflow. No
++  launcher rule re-admits it. A head already reviewed clean on its base at the
++  pre-review gate is never parked there (the existing missing-acceptance rule).
++  It waits in the 30-minute backoff instead, as for a red base.
++- Precedence: a like-for-like candidate failure, then configuration, then a
++  running base check, then a red base, then unattributed. A red base run of a
++  different event is still a red base.
++- Events come from `readChecks(head, names, { events: true })`. The client joins
++  each check run's `check_suite.id` with the commit's `/actions/runs?head_sha=`
++  listing (`event`, `check_suite_id`). Only attribution reads ask for events:
++  the base read of the failed names, and a head re-read of the failed names only
++  when the attribution would charge a fix. The join is best effort. An
++  unreadable listing (no Actions read permission, rate limit, malformed page),
++  an ambiguous suite, a run of another commit or a non-webhook event name proves
++  nothing. Every event stays absent and attribution is exactly as before, so the
++  rule is inert for a credential without Actions read access. Events are in
++  memory only, never persisted.
++- Known consequence: a target whose base commits run CI only on `push` and whose
++  candidate heads run it only on `pull_request` has no like-for-like base
++  evidence. Every red candidate head there parks as configuration, and the
++  charged CI fix route does not fire. Sentinel's own `ci.yml` is that shape for
++  `sentinel/repair/*` branches (`push` only on `master`, `development` and
++  `codex/**`). Whether that is wanted, or the rule should also need a
++  configuration-abort log signature, is an owner decision.
++- Not implemented: the log-signature rule (no-work-selected, scope mismatch,
++  setup failure before the test command). The only job-log read is the matrix
++  cell's start-time CI evidence. That read is advisory and never changes
++  correction policy, and the attribution path has none. The deduplicated owner
++  follow-up issue is also not implemented. The only deduplicated target-issue
++  writer is the launcher's review follow-up pass, keyed to merged pull requests.
+diff --git a/src/contracts/ports-github-requests.ts b/src/contracts/ports-github-requests.ts
+index ee5a6e7e5e..f1ec5e4b30 100644
+--- a/src/contracts/ports-github-requests.ts
++++ b/src/contracts/ports-github-requests.ts
+@@ -86,6 +86,32 @@ export interface GitHubCheckV1 {
+   head: GitSha;
+   startedAt: number | null;
+   completedAt: number | null;
++  /**
++   * The event (`push`, `pull_request`, `workflow_dispatch`, ...) of the GitHub
++   * Actions workflow run that created this check run, present only when the
++   * read asked for it (`GitHubCheckReadOptionsV1.events`) and the run's event
++   * was proven. Absent means unknown: a commit status, another app's check
++   * run, a reader that reads no events, or an unreadable run listing. In
++   * memory only, never persisted (sentinel issue #177).
++   */
++  event?: string;
++}
++
++/**
++ * A carried check-run event: a GitHub webhook event name (`push`,
++ * `pull_request_target`, ...). Anything else is never carried or rendered.
++ */
++export const GITHUB_CHECK_EVENT_PATTERN = /^[a-z][a-z_]{0,39}$/;
++
++/** Optional enrichments of one `readChecks` read. */
++export interface GitHubCheckReadOptionsV1 {
++  /**
++   * Stamp each GitHub Actions check run with its workflow run's event,
++   * through one bounded workflow-run listing of the same commit. Best effort:
++   * an unreadable or inconsistent listing leaves every event absent and never
++   * fails the check read itself.
++   */
++  events?: boolean;
+ }
+ 
+ export interface GitHubChecksV1 {
+diff --git a/src/contracts/ports-github.ts b/src/contracts/ports-github.ts
+index e482b019da..14e2d78f90 100644
+--- a/src/contracts/ports-github.ts
++++ b/src/contracts/ports-github.ts
+@@ -13,6 +13,7 @@ import type {
+   CarriedPatchProofV1,
+   CarriedPatchRequestV1,
+   GitHubBranchProtectionsV1,
++  GitHubCheckReadOptionsV1,
+   GitHubCheckSuitesV1,
+   GitHubChecksV1,
+   GitHubIssueV1,
+@@ -59,11 +60,15 @@ export interface GitHubPort {
+    * returned; every other one is skipped unread. A caller attributing given
+    * head failures against a base passes their names, so an unrelated base run
+    * (sentinel `development` carries 78-character `matrix_cell (<cellId>)`
+-   * runs over the label bound) never refuses the read.
++   * runs over the label bound) never refuses the read. With
++   * `options.events`, each GitHub Actions check run also carries its workflow
++   * run's event where it is proven (`GitHubCheckV1.event`); an implementation
++   * that ignores the option reports none.
+    */
+   readChecks(
+     head: GitSha,
+     names?: ReadonlySet<string>,
++    options?: GitHubCheckReadOptionsV1,
+   ): Promise<PortResultV1<GitHubChecksV1>>;
+   /**
+    * The check runs of `head` reduced to name and check suite, for the
+diff --git a/src/contracts/ports.ts b/src/contracts/ports.ts
+index 17aef8f714..a0168a1875 100644
+--- a/src/contracts/ports.ts
++++ b/src/contracts/ports.ts
+@@ -129,6 +129,7 @@ export class SystemClock implements Clock {
+ export {
+   BASE_REFRESH_CONFLICT_DETAIL,
+   carriedPatchHolds,
++  GITHUB_CHECK_EVENT_PATTERN,
+ } from "./ports-github-requests.ts";
+ 
+ export type {
+@@ -137,6 +138,7 @@ export type {
+   CarriedPatchProofV1,
+   CarriedPatchRequestV1,
+   GitHubBranchProtectionsV1,
++  GitHubCheckReadOptionsV1,
+   GitHubCheckSuitesV1,
+   GitHubChecksV1,
+   GitHubCheckV1,
+diff --git a/src/github/client-check-events.ts b/src/github/client-check-events.ts
+new file mode 100644
+index 0000000000..2adfb3f581
+--- /dev/null
++++ b/src/github/client-check-events.ts
+@@ -0,0 +1,70 @@
++/**
++ * Workflow-run events of one commit's check runs (sentinel issue #177).
++ *
++ * GitHub's check-run listing names each run's check suite but not the event
++ * that started it. The Actions workflow-run listing of the same commit
++ * (`/actions/runs?head_sha=`) names each run's `event` and `check_suite_id`,
++ * so joining the two by suite tells a `push` run from a `pull_request` or
++ * `workflow_dispatch` run of the same job name. Everything here is pure and
++ * lenient: an entry that does not prove its suite, its event or the exact
++ * head is skipped, and a suite two runs claim with different events is
++ * dropped, so an event is stamped only where it is unambiguous and otherwise
++ * stays absent (unknown).
++ */
++import type { GitSha } from "../contracts/brands.ts";
++import {
++  GITHUB_CHECK_EVENT_PATTERN,
++  type GitHubCheckV1,
++} from "../contracts/ports.ts";
++
++function positiveId(value: unknown): number | null {
++  return typeof value === "number" && Number.isSafeInteger(value) && value > 0
++    ? value
++    : null;
++}
++
++function fields(item: unknown): Record<string, unknown> | null {
++  return typeof item === "object" && item !== null && !Array.isArray(item)
++    ? item as Record<string, unknown>
++    : null;
++}
++
++/** The check suite one raw check-run entry names (`check_suite.id`), or null. */
++export function checkRunSuite(item: unknown): number | null {
++  const suite = fields(fields(item)?.check_suite);
++  return suite === null ? null : positiveId(suite.id);
++}
++
++/** Suite id to event over raw workflow-run entries of exactly `head`. */
++export function workflowRunEvents(
++  items: readonly unknown[],
++  head: GitSha,
++): Map<number, string> {
++  const events = new Map<number, string>();
++  const ambiguous = new Set<number>();
++  for (const item of items) {
++    const run = fields(item);
++    if (run === null || run.head_sha !== head) continue;
++    const suite = positiveId(run.check_suite_id);
++    const event = run.event;
++    if (
++      suite === null || typeof event !== "string" ||
++      !GITHUB_CHECK_EVENT_PATTERN.test(event)
++    ) continue;
++    const known = events.get(suite);
++    if (known !== undefined && known !== event) ambiguous.add(suite);
++    events.set(suite, event);
++  }
++  for (const suite of ambiguous) events.delete(suite);
++  return events;
++}
++
++/** `check` carrying the event its suite proves, or `check` unchanged. */
++export function withRunEvent(
++  check: GitHubCheckV1,
++  suite: number | null,
++  events: ReadonlyMap<number, string>,
++): GitHubCheckV1 {
++  const event = suite === null ? undefined : events.get(suite);
++  return event === undefined ? check : { ...check, event };
++}
+diff --git a/src/github/client-http.ts b/src/github/client-http.ts
+index 1b14c246fb..8cf91e04ed 100644
+--- a/src/github/client-http.ts
++++ b/src/github/client-http.ts
+@@ -2,6 +2,7 @@
+ 
+ import type {
+   GitHubBranchProtectionsV1,
++  GitHubCheckReadOptionsV1,
+   GitHubCheckSuitesV1,
+   GitHubChecksV1,
+   GitHubIssueRelationsV1,
+@@ -514,6 +515,7 @@ export abstract class GitHubClientHttp {
+   abstract readChecks(
+     sha: GitSha,
+     names?: ReadonlySet<string>,
++    options?: GitHubCheckReadOptionsV1,
+   ): Promise<PortResultV1<GitHubChecksV1>>;
+ 
+   abstract readCheckSuites(
+diff --git a/src/github/client-reads.ts b/src/github/client-reads.ts
+index 2bce006cb2..5e198e4095 100644
+--- a/src/github/client-reads.ts
++++ b/src/github/client-reads.ts
+@@ -2,8 +2,10 @@
+ 
+ import type {
+   GitHubBranchProtectionsV1,
++  GitHubCheckReadOptionsV1,
+   GitHubCheckSuitesV1,
+   GitHubChecksV1,
++  GitHubCheckV1,
+   GitHubPullRequestV1,
+   GitHubRefV1,
+   GitHubReviewDecisionV1,
+@@ -35,6 +37,11 @@ import type {
+ import { GitHubClientIssues } from "./client-issues.ts";
+ import { parseWire, parseWith, repoPath } from "./client-response.ts";
+ import { REVIEW_DECISION_QUERY } from "./client-issue-wire.ts";
++import {
++  checkRunSuite,
++  withRunEvent,
++  workflowRunEvents,
++} from "./client-check-events.ts";
+ 
+ export abstract class GitHubClientReads extends GitHubClientIssues {
+   /** Host-authored base-review jobs; unrelated supervisor jobs are not task CI. */
+@@ -150,9 +157,33 @@ export abstract class GitHubClientReads extends GitHubClientIssues {
+     );
+   }
+ 
++  /**
++   * Suite id to event of the Actions workflow runs of exactly `sha`
++   * (`client-check-events.ts`). Best effort: a listing that cannot be read
++   * (no Actions read permission, rate limit, malformed page) proves no event,
++   * so every event stays absent and the check read itself is unchanged.
++   */
++  private async readRunEvents(sha: GitSha): Promise<Map<number, string>> {
++    const collected = await this.collectPages(
++      `/repos/${repoPath(this.repository)}/actions/runs`,
++      { head_sha: sha, per_page: String(this.perPage) },
++      (body) => {
++        const obj = expectRecord(body, "$");
++        return expectArray(
++          obj.workflow_runs,
++          "$.workflow_runs",
++          this.maxItems,
++          (v) => v,
++        ) as unknown[];
++      },
++    );
++    return collected.ok ? workflowRunEvents(collected.value, sha) : new Map();
++  }
++
+   async readChecks(
+     sha: GitSha,
+     names?: ReadonlySet<string>,
++    options?: GitHubCheckReadOptionsV1,
+   ): Promise<PortResultV1<GitHubChecksV1>> {
+     const collected = await this.collectCheckRuns(sha);
+     if (!collected.ok) return collected;
+@@ -166,7 +197,8 @@ export abstract class GitHubClientReads extends GitHubClientIssues {
+         : undefined;
+       return typeof raw === "string" && names.has(raw);
+     };
+-    const checks = [];
++    const checks: GitHubCheckV1[] = [];
++    const suites: (number | null)[] = [];
+     for (const item of collected.value) {
+       if (!wanted(item, "name")) continue;
+       const parsed = parseWith(item, (v) => parseCheckRunWire(v, "$"));
+@@ -181,6 +213,13 @@ export abstract class GitHubClientReads extends GitHubClientIssues {
+         );
+       }
+       checks.push(parsed.value);
++      suites.push(checkRunSuite(item));
++    }
++    if (options?.events === true && checks.length > 0) {
++      const events = await this.readRunEvents(sha);
++      checks.forEach((check, index) => {
++        checks[index] = withRunEvent(check, suites[index], events);
++      });
+     }
+     const statusesCollected = await this.collectPages(
+       `/repos/${repoPath(this.repository)}/commits/${sha}/statuses`,
+diff --git a/src/github/port-base.ts b/src/github/port-base.ts
+index 4d9215c1e2..51a6448463 100644
+--- a/src/github/port-base.ts
++++ b/src/github/port-base.ts
+@@ -17,6 +17,7 @@ import type {
+   CandidatePreservationRequestV1,
+   Clock,
+   GitHubBranchProtectionsV1,
++  GitHubCheckReadOptionsV1,
+   GitHubCheckSuitesV1,
+   GitHubChecksV1,
+   GitHubCooldownGateV1,
+@@ -190,8 +191,9 @@ export abstract class GitHubPortBase {
+   readChecks(
+     head: GitSha,
+     names?: ReadonlySet<string>,
++    options?: GitHubCheckReadOptionsV1,
+   ): Promise<PortResultV1<GitHubChecksV1>> {
+-    return this.client.readChecks(head, names);
++    return this.client.readChecks(head, names, options);
+   }
+ 
+   readCheckSuites(head: GitSha): Promise<PortResultV1<GitHubCheckSuitesV1>> {
+diff --git a/src/repair/ci-rejection.ts b/src/repair/ci-rejection.ts
+index c1e88dc19b..e9c066692a 100644
+--- a/src/repair/ci-rejection.ts
++++ b/src/repair/ci-rejection.ts
+@@ -11,13 +11,25 @@
+  * proves nothing. Skipped/cancelled/neutral head conclusions are secondary:
+  * they never open a charged round and never block a deferral on their own.
+  *
++ * The comparison is like-for-like by workflow event where both sides carry
++ * one (`GitHubCheckV1.event`, sentinel issue #177): a head failure is judged
++ * by the base run of the same name AND event when the base has one, and a
++ * head failure whose only green base evidence ran under a different event
++ * (`push` on the base, `pull_request` on the head) is CI configuration, not
++ * the candidate's: a workflow that scopes its jobs by event can abort on the
++ * head before any repository command runs. A check without an event on
++ * either side is attributed exactly as before.
++ *
+  * Nothing here is persisted. The generation-76 rollback contract forbids any
+  * new state shape, so every consumer re-derives the attribution from live
+  * check runs and carries it only in memory (and in the trusted planner's own
+  * digest-bound correction request).
+  */
+ import type { GitSha } from "../contracts/brands.ts";
+-import type { GitHubCheckV1 } from "../contracts/ports.ts";
++import {
++  GITHUB_CHECK_EVENT_PATTERN,
++  type GitHubCheckV1,
++} from "../contracts/ports.ts";
+ import type { BudgetReservationV1 } from "../contracts/budget-reservation.ts";
+ import type { WorkRecordV1 } from "../contracts/work-record.ts";
+ import { type LegacyCutoff, MAX_REVIEW_ROUNDS } from "./review-round-cap.ts";
+@@ -113,16 +125,29 @@ export function trustedCheckName(name: string): string {
+ export function latestChecks(
+   checks: readonly GitHubCheckV1[],
+ ): GitHubCheckV1[] {
++  return [...latestBy(checks, (check) => check.name).values()];
++}
++
++/** Latest observation per key, by the same recency as `latestChecks`. */
++function latestBy(
++  checks: readonly GitHubCheckV1[],
++  key: (check: GitHubCheckV1) => string,
++): Map<string, GitHubCheckV1> {
+   const latest = new Map<string, GitHubCheckV1>();
+   const time = (check: GitHubCheckV1) =>
+     check.startedAt ?? check.completedAt ?? -1;
+   for (const check of checks) {
+-    const prev = latest.get(check.name);
++    const prev = latest.get(key(check));
+     if (prev === undefined || time(check) > time(prev)) {
+-      latest.set(check.name, check);
++      latest.set(key(check), check);
+     }
+   }
+-  return [...latest.values()];
++  return latest;
++}
++
++/** Identity of one check name under one workflow event. */
++function eventKey(check: GitHubCheckV1): string {
++  return `${check.event ?? ""}\u0000${check.name}`;
+ }
+ 
+ /**
+@@ -151,10 +176,23 @@ export function failedChecks(
+   );
+ }
+ 
++/** A head failure whose only green base evidence ran under another event. */
++export interface CiEventMismatchV1 {
++  /** The failure/timed_out head check, with its event. */
++  head: GitHubCheckV1;
++  /** The green same-name base check, with its different event. */
++  base: GitHubCheckV1;
++}
++
+ /** Failed head checks partitioned by the base observation of the same name. */
+ export interface CiAttributionV1 {
+   /** Head failure/timed_out, passed on the base: broken by the candidate. */
+   candidate: GitHubCheckV1[];
++  /**
++   * Head failure/timed_out whose same-name base check passed only under a
++   * different workflow event: not like-for-like, CI configuration.
++   */
++  configuration: CiEventMismatchV1[];
+   /** Head failure/timed_out, failure/timed_out/action_required on the base. */
+   baseRed: GitHubCheckV1[];
+   /** Head failure/timed_out, still running on the base. */
+@@ -169,11 +207,14 @@ export function attributeFailedChecks(
+   failed: readonly GitHubCheckV1[],
+   baseChecks: readonly GitHubCheckV1[],
+ ): CiAttributionV1 {
+-  const base = new Map(
+-    latestChecks(baseChecks).map((check) => [check.name, check]),
++  const base = latestBy(baseChecks, (check) => check.name);
++  const sameEvent = latestBy(
++    baseChecks.filter((check) => check.event !== undefined),
++    eventKey,
+   );
+   const attribution: CiAttributionV1 = {
+     candidate: [],
++    configuration: [],
+     baseRed: [],
+     basePending: [],
+     unattributed: [],
+@@ -184,12 +225,22 @@ export function attributeFailedChecks(
+       attribution.secondary.push(check);
+       continue;
+     }
+-    const observed = base.get(check.name);
+-    if (observed === undefined) attribution.unattributed.push(check);
+-    else if (observed.status !== "completed") {
++    // The base run of the same event decides when there is one; otherwise
++    // the latest base run of the name, as before.
++    const observed = (check.event === undefined
++      ? undefined
++      : sameEvent.get(eventKey(check))) ?? base.get(check.name);
++    if (observed === undefined) {
++      attribution.unattributed.push(check);
++    } else if (observed.status !== "completed") {
+       attribution.basePending.push(check);
+     } else if (observed.conclusion === "success") {
+-      attribution.candidate.push(check);
++      if (
++        check.event !== undefined && observed.event !== undefined &&
++        observed.event !== check.event
++      ) {
++        attribution.configuration.push({ head: check, base: observed });
++      } else attribution.candidate.push(check);
+     } else if (RED_BASE_CONCLUSIONS.includes(observed.conclusion ?? "")) {
+       attribution.baseRed.push(check);
+     } else attribution.unattributed.push(check);
+@@ -200,15 +251,18 @@ export function attributeFailedChecks(
+ /** What the failed head checks prove, in precedence order. */
+ export type CiDispositionV1 =
+   | { kind: "candidate"; checks: GitHubCheckV1[] }
++  | { kind: "configuration"; mismatches: CiEventMismatchV1[] }
+   | { kind: "base_pending" }
+   | { kind: "base_red" }
+   | { kind: "unattributed"; checks: GitHubCheckV1[] };
+ 
+ /**
+  * A candidate-caused failure decides first (the correction re-runs every
+- * check); a running base check is awaited; a red base defers only when every
+- * real head failure is red there too; anything else proves nothing. Secondary
+- * conclusions alone are unattributed.
++ * check); then an event-scoped failure, which no candidate change can fix and
++ * which needs the owner's workflow change (sentinel issue #177); a running
++ * base check is awaited; a red base defers only when every real head failure
++ * is red there too; anything else proves nothing. Secondary conclusions alone
++ * are unattributed.
+  */
+ export function decideCiDisposition(
+   attribution: CiAttributionV1,
+@@ -216,6 +270,9 @@ export function decideCiDisposition(
+   if (attribution.candidate.length > 0) {
+     return { kind: "candidate", checks: attribution.candidate };
+   }
++  if (attribution.configuration.length > 0) {
++    return { kind: "configuration", mismatches: attribution.configuration };
++  }
+   if (attribution.basePending.length > 0) return { kind: "base_pending" };
+   if (attribution.baseRed.length > 0 && attribution.unattributed.length === 0) {
+     return { kind: "base_red" };
+@@ -280,6 +337,43 @@ export function absentCheckLabels(names: readonly string[] | null): string {
+   return [...seen].join(", ");
+ }
+ 
++/**
++ * Opening of the park of a head whose failures are CI configuration, not the
++ * candidate's (sentinel issue #177). It matches no launcher re-admission
++ * prefix: the record stays parked, uncharged, for the owner, since the fix
++ * belongs in the target's workflow (a protected path no model worker may
++ * publish).
++ */
++export const CI_CONFIGURATION_PREFIX =
++  "CI configuration defect, not the candidate's: ";
++
++function trustedEvent(event: string | undefined): string {
++  return event !== undefined && GITHUB_CHECK_EVENT_PATTERN.test(event)
++    ? event
++    : "an unsupported event";
++}
++
++/**
++ * Park detail naming each event-scoped failure (bounded, trusted names and
++ * events only) and the cause.
++ */
++export function ciConfigurationDetail(
++  mismatches: readonly CiEventMismatchV1[],
++): string {
++  const seen = new Set<string>();
++  for (const { head, base } of mismatches) {
++    seen.add(
++      `${trustedCheckName(head.name)}(${head.conclusion ?? "unknown"} on ${
++        trustedEvent(head.event)
++      }; base success only on ${trustedEvent(base.event)})`,
++    );
++    if (seen.size >= MAX_CI_CORRECTION_CHECKS) break;
++  }
++  return `${CI_CONFIGURATION_PREFIX}${[...seen].join(", ")}. The head and ` +
++    "base runs came from different workflow events, so no CI fix is " +
++    "charged; owner action required on the target's CI workflow.";
++}
++
+ /** Terminal blocker detail of a failure no base observation attributes. */
+ export function unattributedDetail(checks: readonly GitHubCheckV1[]): string {
+   return `${CI_UNATTRIBUTED_DETAIL}: ${
+diff --git a/src/repair/loop-ci-correction.ts b/src/repair/loop-ci-correction.ts
+index f5aec2ddc2..352598a1de 100644
+--- a/src/repair/loop-ci-correction.ts
++++ b/src/repair/loop-ci-correction.ts
+@@ -12,7 +12,9 @@
+  * candidate, no exact publication) keeps the exact generation-76 terminal block
+  * whatever the base shows, so a red development branch can never park it at
+  * delivery and turn every base move into another charged review round.
+- * Unproven attribution keeps a terminal block too.
++ * Unproven attribution keeps a terminal block too, and so does a failure
++ * scoped to a workflow event its base never passed under (CI configuration,
++ * sentinel issue #177), which no correction can fix.
+  *
+  * Rollback contract: nothing here writes a field, key or enum value the
+  * generation-76 parsers do not already read. The CI evidence lives only in
+@@ -23,6 +25,7 @@ import type { GitHubCheckV1 } from "../contracts/ports.ts";
+ import type { WorkRecordV1 } from "../contracts/work-record.ts";
+ import {
+   attributeFailedChecks,
++  ciConfigurationDetail,
+   ciCorrectable,
+   ciCorrectionFinding,
+   ciCorrectionRouteOpen,
+@@ -61,23 +64,51 @@ const UNAVAILABLE: StepResultV1 = {
+   detail: "CI check observation unavailable",
+ };
+ 
++/** Attribution reads carry each run's workflow event (sentinel issue #177). */
++const WITH_EVENTS = { events: true } as const;
++
+ /**
+  * Attribute the failed head checks through one base observation. The base read
+  * is an ordinary GitHub read under the caller's cooldown gate; a failed read
+- * attributes nothing (null).
++ * attributes nothing (null). Only the failed names are read: an unrelated base
++ * run over the strict bounds (the self `development` tip's
++ * `matrix_cell (<cellId>)` runs) can never defer a red head forever.
++ *
++ * A failure attributed to the candidate is proven like-for-like before it can
++ * charge anything (sentinel issue #177): unless the failed checks already
++ * carry their events, the failed names are read again on the head with their
++ * workflow events and attributed again, so a head failure whose only green
++ * base evidence ran under a different event becomes CI configuration. A head
++ * whose failure is gone by that read decides nothing now (null). A port that
++ * reports no events keeps the attribution exactly as before.
+  */
+-async function attributeAgainstBase(
++export async function attributeAgainstBase(
+   deps: RepairCycleDepsV1,
+   record: WorkRecordV1,
+   failed: readonly GitHubCheckV1[],
+ ): Promise<CiDispositionV1 | null> {
+-  // Only the failed names are read on the base (see `gateReviewOnCi`).
++  const names = new Set(failed.map((check) => check.name));
+   const base = await deps.github.readChecks(
+     record.target.base,
+-    new Set(failed.map((check) => check.name)),
++    names,
++    WITH_EVENTS,
+   );
+   if (!base.ok) return null;
+-  return decideCiDisposition(attributeFailedChecks(failed, base.value.checks));
++  const baseChecks = base.value.checks;
++  const disposition = decideCiDisposition(
++    attributeFailedChecks(failed, baseChecks),
++  );
++  const head = record.target.head;
++  if (
++    disposition.kind !== "candidate" || head === null ||
++    !baseChecks.some((check) => check.event !== undefined) ||
++    disposition.checks.every((check) => check.event !== undefined)
++  ) return disposition;
++  const observed = await deps.github.readChecks(head, names, WITH_EVENTS);
++  if (!observed.ok) return null;
++  const refailed = failedChecks(observed.value.checks);
++  if (refailed.length === 0) return null;
++  return decideCiDisposition(attributeFailedChecks(refailed, baseChecks));
+ }
+ 
+ /**
+@@ -184,6 +215,17 @@ export async function routeFailedDeliveryChecks(
+           until: deps.clock.now() + CHECK_POLL_MS,
+         }, now),
+       );
++    case "configuration":
++      // The head failed only under a workflow event its base never passed
++      // under (sentinel issue #177): no correction can fix the target's
++      // workflow, so nothing is charged and the record parks for the owner.
++      return persistBlocked(
++        deps,
++        context,
++        record,
++        ciConfigurationDetail(disposition.mismatches),
++        now,
++      );
+     case "base_red":
+       // The same check is red on the reviewed base: the candidate cannot fix
+       // it, so no correction round is spent and nothing is blocked. A moved
+diff --git a/src/repair/loop-ci-first.ts b/src/repair/loop-ci-first.ts
+index 30d7ad1051..2fb931e8d6 100644
+--- a/src/repair/loop-ci-first.ts
++++ b/src/repair/loop-ci-first.ts
+@@ -27,7 +27,10 @@
+  *   existing CI correction; a never-reviewed head gets the CI fix marker where
+  *   the pre-review route is open (`preReviewCiFixRouteOpen`), and otherwise
+  *   parks awaiting a CI fix;
+- * - a red base: a 30-minute `backoff`, nothing charged.
++ * - a red base: a 30-minute `backoff`, nothing charged;
++ * - a failure whose only green base evidence ran under a different workflow
++ *   event (CI configuration, sentinel issue #177): a precise park for the
++ *   owner (`CI_CONFIGURATION_PREFIX`), nothing charged and no fix started.
+  *
+  * A head already reviewed clean on this base (the re-request after a missing
+  * task acceptance, the only reviewed head that asks for another review) waits
+@@ -44,12 +47,12 @@
+ import type { GitHubCheckV1 } from "../contracts/ports.ts";
+ import type { WorkRecordV1, WorkWaitV1 } from "../contracts/work-record.ts";
+ import {
+-  attributeFailedChecks,
++  ciConfigurationDetail,
+   ciCorrectable,
+   ciCorrectionFinding,
+   ciCorrectionRouteOpen,
++  type CiEventMismatchV1,
+   ciFixExhaustedDetail,
+-  decideCiDisposition,
+   failedChecks,
+   latestChecks,
+   preReviewAbsentDetail,
+@@ -66,6 +69,7 @@ import {
+ import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
+ import { absentExpectedChecks, decideCiGate } from "./loop-checks.ts";
+ import {
++  attributeAgainstBase,
+   observeHeadFailure,
+   RED_BASE_RECHECK_MS,
+   waitSince,
+@@ -156,6 +160,38 @@ function awaitChecks(
+   );
+ }
+ 
++/**
++ * A failure scoped to a workflow event its base never passed under (sentinel
++ * issue #177): no CI fix can change the target's workflow, so nothing is
++ * charged and the record parks with the checks and the cause, which no
++ * launcher rule re-admits. A head reviewed clean on this base is never parked
++ * (see `holdForCi`) and re-observes after the red-base backoff instead.
++ */
++function parkCiConfiguration(
++  deps: RepairCycleDepsV1,
++  context: LoopContextV1,
++  record: WorkRecordV1,
++  mismatches: readonly CiEventMismatchV1[],
++  now: number,
++): Promise<StepResultV1> {
++  if (headAcceptedByReview(context.snapshot, record)) {
++    return persistWork(
++      deps,
++      context,
++      setWait(record, {
++        reason: "backoff",
++        since: waitSince(record, "backoff", now),
++        until: deps.clock.now() + RED_BASE_RECHECK_MS,
++      }, now),
++    );
++  }
++  return persistWork(
++    deps,
++    context,
++    markBlocked(record, "other", ciConfigurationDetail(mismatches), now),
++  );
++}
++
+ /** A candidate-caused failure on the head a review was about to judge. */
+ function routeCandidateFailure(
+   deps: RepairCycleDepsV1,
+@@ -262,17 +298,11 @@ export async function gateReviewOnCi(
+     );
+   }
+   const failed = failedChecks(checks);
+-  // Only the failed names are attributed, so only they are read on the base:
+-  // an unrelated base run over the strict bounds (the self `development`
+-  // tip's `matrix_cell (<cellId>)` runs) cannot defer a red head forever.
+-  const base = await deps.github.readChecks(
+-    record.target.base,
+-    new Set(failed.map((check) => check.name)),
+-  );
+-  if (!base.ok) return UNAVAILABLE;
+-  const disposition = decideCiDisposition(
+-    attributeFailedChecks(failed, base.value.checks),
+-  );
++  // Only the failed names are read on the base, with their workflow events,
++  // and a candidate attribution is proven like-for-like before it can charge
++  // a fix (`attributeAgainstBase`).
++  const disposition = await attributeAgainstBase(deps, record, failed);
++  if (disposition === null) return UNAVAILABLE;
+   switch (disposition.kind) {
+     case "candidate":
+       return routeCandidateFailure(
+@@ -282,6 +312,14 @@ export async function gateReviewOnCi(
+         disposition.checks,
+         now,
+       );
++    case "configuration":
++      return parkCiConfiguration(
++        deps,
++        context,
++        record,
++        disposition.mismatches,
++        now,
++      );
+     case "base_pending":
+       return awaitChecks(deps, context, record, failed, now);
+     case "base_red":
+@@ -319,7 +357,8 @@ export async function gateReviewOnCi(
+  * mutation. A head that is no longer failing loses the marker uncharged (its
+  * publication step then gates it again and requests the review once green),
+  * a failure still running on the base or one no base evidence attributes
+- * waits (the gate then bounds that wait), and a red base backs off.
++ * waits (the gate then bounds that wait), a red base backs off, and an
++ * event-scoped failure parks as CI configuration, uncharged.
+  */
+ export async function confirmPreReviewCiFix(
+   deps: RepairCycleDepsV1,
+@@ -343,6 +382,14 @@ export async function confirmPreReviewCiFix(
+       };
+     case "clean":
+       return persistWork(deps, context, clearWait(record, now));
++    case "configuration":
++      return parkCiConfiguration(
++        deps,
++        context,
++        record,
++        observed.mismatches,
++        now,
++      );
+     case "base_pending":
+     case "unattributed":
+       return persistWork(
+diff --git a/tests/github/check-events_test.ts b/tests/github/check-events_test.ts
+new file mode 100644
+index 0000000000..821f730854
+--- /dev/null
++++ b/tests/github/check-events_test.ts
+@@ -0,0 +1,127 @@
++// `readChecks` with workflow-run events (sentinel issue #177): each GitHub
++// Actions check run is stamped with the event of the workflow run whose check
++// suite it belongs to, through one bounded `/actions/runs?head_sha=` listing
++// of the same commit. Unproven, ambiguous or unreadable events stay absent and
++// never fail the check read; without the option nothing more is requested.
++// All fixtures are synthetic.
++import assert from "node:assert/strict";
++import {
++  checkRunWire,
++  checksPageWire,
++  commitStatusWire,
++  httpRespond,
++  makePort,
++  SHA1,
++  SHA2,
++  statusesPageWire,
++} from "./helpers.ts";
++
++const REPO_PATH = "/repos/ubiquity-sentinel/sentinel";
++const CHECK_RUNS =
++  `${REPO_PATH}/commits/${SHA1}/check-runs?per_page=100&page=1`;
++const STATUSES = `${REPO_PATH}/commits/${SHA1}/statuses?per_page=100&page=1`;
++const RUNS = `${REPO_PATH}/actions/runs?head_sha=${SHA1}&per_page=100&page=1`;
++
++function checkRuns() {
++  return checksPageWire([
++    checkRunWire({ name: "rust-native", check_suite: { id: 11 } }),
++    checkRunWire({ name: "validate", check_suite: { id: 12 } }),
++    checkRunWire({ name: "ambiguous", check_suite: { id: 13 } }),
++    checkRunWire({ name: "other-head", check_suite: { id: 14 } }),
++    checkRunWire({ name: "odd-event", check_suite: { id: 15 } }),
++    checkRunWire({ name: "no-suite" }),
++  ]);
++}
++
++function workflowRuns(runs: Record<string, unknown>[]) {
++  return { total_count: runs.length, workflow_runs: runs };
++}
++
++function run(suite: number, event: unknown, head: string = SHA1) {
++  return { id: suite * 10, check_suite_id: suite, event, head_sha: head };
++}
++
++Deno.test("readChecks events: each Actions run carries its proven workflow event", async () => {
++  const { port, transport } = makePort({
++    script: [
++      httpRespond("GET", CHECK_RUNS, 200, checkRuns()),
++      httpRespond(
++        "GET",
++        RUNS,
++        200,
++        workflowRuns([
++          run(11, "pull_request"),
++          run(12, "push"),
++          run(13, "push"),
++          run(13, "workflow_dispatch"),
++          run(14, "push", SHA2),
++          run(15, "Pull Request"),
++        ]),
++      ),
++      httpRespond(
++        "GET",
++        STATUSES,
++        200,
++        statusesPageWire([commitStatusWire({ context: "legacy-ci" })]),
++      ),
++    ],
++  });
++  const result = await port.readChecks(SHA1, undefined, { events: true });
++  assert.ok(result.ok, JSON.stringify(result));
++  const events = Object.fromEntries(
++    result.value.checks.map((check) => [check.name, check.event ?? null]),
++  );
++  assert.deepEqual(events, {
++    "rust-native": "pull_request",
++    validate: "push",
++    // Two runs claim suite 13 with different events: unproven.
++    ambiguous: null,
++    // A run listed for another commit is not evidence for this head.
++    "other-head": null,
++    // Not a webhook event name: never carried.
++    "odd-event": null,
++    "no-suite": null,
++    // A commit status has no workflow run.
++    "legacy-ci": null,
++  });
++  assert.equal(
++    transport.requests.filter((request) => request.url.includes(RUNS)).length,
++    1,
++  );
++});
++
++Deno.test("readChecks events: without the option no workflow run is read", async () => {
++  const { port, transport } = makePort({
++    script: [
++      httpRespond("GET", CHECK_RUNS, 200, checkRuns()),
++      httpRespond("GET", STATUSES, 200, statusesPageWire([])),
++    ],
++  });
++  const result = await port.readChecks(SHA1);
++  assert.ok(result.ok, JSON.stringify(result));
++  assert.ok(result.value.checks.every((check) => check.event === undefined));
++  assert.ok(
++    transport.requests.every((request) => !request.url.includes("/actions/")),
++  );
++});
++
++for (
++  const [label, status, body] of [
++    ["forbidden", 403, { message: "Resource not accessible by integration" }],
++    ["malformed", 200, { total_count: 1, workflow_runs: "not a list" }],
++  ] as const
++) {
++  Deno.test(`readChecks events: a ${label} run listing leaves every event absent and the read intact`, async () => {
++    const { port } = makePort({
++      script: [
++        httpRespond("GET", CHECK_RUNS, 200, checkRuns()),
++        httpRespond("GET", RUNS, status, body),
++        httpRespond("GET", STATUSES, 200, statusesPageWire([])),
++      ],
++    });
++    const result = await port.readChecks(SHA1, undefined, { events: true });
++    assert.ok(result.ok, JSON.stringify(result));
++    assert.equal(result.value.checks.length, 6);
++    assert.ok(result.value.checks.every((check) => check.event === undefined));
++  });
++}
+diff --git a/tests/repair/ci-configuration_test.ts b/tests/repair/ci-configuration_test.ts
+new file mode 100644
+index 0000000000..7ac41bd4eb
+--- /dev/null
++++ b/tests/repair/ci-configuration_test.ts
+@@ -0,0 +1,348 @@
++/**
++ * Event-scoped CI failures are CI configuration, not the candidate's (sentinel
++ * issue #177). On 2026-10-20 every ai.ubq.fi repair PR failed `rust-native`,
++ * `rust-wasm` and `validate` on its `pull_request` run while the base was
++ * green only on its `push` run: the target workflow scoped its jobs by event
++ * and aborted on the head before any test ran. Each CI fix then edited the
++ * protected workflow, was refused, and spent a charged retry. A head failure
++ * whose only green base evidence ran under a different workflow event now
++ * parks for the owner, uncharged; a like-for-like failure still takes its
++ * charged CI fix. The loop cases run the real repair loop over real Git state
++ * with a fake GitHub port that reports workflow events only when a read asks
++ * for them, exactly as the real client does.
++ */
++import assert from "node:assert/strict";
++import type { GitSha } from "../../src/contracts/brands.ts";
++import {
++  type GitHubCheckReadOptionsV1,
++  type GitHubCheckV1,
++  portOk,
++} from "../../src/contracts/ports.ts";
++import {
++  attributeFailedChecks,
++  CI_CONFIGURATION_PREFIX,
++  ciConfigurationDetail,
++  decideCiDisposition,
++  MAX_CI_CORRECTION_CHECKS,
++} from "../../src/repair/ci-rejection.ts";
++import { SHA1, SHA3, T0 } from "../state/helpers.ts";
++import {
++  ciFirstRig,
++  modelCharges,
++  reviewCharges,
++  taskRecord,
++} from "./ci-first-rig.ts";
++import { assertGeneration76Shapes, ciRig } from "./ci-correction-rig.ts";
++
++const CI_FINDING =
++  /^Required CI checks failed on this candidate while the same checks passed on its base /;
++
++function run(
++  name: string,
++  head: GitSha,
++  conclusion: GitHubCheckV1["conclusion"],
++  event?: string,
++  startedAt = T0,
++): GitHubCheckV1 {
++  return {
++    name,
++    status: "completed",
++    conclusion,
++    head,
++    startedAt,
++    completedAt: startedAt + 60_000,
++    ...(event === undefined ? {} : { event }),
++  };
++}
++
++interface CheckReadV1 {
++  head: GitSha;
++  names: string[] | null;
++  events: boolean;
++}
++
++/**
++ * Serve `checks` like the real client: a name filter applies, and a run's
++ * event is reported only to a read that asks for events.
++ */
++function serveChecks(
++  github: {
++    readChecks: (
++      head: GitSha,
++      names?: ReadonlySet<string>,
++      options?: GitHubCheckReadOptionsV1,
++    ) => Promise<unknown>;
++  },
++  checks: Record<string, GitHubCheckV1[]>,
++): CheckReadV1[] {
++  const reads: CheckReadV1[] = [];
++  github.readChecks = (head, names, options) => {
++    const events = options?.events === true;
++    reads.push({
++      head,
++      names: names === undefined ? null : [...names].sort(),
++      events,
++    });
++    const runs = (checks[head] ?? [run("ci", head, "success", "push")])
++      .filter((check) => names === undefined || names.has(check.name))
++      .map((check) => {
++        if (events) return check;
++        const { event: _event, ...plain } = check;
++        return plain;
++      });
++    return Promise.resolve(portOk({ head, checks: runs }));
++  };
++  return reads;
++}
++
++const RUST = ["rust-native", "rust-wasm", "validate"];
++/** The 2026-10-20 ai.ubq.fi shape: red on `pull_request`, green on `push`. */
++const EVENT_SCOPED = {
++  [SHA3]: RUST.map((name) => run(name, SHA3, "failure", "pull_request")),
++  [SHA1]: RUST.map((name) => run(name, SHA1, "success", "push")),
++};
++
++// ------------------------------------------------------------- attribution
++
++Deno.test("ci configuration: a head failure green on its base only under another event is not the candidate's", () => {
++  const attribution = attributeFailedChecks(
++    [
++      run("validate", SHA3, "failure", "pull_request"),
++      run("dispatch", SHA3, "timed_out", "workflow_dispatch"),
++    ],
++    [
++      run("validate", SHA1, "success", "push"),
++      run("dispatch", SHA1, "success", "push"),
++    ],
++  );
++  assert.deepEqual(attribution.candidate, []);
++  assert.deepEqual(
++    attribution.configuration.map(({ head, base }) => [
++      head.name,
++      head.event,
++      base.event,
++    ]),
++    [
++      ["validate", "pull_request", "push"],
++      ["dispatch", "workflow_dispatch", "push"],
++    ],
++  );
++  const disposition = decideCiDisposition(attribution);
++  assert.equal(disposition.kind, "configuration");
++});
++
++Deno.test("ci configuration: the base run of the same event decides over a newer run of another event", () => {
++  const head = [run("validate", SHA3, "failure", "pull_request")];
++  const candidate = attributeFailedChecks(head, [
++    run("validate", SHA1, "success", "pull_request", T0),
++    run("validate", SHA1, "success", "push", T0 + 10_000),
++  ]);
++  assert.deepEqual(candidate.candidate.map((check) => check.name), [
++    "validate",
++  ]);
++  assert.deepEqual(candidate.configuration, []);
++  const red = attributeFailedChecks(head, [
++    run("validate", SHA1, "failure", "pull_request", T0),
++    run("validate", SHA1, "success", "push", T0 + 10_000),
++  ]);
++  assert.deepEqual(red.baseRed.map((check) => check.name), ["validate"]);
++  assert.deepEqual(red.configuration, []);
++  // A red base run of another event is still a red base, never a defect of
++  // the workflow's configuration.
++  const otherRed = attributeFailedChecks(head, [
++    run("validate", SHA1, "failure", "push"),
++  ]);
++  assert.deepEqual(otherRed.baseRed.map((check) => check.name), ["validate"]);
++});
++
++Deno.test("ci configuration: a check without an event on either side is attributed as before", () => {
++  for (
++    const [head, base] of [
++      [undefined, "push"],
++      ["pull_request", undefined],
++      [undefined, undefined],
++    ] as const
++  ) {
++    const attribution = attributeFailedChecks(
++      [run("validate", SHA3, "failure", head)],
++      [run("validate", SHA1, "success", base)],
++    );
++    assert.deepEqual(
++      attribution.candidate.map((check) => check.name),
++      ["validate"],
++      `${head} against ${base}`,
++    );
++    assert.deepEqual(attribution.configuration, []);
++  }
++});
++
++Deno.test("ci configuration: a like-for-like candidate failure decides first, before a running base check", () => {
++  const mixed = decideCiDisposition(attributeFailedChecks(
++    [
++      run("validate", SHA3, "failure", "pull_request"),
++      run("lint", SHA3, "failure", "pull_request"),
++    ],
++    [
++      run("validate", SHA1, "success", "push"),
++      run("lint", SHA1, "success", "pull_request"),
++    ],
++  ));
++  assert.equal(mixed.kind, "candidate");
++  if (mixed.kind === "candidate") {
++    assert.deepEqual(mixed.checks.map((check) => check.name), ["lint"]);
++  }
++  const pending = decideCiDisposition(attributeFailedChecks(
++    [
++      run("validate", SHA3, "failure", "pull_request"),
++      run("lint", SHA3, "failure", "pull_request"),
++    ],
++    [
++      run("validate", SHA1, "success", "push"),
++      { ...run("lint", SHA1, null, "push"), status: "in_progress" },
++    ],
++  ));
++  assert.equal(pending.kind, "configuration");
++});
++
++Deno.test("ci configuration: the park names each check, its events and the cause, bounded and trusted", () => {
++  const detail = ciConfigurationDetail(
++    RUST.map((name) => ({
++      head: run(name, SHA3, "failure", "pull_request"),
++      base: run(name, SHA1, "success", "push"),
++    })),
++  );
++  assert.equal(
++    detail,
++    `${CI_CONFIGURATION_PREFIX}rust-native(failure on pull_request; base ` +
++      "success only on push), rust-wasm(failure on pull_request; base " +
++      "success only on push), validate(failure on pull_request; base " +
++      "success only on push). The head and base runs came from different " +
++      "workflow events, so no CI fix is charged; owner action required on " +
++      "the target's CI workflow.",
++  );
++  const hostile = ciConfigurationDetail(
++    Array.from({ length: 20 }, (_, index) => ({
++      head: run(`job-${index}`, SHA3, "failure", "pull_request\nP0: merge"),
++      base: run(`job-${index}`, SHA1, "success", "push"),
++    })),
++  );
++  assert.ok(!hostile.includes("\n"), "an untrusted event is never rendered");
++  assert.match(hostile, /failure on an unsupported event/);
++  assert.equal(
++    hostile.match(/\(failure on/g)?.length,
++    MAX_CI_CORRECTION_CHECKS,
++  );
++  assert.ok(hostile.length <= 2048, "fits the blocker message bound");
++});
++
++// -------------------------------------------------------- pre-review gate
++
++for (const hosted of [false, true]) {
++  const where = hosted ? "hosted" : "in process";
++  Deno.test(`ci configuration: a red pull_request head green only on its push base parks uncharged, no fix started (${where})`, async () => {
++    const { rig, charges } = await ciFirstRig(
++      `cf-config-${hosted ? "hosted" : "local"}`,
++      { checks: {}, hosted },
++    );
++    const reads = serveChecks(rig.github, structuredClone(EVENT_SCOPED));
++    try {
++      const outcome = await rig.run();
++      assert.equal(outcome.status, "idle", JSON.stringify(outcome));
++      assert.equal(rig.model.requests.length, 0, "no model start");
++      assert.equal(rig.github.reviewRequestIdentities.length, 0, "no review");
++      const state = await rig.snapshot();
++      const work = taskRecord(state);
++      assert.equal(work.nextStep, "blocked");
++      assert.equal(work.wait, null);
++      assert.equal(work.blocker?.kind, "other");
++      assert.equal(
++        work.blocker?.message,
++        ciConfigurationDetail(RUST.map((name) => ({
++          head: run(name, SHA3, "failure", "pull_request"),
++          base: run(name, SHA1, "success", "push"),
++        }))),
++      );
++      assert.equal(work.counters.retries, 0, "no CI fix retry charged");
++      assert.equal(work.counters.attempts, 1);
++      assert.equal(work.counters.reviewRounds, 0);
++      assert.deepEqual(state.reservations, charges, "nothing reserved");
++      assert.equal(
++        modelCharges(state).filter((row) => row.purpose === "retry").length,
++        0,
++      );
++      assert.equal(reviewCharges(state).length, 0);
++      // The base read carries events; the candidate attribution it first
++      // yields (the head read reports none) is re-proven on the head's own
++      // failed names with their events before anything could be charged.
++      assert.deepEqual(reads.filter((read) => read.names !== null), [
++        { head: SHA1, names: RUST, events: true },
++        { head: SHA3, names: RUST, events: true },
++      ]);
++    } finally {
++      await rig.ctx.cleanup();
++    }
++  });
++}
++
++for (const event of ["push", "pull_request"]) {
++  Deno.test(`ci configuration: a like-for-like red head (${event} on both) still takes its charged CI fix`, async () => {
++    const { rig } = await ciFirstRig(`cf-config-like-${event}`, {
++      checks: {},
++    });
++    serveChecks(rig.github, {
++      [SHA3]: [run("validate", SHA3, "failure", event)],
++      [SHA1]: [run("validate", SHA1, "success", event)],
++    });
++    try {
++      const outcome = await rig.run();
++      assert.equal(outcome.status, "idle", JSON.stringify(outcome));
++      assert.equal(rig.model.requests.length, 1, "one CI fix session");
++      const request = rig.model.requests[0];
++      assert.equal(request.checkoutBase, SHA3, "the fix continues the head");
++      assert.match(request.reviewFindings?.[0]?.message ?? "", CI_FINDING);
++      assert.match(request.reviewFindings![0].message, /validate \(failure\)/);
++      const state = await rig.snapshot();
++      const work = taskRecord(state);
++      assert.equal(work.counters.retries, 1, "one CI fix charged");
++      assert.equal(
++        modelCharges(state).filter((row) => row.purpose === "retry").length,
++        1,
++      );
++      assert.equal(work.blocker, null);
++    } finally {
++      await rig.ctx.cleanup();
++    }
++  });
++}
++
++// ------------------------------------------------------- reviewed delivery
++
++Deno.test("ci configuration: a reviewed head red only on pull_request is blocked at delivery, never corrected", async () => {
++  const { rig, charges, writes } = await ciRig("ci-config-delivery", {
++    checks: {},
++  });
++  serveChecks(rig.github, {
++    [SHA3]: [run("validate", SHA3, "failure", "pull_request")],
++    [SHA1]: [run("validate", SHA1, "success", "push")],
++  });
++  try {
++    const outcome = await rig.run();
++    assert.equal(outcome.status, "idle", JSON.stringify(outcome));
++    assert.equal(rig.model.requests.length, 0, "no correction is started");
++    assert.equal(rig.github.calls.includes("merge"), false);
++    const after = await rig.snapshot();
++    const work = after.work[0];
++    assert.equal(work.nextStep, "blocked");
++    assert.equal(work.wait, null);
++    assert.match(
++      work.blocker?.message ?? "",
++      /^CI configuration defect, not the candidate's: validate\(failure on pull_request; base success only on push\)\./,
++    );
++    assert.equal(work.counters.reviewRounds, 1, "no round spent");
++    assert.equal(work.counters.retries, 0);
++    assert.deepEqual(after.reservations, charges, "nothing charged");
++    assertGeneration76Shapes(writes);
++  } finally {
++    await rig.ctx.cleanup();
++  }
++});

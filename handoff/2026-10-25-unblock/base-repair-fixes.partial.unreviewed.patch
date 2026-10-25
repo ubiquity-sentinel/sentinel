@@ -1,0 +1,2899 @@
+diff --git a/docs/DECISIONS.md b/docs/DECISIONS.md
+index cd0882cac1..f8f7a8f52b 100644
+--- a/docs/DECISIONS.md
++++ b/docs/DECISIONS.md
+@@ -3387,6 +3387,19 @@ standing approval above. Applied as follows.
+   already moved, untrusted check names in the issue, a red set unlike the
+   runtime's, and a wrong note on the self scope). Filing was off from 027ecbbea0
+   until this change.
++- 2026-10-25 re-review: its adversarial re-review upheld two P2s (the
++  App-created listing paged the App's whole history oldest first and failed
++  closed for good at 2,000 items, pull requests included, re-read in full every
++  pass with no budget check; the filing read counted an unreadable, mismatched
++  or past-the-bound Actions job as red on tip and head, so a billing stop during
++  an Actions API incident filed a code-fix issue) and P3s (the hosted fix
++  finding still said the checks passed on the base; the job and never-started
++  reads and the CI resume pass were not protected; a red base made only by a
++  commit status filed nothing and said nothing; a base-repair issue whose tip
++  turned green or moved still cost an implementation; recognition used the
++  relations read, so a GraphQL failure lapsed ordinary red-base holds; missing
++  tests). All are fixed below; filing stays off
++  (`BASE_REPAIR_FILING_ENABLED = false`) for the integration owner to turn on.
+ 
+ - Finding (live state, 2026-10-24 23:00 UTC): all 39 Passport records at `work`
+   were held by the CI-first gate's `base_red` rule. Their failing check is red
+@@ -3405,25 +3418,47 @@ standing approval above. Applied as follows.
+   `failure`, `timed_out`, `action_required`) and the failed checks of the first
+   three such held heads in record-id order with the head conclusions a red base
+   can hold (`CANDIDATE_CONCLUSIONS`: `failure`, `timed_out`). Both reads take
+-  the latest run of each name and leave out a job that never started. Only a
+-  check failing on the tip and on a held head holds anything, so the issue lists
+-  only those, through the runtime's trusted check-name shape
++  the latest run of each name and leave out a job that never started. They are
++  strict (`neverStartedVerdicts`): a failed Actions run whose job cannot be
++  read, does not match, or lies past the eight-read bound makes the read
++  unreadable (`checks_unreadable`, `head_checks_unreadable`), never red, so
++  nothing is filed for a red that might be a billing stop. The runtime's own
++  check read keeps such a run as a failure (its conservative hold), unchanged.
++  Only a check failing on the tip and on a held head holds anything, so the
++  issue lists only those, through the runtime's trusted check-name shape
+   (`trustedCheckName`), and nothing is filed when there is none
+   (`base-repair:<repo>:no_held_check`). Any unreadable tip, head or listing
+-  files nothing.
++  files nothing, and the 60 s pass budget is checked between every listing page
++  (`deadline`).
++- Commit statuses are excluded, explicitly: the runtime folds a failure or error
++  status into the checks it holds on, but the launcher's reads judge check runs
++  only. A held tip with no failing check run files nothing and says so
++  (`base-repair:<repo>:no_tip_check`), which also covers a re-run gone green.
++  Folding statuses in was the larger and less safe choice: a status context is
++  usually a deploy or third-party service whose failure (`error` included) no
++  code change fixes, and the never-started and backup rules that keep a billing
++  stop out of the filing do not exist for statuses, so a code-fix issue would be
++  charged for an environment. Neither live target posts statuses today.
+ - The issue is titled `CI is failing on <branch>`, carries no label, and its
+-  first body line is `<!-- sentinel:base-repair:<branch>@<tip> -->`. Before
+-  filing, the pass reads every issue the App created in that repository
+-  (`GET /issues?creator=ubiquity-sentinel[bot]&state=all`, oldest first, up to
+-  20 pages of 100; another creator, a repeated or malformed item, or a full page
+-  at the bound refuses the whole listing). It files nothing when any App issue,
+-  open or closed, already carries the marker for this tip, so a tip gets at most
+-  one issue. While an App issue marked for an older tip of the branch (or with
+-  the first, tip-less marker) is open, a new issue is filed only once every
+-  record of that issue is parked or done; an issue with no record yet still
+-  counts as live. The pass writes no state and never edits, closes or comments
+-  on an issue. The self scope has no base-repair lane: the pass never reads or
+-  files for it.
++  first body line is `<!-- sentinel:base-repair:<branch>@<tip> -->`. It files
++  nothing when any App issue, open or closed, already carries the marker for
++  this tip, so a tip gets at most one issue. The proof is bounded by the tip,
++  never by the App's history: it reads the open items the App created
++  (`GET /issues?creator=ubiquity-sentinel[bot]&state=open`, oldest first, up to
++  20 pages of 100), where this tip's open issue (the steady state) and a live
++  older one decide; then the tip's committer date (`GET /git/commits/<tip>`,
++  bound to the exact commit) and every App-created item, open or closed, newest
++  first (`state=all&direction=desc`) down to the first one created before that
++  date less 24 hours (`BASE_REPAIR_HORIZON_MARGIN_MS`, clock skew): an issue
++  marked for a tip is created after the tip existed. A committer date more than
++  the margin ahead of the pass clock bounds nothing (`horizon_unproven`).
++  Another creator, a repeated, out-of-order or malformed item, or the page bound
++  reached first refuses a listing. While an App issue marked for an older tip of
++  the branch (or with the first, tip-less marker) is open, a new issue is filed
++  only once every record of that issue is parked or done; an issue with no
++  record yet still counts as live. The pass writes no state and never edits,
++  closes or comments on an issue. The self scope has no base-repair lane: the
++  pass never reads or files for it.
+ - The runtime admits the issue like any other, at the ordinary priority of an
+   unlabelled issue. For that task alone (the issue the App authored with the
+   marker on its first body line; no label, no severity and no other check;
+@@ -3431,13 +3466,29 @@ standing approval above. Applied as follows.
+   failure on the current tip: its head still fails the checks it was filed to
+   fix, so it takes the ordinary charged CI fix route instead of the uncharged
+   hold. The fix names exactly the checks red on both (never a secondary
+-  cancelled one). The issue is read only for a `base_red` disposition and once
+-  per run. An unavailable issue read or tip read defers through the callers'
+-  existing unavailable path without a write. A record whose base is no longer
+-  the tip keeps `base_red`, so a moved base refreshes it first, uncharged
+-  (before a refresh the delivery gate corrects only a candidate failure). A
+-  closed issue is still refused before any charge, as every task is
+-  (`readIssueForModel`).
++  cancelled one). The issue is read only for a `base_red` disposition (and a
++  fresh implementation of a marked body, below) and once per run, over the
++  port's relation-free read (`readIssueWithoutRelations`, the REST read alone:
++  only the author and first line decide), so a GraphQL relations failure never
++  makes it unreadable. An unavailable issue or tip read converts nothing; at the
++  CI-first gate a record already in a red-base hold (running or expired) has
++  that same uncharged hold re-armed, so a transient read never lapses it and the
++  delivery line and the pass keep counting it as held; any other record defers
++  without a write. A record whose base is no longer the tip keeps `base_red`, so
++  a moved base refreshes it first, uncharged (before a refresh the delivery gate
++  corrects only a candidate failure). A closed issue is still refused before any
++  charge, as every task is (`readIssueForModel`).
++- A base-repair task whose red is gone costs no implementation: before its fresh
++  implementation is admitted (after the queued base refresh, before any
++  reservation), the runtime reads the base tip and the checks its issue lists on
++  it (`baseRepairTaskCurrent`). A marked tip that is no longer the tip, a marker
++  for another branch, or a tip on which no listed check still fails (a re-run
++  gone green, a job that never started) parks the record with the existing
++  uncharged `stale_source` blocker (`base-repair issue is stale: ...`), which no
++  launcher rule re-admits; a later red tip then gets its own issue, since a
++  parked record's issue no longer counts as live. An unavailable read defers
++  with nothing written. Only a body with the marker on its first line pays these
++  reads; a tip-less (first-form) marker is judged by its listed checks alone.
+ - The fix finding has its own opening,
+   `Required CI checks failed on this
+   candidate and on its red base`, which
+@@ -3448,13 +3499,27 @@ standing approval above. Applied as follows.
+   later repair run (the R79 precedent). Hosted runs therefore keep the ordinary
+   opening until the installed rollback target is a runtime at or after this
+   change (`HOSTED_BASE_REPAIR_FINDING`, off); in process the own opening is
+-  always used. Under a rollback to the previous runtime nothing else changes: it
+-  recognises the task only with a P0 severity (a `P0` label), which the issue is
+-  not filed with, so it keeps the uncharged hold; an issue a person labels P0
+-  gets that runtime's earlier conversion with the ordinary opening.
++  always used. Under the ordinary opening a base-repair fix carries a trusted
++  clause right after its check list (`CI_RED_BASE_FINDING_CLAUSE`: "These checks
++  are also red on the base; this task exists to fix them."), so the hosted text
++  no longer contradicts the issue. Every consumer still reads it: the rollback
++  target's `isCiCorrectionFinding` and the cell's `ciCorrectionHead` match only
++  the opening (`startsWith`), and the cell's log-evidence preference matches
++  only `<name> (`, which the clause never contains. Under a rollback to the
++  previous runtime nothing else changes: it recognises the task only with a P0
++  severity (a `P0` label), which the issue is not filed with, so it keeps the
++  uncharged hold; an issue a person labels P0 gets that runtime's earlier
++  conversion with the ordinary opening.
+ - `src/repair/base-repair.ts` (with the CI-first gate) and
+   `ops/hosted-autonomy-base-repair.ts` (with the App-token issue filing) are
+-  protected paths, so a model-authored candidate never changes the lane.
++  protected paths, and so are the check reads they file and charge on
++  (`ops/hosted-autonomy-github-jobs.ts`, `src/github/never-started-job.ts`) and
++  the CI resume pass that shares the never-started rule
++  (`ops/hosted-autonomy-ci-resume.ts`), so a model-authored candidate never
++  changes the lane.
++- Open item: the backup CI half of the filing read
++  (`ops/hosted-autonomy-backup-ci-read.ts`, `failedNamesWithBackup`) is not a
++  protected path yet; it was outside this change's scope.
+ - Unchanged: current-head CI, native review, the P0 merge block, custody and
+   accounting. The fix merges through the ordinary gates; its pull request closes
+   the issue, and every held record then refreshes onto the green base.
+diff --git a/ops/hosted-autonomy-backup-ci-read.ts b/ops/hosted-autonomy-backup-ci-read.ts
+index 421bcad93a..c6043237ca 100644
+--- a/ops/hosted-autonomy-backup-ci-read.ts
++++ b/ops/hosted-autonomy-backup-ci-read.ts
+@@ -147,17 +147,18 @@ export function backupNeverStartedRemains(runs: readonly Run[]): boolean {
+ 
+ /**
+  * The base-repair failed names (§11.5): the native rule over every native
+- * run (`failedCheckNames`: a never-started job is no failure), plus each name
+- * whose substituted backup result is red. A substituted name is backup on
+- * every run of the listing (the rule is all or nothing per name).
++ * run (`failedCheckNames`: a never-started job is no failure; null when that
++ * strict read cannot tell), plus each name whose substituted backup result is
++ * red. A substituted name is backup on every run of the listing (the rule is
++ * all or nothing per name).
+  */
+ export async function failedNamesWithBackup(
+   head: string,
+   runs: readonly Run[],
+-  failedCheckNames: (head: string, runs: Run[]) => Promise<string[]>,
++  failedCheckNames: (head: string, runs: Run[]) => Promise<string[] | null>,
+   /** The failing conclusions the caller asks for (default: every red one). */
+   conclusions?: readonly string[],
+-): Promise<string[]> {
++): Promise<string[] | null> {
+   const red: ReadonlySet<string> = conclusions === undefined
+     ? RED
+     : new Set(conclusions);
+@@ -166,6 +167,7 @@ export async function failedNamesWithBackup(
+     head,
+     runs.filter((run) => run[SENTINEL_BACKUP_FIELD] === undefined),
+   );
++  if (native === null) return null;
+   const names = [...native];
+   for (const run of backed) {
+     const name = String(run["name"]);
+diff --git a/ops/hosted-autonomy-base-repair.ts b/ops/hosted-autonomy-base-repair.ts
+index a8e6ce3c5b..80e345c7ae 100644
+--- a/ops/hosted-autonomy-base-repair.ts
++++ b/ops/hosted-autonomy-base-repair.ts
+@@ -15,16 +15,24 @@
+  * dispatch-only deploy job) files nothing.
+  *
+  * The issue is filed without a label, with `baseRepairMarker(branch, tip)`
+- * on its first line, after a complete, bounded listing of every issue the
+- * App created (open or closed) shows that no App issue already carries that
+- * marker; one issue is ever filed per red tip. While an App issue marked for
+- * an older tip of the branch is open, a new one is filed only once each of
+- * its records is parked or done. The pass writes no state and never edits,
+- * closes or comments on an issue; the runtime admits the issue like any
+- * other, and its fix merges through the ordinary review and CI gates (its
+- * pull request closes the issue). The self scope has no base-repair lane.
++ * on its first line, once no App issue already carries that marker; one
++ * issue is ever filed per red tip. The proof is bounded by the tip, never by
++ * the App's history: the open App-created listing first (this tip's open
++ * issue, the steady state, decides there), then every App-created item,
++ * open or closed, newest first down to the tip's committer date less
++ * `BASE_REPAIR_HORIZON_MARGIN_MS` (an issue marked for a tip is created
++ * after the tip existed). While an App issue marked for an older tip of the
++ * branch is open, a new one is filed only once each of its records is
++ * parked or done. The pass writes no state and never edits, closes or
++ * comments on an issue; the runtime admits the issue like any other, and its
++ * fix merges through the ordinary review and CI gates (its pull request
++ * closes the issue). The self scope has no base-repair lane.
+  *
+- * Any unreadable tip, check listing or issue listing files nothing.
++ * Any unreadable tip, check read (strict: a failed Actions job whose verdict
++ * is unknown is unreadable, never red) or issue listing files nothing, and
++ * the pass budget is checked between every listing page. A held tip whose
++ * failing check is only a commit status (which these reads do not judge)
++ * files nothing and says so (`no_tip_check`).
+  */
+ import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
+ import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
+@@ -47,10 +55,8 @@ import type {
+ } from "./hosted-autonomy-types.ts";
+ 
+ /**
+- * Filing switch: on since every upheld review finding of 2026-10-25 is fixed
+- * (only checks that hold records' heads, a tip-bound marker over a complete
+- * App-created listing, no label dependency). Off, the pass reads and files
+- * nothing.
++ * Filing switch: off until the integration owner turns it on after the
++ * reworked lane's review. Off, the pass reads and files nothing.
+  */
+ export const BASE_REPAIR_FILING_ENABLED = false;
+ 
+@@ -63,6 +69,13 @@ export const BASE_REPAIR_HEAD_READS = 3;
+ /** At most this many failing check names are listed in an issue. */
+ const MAX_LISTED_CHECKS = 20;
+ 
++/**
++ * Clock skew a tip's committer date may carry. Only App items created at or
++ * after the tip's committer date less this margin can carry its marker; a
++ * committer date more than this past the pass clock proves no horizon.
++ */
++export const BASE_REPAIR_HORIZON_MARGIN_MS = 24 * 60 * 60_000;
++
+ /**
+  * The plain-language base-repair issue for `branch` at `tip`, listing the
+  * failing checks by the runtime's trusted name shape (`trustedCheckName`).
+@@ -190,6 +203,12 @@ export async function runHostedBaseRepairPass(
+       actions.push(`${tag}:deadline`);
+       break;
+     }
++    /** An unproven listing: the budget ran out, or it is unreadable. */
++    const unproven = () => {
++      const late = !inBudget();
++      actions.push(`${tag}:${late ? "deadline" : "issues_unreadable"}`);
++      return late;
++    };
+     try {
+       // A surface that cannot read failed checks or file issues costs nothing.
+       const capable = deps.githubFor(repository);
+@@ -223,7 +242,12 @@ export async function runHostedBaseRepairPass(
+         actions.push(`${tag}:checks_unreadable`);
+         continue;
+       }
+-      if (tipFailed.length === 0) continue;
++      if (tipFailed.length === 0) {
++        // Held on a tip without a failing check run: a red commit status
++        // (not judged here, so nothing is filed) or a re-run gone green.
++        actions.push(`${tag}:no_tip_check`);
++        continue;
++      }
+       const holding = new Set<string>();
+       let headsRead = true;
+       for (const head of heads) {
+@@ -249,24 +273,52 @@ export async function runHostedBaseRepairPass(
+         actions.push(`${tag}:no_held_check`);
+         continue;
+       }
+-      const filed = await issues.listAppAuthored();
+-      if (filed === null) {
+-        actions.push(`${tag}:issues_unreadable`);
++      const marker = baseRepairMarker(branch, tip);
++      const marked = (listing: readonly HostedAppIssueV1[]) =>
++        listing.find((issue) =>
++          !issue.pullRequest && issue.firstLine === marker
++        );
++      // The open App items first: this tip's open issue (the steady state)
++      // and a live older one decide without the same-tip read below.
++      const open = await issues.listOpenAppAuthored(inBudget);
++      if (open === null) {
++        if (unproven()) break;
+         continue;
+       }
+-      const marker = baseRepairMarker(branch, tip);
+-      const same = filed.find((issue) =>
+-        !issue.pullRequest && issue.firstLine === marker
+-      );
+-      if (same !== undefined) {
+-        actions.push(`${tag}:filed_before=#${same.number}`);
++      const openSame = marked(open);
++      if (openSame !== undefined) {
++        actions.push(`${tag}:filed_before=#${openSame.number}`);
+         continue;
+       }
+-      const older = liveOlderIssue(filed, work, repository, branch);
++      const older = liveOlderIssue(open, work, repository, branch);
+       if (older !== null) {
+         actions.push(`${tag}:open=#${older}`);
+         continue;
+       }
++      // A closed issue for this tip: only an item created after the tip
++      // existed can carry its marker, so the newest-first read stops there.
++      const committed = await issues.committedAt(tip);
++      if (committed === null) {
++        actions.push(`${tag}:issues_unreadable`);
++        continue;
++      }
++      const horizon = committed - BASE_REPAIR_HORIZON_MARGIN_MS;
++      if (horizon > started) {
++        // A committer date this far ahead of the clock bounds nothing: an
++        // issue filed for the tip could be older than it.
++        actions.push(`${tag}:horizon_unproven`);
++        continue;
++      }
++      const recent = await issues.listAppAuthoredSince(horizon, inBudget);
++      if (recent === null) {
++        if (unproven()) break;
++        continue;
++      }
++      const same = marked(recent);
++      if (same !== undefined) {
++        actions.push(`${tag}:filed_before=#${same.number}`);
++        continue;
++      }
+       if (!inBudget()) {
+         actions.push(`${tag}:deadline`);
+         break;
+diff --git a/ops/hosted-autonomy-github-issues.ts b/ops/hosted-autonomy-github-issues.ts
+index 9e68c3cd27..1b45f4a6e3 100644
+--- a/ops/hosted-autonomy-github-issues.ts
++++ b/ops/hosted-autonomy-github-issues.ts
+@@ -3,9 +3,11 @@
+  * issues in ONE target repository, over the sentinel App token the
+  * maintenance job already holds. They live on the launcher's port, never in
+  * `src/github`, so neither the runtime nor a model worker ever holds them.
+- * Only four endpoints are used: the created-since issues listing, the
+- * App-created issues listing, one issue read and one issue create. Every
+- * answer must name exactly this repository; anything unproven is null.
++ * Only five endpoints are used: the created-since issues listing, the
++ * App-created issues listing (all states newest first, or open only), one
++ * issue read, one issue create and one commit object read (a base-repair
++ * tip's committer date). Every answer must name exactly this repository;
++ * anything unproven is null.
+  */
+ import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
+ import { HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR } from "./hosted-autonomy-policy.ts";
+@@ -167,11 +169,43 @@ export function createHostedFollowUpIssues(
+ /** Pages of the App-created listing one base-repair read may take. */
+ export const BASE_REPAIR_LISTING_MAX_PAGES = MAX_LISTING_PAGES;
+ 
++/** An exact full commit id. */
++const COMMIT_SHA = /^[0-9a-f]{40}$/;
++
+ /**
+- * The base-repair issue capability (`ops/hosted-autonomy-base-repair.ts`):
+- * the complete listing of every issue and pull request the sentinel App
+- * created here, open or closed, oldest first (a new item lands on the last
+- * page, so earlier pages do not shift under it), and a label-free create.
++ * One App-created item of an App-created listing: bound to `repositoryUrl`,
++ * created by the sentinel App, open or closed; null for anything else (the
++ * creator filter was not applied, or the item is malformed).
++ */
++function appItem(
++  entry: unknown,
++  repositoryUrl: string,
++): HostedAppIssueV1 | null {
++  const item = parseIssueItem(entry, repositoryUrl);
++  const state = record(entry)?.["state"];
++  if (
++    item === null || item.author !== HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR ||
++    (state !== "open" && state !== "closed")
++  ) return null;
++  return {
++    number: item.number,
++    state,
++    pullRequest: item.pullRequest,
++    createdAt: item.createdAt,
++    firstLine: item.firstLine,
++  };
++}
++
++/**
++ * The base-repair issue capability (`ops/hosted-autonomy-base-repair.ts`).
++ * A marker for tip T can only be on an item created after T existed, so the
++ * same-tip proof reads the App-created listing newest first and stops at the
++ * first item created before the caller's horizon (T's committer date less a
++ * margin, `committedAt`): bounded by the tip, never by the App's history.
++ * The older-tip rule reads the open App-created listing, bounded by the open
++ * count. Both check `inBudget` before every page, and a repeated, malformed,
++ * foreign or out-of-order item, or the page bound reached first, refuses the
++ * whole listing. The create sends no label.
+  */
+ export function createHostedBaseRepairIssues(
+   request: ReturnType<typeof createHostedAutonomyRequest>,
+@@ -181,37 +215,85 @@ export function createHostedBaseRepairIssues(
+   const repositoryUrl = `${API_BASE}/repos/${scope}`;
+   const creator = encodeURIComponent(HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR);
+   const followUps = createHostedFollowUpIssues(request, repository);
++  /** One page of the App-created listing, or null when it is not one. */
++  async function page(
++    query: string,
++    number: number,
++  ): Promise<HostedAppIssueV1[] | null> {
++    const raw = await request(
++      "GET",
++      `/repos/${scope}/issues?creator=${creator}&${query}&per_page=${LISTING_PAGE_SIZE}&page=${number}`,
++      undefined,
++      MAX_COMPARE_RESPONSE_BYTES,
++    );
++    if (!Array.isArray(raw) || raw.length > LISTING_PAGE_SIZE) return null;
++    const items: HostedAppIssueV1[] = [];
++    for (const entry of raw) {
++      const item = appItem(entry, repositoryUrl);
++      if (item === null) return null;
++      items.push(item);
++    }
++    return items;
++  }
+   return {
+-    async listAppAuthored() {
++    async committedAt(commit: string) {
++      if (!COMMIT_SHA.test(commit)) return null;
++      const raw = record(
++        await request("GET", `/repos/${scope}/git/commits/${commit}`),
++      );
++      const date = record(raw?.["committer"])?.["date"];
++      if (
++        raw === null || raw["sha"] !== commit || typeof date !== "string" ||
++        !CREATED_AT.test(date)
++      ) return null;
++      const at = Date.parse(date);
++      return Number.isSafeInteger(at) ? at : null;
++    },
++    async listAppAuthoredSince(sinceMs, inBudget) {
++      if (!Number.isSafeInteger(sinceMs)) return null;
+       const items: HostedAppIssueV1[] = [];
+       const seen = new Set<number>();
+-      for (let page = 1; page <= BASE_REPAIR_LISTING_MAX_PAGES; page++) {
+-        const raw = await request(
+-          "GET",
+-          `/repos/${scope}/issues?creator=${creator}&state=all&sort=created&direction=asc&per_page=${LISTING_PAGE_SIZE}&page=${page}`,
+-          undefined,
+-          MAX_COMPARE_RESPONSE_BYTES,
++      let previous = Number.POSITIVE_INFINITY;
++      for (let number = 1; number <= BASE_REPAIR_LISTING_MAX_PAGES; number++) {
++        if (!inBudget()) return null;
++        const listed = await page(
++          "state=all&sort=created&direction=desc",
++          number,
+         );
+-        if (!Array.isArray(raw) || raw.length > LISTING_PAGE_SIZE) return null;
+-        for (const entry of raw) {
+-          const item = parseIssueItem(entry, repositoryUrl);
+-          const state = record(entry)?.["state"];
+-          // A malformed item, another creator (the filter was not applied)
+-          // or a repeat (the pages shifted) is not one complete listing.
+-          if (
+-            item === null ||
+-            item.author !== HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR ||
+-            seen.has(item.number) || (state !== "open" && state !== "closed")
+-          ) return null;
++        if (listed === null) return null;
++        for (const item of listed) {
++          // A repeat (a new item shifted the pages) or an out-of-order
++          // creation instant is not one stable newest-first listing.
++          if (seen.has(item.number) || item.createdAt > previous) return null;
++          seen.add(item.number);
++          previous = item.createdAt;
++          // Every item at or after the horizon has been read.
++          if (item.createdAt < sinceMs) return items;
++          items.push(item);
++        }
++        if (listed.length < LISTING_PAGE_SIZE) return items;
++      }
++      // The bound was reached before the horizon: nothing older is proven.
++      return null;
++    },
++    async listOpenAppAuthored(inBudget) {
++      const items: HostedAppIssueV1[] = [];
++      const seen = new Set<number>();
++      for (let number = 1; number <= BASE_REPAIR_LISTING_MAX_PAGES; number++) {
++        if (!inBudget()) return null;
++        // Oldest first: a new item lands on the last page, so earlier pages
++        // do not shift under it.
++        const listed = await page(
++          "state=open&sort=created&direction=asc",
++          number,
++        );
++        if (listed === null) return null;
++        for (const item of listed) {
++          if (seen.has(item.number) || item.state !== "open") return null;
+           seen.add(item.number);
+-          items.push({
+-            number: item.number,
+-            state,
+-            pullRequest: item.pullRequest,
+-            firstLine: item.firstLine,
+-          });
++          items.push(item);
+         }
+-        if (raw.length < LISTING_PAGE_SIZE) return items;
++        if (listed.length < LISTING_PAGE_SIZE) return items;
+       }
+       // A full last page at the bound proves nothing about the rest.
+       return null;
+diff --git a/ops/hosted-autonomy-github-jobs.ts b/ops/hosted-autonomy-github-jobs.ts
+index 14ce2e1ea6..1aeffe0abc 100644
+--- a/ops/hosted-autonomy-github-jobs.ts
++++ b/ops/hosted-autonomy-github-jobs.ts
+@@ -7,8 +7,12 @@
+  *   check-run listing, the latest run of each name that completed with one
+  *   of the caller's `conclusions` (the runtime's own sets: a tip's
+  *   `RED_BASE_CONCLUSIONS`, a held head's `CANDIDATE_CONCLUSIONS`), without
+- *   the failed Actions runs whose job never started (bounded job reads; an
+- *   unreadable job keeps its run as a failure).
++ *   the failed Actions runs whose job never started (bounded job reads). It
++ *   is strict: null when any counted failed Actions run's verdict is unknown
++ *   (an unreadable or mismatched job, or one past the read bound), so the
++ *   pass files nothing on a red it cannot tell from a billing stop. The
++ *   runtime's own check read keeps such a run as a failure (its
++ *   conservative hold).
+  * - `runNeverStarted`: whether one completed workflow run's latest attempt
+  *   failed only through jobs that never started (the CI resume pass); null
+  *   when its job listing cannot be read completely and bound to the run.
+@@ -16,7 +20,7 @@
+ import {
+   completedJobNeverStarted,
+   latestRunIndexes,
+-  neverStartedRunIndexes,
++  neverStartedVerdicts,
+ } from "../src/github/never-started-job.ts";
+ import type { createHostedAutonomyRequest } from "./hosted-autonomy-github-listing.ts";
+ 
+@@ -32,17 +36,24 @@ export function createHostedActionsJobReads(
+       head: string,
+       runs: readonly Record<string, unknown>[],
+       conclusions: readonly string[],
+-    ): Promise<string[]> {
++    ): Promise<string[] | null> {
+       const latest = latestRunIndexes(runs);
+-      const notStarted = await neverStartedRunIndexes(
++      const { marked, unknown } = await neverStartedVerdicts(
+         latest.map((index) => runs[index]),
+         head,
+         (jobId) => request("GET", `/repos/${scope}/actions/jobs/${jobId}`),
+       );
+-      return latest.filter((index, position) =>
+-        !notStarted.has(position) &&
++      const counted = (index: number) =>
+         runs[index]["status"] === "completed" &&
+-        conclusions.includes(String(runs[index]["conclusion"]))
++        conclusions.includes(String(runs[index]["conclusion"]));
++      // Strict: a counted failure that might be a billing stop is unknown.
++      if (
++        latest.some((index, position) =>
++          unknown.has(position) && counted(index)
++        )
++      ) return null;
++      return latest.filter((index, position) =>
++        !marked.has(position) && counted(index)
+       ).map((index) => String(runs[index]["name"]));
+     },
+     async runNeverStarted(id: number, head: string): Promise<boolean | null> {
+diff --git a/ops/hosted-autonomy-github.ts b/ops/hosted-autonomy-github.ts
+index 5157aadbe4..a4b97a8e49 100644
+--- a/ops/hosted-autonomy-github.ts
++++ b/ops/hosted-autonomy-github.ts
+@@ -334,7 +334,8 @@ export function createHostedAutonomyGitHub(
+       if (runs === null) return null;
+       // A job that never started (a billing stop) is no failing check; a
+       // red backup result standing in for one is (spec §11.5), within the
+-      // conclusions the caller asks for.
++      // conclusions the caller asks for. A failure whose job verdict is
++      // unknown makes the read unreadable (null): strict for base repair.
+       return await failedNamesWithBackup(
+         head,
+         runs,
+diff --git a/ops/hosted-autonomy-types.ts b/ops/hosted-autonomy-types.ts
+index 736939f76b..f0ecb368dd 100644
+--- a/ops/hosted-autonomy-types.ts
++++ b/ops/hosted-autonomy-types.ts
+@@ -156,10 +156,12 @@ export interface HostedAutonomyGitHubV1 {
+    * Base-repair read: the names of the check runs on the exact commit whose
+    * latest run of that name completed with one of `conclusions`, leaving out
+    * a GitHub Actions run whose job never started (no step, no runner: a
+-   * billing or spending-limit stop; bounded job reads, an unreadable job
+-   * keeps its failure). Empty when none did, null when the complete listing
+-   * cannot be read. Optional: a surface without it files no base-repair
+-   * issue.
++   * billing or spending-limit stop; bounded job reads). Empty when none did,
++   * null when the complete listing cannot be read or a counted failed
++   * Actions run's job verdict is unknown (unreadable, mismatched or past the
++   * read bound: strict, so nothing is filed for a possible billing stop).
++   * Commit statuses are not read. Optional: a surface without it files no
++   * base-repair issue.
+    */
+   failedChecks?(
+     commit: string,
+@@ -348,6 +350,8 @@ export interface HostedAppIssueV1 {
+   state: "open" | "closed";
+   /** True for a pull request (the issues listing returns both). */
+   pullRequest: boolean;
++  /** GitHub's `created_at`, epoch milliseconds. */
++  createdAt: number;
+   /** The body's first line (LF or CRLF), empty for an empty body. */
+   firstLine: string;
+ }
+@@ -355,11 +359,30 @@ export interface HostedAppIssueV1 {
+ /** Launcher-only base-repair issues of ONE repository (the App token). */
+ export interface HostedBaseRepairIssuesV1 {
+   /**
+-   * Every issue and pull request of this repository the sentinel App
+-   * created, open or closed, from one complete bounded listing; null when it
+-   * cannot be proven complete, App-created and bound to this repository.
++   * The committer date of exactly `commit` (its commit object), epoch
++   * milliseconds: the horizon of the base-repair marker for that tip. Null
++   * when it cannot be read and bound to that commit.
+    */
+-  listAppAuthored(): Promise<readonly HostedAppIssueV1[] | null>;
++  committedAt(commit: string): Promise<number | null>;
++  /**
++   * Every issue and pull request of this repository the sentinel App
++   * created at or after `sinceMs`, open or closed, newest first, read down
++   * to the first older item. Null when that listing cannot be proven
++   * complete, App-created and bound to this repository within the page
++   * bound, or `inBudget` turns false before a page.
++   */
++  listAppAuthoredSince(
++    sinceMs: number,
++    inBudget: () => boolean,
++  ): Promise<readonly HostedAppIssueV1[] | null>;
++  /**
++   * Every open issue and pull request of this repository the sentinel App
++   * created, from one complete bounded listing; null as for
++   * `listAppAuthoredSince`.
++   */
++  listOpenAppAuthored(
++    inBudget: () => boolean,
++  ): Promise<readonly HostedAppIssueV1[] | null>;
+   /**
+    * Create one issue with exactly this title and body and no label: its
+    * number only when GitHub's answer is this repository's App-created issue
+diff --git a/src/contracts/ports-github.ts b/src/contracts/ports-github.ts
+index cc0fb545b8..e2624c4efb 100644
+--- a/src/contracts/ports-github.ts
++++ b/src/contracts/ports-github.ts
+@@ -45,6 +45,15 @@ export interface GitHubPort {
+    */
+   readonly reviewerIdentity: string;
+   readIssue(issueNumber: number): Promise<PortResultV1<GitHubIssueV1 | null>>;
++  /**
++   * Optional: `readIssue` without the native relations (the one REST read,
++   * never GraphQL), for a caller that needs only the issue's author and text
++   * (`isBaseRepairTask`), so a relations failure never makes it unreadable.
++   * Absent, such a caller uses `readIssue`.
++   */
++  readIssueWithoutRelations?(
++    issueNumber: number,
++  ): Promise<PortResultV1<GitHubIssueV1 | null>>;
+   listOpenIssues(): Promise<PortResultV1<GitHubIssueV1[]>>;
+   /** Find the PR for a deterministic head branch; null when none exists. */
+   findPullRequestByHeadRef(
+diff --git a/src/github/client-issues.ts b/src/github/client-issues.ts
+index bb0a185874..90bb52d08e 100644
+--- a/src/github/client-issues.ts
++++ b/src/github/client-issues.ts
+@@ -105,6 +105,19 @@ export abstract class GitHubClientIssues extends GitHubClientHttp {
+ 
+   async readIssue(
+     issueNumber: number,
++  ): Promise<PortResultV1<GitHubIssueV1 | null>> {
++    const read = await this.readIssueWithoutRelations(issueNumber);
++    if (!read.ok || read.value === null || !this.includeIssueRelations) {
++      return read;
++    }
++    const relations = await this.readIssueRelations(read.value.number);
++    if (!relations.ok) return relations;
++    return portOk({ ...read.value, relations: relations.value });
++  }
++
++  /** The issue's one REST read, never its GraphQL relations. */
++  async readIssueWithoutRelations(
++    issueNumber: number,
+   ): Promise<PortResultV1<GitHubIssueV1 | null>> {
+     const path = `/repos/${repoPath(this.repository)}/issues/${issueNumber}`;
+     const response = await this.request(
+@@ -131,10 +144,7 @@ export abstract class GitHubClientIssues extends GitHubClientHttp {
+       // one. Distinct from a transport failure, never a fabricated issue.
+       return portOk(null);
+     }
+-    if (!this.includeIssueRelations) return portOk(parsed.value.issue);
+-    const relations = await this.readIssueRelations(parsed.value.issue.number);
+-    if (!relations.ok) return relations;
+-    return portOk({ ...parsed.value.issue, relations: relations.value });
++    return portOk(parsed.value.issue);
+   }
+ 
+   /**
+diff --git a/src/github/never-started-job.ts b/src/github/never-started-job.ts
+index c97c8cead6..635b76fc1b 100644
+--- a/src/github/never-started-job.ts
++++ b/src/github/never-started-job.ts
+@@ -19,7 +19,11 @@
+  * does not match keeps its run exactly as GitHub reported it. The runtime
+  * check read (`readChecks`) and the launcher's base-repair read
+  * (`failedChecks`) share these rules; the launcher's CI resume pass judges a
+- * workflow run's jobs with `completedJobNeverStarted`.
++ * workflow run's jobs with `completedJobNeverStarted`. The base-repair read
++ * is strict (`neverStartedVerdicts`): a failed Actions run whose verdict is
++ * unknown (an unreadable or mismatched job, or one past the read bound)
++ * makes its whole read unreadable, so a billing stop during an Actions API
++ * incident never files a code-fix issue.
+  */
+ 
+ /** GitHub's own Actions app on a check run. */
+@@ -111,19 +115,22 @@ export function latestRunIndexes(runs: readonly unknown[]): number[] {
+ }
+ 
+ /**
+- * The indexes into `runs` (raw check runs, every one bound to `head`) of the
+- * failed Actions runs whose job never started. Only the latest run of each
+- * name is judged, at most `MAX_NEVER_STARTED_JOB_READS` jobs are read, and a
+- * verdict found in `cache` (keyed by job and head) costs no read; an
+- * unreadable or mismatched job is left out and is not cached.
++ * The verdicts on the failed Actions runs of `runs` (raw check runs, every
++ * one bound to `head`), as indexes into `runs`: `marked` holds the runs whose
++ * job never started, `unknown` the failed Actions runs no verdict was found
++ * for (an unreadable or mismatched job, or one past the read bound). Only the
++ * latest run of each name is judged, at most `MAX_NEVER_STARTED_JOB_READS`
++ * jobs are read, and a verdict found in `cache` (keyed by job and head) costs
++ * no read; an unknown verdict is not cached.
+  */
+-export async function neverStartedRunIndexes(
++export async function neverStartedVerdicts(
+   runs: readonly unknown[],
+   head: string,
+   readJob: ActionsJobReadV1,
+   cache?: Map<string, boolean>,
+-): Promise<Set<number>> {
++): Promise<{ marked: Set<number>; unknown: Set<number> }> {
+   const marked = new Set<number>();
++  const unknown = new Set<number>();
+   let reads = 0;
+   for (const index of latestRunIndexes(runs)) {
+     const jobId = failedActionsJobId(runs[index]);
+@@ -131,7 +138,10 @@ export async function neverStartedRunIndexes(
+     const key = `${jobId}:${head}`;
+     let verdict = cache?.get(key) ?? null;
+     if (verdict === null) {
+-      if (reads >= MAX_NEVER_STARTED_JOB_READS) continue;
++      if (reads >= MAX_NEVER_STARTED_JOB_READS) {
++        unknown.add(index);
++        continue;
++      }
+       reads++;
+       let body: unknown = null;
+       try {
+@@ -140,12 +150,29 @@ export async function neverStartedRunIndexes(
+         body = null;
+       }
+       verdict = completedJobNeverStarted(body, jobId, head);
+-      if (verdict === null) continue;
++      if (verdict === null) {
++        unknown.add(index);
++        continue;
++      }
+       if (cache !== undefined && cache.size < VERDICT_CACHE_MAX) {
+         cache.set(key, verdict);
+       }
+     }
+     if (verdict) marked.add(index);
+   }
+-  return marked;
++  return { marked, unknown };
++}
++
++/**
++ * The indexes into `runs` of the failed Actions runs whose job never started
++ * (`neverStartedVerdicts`): a run whose verdict is unknown is left out, so it
++ * keeps its failure exactly as GitHub reported it (the runtime's rule).
++ */
++export async function neverStartedRunIndexes(
++  runs: readonly unknown[],
++  head: string,
++  readJob: ActionsJobReadV1,
++  cache?: Map<string, boolean>,
++): Promise<Set<number>> {
++  return (await neverStartedVerdicts(runs, head, readJob, cache)).marked;
+ }
+diff --git a/src/github/port-base.ts b/src/github/port-base.ts
+index ff43e761da..ace32f9b0d 100644
+--- a/src/github/port-base.ts
++++ b/src/github/port-base.ts
+@@ -159,6 +159,12 @@ export abstract class GitHubPortBase {
+     return this.client.readIssue(issueNumber);
+   }
+ 
++  readIssueWithoutRelations(
++    issueNumber: number,
++  ): Promise<PortResultV1<GitHubIssueV1 | null>> {
++    return this.client.readIssueWithoutRelations(issueNumber);
++  }
++
+   listOpenIssues(): Promise<PortResultV1<GitHubIssueV1[]>> {
+     return this.client.listOpenIssues();
+   }
+diff --git a/src/host/local-config.ts b/src/host/local-config.ts
+index 080568a8e2..287506c279 100644
+--- a/src/host/local-config.ts
++++ b/src/host/local-config.ts
+@@ -332,6 +332,14 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
+       "ops/hosted-autonomy-follow-ups.ts",
+       "ops/hosted-autonomy-follow-up-pass.ts",
+       "ops/hosted-autonomy-base-repair.ts",
++      // The check reads behind what the base-repair lane files and charges:
++      // which conclusions count as red and the rule that a job that never
++      // started (a billing stop) is no failure, shared by the runtime's
++      // check read and the launcher's filing and CI resume reads. A
++      // model-authored candidate must never weaken them.
++      "ops/hosted-autonomy-github-jobs.ts",
++      "src/github/never-started-job.ts",
++      "ops/hosted-autonomy-ci-resume.ts",
+       // The conflict resolution decides when a base-refresh conflict is
+       // charged, exactly what the trusted host commits for it (the merge
+       // committer and resolver) and when the launcher re-admits a conflict
+diff --git a/src/host/local-github.ts b/src/host/local-github.ts
+index 14705fd7a5..aab3028d50 100644
+--- a/src/host/local-github.ts
++++ b/src/host/local-github.ts
+@@ -628,9 +628,10 @@ const LOCAL_SKIP_LABEL = "sentinel:skip";
+  * Scope the privately-owned concrete local port to the issues this deployment
+  * may repair.
+  *
+- * Only `listOpenIssues` and `readIssue` are replaced, and both originals are
+- * bound to this exact port before replacement, so every other method keeps
+- * the class instance and its `this` binding. EVERY open issue is in scope:
++ * Only `listOpenIssues`, `readIssue` and `readIssueWithoutRelations` are
++ * replaced, and each original is bound to this exact port before
++ * replacement, so every other method keeps the class instance and its
++ * `this` binding. EVERY open issue is in scope:
+  * nothing is silently filtered out, and an issue is excluded only by an
+  * explicit opt-out — the exact standalone first line `<!-- sentinel:skip -->`
+  * or the `sentinel:skip` label. The historical `<!-- sentinel:repair -->`
+@@ -649,16 +650,27 @@ export function scopeLocalRepairIssues(port: GitHubPort): GitHubPort {
+       ? { ...listed, value: listed.value.filter(isLocalRepairIssue) }
+       : listed;
+   };
+-  port.readIssue = async (issueNumber) => {
+-    const read = await readIssue(issueNumber);
+-    if (!read.ok || read.value === null || isLocalRepairIssue(read.value)) {
+-      return read;
++  const scoped = (
++    read: GitHubPortReadIssue,
++  ): GitHubPortReadIssue =>
++  async (issueNumber) => {
++    const issue = await read(issueNumber);
++    if (!issue.ok || issue.value === null || isLocalRepairIssue(issue.value)) {
++      return issue;
+     }
+     return portOk(null);
+   };
++  port.readIssue = scoped(readIssue);
++  if (port.readIssueWithoutRelations !== undefined) {
++    port.readIssueWithoutRelations = scoped(
++      port.readIssueWithoutRelations.bind(port),
++    );
++  }
+   return port;
+ }
+ 
++type GitHubPortReadIssue = GitHubPort["readIssue"];
++
+ /**
+  * Default admission with an explicit opt-out. The skip marker must be the whole
+  * first line with no leading whitespace, quoting or fencing, followed by LF,
+diff --git a/src/repair/base-repair.ts b/src/repair/base-repair.ts
+index e7056e5b13..0ac1bfcbc8 100644
+--- a/src/repair/base-repair.ts
++++ b/src/repair/base-repair.ts
+@@ -19,14 +19,21 @@
+  * `base_red`, so the moved base refreshes it first, uncharged. Every other
+  * gate (current-head CI, native review, P0, custody, accounting) is
+  * unchanged, and a closed issue is still refused before any charge
+- * (`readIssueForModel`).
++ * (`readIssueForModel`). A fresh implementation of a base-repair task whose
++ * marked tip is no longer its base's tip, or no longer fails a check its
++ * issue lists, is parked as a stale source before anything is charged
++ * (`baseRepairTaskCurrent`): no model start for a red that is gone.
+  */
+ import type { RepairCycleDepsV1 } from "./loop-types.ts";
+ import type { WorkRecordV1 } from "../contracts/work-record.ts";
++import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
+ import {
+   type CiAttributionV1,
+   type CiDispositionV1,
+   decideCiDisposition,
++  latestChecks,
++  RED_BASE_CONCLUSIONS,
++  UNTRUSTED_CHECK_NAME,
+ } from "./ci-rejection.ts";
+ 
+ /** First body line prefix of a base-repair issue (`baseRepairMarker`). */
+@@ -80,8 +87,11 @@ const recognised = new WeakMap<object, Map<string, boolean>>();
+ /**
+  * Whether `record` is a base-repair task: an issue task whose issue the App
+  * authored with the marker on its first body line. Read only when a caller
+- * needs it (a `base_red` disposition) and memoised per run (`deps`). Null
+- * when the issue read is unavailable: the caller defers without a write.
++ * needs it (a `base_red` disposition, a fresh implementation of a marked
++ * body) and memoised per run (`deps`), over the relation-free issue read
++ * where the port has one (only the author and first line decide, so a
++ * GraphQL relations failure never makes it unreadable). Null when the issue
++ * read is unavailable: the caller defers without converting anything.
+  */
+ export async function isBaseRepairTask(
+   deps: Pick<RepairCycleDepsV1, "github">,
+@@ -95,7 +105,9 @@ export async function isBaseRepairTask(
+   if (known !== undefined) return known;
+   let verdict: boolean;
+   try {
+-    const read = await deps.github.readIssue(number);
++    const read = deps.github.readIssueWithoutRelations === undefined
++      ? await deps.github.readIssue(number)
++      : await deps.github.readIssueWithoutRelations(number);
+     if (!read.ok) return null;
+     verdict = read.value !== null && read.value.number === number &&
+       read.value.author === BASE_REPAIR_AUTHOR &&
+@@ -147,3 +159,65 @@ export async function ownBaseRed(
+   }
+   return { kind: "candidate", checks: [...attribution.baseRed], redBase: true };
+ }
++
++/** Park detail of a base-repair task whose red is gone (stale source). */
++export const BASE_REPAIR_STALE_DETAIL =
++  "base-repair issue is stale: its tip is no longer the base tip or no longer fails a check it lists";
++
++/** The check names a base-repair issue body lists (`- \`<name>\``). */
++export function listedBaseRepairChecks(body: string): string[] {
++  const lines = body.split(/\r?\n/);
++  const start = lines.indexOf("Failing checks:");
++  if (start === -1) return [];
++  const names: string[] = [];
++  for (const line of lines.slice(start + 1)) {
++    const listed = /^- `([^`]+)`$/.exec(line);
++    if (listed === null) break;
++    names.push(listed[1]);
++  }
++  return names;
++}
++
++/**
++ * Whether a fresh implementation of `record` may start under `config`, given
++ * the body of its issue as read for the model. True for every task but a
++ * base-repair task (`isBaseRepairTask`; nothing is read for any other body)
++ * whose marked tip is no longer the base branch's tip, or whose tip no
++ * longer fails a check its issue lists (a re-run gone green, a never-started
++ * job): false, the stale task the caller parks before anything is charged.
++ * A tip-less (first-form) marker is judged by its listed checks alone, and a
++ * listed check under the untrusted stand-in name (which no read can find)
++ * leaves a task on its tip admitted. Null
++ * when the issue, ref or check read is unavailable: the caller defers.
++ */
++export async function baseRepairTaskCurrent(
++  deps: Pick<RepairCycleDepsV1, "github">,
++  record: WorkRecordV1,
++  config: Pick<RepositoryConfigV1, "baseBranch">,
++  body: string,
++): Promise<boolean | null> {
++  if (!isBaseRepairBody(body)) return true;
++  const task = await isBaseRepairTask(deps, record);
++  if (task !== true) return task === null ? null : true;
++  const marker = parseBaseRepairMarker(body.split(/\r?\n/, 1)[0]);
++  if (marker === null || marker.branch !== config.baseBranch) return false;
++  const names = listedBaseRepairChecks(body);
++  if (names.length === 0) return false;
++  try {
++    const tip = await deps.github.readRef(`refs/heads/${config.baseBranch}`);
++    if (!tip.ok || tip.value === null) return null;
++    if (marker.tip !== null && tip.value.sha !== marker.tip) return false;
++    // A check listed under the untrusted stand-in cannot be read back by its
++    // name, so its red cannot be disproved: the task on its tip may start.
++    if (names.includes(UNTRUSTED_CHECK_NAME)) return true;
++    const checks = await deps.github.readChecks(tip.value.sha, new Set(names));
++    if (!checks.ok) return null;
++    return latestChecks(checks.value.checks).some((check) =>
++      names.includes(check.name) && check.status === "completed" &&
++      check.neverStarted !== true &&
++      RED_BASE_CONCLUSIONS.includes(check.conclusion ?? "")
++    );
++  } catch {
++    return null;
++  }
++}
+diff --git a/src/repair/ci-first-policy.ts b/src/repair/ci-first-policy.ts
+index a2f4ee7a59..ab4dbe319b 100644
+--- a/src/repair/ci-first-policy.ts
++++ b/src/repair/ci-first-policy.ts
+@@ -155,8 +155,13 @@ export const RED_BASE_RECHECK_MS = 30 * 60_000;
+  * refusal backoff `CHECK_POLL_MS`.
+  */
+ export function isRedBaseHold(wait: WorkWaitV1 | null, now: number): boolean {
++  return hasRedBaseHoldShape(wait) && now < wait!.until!;
++}
++
++/** True when `wait` is a red base's hold, running or expired. */
++export function hasRedBaseHoldShape(wait: WorkWaitV1 | null): boolean {
+   return wait !== null && wait.reason === "backoff" && wait.until !== null &&
+-    wait.until - wait.since >= RED_BASE_RECHECK_MS && now < wait.until;
++    wait.until - wait.since >= RED_BASE_RECHECK_MS;
+ }
+ 
+ /**
+diff --git a/src/repair/ci-rejection.ts b/src/repair/ci-rejection.ts
+index 8fed08bf9c..76f96b4f25 100644
+--- a/src/repair/ci-rejection.ts
++++ b/src/repair/ci-rejection.ts
+@@ -87,7 +87,10 @@ export function ciCorrectionRouteOpen(
+  * base-repair rework recognise only `CI_CORRECTION_FINDING_PREFIX`, so hosted
+  * runs keep that opening until the installed rollback target recognises both
+  * (a runtime at or after this change); in process the own opening is always
+- * used.
++ * used. Under the ordinary opening a hosted base-repair fix carries
++ * `CI_RED_BASE_FINDING_CLAUSE` after its check list, which every consumer
++ * reads past (each matches the opening with `startsWith`, the cell's log
++ * evidence only `<name> (`), so its text never leaves the base green.
+  */
+ export const HOSTED_BASE_REPAIR_FINDING = false;
+ 
+@@ -136,6 +139,16 @@ export const CI_CORRECTION_FINDING_PREFIX =
+ export const CI_BASE_REPAIR_FINDING_PREFIX =
+   "Required CI checks failed on this candidate and on its red base ";
+ 
++/**
++ * Trusted clause a base-repair task's fix finding carries after its check
++ * list under the ordinary opening (a hosted run before
++ * `HOSTED_BASE_REPAIR_FINDING`): the checks are red on the base too. It holds
++ * no `(`, so the cell's log-evidence preference (`<name> (`) never matches
++ * it.
++ */
++export const CI_RED_BASE_FINDING_CLAUSE =
++  "These checks are also red on the base; this task exists to fix them.";
++
+ /**
+  * Head conclusions that can be the candidate's own failure (and the only
+  * head failures a red base holds, `base_red`).
+@@ -405,8 +418,10 @@ export function baseRedDetail(checks: readonly GitHubCheckV1[]): string {
+ 
+ /**
+  * The unresolved P1-equivalent finding a correction must resolve. It names
+- * only trusted failing check names and the base: green, or red under a
+- * base-repair task's own opening (`redBase`). The failing jobs' log
++ * only trusted failing check names and the base: green, or red for a
++ * base-repair task's own red base (`redBase`), under its own opening where
++ * the run may use it (`ownOpening`) and otherwise under the ordinary opening
++ * followed by `CI_RED_BASE_FINDING_CLAUSE`. The failing jobs' log
+  * evidence is never part of it (state and the digest-bound request keep this
+  * short R80-parseable text): the trusted matrix cell attaches that evidence
+  * at start time beside the request (`src/host/matrix-cell-ci-evidence.ts`).
+@@ -414,20 +429,23 @@ export function baseRedDetail(checks: readonly GitHubCheckV1[]): string {
+ export function ciCorrectionFinding(
+   base: GitSha,
+   checks: readonly GitHubCheckV1[],
+-  /** A base-repair task's own red base (`CI_BASE_REPAIR_FINDING_PREFIX`). */
++  /** A base-repair task's own red base: the checks are red there too. */
+   redBase = false,
++  /** The run may use `CI_BASE_REPAIR_FINDING_PREFIX` (`baseRepairFindingOpen`). */
++  ownOpening = true,
+ ): { severity: string; path: string | null; message: string } {
+-  const prefix = redBase
++  const prefix = redBase && ownOpening
+     ? CI_BASE_REPAIR_FINDING_PREFIX
+     : CI_CORRECTION_FINDING_PREFIX;
++  const clause = redBase && !ownOpening ? ` ${CI_RED_BASE_FINDING_CLAUSE}` : "";
+   return {
+     severity: "P1",
+     path: null,
+     message:
+       `${prefix}${base.slice(0, 12)}: ${
+         labels(checks, (name, conclusion) => `${name} (${conclusion})`)
+-      }. Reproduce them with the repository's own test and check commands and ` +
+-      `fix the candidate so they pass.`,
++      }.${clause} Reproduce them with the repository's own test and check ` +
++      `commands and fix the candidate so they pass.`,
+   };
+ }
+ 
+diff --git a/src/repair/loop-ci-correction.ts b/src/repair/loop-ci-correction.ts
+index 12c3090aa6..05b3174198 100644
+--- a/src/repair/loop-ci-correction.ts
++++ b/src/repair/loop-ci-correction.ts
+@@ -276,7 +276,8 @@ export async function confirmCiCorrection(
+       finding: ciCorrectionFinding(
+         record.target.base,
+         observed.checks,
+-        observed.redBase === true && baseRepairFindingOpen(deps),
++        observed.redBase === true,
++        baseRepairFindingOpen(deps),
+       ),
+     };
+   }
+diff --git a/src/repair/loop-ci-first.ts b/src/repair/loop-ci-first.ts
+index 4c3748e25c..a8bb5777ae 100644
+--- a/src/repair/loop-ci-first.ts
++++ b/src/repair/loop-ci-first.ts
+@@ -64,6 +64,7 @@ import {
+ import {
+   ciFixesLeft,
+   ciFixMarker,
++  hasRedBaseHoldShape,
+   PRE_REVIEW_CI_BOUND_MS,
+   preReviewCiFixRouteOpen,
+ } from "./ci-first-policy.ts";
+@@ -160,6 +161,24 @@ function awaitChecks(
+   );
+ }
+ 
++/** The uncharged red-base hold (`base_red`), its `since` kept. */
++function holdOnRedBase(
++  deps: RepairCycleDepsV1,
++  context: LoopContextV1,
++  record: WorkRecordV1,
++  now: number,
++): Promise<StepResultV1> {
++  return persistWork(
++    deps,
++    context,
++    holdForCi(context, record, {
++      reason: "backoff",
++      since: waitSince(record, "backoff", now),
++      until: deps.clock.now() + RED_BASE_RECHECK_MS,
++    }, now),
++  );
++}
++
+ /** A candidate-caused failure on the head a review was about to judge. */
+ function routeCandidateFailure(
+   deps: RepairCycleDepsV1,
+@@ -279,8 +298,16 @@ export async function gateReviewOnCi(
+     record,
+     attributeFailedChecks(failed, base.value.checks),
+   );
+-  // A base-repair recognition or tip read that is unavailable mutates nothing.
+-  if (disposition === null) return UNAVAILABLE;
++  // A base-repair recognition or tip read that is unavailable converts
++  // nothing (it comes only from a red base). A record already held by its
++  // red base keeps that hold re-armed, uncharged, so a transient read never
++  // lapses it (the delivery line and the base-repair pass read the hold);
++  // any other record is left untouched.
++  if (disposition === null) {
++    return hasRedBaseHoldShape(record.wait)
++      ? holdOnRedBase(deps, context, record, now)
++      : UNAVAILABLE;
++  }
+   switch (disposition.kind) {
+     case "candidate":
+       return routeCandidateFailure(
+@@ -295,15 +322,7 @@ export async function gateReviewOnCi(
+     case "base_red":
+       // The same check is red on the base: no fix can make it green, so
+       // nothing is charged; a later base move refreshes the head first.
+-      return persistWork(
+-        deps,
+-        context,
+-        holdForCi(context, record, {
+-          reason: "backoff",
+-          since: waitSince(record, "backoff", now),
+-          until: deps.clock.now() + RED_BASE_RECHECK_MS,
+-        }, now),
+-      );
++      return holdOnRedBase(deps, context, record, now);
+     case "unattributed":
+       // No base evidence (a cancelled, absent or inconclusive base check, or
+       // a head check that never concluded) proves nothing about the
+@@ -350,7 +369,8 @@ export async function confirmPreReviewCiFix(
+         finding: ciCorrectionFinding(
+           record.target.base,
+           observed.checks,
+-          observed.redBase === true && baseRepairFindingOpen(deps),
++          observed.redBase === true,
++          baseRepairFindingOpen(deps),
+         ),
+       };
+     case "clean":
+diff --git a/src/repair/loop-implementation.ts b/src/repair/loop-implementation.ts
+index 86bd91b21a..f8e2db4ced 100644
+--- a/src/repair/loop-implementation.ts
++++ b/src/repair/loop-implementation.ts
+@@ -46,6 +46,10 @@ import {
+ } from "./loop-state.ts";
+ import { legacyCutoff } from "./loop-review-round-cap.ts";
+ import { readBase, readIssueForModel } from "./loop-task-context.ts";
++import {
++  BASE_REPAIR_STALE_DETAIL,
++  baseRepairTaskCurrent,
++} from "./base-repair.ts";
+ import type {
+   LoopContextV1,
+   PreparedImplementationV1,
+@@ -268,6 +272,36 @@ export async function prepareImplementationStart(
+       };
+       return persistWork(deps, context, refreshed);
+     }
++    // A base-repair task whose red is gone (its tip moved or no longer fails
++    // a listed check) never starts: it parks as a stale source, uncharged,
++    // like an issue no task-bound review can serve. An unavailable read
++    // defers with nothing written.
++    if (issue !== null) {
++      const current = await baseRepairTaskCurrent(
++        deps,
++        record,
++        config,
++        issue.body,
++      );
++      if (current === null) {
++        return {
++          kind: "deferred",
++          detail: "base-repair task observation unavailable",
++        };
++      }
++      if (!current) {
++        return persistWork(
++          deps,
++          context,
++          markBlocked(
++            record,
++            "stale_source",
++            BASE_REPAIR_STALE_DETAIL,
++            deps.clock.now(),
++          ),
++        );
++      }
++    }
+   }
+ 
+   const startsAt = deps.clock.now();
+diff --git a/tests/github/issue-relations_test.ts b/tests/github/issue-relations_test.ts
+index 57d120f448..e554bf3557 100644
+--- a/tests/github/issue-relations_test.ts
++++ b/tests/github/issue-relations_test.ts
+@@ -331,6 +331,45 @@ Deno.test(
+   },
+ );
+ 
++Deno.test(
++  "issue relations: the relation-free read is the REST read alone, even with the opt-in",
++  async () => {
++    // The base-repair recognition needs only the author and first line, so a
++    // GraphQL outage that fails the full read never makes it unreadable.
++    const { client, transport } = makeClient([
++      httpRespond("GET", "/issues/7", 200, issueWire()),
++    ], true);
++    const lean = await client.readIssueWithoutRelations(7);
++    assert.equal(lean.ok, true, JSON.stringify(lean));
++    if (!lean.ok) return;
++    assert.equal(lean.value?.number, 7);
++    assert.equal(lean.value?.relations, undefined);
++    assert.deepEqual(
++      transport.requests.map((request) => request.method),
++      ["GET"],
++      "no GraphQL read",
++    );
++    // The full read over the same outage still fails closed.
++    const broken = makeClient([
++      httpRespond("GET", "/issues/7", 200, issueWire()),
++      httpRespond("POST", "/graphql", 502, { message: "bad gateway" }),
++    ], true);
++    const full = await broken.client.readIssue(7);
++    assert.equal(full.ok, false);
++    // A pull request is still no issue.
++    const pull = makeClient([
++      httpRespond(
++        "GET",
++        "/issues/7",
++        200,
++        pullWire({ number: 7, pull_request: {} }),
++      ),
++    ], true);
++    const none = await pull.client.readIssueWithoutRelations(7);
++    assert.equal(none.ok && none.value === null, true, JSON.stringify(none));
++  },
++);
++
+ Deno.test(
+   "issue relations: listOpenIssues includes the issue without relations when one relation read fails",
+   async () => {
+diff --git a/tests/host/hosted-authority-protected-paths_test.ts b/tests/host/hosted-authority-protected-paths_test.ts
+index 66578d9fd1..6992343382 100644
+--- a/tests/host/hosted-authority-protected-paths_test.ts
++++ b/tests/host/hosted-authority-protected-paths_test.ts
+@@ -86,6 +86,11 @@ for (
+     // pass files its issue over the App token.
+     "src/repair/base-repair.ts",
+     "ops/hosted-autonomy-base-repair.ts",
++    // The check reads it files and charges on: the red conclusions and the
++    // never-started (billing stop) rule, shared with the CI resume pass.
++    "ops/hosted-autonomy-github-jobs.ts",
++    "src/github/never-started-job.ts",
++    "ops/hosted-autonomy-ci-resume.ts",
+   ]
+ ) {
+   Deno.test(`hosted authority: maintenance refuses ${path}`, () =>
+diff --git a/tests/host/hosted-autonomy-base-repair-backup_test.ts b/tests/host/hosted-autonomy-base-repair-backup_test.ts
+index 1eb8be0123..c4f6730c94 100644
+--- a/tests/host/hosted-autonomy-base-repair-backup_test.ts
++++ b/tests/host/hosted-autonomy-base-repair-backup_test.ts
+@@ -39,6 +39,7 @@ import {
+   NOW,
+   TIP,
+ } from "./hosted-autonomy-spent-fixtures.ts";
++import { fakeBaseRepairIssues } from "./hosted-autonomy-base-repair-fixtures.ts";
+ 
+ const SCOPE = `/repos/${GATEWAY.owner}/${GATEWAY.name}`;
+ const SLUG = `${GATEWAY.owner}/${GATEWAY.name}` as const;
+@@ -103,7 +104,7 @@ async function pass(label: string, read: BackupCiReadV1) {
+     wait: { reason: "backoff", since: NOW - 60_000, until: NOW + 1_740_000 },
+     target: { ...target, base: TIP, head: HEAD },
+   });
+-  const filed: unknown[] = [];
++  const { issues, filed } = fakeBaseRepairIssues();
+   const { surface: base } = liveSurface({ tip: TIP });
+   const reader = new FakeBackupCiReader(() => read, [{
+     repository: SLUG,
+@@ -117,13 +118,7 @@ async function pass(label: string, read: BackupCiReadV1) {
+   const combined: HostedAutonomyGitHubV1 = {
+     ...base,
+     failedChecks: real.failedChecks,
+-    baseRepairIssues: {
+-      listAppAuthored: () => Promise.resolve([]),
+-      create: (input) => {
+-        filed.push(input);
+-        return Promise.resolve(4242);
+-      },
+-    },
++    baseRepairIssues: issues,
+   };
+   const rig = await liveRig(
+     `backup-base-${label}`,
+@@ -169,7 +164,12 @@ Deno.test("base repair backup: uncalibrated, provisional or missing backup evide
+   ];
+   for (const [label, read] of cases) {
+     const { actions, filed } = await pass(label, read);
+-    assert.deepEqual(actions, [], label);
++    // The never-started run is no failure: no failing check on the tip.
++    assert.deepEqual(
++      actions,
++      ["base-repair:ubiquity/ai.ubq.fi:no_tip_check"],
++      label,
++    );
+     assert.deepEqual(filed, [], `${label}: a billing stop is no code fix`);
+   }
+ });
+diff --git a/tests/host/hosted-autonomy-base-repair-bounds_test.ts b/tests/host/hosted-autonomy-base-repair-bounds_test.ts
+new file mode 100644
+index 0000000000..32af517b31
+--- /dev/null
++++ b/tests/host/hosted-autonomy-base-repair-bounds_test.ts
+@@ -0,0 +1,155 @@
++/**
++ * The base-repair pass's bounds (review findings of 2026-10-25): the self
++ * scope is never read, the pass budget stops it before any create (between
++ * listing pages too), a create GitHub does not confirm is `file_failed`, a
++ * held tip without a failing check run says so (`no_tip_check`, a red
++ * commit status is not judged), and the same-tip proof reads only down to
++ * the tip's committer date less the margin, never the App's whole history.
++ */
++import assert from "node:assert/strict";
++import {
++  BASE_REPAIR_HORIZON_MARGIN_MS,
++  BASE_REPAIR_PASS_BUDGET_MS,
++} from "../../ops/hosted-autonomy-base-repair.ts";
++import { HOSTED_AUTONOMY_SELF_SCOPE } from "../../ops/hosted-autonomy-policy.ts";
++import { NOW, TIP } from "./hosted-autonomy-spent-fixtures.ts";
++import {
++  appIssue,
++  HEAD,
++  held,
++  MARKER,
++  pass,
++  TAG,
++  TIP_COMMITTED_AT,
++} from "./hosted-autonomy-base-repair-fixtures.ts";
++
++const RED = { [TIP]: ["validate"], [HEAD]: ["validate"] };
++
++Deno.test("base repair bounds: a held record of the self scope is never read and files nothing", async () => {
++  const self = {
++    ...held(618),
++    repository: { ...HOSTED_AUTONOMY_SELF_SCOPE },
++  };
++  const { actions, reads, calls, filed } = await pass({
++    failed: RED,
++    work: [self],
++  });
++  assert.deepEqual(actions, []);
++  assert.deepEqual(reads, [], "no check read");
++  assert.deepEqual(calls, [], "no listing, commit read or create");
++  assert.equal(filed.length, 0);
++});
++
++Deno.test("base repair bounds: a clock past the budget stops the pass with no create", async () => {
++  // The budget runs out while the held heads are read, before any listing.
++  let now = NOW;
++  const atHead = await pass({
++    failed: RED,
++    now: () => now,
++    onCall: (call) => {
++      if (call === `failedChecks:${HEAD}`) {
++        now = NOW + BASE_REPAIR_PASS_BUDGET_MS;
++      }
++    },
++  });
++  assert.deepEqual(atHead.actions, [`${TAG}:deadline`]);
++  assert.equal(atHead.listings, 0);
++  assert.equal(atHead.filed.length, 0);
++  // It runs out between the open listing and the same-tip listing's first
++  // page: that listing refuses and the pass stops, with no create.
++  now = NOW;
++  const atListing = await pass({
++    failed: RED,
++    now: () => now,
++    onCall: (call) => {
++      if (call.startsWith("committedAt:")) {
++        now = NOW + BASE_REPAIR_PASS_BUDGET_MS;
++      }
++    },
++  });
++  assert.deepEqual(atListing.actions, [`${TAG}:deadline`]);
++  assert.ok(!atListing.calls.includes("create"), atListing.calls.join());
++  // It runs out once the same-tip listing has answered: still no create.
++  let armed = false;
++  let late = 0;
++  const atCreate = await pass({
++    failed: RED,
++    // The listing's own budget read is the first after it is called.
++    now: () => armed && late++ >= 1 ? NOW + BASE_REPAIR_PASS_BUDGET_MS : NOW,
++    onCall: (call) => {
++      if (call.startsWith("since:")) armed = true;
++    },
++  });
++  assert.deepEqual(atCreate.actions, [`${TAG}:deadline`]);
++  assert.ok(atCreate.calls.some((call) => call.startsWith("since:")));
++  assert.equal(atCreate.filed.length, 0);
++});
++
++Deno.test("base repair bounds: a create GitHub does not confirm is file_failed", async () => {
++  const { actions, filed } = await pass({ failed: RED, created: null });
++  assert.deepEqual(actions, [`${TAG}:file_failed`]);
++  assert.equal(filed.length, 1, "the create was sent once");
++});
++
++Deno.test("base repair bounds: the same-tip proof reads down to the tip's committer date less the margin", async () => {
++  const { actions, calls } = await pass({ failed: RED });
++  assert.deepEqual(actions, [`${TAG}:filed=#4242`]);
++  assert.deepEqual(calls, [
++    "open",
++    `committedAt:${TIP}`,
++    `since:${TIP_COMMITTED_AT - BASE_REPAIR_HORIZON_MARGIN_MS}`,
++    "create",
++  ]);
++  // A closed issue for this tip inside the horizon is found there.
++  const closed = await pass({
++    failed: RED,
++    issues: [
++      appIssue(9, MARKER, {
++        state: "closed",
++        createdAt: TIP_COMMITTED_AT - BASE_REPAIR_HORIZON_MARGIN_MS,
++      }),
++    ],
++  });
++  assert.deepEqual(closed.actions, [`${TAG}:filed_before=#9`]);
++});
++
++Deno.test("base repair bounds: an unreadable or future committer date proves no horizon and files nothing", async () => {
++  const unread = await pass({ failed: RED, committedAt: null });
++  assert.deepEqual(unread.actions, [`${TAG}:issues_unreadable`]);
++  assert.equal(unread.filed.length, 0);
++  const ahead = await pass({
++    failed: RED,
++    committedAt: NOW + BASE_REPAIR_HORIZON_MARGIN_MS + 1,
++  });
++  assert.deepEqual(ahead.actions, [`${TAG}:horizon_unproven`]);
++  assert.ok(!ahead.calls.some((call) => call.startsWith("since:")));
++  assert.equal(ahead.filed.length, 0);
++  // A committer date within the margin ahead of the clock still bounds it.
++  const skewed = await pass({
++    failed: RED,
++    committedAt: NOW + BASE_REPAIR_HORIZON_MARGIN_MS,
++  });
++  assert.deepEqual(skewed.actions, [`${TAG}:filed=#4242`]);
++});
++
++Deno.test("base repair bounds: a held tip without a failing check run files nothing and says so", async () => {
++  // The runtime may hold on a red commit status, which this read does not
++  // judge (only check runs, with the never-started rule): it is reported.
++  const { actions, reads, listings } = await pass({
++    failed: { [TIP]: [], [HEAD]: ["validate"] },
++  });
++  assert.deepEqual(actions, [`${TAG}:no_tip_check`]);
++  assert.deepEqual(reads.map((read) => read.commit), [TIP]);
++  assert.equal(listings, 0);
++});
++
++Deno.test("base repair bounds: a surface that throws is unexpected_error and stops nothing else", async () => {
++  const { actions, filed } = await pass({
++    failed: RED,
++    onCall: (call) => {
++      if (call === "open") throw new Error("synthetic");
++    },
++  });
++  assert.deepEqual(actions, [`${TAG}:unexpected_error`]);
++  assert.equal(filed.length, 0);
++});
+diff --git a/tests/host/hosted-autonomy-base-repair-fixtures.ts b/tests/host/hosted-autonomy-base-repair-fixtures.ts
+new file mode 100644
+index 0000000000..6150b9273f
+--- /dev/null
++++ b/tests/host/hosted-autonomy-base-repair-fixtures.ts
+@@ -0,0 +1,191 @@
++/**
++ * A fake base-repair issue capability (`HostedBaseRepairIssuesV1`) over a
++ * list of App-created items, for the base-repair pass suites. The listings
++ * answer like the real ones: the open listing every open item, the
++ * same-tip listing every item created at or after the horizon, and each
++ * refuses (null) once `inBudget` is false.
++ */
++import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
++import { baseRepairMarker } from "../../src/repair/base-repair.ts";
++import { runHostedBaseRepairPass } from "../../ops/hosted-autonomy-base-repair.ts";
++import type {
++  HostedAppIssueV1,
++  HostedAutonomyGitHubV1,
++  HostedBaseRepairIssuesV1,
++} from "../../ops/hosted-autonomy-types.ts";
++import {
++  liveRecord,
++  liveRig,
++  liveSnapshot,
++  liveSurface,
++  NOW,
++  TIP,
++} from "./hosted-autonomy-spent-fixtures.ts";
++
++export const TAG = "base-repair:ubiquity/ai.ubq.fi";
++export const HEAD = "1".repeat(40);
++export const OLD_TIP = "2".repeat(40);
++export const MARKER = baseRepairMarker("development", TIP);
++
++/** The CI-first gate's red-base hold, as a live poll re-arms it. */
++export const HELD = {
++  reason: "backoff",
++  since: NOW - 60_000,
++  until: NOW + 1_740_000,
++};
++
++/** A record of ai.ubq.fi issue `issue` (the live #618 row, re-identified). */
++export function record(
++  issue: number,
++  overrides: Record<string, unknown> = {},
++): WorkRecordV1 {
++  const template = liveRecord(618);
++  return liveRecord(618, {
++    id: `issue-ubiquity-ai.ubq.fi-${issue}`,
++    source: { ...template.source, id: String(issue) },
++    related: { ...template.related, issueNumber: issue },
++    ...overrides,
++  });
++}
++
++/** The live #618 target, published at `head` on `base`. */
++export function target(head: string, base: string) {
++  const { branch, pr } = liveRecord(618).target;
++  return { base, branch, checkpoint: null, head, pr };
++}
++
++/** A record held by its red base on `base` with published `head`. */
++export function held(issue: number, head = HEAD, base = TIP): WorkRecordV1 {
++  return record(issue, {
++    nextStep: "work",
++    blocker: null,
++    wait: HELD,
++    target: target(head, base),
++  });
++}
++
++/** The fake tip's committer date: an hour before the pass clock. */
++export const TIP_COMMITTED_AT = NOW - 3_600_000;
++
++/** One App-created item, open and created half an hour before the pass. */
++export function appIssue(
++  number: number,
++  firstLine: string,
++  overrides: Partial<HostedAppIssueV1> = {},
++): HostedAppIssueV1 {
++  return {
++    number,
++    state: "open",
++    pullRequest: false,
++    createdAt: NOW - 1_800_000,
++    firstLine,
++    ...overrides,
++  };
++}
++
++export interface FakeBaseRepairIssuesOptionsV1 {
++  /** Every App-created item; null makes both listings unreadable. */
++  issues?: readonly HostedAppIssueV1[] | null;
++  /** The tip's committer date (default `TIP_COMMITTED_AT`); null: unread. */
++  committedAt?: number | null;
++  /** The create's answer (default 4242). */
++  created?: number | null;
++  /** Called before each answer (a test's clock advance). */
++  onCall?: (call: string) => void;
++}
++
++export function fakeBaseRepairIssues(
++  options: FakeBaseRepairIssuesOptionsV1 = {},
++) {
++  const filed: { title: string; body: string }[] = [];
++  const calls: string[] = [];
++  const all = options.issues === undefined ? [] : options.issues;
++  const note = (call: string) => {
++    calls.push(call);
++    options.onCall?.(call);
++  };
++  const issues: HostedBaseRepairIssuesV1 = {
++    committedAt: (commit) => {
++      note(`committedAt:${commit}`);
++      return Promise.resolve(
++        options.committedAt === undefined
++          ? TIP_COMMITTED_AT
++          : options.committedAt,
++      );
++    },
++    listAppAuthoredSince: (sinceMs, inBudget) => {
++      note(`since:${sinceMs}`);
++      if (!inBudget() || all === null) return Promise.resolve(null);
++      return Promise.resolve(
++        all.filter((issue) => issue.createdAt >= sinceMs)
++          .sort((a, b) => b.createdAt - a.createdAt),
++      );
++    },
++    listOpenAppAuthored: (inBudget) => {
++      note("open");
++      if (!inBudget() || all === null) return Promise.resolve(null);
++      return Promise.resolve(all.filter((issue) => issue.state === "open"));
++    },
++    create: (input) => {
++      note("create");
++      filed.push(input);
++      return Promise.resolve(
++        options.created === undefined ? 4242 : options.created,
++      );
++    },
++  };
++  return { issues, filed, calls };
++}
++
++export interface PassOptionsV1 extends FakeBaseRepairIssuesOptionsV1 {
++  /** Failed check names by commit (absent: none failed). */
++  failed: Record<string, string[] | null>;
++  work?: WorkRecordV1[];
++  filing?: boolean;
++  /** The pass clock (default: always `NOW`). */
++  now?: () => number;
++}
++
++/** The REAL pass over the fake surface and a real-Git state rig. */
++export async function pass(options: PassOptionsV1) {
++  const { surface: base } = liveSurface({ tip: TIP });
++  const fake = fakeBaseRepairIssues(options);
++  const reads: { commit: string; conclusions: readonly string[] }[] = [];
++  const surface: HostedAutonomyGitHubV1 = {
++    ...base,
++    failedChecks: (commit, conclusions) => {
++      reads.push({ commit, conclusions });
++      options.onCall?.(`failedChecks:${commit}`);
++      return Promise.resolve(
++        commit in options.failed ? options.failed[commit] : [],
++      );
++    },
++    baseRepairIssues: fake.issues,
++  };
++  const work = options.work ?? [held(618)];
++  const rig = await liveRig("base-repair", liveSnapshot(work, []), surface);
++  try {
++    const actions = await runHostedBaseRepairPass(
++      {
++        state: rig.state,
++        githubFor: rig.githubFor,
++        clock: { now: options.now ?? (() => NOW) },
++      },
++      undefined,
++      // The lane ships with filing off; the pass is exercised with it on.
++      { filing: options.filing ?? true },
++    );
++    return {
++      actions,
++      filed: fake.filed,
++      reads,
++      calls: fake.calls,
++      listings: fake.calls.filter((call) =>
++        call === "open" || call.startsWith("since:")
++      ).length,
++      writes: rig.writes,
++    };
++  } finally {
++    await Deno.remove(rig.tmp, { recursive: true });
++  }
++}
+diff --git a/tests/host/hosted-autonomy-base-repair-listing_test.ts b/tests/host/hosted-autonomy-base-repair-listing_test.ts
+index 6473c853e8..0bbdd72b86 100644
+--- a/tests/host/hosted-autonomy-base-repair-listing_test.ts
++++ b/tests/host/hosted-autonomy-base-repair-listing_test.ts
+@@ -1,10 +1,14 @@
+ /**
+  * The base-repair issue capability over the REAL launcher surface and a
+- * stubbed `fetch` (review finding of 2026-10-25: one unfiltered page of 100
+- * open issues with no author check). The dedupe reads every issue the
+- * sentinel App created, open or closed, page by page to a short last page;
+- * another creator, a repeated item, a malformed item or a full page at the
+- * bound refuses the whole listing. The create sends no label.
++ * stubbed `fetch` (review findings of 2026-10-25: one unfiltered page of 100
++ * open issues with no author check; then an oldest-first listing of the
++ * App's whole history that failed closed for good at 2,000 items). The
++ * same-tip read lists every App-created item newest first and stops at the
++ * first one created before the caller's horizon; the older-tip read lists
++ * the open App-created items. Another creator, a repeated, out-of-order or
++ * malformed item, the page bound reached first, or the budget ending
++ * refuses the whole listing. The tip's committer date is read from its
++ * commit object, bound to the exact commit. The create sends no label.
+  */
+ import assert from "node:assert/strict";
+ import { createHostedAutonomyGitHub } from "../../ops/hosted-autonomy-github.ts";
+@@ -14,6 +18,13 @@ import { GATEWAY } from "./hosted-autonomy-spent-fixtures.ts";
+ const APP = "ubiquity-sentinel[bot]";
+ const REPO_URL =
+   `https://api.github.com/repos/${GATEWAY.owner}/${GATEWAY.name}`;
++const LISTING = `${REPO_URL}/issues?creator=ubiquity-sentinel%5Bbot%5D`;
++const SHA = "a".repeat(40);
++/** The instant item N was created (one minute apart, item 1 the oldest). */
++const at = (number: number) =>
++  Date.parse("2026-09-01T00:00:00Z") + number * 60_000;
++const iso = (ms: number) => new Date(ms).toISOString().replace(".000Z", "Z");
++const always = () => true;
+ 
+ function item(
+   number: number,
+@@ -24,15 +35,24 @@ function item(
+     state: "open",
+     user: { login: APP },
+     repository_url: REPO_URL,
+-    created_at: "2026-10-25T10:00:00Z",
++    created_at: iso(at(number)),
+     body: `first line of #${number}\nmore`,
+     ...overrides,
+   };
+ }
+ 
+-/** Runs `body` with `fetch` answering listing page N with `pages[N-1]`. */
+-async function withPages<T>(
+-  pages: unknown[],
++interface Routes {
++  /** Pages of the newest-first, all-states listing. */
++  all?: unknown[];
++  /** Pages of the oldest-first open listing. */
++  open?: unknown[];
++  /** The commit object of `SHA` (absent: 404). */
++  commit?: unknown;
++}
++
++/** Runs `body` with `fetch` answering the capability's routes. */
++async function withRoutes<T>(
++  routes: Routes,
+   body: () => Promise<T>,
+   requested: { url: string; method: string; body: unknown }[] = [],
+ ): Promise<T> {
+@@ -44,12 +64,16 @@ async function withPages<T>(
+       method: init?.method ?? "GET",
+       body: typeof init?.body === "string" ? JSON.parse(init.body) : null,
+     });
+-    const page = /[?&]page=(\d+)/.exec(url);
+-    const answer = init?.method === "POST"
+-      ? item(77, { title: "t", body: "b" })
+-      : page === null
+-      ? 404
+-      : pages[Number(page[1]) - 1] ?? [];
++    const page = Number(/[?&]page=(\d+)/.exec(url)?.[1] ?? 0);
++    let answer: unknown = 404;
++    if (init?.method === "POST") answer = item(77, { title: "t", body: "b" });
++    else if (url.includes("&state=all&sort=created&direction=desc&")) {
++      answer = routes.all?.[page - 1] ?? [];
++    } else if (url.includes("&state=open&sort=created&direction=asc&")) {
++      answer = routes.open?.[page - 1] ?? [];
++    } else if (url === `${REPO_URL}/git/commits/${SHA}`) {
++      answer = routes.commit ?? 404;
++    }
+     return Promise.resolve(
+       typeof answer === "number"
+         ? new Response("{}", { status: answer })
+@@ -65,64 +89,190 @@ async function withPages<T>(
+ 
+ const issues = () =>
+   createHostedAutonomyGitHub("token", GATEWAY).baseRepairIssues!;
+-const full = (from: number) =>
+-  Array.from({ length: 100 }, (_, index) => item(from + index));
+ 
+-Deno.test("base repair listing: every App-created issue, open or closed, to a short last page", async () => {
++/** Pages of 100 of `newest` down to item 1, newest first. */
++function newestFirst(newest: number): unknown[][] {
++  const pages: unknown[][] = [];
++  for (let top = newest; top >= 1; top -= 100) {
++    pages.push(
++      Array.from(
++        { length: Math.min(100, top) },
++        (_, index) => item(top - index, { state: "closed" }),
++      ),
++    );
++  }
++  return pages;
++}
++
++Deno.test("base repair listing: the same-tip read stops at the horizon, past any history", async () => {
++  // 2,500 App items (pull requests and issues alike); the tip is recent, so
++  // only the newest 40 can carry its marker and one page is read.
++  const pages = newestFirst(2_500);
++  (pages[0] as Record<string, unknown>[])[10] = item(2_490, {
++    state: "closed",
++    body: "<!-- sentinel:base-repair:main@x -->",
++  });
+   const requested: { url: string; method: string; body: unknown }[] = [];
+-  const listed = await withPages(
+-    [full(1), [
+-      item(101, { state: "closed" }),
+-      item(102, { pull_request: {} }),
+-    ]],
+-    () => issues().listAppAuthored(),
++  const listed = await withRoutes(
++    { all: pages },
++    () => issues().listAppAuthoredSince(at(2_461), always),
+     requested,
+   );
+   assert.ok(listed !== null);
+-  assert.equal(listed.length, 102);
+-  assert.deepEqual(listed[100], {
+-    number: 101,
++  assert.deepEqual(
++    listed.map((issue) => issue.number),
++    Array.from({ length: 40 }, (_, index) => 2_500 - index),
++  );
++  assert.deepEqual(listed[10], {
++    number: 2_490,
+     state: "closed",
+     pullRequest: false,
+-    firstLine: "first line of #101",
++    createdAt: at(2_490),
++    firstLine: "<!-- sentinel:base-repair:main@x -->",
+   });
+-  assert.equal(listed[101].pullRequest, true);
+-  assert.deepEqual(
+-    requested.map((request) => request.url),
+-    [1, 2].map((page) =>
+-      `${REPO_URL}/issues?creator=ubiquity-sentinel%5Bbot%5D&state=all&sort=created&direction=asc&per_page=100&page=${page}`
+-    ),
++  assert.deepEqual(requested.map((request) => request.url), [
++    `${LISTING}&state=all&sort=created&direction=desc&per_page=100&page=1`,
++  ]);
++  // A horizon further back reads further pages, and a short last page ends
++  // a history younger than the horizon.
++  const deep = await withRoutes(
++    { all: pages },
++    () => issues().listAppAuthoredSince(at(2_250), always),
++  );
++  assert.equal(deep?.length, 251);
++  const short = await withRoutes(
++    { all: newestFirst(150) },
++    () => issues().listAppAuthoredSince(0, always),
+   );
++  assert.equal(short?.length, 150);
+ });
+ 
+-Deno.test("base repair listing: another creator, a repeat, a malformed item or no proven end refuses it", async () => {
++Deno.test("base repair listing: the same-tip read refuses an unprovable listing", async () => {
++  const pages = newestFirst(300);
+   const cases: [string, unknown[]][] = [
+-    ["another creator", [[item(1, { user: { login: "someone" } })]]],
+-    ["a repeat across pages", [full(1), [item(100)]]],
++    ["another creator", [[item(3, { user: { login: "someone" } })]]],
++    ["a repeat across pages", [pages[0], [item(201), ...pages[1].slice(1)]]],
++    ["out of order", [[item(2), item(3)]]],
+     ["an unknown state", [[item(1, { state: "merged" })]]],
+     ["another repository", [[item(1, { repository_url: `${REPO_URL}x` })]]],
+     ["not a list", [{ message: "Not Found" }]],
++    // Every page of the bound is newer than the horizon: nothing older is
++    // proven.
+     [
+-      "a full page at the bound",
+-      Array.from(
+-        { length: BASE_REPAIR_LISTING_MAX_PAGES },
+-        (_, page) => full(page * 100 + 1),
++      "the bound before the horizon",
++      newestFirst(
++        BASE_REPAIR_LISTING_MAX_PAGES * 100 + 1,
+       ),
+     ],
+   ];
+-  for (const [label, pages] of cases) {
++  for (const [label, all] of cases) {
++    assert.equal(
++      await withRoutes({ all }, () => issues().listAppAuthoredSince(0, always)),
++      null,
++      label,
++    );
++  }
++  // The budget is read before every page.
++  const requested: { url: string; method: string; body: unknown }[] = [];
++  let pagesLeft = 1;
++  const spent = await withRoutes(
++    { all: pages },
++    () => issues().listAppAuthoredSince(0, () => pagesLeft-- > 0),
++    requested,
++  );
++  assert.equal(spent, null);
++  assert.equal(requested.length, 1, "no page after the budget ends");
++});
++
++Deno.test("base repair listing: the open read lists every open App item oldest first", async () => {
++  const first = Array.from({ length: 100 }, (_, index) => item(index + 1));
++  const requested: { url: string; method: string; body: unknown }[] = [];
++  const listed = await withRoutes(
++    { open: [first, [item(101, { pull_request: {} })]] },
++    () => issues().listOpenAppAuthored(always),
++    requested,
++  );
++  assert.equal(listed?.length, 101);
++  assert.equal(listed?.[100].pullRequest, true);
++  assert.deepEqual(
++    requested.map((request) => request.url),
++    [1, 2].map((page) =>
++      `${LISTING}&state=open&sort=created&direction=asc&per_page=100&page=${page}`
++    ),
++  );
++  const full = (from: number) =>
++    Array.from({ length: 100 }, (_, index) => item(from + index));
++  for (
++    const [label, open] of [
++      ["a closed item", [[item(1, { state: "closed" })]]],
++      ["another creator", [[item(1, { user: { login: "someone" } })]]],
++      ["a repeat", [full(1), [item(100)]]],
++      [
++        "a full page at the bound",
++        Array.from(
++          { length: BASE_REPAIR_LISTING_MAX_PAGES },
++          (_, page) => full(page * 100 + 1),
++        ),
++      ],
++    ] as const
++  ) {
++    assert.equal(
++      await withRoutes(
++        { open: [...open] },
++        () => issues().listOpenAppAuthored(always),
++      ),
++      null,
++      label,
++    );
++  }
++  assert.equal(
++    await withRoutes(
++      { open: [first] },
++      () => issues().listOpenAppAuthored(() => false),
++    ),
++    null,
++  );
++});
++
++Deno.test("base repair listing: the tip's committer date is bound to the exact commit", async () => {
++  const commit = (overrides: Record<string, unknown> = {}) => ({
++    sha: SHA,
++    committer: { name: "x", date: "2026-10-24T21:33:47Z" },
++    ...overrides,
++  });
++  assert.equal(
++    await withRoutes(
++      { commit: commit() },
++      () => issues().committedAt(SHA),
++    ),
++    Date.parse("2026-10-24T21:33:47Z"),
++  );
++  for (
++    const [label, answer] of [
++      ["another commit", commit({ sha: "b".repeat(40) })],
++      ["no committer", commit({ committer: null })],
++      ["a lenient date", commit({ committer: { date: "1" } })],
++      ["unreadable", undefined],
++    ] as const
++  ) {
+     assert.equal(
+-      await withPages(pages, () => issues().listAppAuthored()),
++      await withRoutes({ commit: answer }, () => issues().committedAt(SHA)),
+       null,
+       label,
+     );
+   }
++  const requested: { url: string; method: string; body: unknown }[] = [];
++  assert.equal(
++    await withRoutes({}, () => issues().committedAt("main"), requested),
++    null,
++  );
++  assert.equal(requested.length, 0, "only an exact commit id is read");
+ });
+ 
+ Deno.test("base repair listing: the create sends no label", async () => {
+   const requested: { url: string; method: string; body: unknown }[] = [];
+-  const number = await withPages(
+-    [],
++  const number = await withRoutes(
++    {},
+     () => issues().create({ title: "t", body: "b" }),
+     requested,
+   );
+diff --git a/tests/host/hosted-autonomy-base-repair_test.ts b/tests/host/hosted-autonomy-base-repair_test.ts
+index 210c5e3cdd..99658528e6 100644
+--- a/tests/host/hosted-autonomy-base-repair_test.ts
++++ b/tests/host/hosted-autonomy-base-repair_test.ts
+@@ -21,119 +21,21 @@ import {
+   BASE_REPAIR_FILING_ENABLED,
+   BASE_REPAIR_HEAD_READS,
+   baseRepairIssue,
+-  runHostedBaseRepairPass,
+ } from "../../ops/hosted-autonomy-base-repair.ts";
+-import type {
+-  HostedAppIssueV1,
+-  HostedAutonomyGitHubV1,
+-} from "../../ops/hosted-autonomy-types.ts";
++import type { HostedAppIssueV1 } from "../../ops/hosted-autonomy-types.ts";
++import { liveRecord, NOW, TIP } from "./hosted-autonomy-spent-fixtures.ts";
+ import {
+-  liveRecord,
+-  liveRig,
+-  liveSnapshot,
+-  liveSurface,
+-  NOW,
+-  TIP,
+-} from "./hosted-autonomy-spent-fixtures.ts";
+-
+-const TAG = "base-repair:ubiquity/ai.ubq.fi";
+-const HEAD = "1".repeat(40);
+-const OLD_TIP = "2".repeat(40);
+-const MARKER = baseRepairMarker("development", TIP);
+-
+-/** The CI-first gate's red-base hold, as a live poll re-arms it. */
+-const HELD = { reason: "backoff", since: NOW - 60_000, until: NOW + 1_740_000 };
+-
+-/** A record of ai.ubq.fi issue `issue` (the live #618 row, re-identified). */
+-function record(
+-  issue: number,
+-  overrides: Record<string, unknown> = {},
+-): WorkRecordV1 {
+-  const template = liveRecord(618);
+-  return liveRecord(618, {
+-    id: `issue-ubiquity-ai.ubq.fi-${issue}`,
+-    source: { ...template.source, id: String(issue) },
+-    related: { ...template.related, issueNumber: issue },
+-    ...overrides,
+-  });
+-}
+-
+-/** The live #618 target, published at `head` on `base`. */
+-function target(head: string, base: string) {
+-  const { branch, pr } = liveRecord(618).target;
+-  return { base, branch, checkpoint: null, head, pr };
+-}
+-
+-/** A record held by its red base on `base` with published `head`. */
+-function held(issue: number, head = HEAD, base = TIP): WorkRecordV1 {
+-  return record(issue, {
+-    nextStep: "work",
+-    blocker: null,
+-    wait: HELD,
+-    target: target(head, base),
+-  });
+-}
+-
+-function appIssue(
+-  number: number,
+-  firstLine: string,
+-  overrides: Partial<HostedAppIssueV1> = {},
+-): HostedAppIssueV1 {
+-  return { number, state: "open", pullRequest: false, firstLine, ...overrides };
+-}
+-
+-interface PassOptions {
+-  /** Failed check names by commit (absent: none failed). */
+-  failed: Record<string, string[] | null>;
+-  issues?: readonly HostedAppIssueV1[] | null;
+-  work?: WorkRecordV1[];
+-  filing?: boolean;
+-}
+-
+-async function pass(options: PassOptions) {
+-  const { surface: base } = liveSurface({ tip: TIP });
+-  const filed: { title: string; body: string }[] = [];
+-  const reads: { commit: string; conclusions: readonly string[] }[] = [];
+-  let listings = 0;
+-  const surface: HostedAutonomyGitHubV1 = {
+-    ...base,
+-    failedChecks: (commit, conclusions) => {
+-      reads.push({ commit, conclusions });
+-      return Promise.resolve(
+-        commit in options.failed ? options.failed[commit] : [],
+-      );
+-    },
+-    baseRepairIssues: {
+-      listAppAuthored: () => {
+-        listings++;
+-        return Promise.resolve(
+-          options.issues === undefined ? [] : options.issues,
+-        );
+-      },
+-      create: (input) => {
+-        filed.push(input);
+-        return Promise.resolve(4242);
+-      },
+-    },
+-  };
+-  const work = options.work ?? [held(618)];
+-  const rig = await liveRig("base-repair", liveSnapshot(work, []), surface);
+-  try {
+-    const actions = await runHostedBaseRepairPass(
+-      {
+-        state: rig.state,
+-        githubFor: rig.githubFor,
+-        clock: { now: () => NOW },
+-      },
+-      undefined,
+-      // The lane ships with filing off; the pass is exercised with it on.
+-      { filing: options.filing ?? true },
+-    );
+-    return { actions, filed, reads, listings, writes: rig.writes };
+-  } finally {
+-    await Deno.remove(rig.tmp, { recursive: true });
+-  }
+-}
++  appIssue,
++  HEAD,
++  held,
++  MARKER,
++  OLD_TIP,
++  pass,
++  type PassOptionsV1,
++  record,
++  TAG,
++  target,
++} from "./hosted-autonomy-base-repair-fixtures.ts";
+ 
+ Deno.test("base repair pass: filing ships off until its re-review passes", () => {
+   assert.equal(BASE_REPAIR_FILING_ENABLED, false);
+@@ -179,9 +81,10 @@ Deno.test("base repair pass: a tip red only on checks no held head fails files n
+ });
+ 
+ Deno.test("base repair pass: no hold on the tip, a green tip and unreadable reads file nothing", async () => {
+-  const cases: [PassOptions, string[], number][] = [
+-    // A green tip reads no head.
+-    [{ failed: { [TIP]: [] } }, [], 1],
++  const cases: [PassOptionsV1, string[], number][] = [
++    // A tip without a failing check run (a red commit status, which the
++    // read does not judge, or a re-run gone green) reads no head and says so.
++    [{ failed: { [TIP]: [] } }, [`${TAG}:no_tip_check`], 1],
+     [{ failed: { [TIP]: null } }, [`${TAG}:checks_unreadable`], 1],
+     [{ failed: { [TIP]: ["validate"], [HEAD]: null } }, [
+       `${TAG}:head_checks_unreadable`,
+@@ -250,12 +153,18 @@ Deno.test("base repair pass: only the first held heads by record id are read", a
+ Deno.test("base repair pass: an App issue already marked for this tip, open or closed, files nothing", async () => {
+   const red = { [TIP]: ["validate"], [HEAD]: ["validate"] };
+   for (const state of ["open", "closed"] as const) {
+-    const { actions, filed } = await pass({
++    const { actions, filed, calls } = await pass({
+       failed: red,
+       issues: [appIssue(7, MARKER, { state })],
+     });
+     assert.deepEqual(actions, [`${TAG}:filed_before=#7`], state);
+     assert.equal(filed.length, 0, state);
++    // The open issue (the steady state) decides from the open listing alone.
++    assert.equal(
++      calls.some((call) => call.startsWith("since:")),
++      state === "closed",
++      state,
++    );
+   }
+   // A pull request is not the issue, and only the first line marks one.
+   for (
+diff --git a/tests/host/hosted-autonomy-never-started-checks_test.ts b/tests/host/hosted-autonomy-never-started-checks_test.ts
+index abe469e491..873c5be586 100644
+--- a/tests/host/hosted-autonomy-never-started-checks_test.ts
++++ b/tests/host/hosted-autonomy-never-started-checks_test.ts
+@@ -7,11 +7,15 @@
+  * stop on a target base would have filed a code-fix issue no code change can
+  * satisfy. It now reads the job of each failed Actions check run (bounded,
+  * the latest run of each name) and leaves out a job with no step and no
+- * runner; an unreadable job keeps the run as a failure, as before. The
+- * caller names the conclusions that count (the runtime's own sets).
++ * runner. It is strict (review finding of 2026-10-25): a failed Actions run
++ * whose job cannot be read, does not match or lies past the read bound makes
++ * the whole read unreadable (null), never red, so a billing stop during an
++ * Actions API incident files nothing. The caller names the conclusions that
++ * count (the runtime's own sets).
+  *
+  * The REAL surface runs over a stubbed `fetch`; the REAL base-repair pass
+- * then files nothing for a base whose only failure never started.
++ * then files nothing for a base whose only failure never started, or whose
++ * failures it cannot tell from one.
+  */
+ import assert from "node:assert/strict";
+ import {
+@@ -21,6 +25,7 @@ import {
+ import { createHostedAutonomyGitHub } from "../../ops/hosted-autonomy-github.ts";
+ import { runHostedBaseRepairPass } from "../../ops/hosted-autonomy-base-repair.ts";
+ import type { HostedAutonomyGitHubV1 } from "../../ops/hosted-autonomy-types.ts";
++import { MAX_NEVER_STARTED_JOB_READS } from "../../src/github/never-started-job.ts";
+ import {
+   GATEWAY,
+   liveRecord,
+@@ -30,6 +35,7 @@ import {
+   NOW,
+   TIP,
+ } from "./hosted-autonomy-spent-fixtures.ts";
++import { fakeBaseRepairIssues } from "./hosted-autonomy-base-repair-fixtures.ts";
+ 
+ const SCOPE = `/repos/${GATEWAY.owner}/${GATEWAY.name}`;
+ const ACTIONS = { id: 15368, slug: "github-actions" };
+@@ -129,17 +135,13 @@ Deno.test("launcher failedChecks: a never-started Actions failure is no failing
+   );
+ });
+ 
+-Deno.test("launcher failedChecks: a job that ran, an unreadable job and another app keep their failure", async () => {
++Deno.test("launcher failedChecks: a job that ran and another app keep their failure", async () => {
+   const cases: [Record<string, unknown>[], Record<number, Answer>, string[]][] =
+     [
+       [[run(JOB)], {
+         [JOB]: job(JOB, { steps: [{ number: 1, name: "Set up job" }] }),
+       }, ["deno"]],
+       [[run(JOB)], { [JOB]: job(JOB, { runner_id: 3 }) }, ["deno"]],
+-      [[run(JOB)], { [JOB]: 404 }, ["deno"]],
+-      [[run(JOB)], { [JOB]: job(JOB, { head_sha: "f".repeat(40) }) }, [
+-        "deno",
+-      ]],
+       [[run(JOB, { name: "lint", app: { id: 9, slug: "ci-bot" } })], {}, [
+         "lint",
+       ]],
+@@ -158,6 +160,65 @@ Deno.test("launcher failedChecks: a job that ran, an unreadable job and another
+   }
+ });
+ 
++/** `count` failed Actions runs on `commit`, each its own name and job. */
++function failedRuns(commit: string, count: number, base = JOB) {
++  return Array.from(
++    { length: count },
++    (_, index) => run(base + index, { name: `job-${index}`, head_sha: commit }),
++  );
++}
++
++/** Every one of `runs`' jobs never started, on `commit`. */
++function stoppedJobs(commit: string, runs: Record<string, unknown>[]) {
++  return Object.fromEntries(
++    runs.map((
++      row,
++    ) => [row.id as number, job(row.id as number, { head_sha: commit })]),
++  );
++}
++
++Deno.test("launcher failedChecks: a failed job whose verdict is unknown makes the read unreadable", async () => {
++  const cases: [string, Record<number, Answer>][] = [
++    ["404", { [JOB]: 404 }],
++    ["500", { [JOB]: 500 }],
++    ["502", { [JOB]: 502 }],
++    ["403", { [JOB]: 403 }],
++    ["another commit", { [JOB]: job(JOB, { head_sha: "f".repeat(40) }) }],
++    ["another job", { [JOB]: job(JOB + 7) }],
++    ["still running", { [JOB]: job(JOB, { status: "in_progress" }) }],
++  ];
++  for (const [label, jobs] of cases) {
++    assert.equal(await withFetch([run(JOB)], jobs, tipFailures), null, label);
++  }
++  // Past the read bound, the next failed job's verdict is unknown too.
++  const runs = failedRuns(TIP, MAX_NEVER_STARTED_JOB_READS + 1);
++  const requested: string[] = [];
++  assert.equal(
++    await withFetch(runs, stoppedJobs(TIP, runs), tipFailures, requested),
++    null,
++  );
++  assert.equal(
++    requested.filter((url) => url.includes("/actions/jobs/")).length,
++    MAX_NEVER_STARTED_JOB_READS,
++  );
++  // Within the bound every never-started job is known: no failure.
++  const bounded = failedRuns(TIP, MAX_NEVER_STARTED_JOB_READS);
++  assert.deepEqual(
++    await withFetch(bounded, stoppedJobs(TIP, bounded), tipFailures),
++    [],
++  );
++  // An unknown verdict on a run the caller does not count changes nothing:
++  // a cancelled run is no failed Actions run, so no job is read for it.
++  assert.deepEqual(
++    await withFetch(
++      [run(JOB, { conclusion: "cancelled" }), run(JOB + 1, { name: "lint" })],
++      { [JOB + 1]: job(JOB + 1, { steps: [{ number: 1 }] }) },
++      tipFailures,
++    ),
++    ["lint"],
++  );
++});
++
+ Deno.test("launcher failedChecks: the caller's conclusions count, the runtime's own sets", async () => {
+   const runs = [
+     run(JOB, { name: "approve", conclusion: "action_required", app: {} }),
+@@ -204,19 +265,13 @@ Deno.test("base repair pass: a base whose only failure never started files nothi
+     wait: { reason: "backoff", since: NOW - 60_000, until: NOW + 1_740_000 },
+     target: { base: TIP, branch, checkpoint: null, head: HEAD, pr },
+   });
+-  const filed: unknown[] = [];
++  const { issues, filed } = fakeBaseRepairIssues();
+   const { surface: base } = liveSurface({ tip: TIP });
+   const real = surface();
+   const combined: HostedAutonomyGitHubV1 = {
+     ...base,
+     failedChecks: real.failedChecks,
+-    baseRepairIssues: {
+-      listAppAuthored: () => Promise.resolve([]),
+-      create: (input) => {
+-        filed.push(input);
+-        return Promise.resolve(4242);
+-      },
+-    },
++    baseRepairIssues: issues,
+   };
+   const rig = await liveRig(
+     "never-started-base",
+@@ -244,7 +299,10 @@ Deno.test("base repair pass: a base whose only failure never started files nothi
+       { [JOB]: job(JOB), [HEAD_JOB]: headJob },
+       runPass,
+     );
+-    assert.deepEqual(actions, []);
++    // No failing check run is left on the tip: reported, nothing filed.
++    assert.deepEqual(actions, [
++      "base-repair:ubiquity/ai.ubq.fi:no_tip_check",
++    ]);
+     assert.deepEqual(filed, [], "a billing stop is no code-fix issue");
+     // The same base with a job that ran still files its issue.
+     const ran = await withFetch(
+@@ -257,6 +315,50 @@ Deno.test("base repair pass: a base whose only failure never started files nothi
+     );
+     assert.deepEqual(ran, ["base-repair:ubiquity/ai.ubq.fi:filed=#4242"]);
+     assert.equal(filed.length, 1);
++    // A billing stop during an Actions API incident: every job read fails,
++    // so neither side's red can be told from a stop and nothing is filed.
++    for (const status of [500, 502, 403]) {
++      const incident = await withFetch(
++        { [TIP]: [run(JOB)], [HEAD]: headRuns },
++        { [JOB]: status, [HEAD_JOB]: status },
++        runPass,
++      );
++      assert.deepEqual(
++        incident,
++        ["base-repair:ubiquity/ai.ubq.fi:checks_unreadable"],
++        String(status),
++      );
++      // Readable on the tip, unreadable on the head.
++      const head = await withFetch(
++        { [TIP]: [run(JOB)], [HEAD]: headRuns },
++        {
++          [JOB]: job(JOB, { steps: [{ number: 1, name: "test" }] }),
++          [HEAD_JOB]: status,
++        },
++        runPass,
++      );
++      assert.deepEqual(
++        head,
++        ["base-repair:ubiquity/ai.ubq.fi:head_checks_unreadable"],
++        String(status),
++      );
++    }
++    // More never-started runs than the read bound, on the tip and the head.
++    const tipRuns = failedRuns(TIP, MAX_NEVER_STARTED_JOB_READS + 2);
++    const manyHead = failedRuns(
++      HEAD,
++      MAX_NEVER_STARTED_JOB_READS + 2,
++      HEAD_JOB,
++    );
++    const many = await withFetch(
++      { [TIP]: tipRuns, [HEAD]: manyHead },
++      { ...stoppedJobs(TIP, tipRuns), ...stoppedJobs(HEAD, manyHead) },
++      runPass,
++    );
++    assert.deepEqual(many, [
++      "base-repair:ubiquity/ai.ubq.fi:checks_unreadable",
++    ]);
++    assert.equal(filed.length, 1, "nothing more was filed");
+   } finally {
+     await Deno.remove(rig.tmp, { recursive: true });
+   }
+diff --git a/tests/host/local-github_test.ts b/tests/host/local-github_test.ts
+index 6d40c94102..1c1857671e 100644
+--- a/tests/host/local-github_test.ts
++++ b/tests/host/local-github_test.ts
+@@ -11,6 +11,7 @@ import type { GitSha } from "../../src/contracts/brands.ts";
+ import {
+   type GitHubCooldownGateV1,
+   type GitHubIssueV1,
++  type GitHubPort,
+   portError,
+   portOk,
+   type PortResultV1,
+@@ -389,6 +390,32 @@ Deno.test(
+   },
+ );
+ 
++Deno.test(
++  "local issue scope: the relation-free read is scoped exactly like readIssue",
++  async () => {
++    const plain: Partial<GitHubIssueV1> = { number: 11, body: "ordinary" };
++    const github: GitHubPort = new FakeGithub({ issues: [plain] });
++    const lean: number[] = [];
++    // The concrete port's relation-free read (the fake serves its one table).
++    github.readIssueWithoutRelations = function (
++      this: GitHubPort,
++      number: number,
++    ) {
++      lean.push(number);
++      return this.readIssue(number);
++    };
++    const scoped = scopeLocalRepairIssues(github);
++    const admitted = await scoped.readIssueWithoutRelations!(11);
++    assert.equal(admitted.ok && admitted.value?.number, 11);
++    plain.body = `${LOCAL_SKIP_MARKER}\nnow skipped`;
++    assert.deepEqual(await scoped.readIssueWithoutRelations!(11), portOk(null));
++    assert.deepEqual(lean, [11, 11], "the original read, bound to the port");
++    // A port without it gains none.
++    const bare = scopeLocalRepairIssues(new FakeGithub());
++    assert.equal(bare.readIssueWithoutRelations, undefined);
++  },
++);
++
+ Deno.test(
+   "local issue scope: port errors pass through and other methods keep behavior",
+   async () => {
+diff --git a/tests/repair/base-repair-admission_test.ts b/tests/repair/base-repair-admission_test.ts
+new file mode 100644
+index 0000000000..e702faf941
+--- /dev/null
++++ b/tests/repair/base-repair-admission_test.ts
+@@ -0,0 +1,185 @@
++/**
++ * A base-repair task whose red is gone costs no implementation (review
++ * finding of 2026-10-25). The REAL repair loop admits the launcher's own
++ * issue text (`baseRepairIssue`) from intake; before its first
++ * implementation is charged, the runtime re-checks that the marker's tip is
++ * still the base tip and still fails a check the issue lists. A moved tip,
++ * a listed check gone green and one whose job never started park the task
++ * as a stale source with nothing reserved and no model start; an unavailable
++ * read defers with nothing written; a tip that still fails, and an issue
++ * that only quotes the marker, start as before.
++ */
++import assert from "node:assert/strict";
++import type { GitSha } from "../../src/contracts/brands.ts";
++import {
++  type GitHubCheckV1,
++  type GitHubIssueV1,
++  portError,
++  portOk,
++} from "../../src/contracts/ports.ts";
++import {
++  BASE_REPAIR_AUTHOR,
++  BASE_REPAIR_STALE_DETAIL,
++  listedBaseRepairChecks,
++} from "../../src/repair/base-repair.ts";
++import { baseRepairIssue } from "../../ops/hosted-autonomy-base-repair.ts";
++import { SHA1, SHA2, T0 } from "../state/helpers.ts";
++import { check } from "./ci-first-rig.ts";
++import { makeRig } from "./loop-rig.ts";
++
++const ISSUE = 5;
++
++interface AdmissionCase {
++  /** The tip the marker names (the base tip is SHA1). */
++  marked?: GitSha;
++  /** The failing checks the launcher lists (default `deno`). */
++  listed?: string[];
++  author?: string;
++  /** The listed checks' runs on the tip; null: the read is unavailable. */
++  tipChecks: GitHubCheckV1[] | null;
++}
++
++async function admit(prefix: string, options: AdmissionCase) {
++  const { title, body } = baseRepairIssue(
++    "development",
++    options.marked ?? SHA1,
++    options.listed ?? ["deno"],
++  );
++  const issue: GitHubIssueV1 = {
++    number: ISSUE,
++    title,
++    body,
++    state: "open",
++    author: options.author ?? BASE_REPAIR_AUTHOR,
++    labels: [],
++    createdAt: T0 - 300,
++    updatedAt: T0 - 300,
++    closedAt: null,
++  };
++  const rig = await makeRig(`base-repair-admit-${prefix}`, {
++    summaries: false,
++    github: { openIssues: [issue], baseSha: SHA1 },
++  });
++  rig.github.readIssue = (number: number) =>
++    Promise.resolve(portOk(number === ISSUE ? issue : null));
++  const tipReads: { head: GitSha; names: string[] }[] = [];
++  const read = rig.github.readChecks.bind(rig.github);
++  rig.github.readChecks = (head: GitSha, names?: ReadonlySet<string>) => {
++    if (head !== SHA1) return read(head);
++    tipReads.push({ head, names: [...(names ?? [])] });
++    return Promise.resolve(
++      options.tipChecks === null
++        ? portError("unavailable", "check read failed")
++        : portOk({ head, checks: options.tipChecks }),
++    );
++  };
++  try {
++    const outcome = await rig.run();
++    const state = await rig.snapshot();
++    const work = state.work.find((record) =>
++      record.related.issueNumber === ISSUE
++    );
++    assert.ok(work !== undefined, "intake admitted the issue");
++    return {
++      outcome,
++      work,
++      state,
++      tipReads,
++      requests: rig.model.requests,
++    };
++  } finally {
++    await rig.ctx.cleanup();
++  }
++}
++
++Deno.test("base repair admission: the launcher's issue lists its checks in the shape the runtime reads", () => {
++  const { body } = baseRepairIssue("main", SHA1, ["validate", "deno"]);
++  assert.deepEqual(listedBaseRepairChecks(body), ["deno", "validate"]);
++  assert.deepEqual(listedBaseRepairChecks("no list here"), []);
++});
++
++Deno.test("base repair admission: a tip that still fails a listed check starts the implementation", async () => {
++  const { work, tipReads, requests } = await admit("red", {
++    tipChecks: [check("deno", SHA1, "failure")],
++  });
++  assert.equal(requests.length >= 1, true, "one implementation started");
++  assert.equal(requests[0].issue?.number, ISSUE);
++  assert.notEqual(work.blocker?.kind, "stale_source");
++  assert.deepEqual(tipReads[0], { head: SHA1, names: ["deno"] });
++});
++
++Deno.test("base repair admission: a moved tip, a green listed check and a never-started one park it uncharged", async () => {
++  const cases: [string, AdmissionCase, number][] = [
++    ["moved", { marked: SHA2, tipChecks: [check("deno", SHA1, "failure")] }, 0],
++    ["green", { tipChecks: [check("deno", SHA1, "success")] }, 1],
++    ["absent", { tipChecks: [check("lint", SHA1, "failure")] }, 1],
++    [
++      "never-started",
++      {
++        tipChecks: [{ ...check("deno", SHA1, "failure"), neverStarted: true }],
++      },
++      1,
++    ],
++  ];
++  for (const [label, options, checkReads] of cases) {
++    const { work, state, tipReads, requests } = await admit(label, options);
++    assert.equal(requests.length, 0, `${label}: no model start`);
++    assert.equal(work.nextStep, "blocked", label);
++    assert.deepEqual(
++      work.blocker && {
++        kind: work.blocker.kind,
++        message: work.blocker.message,
++      },
++      { kind: "stale_source", message: BASE_REPAIR_STALE_DETAIL },
++      label,
++    );
++    assert.equal(
++      state.reservations.filter((row) => row.taskId === work.id).length,
++      0,
++      `${label}: nothing reserved`,
++    );
++    assert.equal(work.counters.attempts, 0, label);
++    // A moved tip is decided before any check read.
++    assert.equal(tipReads.length, checkReads, label);
++  }
++});
++
++Deno.test("base repair admission: an unavailable check read defers with nothing written", async () => {
++  const { work, state, requests } = await admit("unavailable", {
++    tipChecks: null,
++  });
++  assert.equal(requests.length, 0);
++  assert.equal(work.nextStep, "work");
++  assert.equal(work.blocker, null);
++  assert.equal(work.counters.attempts, 0);
++  assert.equal(
++    state.reservations.filter((row) => row.taskId === work.id).length,
++    0,
++  );
++});
++
++Deno.test("base repair admission: a check listed under the untrusted stand-in name cannot be disproved", async () => {
++  const { tipReads, requests } = await admit("untrusted", {
++    listed: ["a`b"],
++    tipChecks: [check("deno", SHA1, "success")],
++  });
++  assert.equal(requests.length >= 1, true, "the task on its tip starts");
++  assert.equal(tipReads.length, 0, "no read could find that check");
++  // Moved, it is still stale.
++  const moved = await admit("untrusted-moved", {
++    listed: ["a`b"],
++    marked: SHA2,
++    tipChecks: [],
++  });
++  assert.equal(moved.requests.length, 0);
++  assert.equal(moved.work.blocker?.kind, "stale_source");
++});
++
++Deno.test("base repair admission: an issue only another author marks is an ordinary task", async () => {
++  const { tipReads, requests } = await admit("other-author", {
++    author: "someone",
++    tipChecks: [check("deno", SHA1, "success")],
++  });
++  assert.equal(requests.length >= 1, true);
++  assert.equal(tipReads.length, 0, "no tip check read for an ordinary task");
++});
+diff --git a/tests/repair/base-repair-lane_test.ts b/tests/repair/base-repair-lane_test.ts
+index 88da8be5ee..ada19b09af 100644
+--- a/tests/repair/base-repair-lane_test.ts
++++ b/tests/repair/base-repair-lane_test.ts
+@@ -8,9 +8,12 @@
+  * issue with the marker on its first line; no label, no severity) a
+  * `base_red` failure on the current tip is its own: it takes the ordinary
+  * charged CI fix route, for exactly the checks red on both, with a finding
+- * that does not claim they passed on the base. Every other record keeps the
+- * hold; an unavailable issue or tip read defers without a write; a base that
+- * is no longer the tip refreshes first, uncharged.
++ * that does not claim they passed on the base (hosted, the ordinary opening
++ * followed by a red-base clause). Every other record keeps the hold; an
++ * unavailable issue or tip read converts nothing (a record already in a
++ * red-base hold has it re-armed, uncharged); recognition reads the issue
++ * without its GraphQL relations; a base that is no longer the tip refreshes
++ * first, uncharged.
+  */
+ import assert from "node:assert/strict";
+ import type { GitSha } from "../../src/contracts/brands.ts";
+@@ -33,14 +36,19 @@ import {
+   attributeFailedChecks,
+   CI_BASE_REPAIR_FINDING_PREFIX,
+   CI_CORRECTION_FINDING_PREFIX,
++  CI_RED_BASE_FINDING_CLAUSE,
+   ciCorrectionFinding,
+   HOSTED_BASE_REPAIR_FINDING,
+   isCiCorrectionFinding,
+ } from "../../src/repair/ci-rejection.ts";
+ import { confirmCiCorrection } from "../../src/repair/loop-ci-correction.ts";
+ import { confirmPreReviewCiFix } from "../../src/repair/loop-ci-first.ts";
+-import { isCiFixMarker } from "../../src/repair/ci-first-policy.ts";
+-import { SHA1, SHA2, SHA3, workRecord } from "../state/helpers.ts";
++import {
++  isCiFixMarker,
++  isRedBaseHold,
++  RED_BASE_RECHECK_MS,
++} from "../../src/repair/ci-first-policy.ts";
++import { SHA1, SHA2, SHA3, T0, workRecord } from "../state/helpers.ts";
+ import { check, ciFirstRig, taskRecord } from "./ci-first-rig.ts";
+ import { ciRig } from "./ci-correction-rig.ts";
+ 
+@@ -69,19 +77,37 @@ type IssueRead = Awaited<ReturnType<RepairCycleDepsV1["github"]["readIssue"]>>;
+ async function gateOutcome(
+   /** One answer for every read, or the answer to the nth read (from 0). */
+   read: IssueRead | ((call: number) => IssueRead),
+-  options: { hosted?: boolean; checks?: typeof RED; prefix?: string } = {},
++  options: {
++    hosted?: boolean;
++    checks?: typeof RED;
++    prefix?: string;
++    wait?: Parameters<typeof ciFirstRig>[1]["wait"];
++    /** Serve `read` as the port's relation-free read; `readIssue` fails. */
++    relationFree?: boolean;
++  } = {},
+ ) {
+   const { rig, charges, writes } = await ciFirstRig(
+     `base-repair-${options.prefix ?? "gate"}`,
+-    { hosted: options.hosted ?? true, checks: options.checks ?? RED },
++    {
++      hosted: options.hosted ?? true,
++      checks: options.checks ?? RED,
++      ...(options.wait === undefined ? {} : { wait: options.wait }),
++    },
+   );
+   const reads: number[] = [];
+-  rig.github.readIssue = (number: number) => {
++  const answer = (number: number) => {
+     reads.push(number);
+     return Promise.resolve(
+       typeof read === "function" ? read(reads.length - 1) : read,
+     );
+   };
++  if (options.relationFree === true) {
++    // The relations (GraphQL) half of the full read is down.
++    rig.github.readIssue = () =>
++      Promise.resolve(portError("unavailable", "relations read failed"));
++    (rig.github as RepairCycleDepsV1["github"]).readIssueWithoutRelations =
++      answer;
++  } else rig.github.readIssue = answer;
+   try {
+     const outcome = await rig.run();
+     const after = await rig.snapshot();
+@@ -220,6 +246,53 @@ Deno.test("base repair: an unavailable issue read defers the gate without a writ
+   assert.deepEqual(after.reservations, charges, "no review is reserved");
+ });
+ 
++Deno.test("base repair: an unavailable recognition re-arms an expired red-base hold, uncharged", async () => {
++  // Expired at the rig's clock (T0 + 10 minutes).
++  const expired = {
++    reason: "backoff" as const,
++    since: T0 - 30 * 60_000,
++    until: T0,
++  };
++  const { work, charges, after, rig, reads } = await gateOutcome(
++    portError("unavailable", "issue read failed"),
++    { prefix: "rearm", wait: expired },
++  );
++  const now = T0 + 10 * 60_000;
++  assert.deepEqual(reads, [1]);
++  assert.equal(work.nextStep, "work");
++  assert.equal(work.blocker, null);
++  assert.ok(isRedBaseHold(work.wait, now), JSON.stringify(work.wait));
++  assert.equal(work.wait?.since, expired.since, "the hold keeps its start");
++  assert.equal(work.wait?.until, now + RED_BASE_RECHECK_MS);
++  assert.equal(rig.github.calls.includes("requestReview"), false);
++  assert.deepEqual(after.reservations, charges, "nothing charged");
++  // Any other wait (here the CI fix marker) is left untouched, as before.
++  const marker = { reason: "backoff" as const, since: T0, until: T0 };
++  const kept = await gateOutcome(
++    portError("unavailable", "issue read failed"),
++    { prefix: "rearm-marker", wait: marker },
++  );
++  assert.deepEqual(kept.work.wait, marker);
++});
++
++Deno.test("base repair: a relations outage leaves the gate's recognition and every hold intact", async () => {
++  // An ordinary held record keeps its uncharged hold.
++  const ordinary = await gateOutcome(
++    portOk(issue({ author: "someone" })),
++    { prefix: "lean-ordinary", relationFree: true },
++  );
++  assert.deepEqual(ordinary.reads, [1]);
++  assert.equal(ordinary.work.wait?.reason, "backoff");
++  assert.equal(isCiFixMarker(ordinary.work.wait), false);
++  assert.deepEqual(ordinary.after.reservations, ordinary.charges);
++  // The base-repair task still takes its CI fix route.
++  const task = await gateOutcome(portOk(issue()), {
++    prefix: "lean-task",
++    relationFree: true,
++  });
++  assert.ok(isCiFixMarker(task.work.wait), JSON.stringify(task.work.wait));
++});
++
+ /** A minimal deps over a readIssue/readRef pair (the base is SHA1). */
+ function directDeps(
+   tip: IssueRead | null,
+@@ -252,7 +325,7 @@ function directDeps(
+   return { deps, record, calls };
+ }
+ 
+-Deno.test("base repair: a hosted fix keeps the opening its rollback target recognises", async () => {
++Deno.test("base repair: a hosted fix keeps the opening its rollback target recognises and says the base is red", async () => {
+   const at = () =>
+     Promise.resolve(portOk({ ref: "refs/heads/development", sha: SHA1 }));
+   assert.equal(HOSTED_BASE_REPAIR_FINDING, false);
+@@ -265,14 +338,34 @@ Deno.test("base repair: a hosted fix keeps the opening its rollback target recog
+       const message = confirmed.kind === "confirmed"
+         ? confirmed.finding.message
+         : "";
++      const label = `${confirm.name} hosted=${hosted}: ${message}`;
+       assert.ok(
+         message.startsWith(
+           hosted ? CI_CORRECTION_FINDING_PREFIX : CI_BASE_REPAIR_FINDING_PREFIX,
+         ),
+-        `${confirm.name} hosted=${hosted}: ${message}`,
++        label,
+       );
++      // Hosted, the recognised opening is followed by the red-base clause
++      // right after the check list, so the text matches the issue.
++      assert.equal(message.includes(CI_RED_BASE_FINDING_CLAUSE), hosted, label);
++      if (hosted) {
++        assert.ok(
++          message.includes(`deno (failure). ${CI_RED_BASE_FINDING_CLAUSE} `),
++          label,
++        );
++      }
++      if (confirmed.kind === "confirmed") {
++        assert.ok(isCiCorrectionFinding(confirmed.finding), label);
++      }
+     }
+   }
++  // An ordinary candidate failure never carries the clause.
++  const ordinary = ciCorrectionFinding(SHA1, [check("deno", SHA3, "failure")]);
++  assert.ok(!ordinary.message.includes(CI_RED_BASE_FINDING_CLAUSE));
++  assert.ok(
++    !CI_RED_BASE_FINDING_CLAUSE.includes("("),
++    "the cell's log-evidence preference never matches the clause",
++  );
+ });
+ 
+ const ATTRIBUTION = attributeFailedChecks(
+@@ -324,6 +417,58 @@ Deno.test("base repair: ownBaseRed converts only on the current tip, with only t
+   assert.deepEqual(green.calls, []);
+ });
+ 
++Deno.test("base repair: an incident, a mismatched issue and a missing config keep base_red", async () => {
++  const at = () =>
++    Promise.resolve(portOk({ ref: "refs/heads/development", sha: SHA1 }));
++  // An incident record that names an issue is never the issue's task: no
++  // read at all.
++  const incident = directDeps(null, at);
++  const record = {
++    ...incident.record,
++    source: { kind: "incident" as const, id: "inc-a", revision: SHA1 },
++    related: { incidentId: "inc-a", issueNumber: 1 },
++  };
++  assert.equal(await isBaseRepairTask(incident.deps, record), false);
++  assert.deepEqual(await ownBaseRed(incident.deps, record, ATTRIBUTION), {
++    kind: "base_red",
++  });
++  assert.deepEqual(incident.calls, []);
++  // An answer for another issue number is not this task's issue.
++  const mismatched = directDeps(portOk(issue({ number: 2 })), at);
++  assert.equal(
++    await isBaseRepairTask(mismatched.deps, mismatched.record),
++    false,
++  );
++  assert.deepEqual(
++    await ownBaseRed(mismatched.deps, mismatched.record, ATTRIBUTION),
++    { kind: "base_red" },
++  );
++  // A record no config covers proves no tip: it keeps base_red.
++  const unconfigured = directDeps(null, at);
++  const deps = { ...unconfigured.deps, configs: [] };
++  assert.deepEqual(
++    await ownBaseRed(deps, unconfigured.record, ATTRIBUTION),
++    { kind: "base_red" },
++  );
++  assert.deepEqual(unconfigured.calls, ["issue"], "no tip read");
++});
++
++Deno.test("base repair: recognition reads the issue without its relations where the port can", async () => {
++  const at = () =>
++    Promise.resolve(portOk({ ref: "refs/heads/development", sha: SHA1 }));
++  const run = directDeps(portError("unavailable", "graphql"), at);
++  const lean: string[] = [];
++  (run.deps.github as RepairCycleDepsV1["github"]).readIssueWithoutRelations = (
++    number: number,
++  ) => {
++    lean.push(`lean:${number}`);
++    return Promise.resolve(portOk(issue()));
++  };
++  assert.equal(await isBaseRepairTask(run.deps, run.record), true);
++  assert.deepEqual(lean, ["lean:1"]);
++  assert.deepEqual(run.calls, [], "the full (relations) read is never made");
++});
++
+ Deno.test("base repair: isBaseRepairTask is three-way and memoised per run", async () => {
+   const at = () =>
+     Promise.resolve(portOk({ ref: "refs/heads/development", sha: SHA1 }));
