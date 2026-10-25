@@ -12,6 +12,7 @@ import {
   readHostedClosedIssues,
   runHostedRetryPass,
 } from "./hosted-autonomy-retry-pass.ts";
+import { retryWritten } from "./hosted-autonomy-retry-actions.ts";
 import { runHostedClosurePass } from "./hosted-autonomy-closure-pass.ts";
 import {
   createHostedAutonomyScopes,
@@ -488,23 +489,24 @@ async function runHostedAutonomyChain(
 
   const suffix = (value: string) =>
     actions.some((action) => action.endsWith(value));
-  const reason: HostedAutonomyReasonV1 =
-    actions.some((action) => action.startsWith("retry:"))
-      ? "retried"
-      : suffix(":already_recorded")
-      ? "already_recorded"
-      : suffix(":base_moved")
-      ? "base_moved"
-      : suffix(":checks_pending")
-      ? "checks_pending"
-      : suffix(":merge_refused")
-      ? "merge_refused"
-      : suffix(":merge_not_observed")
-      ? "merge_not_observed"
-      : suffix(":foreign_author")
-      ? "foreign_author"
-      : actions.length > 0
-      ? "no_authorizing_review"
-      : "no_change";
+  // A read-only retry line (a repeated denial or skip) is not a retry: only a
+  // written one is, so a pass that wrote nothing reports its own class.
+  const reason: HostedAutonomyReasonV1 = retryWritten(actions)
+    ? "retried"
+    : suffix(":already_recorded")
+    ? "already_recorded"
+    : suffix(":base_moved")
+    ? "base_moved"
+    : suffix(":checks_pending")
+    ? "checks_pending"
+    : suffix(":merge_refused")
+    ? "merge_refused"
+    : suffix(":merge_not_observed")
+    ? "merge_not_observed"
+    : suffix(":foreign_author")
+    ? "foreign_author"
+    : actions.length > 0
+    ? "no_authorizing_review"
+    : "no_change";
   return skipped(reason, observedHead, actions);
 }

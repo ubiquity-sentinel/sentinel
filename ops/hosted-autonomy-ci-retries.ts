@@ -14,8 +14,9 @@
  * (including R77 restored after a failed generation 78) a re-admitted head
  * would only be re-gated and blocked again. The flake comes first: the
  * caller re-admits a head for correction only once its once-per-head re-run
- * (ops/hosted-autonomy-ci-rerun.ts) can no longer act, and at most
- * `HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS` heads per pass.
+ * (ops/hosted-autonomy-ci-rerun.ts) can no longer act, and only once its
+ * pull request reads open (`HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS` is a
+ * retired throttle).
  *
  * The green-head rule (`ciGreenRedeliveryEligible`) needs no such runtime: a
  * head whose CI is green NOW on its unchanged reviewed base passes any
@@ -67,17 +68,16 @@ export const HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES: ReadonlySet<string> =
   ]);
 
 /**
- * Bound on heads one maintenance pass re-admits for a CI correction. Each
- * such head may be returned to `work` to await its charged correction, which
- * is the one state a rollback to R77 turns into one extra charged review, so
- * the cap also bounds that exposure per pass. The retry pass counts only
- * corrections it admits after verifying the pull request is open, so a
- * candidate it drops there never holds a slot. Green re-admissions need no
- * correction and never count. Raised from 4 to 12 on 2026-10-17 to work the
- * CI-red backlog (about 30 records) while the owner's Codex quota allows; the
- * runtime has no per-wave cap on corrections, so this is the binding bound.
+ * Retired per-pass throttle on CI correction re-admissions (4, then 12 from
+ * 2026-10-17). The owner directive lifting artificial caps retires it the way
+ * the conflict-resolution throttle was retired: the exported numeric policy
+ * stays for importers while every remotely verified candidate is admitted.
+ * The retry pass still re-admits a head only after its pull request reads
+ * open, and the correction itself stays a charged, round-counted runtime
+ * step: review rounds, durable reservations, current-head CI and the
+ * proven-runtime rule (`ciCorrectionRuntimeProven`) remain the bounds.
  */
-export const HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS = 12;
+export const HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS = Number.MAX_SAFE_INTEGER;
 
 /**
  * True only for an allowlisted CI-correction runtime at generation 78+ whose

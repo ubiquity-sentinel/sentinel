@@ -86,6 +86,11 @@ import {
   acceptanceCorrectionRuntimeProven,
   planAcceptanceReadmissions,
 } from "./hosted-autonomy-acceptance.ts";
+import {
+  retryGrantAction,
+  retryParkAction,
+  retryReadmitAction,
+} from "./hosted-autonomy-retry-actions.ts";
 
 /** Legacy class drift lines reported per pass (the rest are counted). */
 export const LEGACY_DRIFT_REPORTS_PER_PASS = 12;
@@ -672,18 +677,16 @@ export async function runHostedRetryPass(
     }
     snapshot = readback.value.snapshot;
     observedHead = readback.value.head;
+    // Only these three lines report the write (`retryWritten`); they are
+    // pushed after its verified readback.
     for (const plan of plans) {
-      actions.push(`retry:${plan.id}:grant=${plan.grant}:${plan.detail}`);
+      actions.push(retryGrantAction(plan.id, plan.grant, plan.detail));
     }
     for (const readmission of readmissions) {
-      actions.push(`retry:${readmission.id}:readmit:${readmission.detail}`);
+      actions.push(retryReadmitAction(readmission.id, readmission.detail));
     }
     for (const park of parks) {
-      actions.push(
-        `retry:${park.id}:parked:repeat_failure:${
-          repeatFailureLabel(park.park)
-        }`,
-      );
+      actions.push(retryParkAction(park.id, repeatFailureLabel(park.park)));
     }
     return {
       kind: "hosted_autonomy",

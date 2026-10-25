@@ -1,9 +1,11 @@
 /**
  * The delivery pass's merge bound and the disabled moved-base merge (review
  * of the spent-round delivery lane): the base tip and the tip's CI are read
- * once per pass, so once the pass has called merge, whatever it answered, no
- * further merge is attempted in that pass; and the moved-base merge (D3),
- * whose merged result no CI ever tests, ships disabled.
+ * once per repository per pass, so once the pass has called merge in a
+ * repository, whatever it answered, no further merge is attempted in that
+ * repository in that pass (another repository's: see
+ * hosted-autonomy-merge-per-repository_test.ts); and the moved-base merge
+ * (D3), whose merged result no CI ever tests, ships disabled.
  */
 import assert from "node:assert/strict";
 import type { HostedAutonomyGitHubV1 } from "../../ops/hosted-autonomy-types.ts";

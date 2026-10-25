@@ -3118,6 +3118,55 @@ standing approval above. Applied as follows.
   new is persisted, so the generation-80 and 81 rollback readers parse every
   state this writes.
 
+## 2026-10-25: maintenance throughput caps and the `retried` status
+
+- Finding (maintenance runs 40133653940, 40136967547 and 40137557976 on
+  2026-10-24): the `hosted_autonomy` status read `skipped`, reason `retried`,
+  with no write. The only `retry:` line in each was the read-only denial
+  `retry:issue-ubiquity-ai.ubq.fi-1213:denied:repeat_failure_parked:…`, which is
+  named on every pass while the record stays parked, and any `retry:` line made
+  a pass `retried`. The real class of all three was `already_recorded`. Two
+  artificial per-pass bounds also survived the owner directive that lifted caps:
+  at most 12 CI correction re-admissions per maintenance pass
+  (`HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS`), and at most one launcher merge
+  per pass across all repositories, so one target's merge deferred every
+  reviewed green head in the other targets to a later pass.
+- Decision: `HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS` is
+  `Number.MAX_SAFE_INTEGER`, the way the conflict-resolution throttle was
+  retired. The constant stays for importers. Every correction candidate whose
+  pull request reads open is re-admitted in the same pass.
+- The delivery pass calls merge at most once per repository per pass (a set of
+  scope keys). A merge moves only its own repository's tip, so another
+  repository's reviewed head still merges in the same pass. Each merge keeps
+  every gate: the uncached tip re-read right before the call, green CI on the
+  exact head, the current-head receipt with no unresolved P0, the task re-read
+  and the merge-commit parent check. Within one repository the bound is
+  unchanged: once merge was called there, whatever it answered, every later open
+  pull request of that repository is `merge_deferred` for the pass, because a
+  second merge would land on a tree no CI ran on.
+- `retried` is decided only from the three lines the retry pass pushes after its
+  own verified write: `retry:<id>:grant=<n>:…`, `retry:<id>:readmit:…` and
+  `retry:<id>:parked:repeat_failure:…`
+  ([ops/hosted-autonomy-retry-actions.ts](../ops/hosted-autonomy-retry-actions.ts)).
+  A repeated `denied:` or `skipped:` line no longer makes a pass `retried`. A
+  pass that wrote nothing reports its own class, a delivery write after only
+  denials reports `applied`, and an unreadable self tip reports `base_moved`.
+- A non-carried review or delivery record outside the Gateway, whose reviewed
+  base is not the tip this pass already read for its repository, now has only
+  its pull request read, like a spent record behind the tip (#156). An unmerged
+  pull request reports `base_moved` without the source-issue read. Every gate it
+  could reach refuses it `base_moved` before any effect, because the moved-base
+  rule is Gateway-only. A merged pull request goes on to the ordinary booking
+  path, so the lost write of a merge that moved the tip itself is still booked.
+  No tip is read early for this rule, and a self delivery that is already
+  recorded keeps its read-free `already_recorded`. The only visible difference
+  is the label of a no-effect refusal: such a record now reports `base_moved`
+  where it could report a task or author refusal before.
+- Unchanged: review rounds, durable reservations and their settlement, the
+  proven-runtime rule for corrections, current-head CI and review, the P0 merge
+  block, custody and the historical readers. Nothing is refunded, re-counted or
+  charged by these changes.
+
 ## 2026-10-24: a red target base gets its own repair (base-repair lane)
 
 - Finding (live state, 2026-10-24 23:00 UTC): all 39 Passport records at `work`
