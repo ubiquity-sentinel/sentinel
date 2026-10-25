@@ -27,6 +27,7 @@ import {
   acceptedReleases,
   applyHostedClosures,
   applyHostedRetirements,
+  isHostedRetired,
   planHostedClosures,
   planHostedRetirements,
 } from "./hosted-autonomy-closures.ts";
@@ -311,11 +312,12 @@ export async function runHostedClosurePass(
   // definitively closed without a merge can never deliver, whatever step it is
   // parked at. That verdict requires the read to succeed and the pull to be
   // neither merged nor open; a failed or empty read is not evidence and leaves
-  // the record alone.
+  // the record alone. An already retired record is never planned again
+  // (`planHostedRetirements`), so its pull request is not read.
   const closedUnmerged = new Set<string>();
   for (const record of snapshot.work) {
     if (
-      record.nextStep === "done" ||
+      record.nextStep === "done" || isHostedRetired(record) ||
       queueRecordProtected(record, deps.queueCustody)
     ) continue;
     const issueNumber = record.related.issueNumber;

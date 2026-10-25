@@ -3167,6 +3167,53 @@ standing approval above. Applied as follows.
   block, custody and the historical readers. Nothing is refunded, re-counted or
   charged by these changes.
 
+## 2026-10-25: a head held by its red base holds no delivery line; retired records cost no read
+
+- Finding (live state, 2026-10-24 23:13 UTC): Passport records 13 (PR 161) and
+  14 (PR 162) sat at `work` on the tip with their refreshed heads held by the
+  CI-first gate's `base_red` backoff and stood `re_review` in the delivery line,
+  so all 22 reviewed Passport records with a round left deferred behind them for
+  18 hours. The hold waits for a base move, only a merge moves the tip, and the
+  line held every record whose merge could move it; only the stall rule (12
+  re-arms of a 30-minute hold) ever released it.
+- Finding (same state): 115 of the 388 non-done records were already retired
+  (`HOSTED_AUTONOMY_RETIRED`). Every maintenance pass still read each one's
+  source issue, one sequential read each (the context phase that runs these
+  reads took 85 seconds), and the closure pass read the pull request of the 24
+  that had one, although the retirement plan never plans a retired record again
+  and no rule acts on a retired record's issue or pull.
+- Decision: a contender on the tip whose wait is a red base's hold still running
+  (`isRedBaseHold`: a `backoff` that rechecks `RED_BASE_RECHECK_MS` or more
+  after its start, which only the red-base holds of the CI-first gate, the
+  pre-review fix, the pre-merge correction and the carried gate write) stands
+  `waiting` and holds nobody, at any step. Once the hold is due it stands as
+  before until its own step re-arms the hold or moves on
+  ([src/repair/delivery-queue.ts](../src/repair/delivery-queue.ts)).
+- A running CI wait (`ci_pending`) keeps holding: the wait records neither the
+  checks nor whether its jobs started, so one whose jobs never started cannot be
+  told from running CI, and the line on the tip must keep holding behind running
+  CI. Such a wait is bounded by the stall rule at the five-minute poll (about an
+  hour). The never-started billing failure itself completes as `failure` and
+  lands in the red-base hold.
+- Cost: while a base stays red, reviewed records refresh onto it one at a time
+  and wait there; once a merge repairs the base they refresh and are reviewed
+  again in parallel, which the line used to delay until the stall release. A
+  record whose own change passes on the red base, or a base-repair pull request
+  whose base moved, no longer waits behind a head that cannot move.
+- Decision: the launcher reads no source issue for a retired record and no pull
+  request in the closed-unmerged scan for one
+  ([ops/hosted-autonomy-closed-issues.ts](../ops/hosted-autonomy-closed-issues.ts)).
+  A retired record's issue is still read while a record that is not retired
+  shares its issue (a decomposition part). No verdict changes: on the pre-change
+  code a retired record's whole pass was identical whether its issue read
+  closed, open or unreadable. The remaining issue reads run at most four at a
+  time, started and applied in record order (the same facts, `seen` ids and
+  actions).
+- Unchanged: the line writes nothing (under generation 80, the rollback target,
+  the line holds behind such a head again, which is only slower), the CI fix
+  marker, the carried-merge marker and every standing on a moved base,
+  current-head CI, native review, the P0 merge block, custody and accounting.
+
 ## 2026-10-24: a red target base gets its own repair (base-repair lane)
 
 - Finding (live state, 2026-10-24 23:00 UTC): all 39 Passport records at `work`

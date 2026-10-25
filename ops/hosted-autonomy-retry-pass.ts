@@ -13,10 +13,7 @@ import {
 } from "../src/contracts/hosted-supervisor.ts";
 import { parseReleaseStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
-import {
-  queueProtectedIds,
-  queueRecordProtected,
-} from "./hosted-autonomy-queue-context.ts";
+import { queueProtectedIds } from "./hosted-autonomy-queue-context.ts";
 import { failed, readRepairSafely, skipped } from "./hosted-autonomy-state.ts";
 import type { HostedAutonomyPassContextV1 } from "./hosted-autonomy-scopes.ts";
 import {
@@ -186,43 +183,8 @@ export function legacyHeldHeadActions(
   return actions;
 }
 
-/**
- * Read-only source facts shared by bookkeeping and the later retry grant. A
- * pass that continues after a write passes the ids it already read (`seen`):
- * each record's issue is read once per pass, and the facts already held are
- * kept.
- */
-export async function readHostedClosedIssues(
-  context: HostedAutonomyPassContextV1,
-  seen?: Set<string>,
-): Promise<void> {
-  const { snapshot, scopeFor, actions } = context;
-  const closedIssues = new Set<string>(
-    seen === undefined ? [] : context.closedIssues,
-  );
-  for (const record of snapshot.work) {
-    if (record.nextStep === "done") continue;
-    if (queueRecordProtected(record, context.deps.queueCustody)) continue;
-    const issueNumber = record.related.issueNumber;
-    if (issueNumber === null || seen?.has(record.id)) continue;
-    seen?.add(record.id);
-    const scope = await scopeFor(record.repository);
-    if (scope.surface === null) {
-      actions.push(`record:${record.id}:surface_unreadable`);
-      continue;
-    }
-    let open: boolean | null = null;
-    try {
-      open = await scope.surface.readIssueOpen(issueNumber);
-    } catch {
-      open = null;
-    }
-    if (open === false) {
-      closedIssues.add(hostedIssueKey(record.repository, issueNumber));
-    }
-  }
-  context.closedIssues = closedIssues;
-}
+/** The pass's source-issue facts (`hosted-autonomy-closed-issues.ts`). */
+export { readHostedClosedIssues } from "./hosted-autonomy-closed-issues.ts";
 
 export async function runHostedRetryPass(
   context: HostedAutonomyPassContextV1,

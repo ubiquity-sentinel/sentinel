@@ -33,7 +33,7 @@ import {
   failedChecks,
   unattributedDetail,
 } from "./ci-rejection.ts";
-import { ciFixesLeft } from "./ci-first-policy.ts";
+import { ciFixesLeft, RED_BASE_RECHECK_MS } from "./ci-first-policy.ts";
 import { CHECK_POLL_MS } from "./loop-bounds.ts";
 import {
   headAcceptedByReview,
@@ -54,8 +54,11 @@ import {
   setWait,
 } from "./transitions.ts";
 
-/** Re-observation interval while the reviewed base itself is red. */
-export const RED_BASE_RECHECK_MS = 30 * 60_000;
+/**
+ * Re-observation interval while the reviewed base itself is red (defined with
+ * the pure red-base hold, `isRedBaseHold`, which the delivery line reads).
+ */
+export { RED_BASE_RECHECK_MS };
 
 const UNAVAILABLE: StepResultV1 = {
   kind: "deferred",

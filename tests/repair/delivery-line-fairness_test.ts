@@ -135,7 +135,13 @@ Deno.test("delivery line (live 01:25Z): 698 and 879 are not held by CI-fixed hea
   for (const issue of [605, 597, 602]) {
     assert.equal(record(issue).intent?.kind, "merge", `${issue}`);
     assert.equal(
-      lineStanding(snapshot, record(issue), state.developmentTip, CUTOFF),
+      lineStanding(
+        snapshot,
+        record(issue),
+        state.developmentTip,
+        state.updatedAt,
+        CUTOFF,
+      ),
       "ready",
       `${issue}`,
     );
@@ -156,7 +162,13 @@ Deno.test("delivery line (live 01:25Z): 698 and 879 are not held by CI-fixed hea
     assert.equal(holder.target.base, state.developmentTip, `${issue}`);
     assert.equal(holder.wait?.reason, "ci_pending", `${issue}`);
     assert.equal(
-      lineStanding(snapshot, holder, state.developmentTip, CUTOFF),
+      lineStanding(
+        snapshot,
+        holder,
+        state.developmentTip,
+        state.updatedAt,
+        CUTOFF,
+      ),
       "re_review",
       `${issue}`,
     );
@@ -172,7 +184,7 @@ Deno.test("delivery line (live 20:36Z): red heads and heads awaiting their CI ho
   assert.equal(ahead(698), LIVE_ID(595));
   assert.equal(ahead(879), LIVE_ID(595));
   const standing = (issue: number) =>
-    lineStanding(snapshot, record(issue), tip, CUTOFF);
+    lineStanding(snapshot, record(issue), tip, state.updatedAt, CUTOFF);
   for (const issue of [595, 698, 879]) {
     assert.equal(standing(issue), "ready", `${issue}`);
   }
@@ -200,7 +212,7 @@ Deno.test("delivery line (live 20:36Z): red heads and heads awaiting their CI ho
     updatedAt: state.updatedAt,
   };
   assert.equal(
-    lineStanding(booked, refreshed, tip, CUTOFF),
+    lineStanding(booked, refreshed, tip, state.updatedAt, CUTOFF),
     "landing",
   );
   assert.equal(ahead(879, replace(booked, refreshed)), LIVE_ID(698));
@@ -368,7 +380,11 @@ function shapeLine(rows: typeof SHAPES) {
 Deno.test("delivery line: every contender shape has its standing", () => {
   const snapshot = shapeLine(SHAPES);
   for (const [label, expected, record] of SHAPES) {
-    assert.equal(lineStanding(snapshot, record, TIP, null), expected, label);
+    assert.equal(
+      lineStanding(snapshot, record, TIP, NOW, null),
+      expected,
+      label,
+    );
   }
 });
 
