@@ -146,7 +146,7 @@ jobs:
           SENTINEL_MODEL_BASE_URL: ${{ vars.SENTINEL_MODEL_BASE_URL }}
           SENTINEL_MODEL_ID: ${{ vars.SENTINEL_IMPLEMENTATION_MODEL_ID || 'gpt-6.1-sol' }}
           SENTINEL_MODEL_FALLBACK: ${{ vars.SENTINEL_MODEL_FALLBACK }}
-          SENTINEL_BACKUP_CI: ${{ vars.SENTINEL_BACKUP_CI }}
+          SENTINEL_BACKUP_CI: ${{ vars.SENTINEL_BACKUP_CI || 'on' }}
         run: >-
           deno run --no-lock
           --allow-read
@@ -370,7 +370,7 @@ jobs:
           SENTINEL_REVIEW_MODEL_ID: ${{ vars.SENTINEL_REVIEW_MODEL_ID }}
           SENTINEL_MODEL_FALLBACK: ${{ vars.SENTINEL_MODEL_FALLBACK }}
           SENTINEL_DEEPSEEK_API_KEY: ${{ secrets.SENTINEL_DEEPSEEK_API_KEY }}
-          SENTINEL_BACKUP_CI: ${{ vars.SENTINEL_BACKUP_CI }}
+          SENTINEL_BACKUP_CI: ${{ vars.SENTINEL_BACKUP_CI || 'on' }}
         run: >-
           deno run
           --allow-read
@@ -566,7 +566,7 @@ jobs:
           SENTINEL_REVIEW_MODEL_ID: ${{ vars.SENTINEL_REVIEW_MODEL_ID }}
           SENTINEL_MODEL_FALLBACK: ${{ vars.SENTINEL_MODEL_FALLBACK }}
           SENTINEL_DEEPSEEK_API_KEY: ${{ secrets.SENTINEL_DEEPSEEK_API_KEY }}
-          SENTINEL_BACKUP_CI: ${{ vars.SENTINEL_BACKUP_CI }}
+          SENTINEL_BACKUP_CI: ${{ vars.SENTINEL_BACKUP_CI || 'on' }}
         run: |
           printf '%s\n' '{"planDigest":"${{ needs.matrix_plan.outputs.planDigest }}","cellId":"${{ matrix.cellId }}"}' |
           deno run \
@@ -766,7 +766,7 @@ jobs:
           SENTINEL_REVIEW_MODEL_ID: ${{ vars.SENTINEL_REVIEW_MODEL_ID }}
           SENTINEL_MODEL_FALLBACK: ${{ vars.SENTINEL_MODEL_FALLBACK }}
           SENTINEL_DEEPSEEK_API_KEY: ${{ secrets.SENTINEL_DEEPSEEK_API_KEY }}
-          SENTINEL_BACKUP_CI: ${{ vars.SENTINEL_BACKUP_CI }}
+          SENTINEL_BACKUP_CI: ${{ vars.SENTINEL_BACKUP_CI || 'on' }}
         run: |
           if [ '${{ needs.prepare.outputs.modelStartsEnabled }}' = 'true' ]; then
             printf '%s\n' '{"planDigest":"${{ needs.matrix_plan.outputs.planDigest }}"}'

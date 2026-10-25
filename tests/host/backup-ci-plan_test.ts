@@ -192,6 +192,38 @@ Deno.test("candidates come in priority order p0 to p8, heads rotated by run id",
     runId: 0,
   });
   assert.deepEqual(calibrated.map((c) => c.purpose), ["stand_in"]);
+  // Commits the runner settled or has in flight give way to later ones; a
+  // retryable no-evidence commit stays eligible, another runner's entry is
+  // not this runner's.
+  const calibrationFiles = new Map([
+    [sha("a"), commitFile([result()], { commit: sha("a") })],
+    [sha("b"), commitFile([dispatched()], { commit: sha("b") })],
+    [
+      sha("c"),
+      commitFile([noEvidence(key(), { final: true, nextAt: null })], {
+        commit: sha("c"),
+      }),
+    ],
+    [sha("d"), commitFile([noEvidence()], { commit: sha("d") })],
+    [
+      sha("e"),
+      commitFile([result(key(), { runnerId: "f".repeat(16) })], {
+        commit: sha("e"),
+      }),
+    ],
+  ]);
+  const later = backupCiCandidates({
+    records: [],
+    baseTip: null,
+    defaultBranch: "main",
+    calibrationCommits: ["a", "b", "c", "d", "e", "f"].map(sha),
+    calibrated: false,
+    files: calibrationFiles,
+    mode: "on",
+    runnerId: RUNNER,
+    runId: 0,
+  }).filter((c) => c.purpose === "calibration");
+  assert.deepEqual(later.map((c) => c.commit.slice(0, 1)), ["d", "e"]);
   // Rotation moves the start within the head classes only.
   const heads = (runId: number) =>
     backupCiCandidates({

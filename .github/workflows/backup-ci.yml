@@ -9,8 +9,9 @@
 # It runs only launcher code. Target bytes are read as data through git
 # plumbing on a bare repository and a bounded YAML parse; no target code ever
 # runs here. The ref and attempt guards make a dispatch at any other ref, or a
-# re-run, a no-op, and the mode switch (vars.SENTINEL_BACKUP_CI: off unless
-# exactly `shadow` or `on`) disables dispatch, planning and consumption.
+# re-run, a no-op, and the mode switch (vars.SENTINEL_BACKUP_CI: unset is
+# `on`, `shadow` only observes, any other value is off) disables dispatch,
+# planning and consumption. Stand-ins still need a calibrated runner.
 # No cache is restored anywhere in this workflow.
 name: sentinel-backup-ci
 
@@ -27,7 +28,7 @@ jobs:
   backup_ci:
     if: >-
       github.ref == 'refs/heads/sentinel-supervisor' && github.run_attempt == 1 &&
-      (vars.SENTINEL_BACKUP_CI == 'shadow' || vars.SENTINEL_BACKUP_CI == 'on')
+      (contains(fromJSON('["shadow","on"]'), vars.SENTINEL_BACKUP_CI || 'on'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
@@ -67,7 +68,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           SENTINEL_TARGET_READ_TOKEN: ${{ steps.target-token.outputs.token }}
-          SENTINEL_BACKUP_CI: ${{ vars.SENTINEL_BACKUP_CI }}
+          SENTINEL_BACKUP_CI: ${{ vars.SENTINEL_BACKUP_CI || 'on' }}
         run: >-
           deno run --no-lock --allow-read --allow-write --allow-run=git,tar
           --allow-net="api.github.com,github.com,raw.githubusercontent.com,*.blob.core.windows.net"
@@ -97,7 +98,7 @@ jobs:
         if: steps.pass.outputs.hasWork == 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          SENTINEL_BACKUP_CI: ${{ vars.SENTINEL_BACKUP_CI }}
+          SENTINEL_BACKUP_CI: ${{ vars.SENTINEL_BACKUP_CI || 'on' }}
           SENTINEL_BACKUP_PASS_DIGEST: ${{ steps.pass.outputs.passDigest }}
           SENTINEL_BACKUP_TREE0: ${{ steps.tree0.outputs.artifact-id }}
           SENTINEL_BACKUP_TREE1: ${{ steps.tree1.outputs.artifact-id }}

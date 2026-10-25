@@ -3105,6 +3105,24 @@ standing approval above. Applied as follows.
   file blob, job, run identity) before it counts, and a verified success stands
   in for exactly that never-started check. A check that ran and failed is never
   overridden, and missing, stale or unverifiable backup evidence never passes.
+- Activation (2026-10-25, owner directive "Get them unstuck"): the act pin is
+  `v0.2.89` (released 2026-06-01, the newest release at least 14 days old). Its
+  `act_Linux_x86_64.tar.gz` sha256 `0191d6f1…24c0` comes from the release's
+  `checksums.txt` and matched the downloaded asset. The calibration list holds
+  eight Passport commits whose `deno` check ran natively before 06:40 UTC on
+  2026-10-24: six green, and two (`84557beb`, `8908b8e4`) that failed
+  `bun run check` on every push and pull request run. The planner now skips
+  calibration commits the runner already settled or has in flight, so later
+  commits are reached; before, it re-offered only the first two, and a runner
+  could never collect the five agreements the gate needs.
+- The mode defaults to `on`: unset `vars.SENTINEL_BACKUP_CI` reads as `on`,
+  `shadow` only observes, and any other value (`off`) disables dispatch,
+  planning and consumption, like `SENTINEL_AUTO_FOLLOW`. The session cannot
+  write repository variables (the Actions variables path is refused by its
+  proxy). The skipped shadow stage is covered by the calibration gate: no backup
+  result stands in until the runner has at least five agreements with native CI,
+  one of them a failure, no false green and at most one false red. A false green
+  suspends the runner automatically.
 
 ## 2026-10-24: the runtime never merges a tree no CI ran on (base compare-and-swap)
 

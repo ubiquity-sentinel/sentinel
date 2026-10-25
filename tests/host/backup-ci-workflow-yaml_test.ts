@@ -59,7 +59,7 @@ Deno.test("backup_ci and the leg are guarded by ref and attempt", async () => {
   assert(guard.includes("github.run_attempt == 1"));
   assert(
     guard.includes(
-      "vars.SENTINEL_BACKUP_CI == 'shadow' || vars.SENTINEL_BACKUP_CI == 'on'",
+      "contains(fromJSON('[\"shadow\",\"on\"]'), vars.SENTINEL_BACKUP_CI || 'on')",
     ),
   );
   assert.deepEqual(trusted.environment, { name: "sentinel-supervisor" });
@@ -129,14 +129,14 @@ Deno.test("no run: script interpolates inputs or step outputs", async () => {
   assert(!String(dispatch.run).includes("${{"));
 });
 
-Deno.test("the dispatcher dispatches the pass only in shadow or on", async () => {
+Deno.test("the dispatcher dispatches the pass only in shadow or on (unset is on)", async () => {
   const step = allSteps(await workflow("supervisor-dispatch.yml")).find((s) =>
     s.name === "Dispatch the backup CI pass"
   );
   assert(step !== undefined);
   assert.equal(
     step.if,
-    "vars.SENTINEL_BACKUP_CI == 'shadow' || vars.SENTINEL_BACKUP_CI == 'on'",
+    "contains(fromJSON('[\"shadow\",\"on\"]'), vars.SENTINEL_BACKUP_CI || 'on')",
   );
   assert.equal(step["continue-on-error"], true);
   assert.equal(
@@ -165,7 +165,7 @@ Deno.test("the four supervisor steps bind and allow SENTINEL_BACKUP_CI", async (
     assert(step !== undefined, name);
     assert.equal(
       (step.env as Obj).SENTINEL_BACKUP_CI,
-      "${{ vars.SENTINEL_BACKUP_CI }}",
+      "${{ vars.SENTINEL_BACKUP_CI || 'on' }}",
       name,
     );
     const allow = /--allow-env=(\S+)/.exec(String(step.run))?.[1] ?? "";

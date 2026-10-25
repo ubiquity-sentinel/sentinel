@@ -653,9 +653,19 @@ Deno.test("run refuses an unfilled act pin", async () => {
   const r = await rig();
   try {
     assert.equal(await legPrepare(r.deps()), 0);
+    const committed = JSON.parse(
+      await Deno.readTextFile("ops/backup-ci-pins.json"),
+    );
     await Deno.writeTextFile(
       `${r.root}/launcher/ops/backup-ci-pins.json`,
-      await Deno.readTextFile("ops/backup-ci-pins.json"),
+      JSON.stringify({
+        ...committed,
+        act: {
+          ...committed.act,
+          version: "UNFILLED-primary-records-the-act-release-tag",
+          sha256: "UNFILLED-sha256-of-the-asset",
+        },
+      }),
     );
     assert.equal(await legRun(r.deps()), 1);
     assert(r.printed.some((l) => l.includes("act pin is not filled")));

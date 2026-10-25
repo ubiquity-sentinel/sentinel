@@ -1,6 +1,15 @@
 {
   "version": 1,
   "targets": {
-    "ubiquity/passport.ubq.fi": []
+    "ubiquity/passport.ubq.fi": [
+      "95765554e5e5a3595799fd64c1f7b4285d0c4949",
+      "84557beb7fe99ed00e61ecc43d0431eea4704f99",
+      "12c0a0aca529e6767551941d26f8bff15cc7b25c",
+      "9b2af22a1d1da182b5d721722330fe7d4820e5bd",
+      "8908b8e4612de1e6e08c110e4f2cf06841a0c5bd",
+      "e98b02a3f26cd984b1fdcf25079ea4ce2622f35d",
+      "1f6ee11246c917de0b26c5877d73b49dd360e587",
+      "a7b4427d0ca0eb978f0df8ec1fb7c0fd905c946a"
+    ]
   }
 }

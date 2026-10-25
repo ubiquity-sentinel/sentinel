@@ -99,10 +99,11 @@ jobs:
           --allow-env=GH_TOKEN,SENTINEL_FOLLOW_SHA,SENTINEL_FOLLOW_READY
           src/host/supervisor-dispatch.ts
       # Backup CI (docs/backup-ci-spec.md §8.4): one trusted pass per
-      # five-minute dispatch, only while the mode is shadow or on. Its failure
-      # never fails the supervisor dispatch.
+      # five-minute dispatch, only while the mode is shadow or on (unset is
+      # on; `off` disables it). Its failure never fails the supervisor
+      # dispatch.
       - name: Dispatch the backup CI pass
-        if: vars.SENTINEL_BACKUP_CI == 'shadow' || vars.SENTINEL_BACKUP_CI == 'on'
+        if: contains(fromJSON('["shadow","on"]'), vars.SENTINEL_BACKUP_CI || 'on')
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}

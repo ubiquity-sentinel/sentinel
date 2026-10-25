@@ -88,6 +88,22 @@ function engaged(
   return file?.entries.some((e) => backupCiModeClass(e.mode) === cls) ?? false;
 }
 
+/**
+ * Whether the runner has an entry of the mode class on the commit that is in
+ * flight or settled (a retryable `no_evidence` is neither).
+ */
+function calibrationTaken(
+  file: BackupCiCommitFileV1 | null | undefined,
+  mode: "shadow" | "on",
+  runnerId: string,
+): boolean {
+  const cls = backupCiModeClass(mode);
+  return file?.entries.some((e) =>
+    backupCiModeClass(e.mode) === cls && e.runnerId === runnerId &&
+    (e.state !== "no_evidence" || e.final)
+  ) ?? false;
+}
+
 /** Attempt-1 reds of the mode class and runner that lack an attempt 2. */
 export function unconfirmedReds(
   file: BackupCiCommitFileV1,
@@ -167,11 +183,12 @@ export function backupCiCandidates(
     }
   }
   if (!input.calibrated) {
+    // Commits this runner already settled or has in flight are skipped, so
+    // later commits are reached (the first two alone cannot calibrate).
     for (
-      const commit of input.calibrationCommits.slice(
-        0,
-        BACKUP_CI_MAX_CALIBRATION_PER_PASS,
-      )
+      const commit of input.calibrationCommits.filter((commit) =>
+        !calibrationTaken(input.files.get(commit), input.mode, input.runnerId)
+      ).slice(0, BACKUP_CI_MAX_CALIBRATION_PER_PASS)
     ) out.push(base(1, commit, "calibration"));
   }
   if (input.baseTip !== null) out.push(base(2, input.baseTip, "stand_in"));
