@@ -7,6 +7,28 @@ grant. Muse ownership is retired. Current policy belongs in
 checkpoints below retain their original text and do not establish current
 ownership, authority or acceptance.
 
+## CI throughput delivery checkpoint (2026-10-25 23:29 UTC)
+
+Current integration owner: `01a1752a-4c5b-72d1-9ede-0782a06ccc21`.
+
+- PR [#217](https://github.com/ubiquity-sentinel/sentinel/pull/217) is merged.
+- Canonical merge: `3ae68fd57f7ef9948090aa31c90ed31cc19da56f`.
+- Verified first parent: `92a8fcb43050a431c4072f68a25695e497aaf77a`.
+- Verified second parent: `91ddd242c6538af3ea21606bcd185f81a27e8a77`.
+- All three accepted commits are reachable from `development`.
+- Merged CI source bytes match the accepted PR head exactly.
+- Canonical CI run `40244192274` passed all seven jobs.
+- Canonical CI elapsed: 383 seconds; summed job time: 1544 seconds.
+- Earlier PR CI run `40237711947` passed in 397 seconds, totaling 1609.
+- Baseline run `40223908503` took 853 seconds, totaling 2962.
+- Decision record: `4ca7caa0f203962df8398108e2abfc85a03ad923`.
+
+These run comparisons measure CI elapsed and job time, not billed charges.
+
+Development review remained unavailable: the hosted request was unadopted and the native fallback failed before starting with `EPERM`. No review verdict is claimed. A fresh independent policy audit confirmed the existing development-tooling/tests exception in the Review and development delivery decision; the strict native receipt gate applies to autonomous runtime target repairs.
+
+The scoped CI optimization is delivered. Runtime installation and three-target autonomous delivery retain their separate acceptance records. Documentation-only follow-ups preserve the accepted code bytes; the stale local checkout and unrelated dirty work were preserved.
+
 ## Latest checkpoint (2026-10-25 05:45 UTC, handoff)
 
 - Handoff:
