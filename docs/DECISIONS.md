@@ -3028,7 +3028,8 @@ standing approval above. Applied as follows.
   them. A red base can only move by a merge, and no merge passes a red base, so
   nothing in Sentinel was assigned to fix it and the whole target stayed wedged.
 - Decision: the launcher's maintenance pass reads the base tip of every foreign
-  target with live work
+  target with a record held in a timed `backoff` at `work` (the CI-first
+  red-base hold), sharing the follow-up pass's one state read
   ([ops/hosted-autonomy-base-repair.ts](../ops/hosted-autonomy-base-repair.ts)).
   When a completed check on that exact commit failed (`failure`, `timed_out` or
   `startup_failure`), it files one issue labelled P0, titled
