@@ -51,7 +51,11 @@ async function archive(dir: string, mode: number): Promise<string> {
 }
 
 async function install(mode: number) {
-  const dir = await Deno.makeTempDir({ prefix: "backup-ci-leg-install-" });
+  // Under the repository: CI grants test reads of `.` only.
+  const dir = `${Deno.cwd()}/${
+    (await Deno.makeTempDir({ dir: ".", prefix: ".backup-ci-leg-install-" }))
+      .replace(/^\.\//, "")
+  }`;
   try {
     const runTemp = `${dir}/runner-temp`;
     const launcher = `${dir}/launcher`;
