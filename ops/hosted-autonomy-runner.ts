@@ -44,6 +44,7 @@ import {
 import { runHostedFollowUpPass } from "./hosted-autonomy-follow-up-pass.ts";
 import { runHostedBaseRepairPass } from "./hosted-autonomy-base-repair.ts";
 import { runHostedCiResumePass } from "./hosted-autonomy-ci-resume.ts";
+import { runHostedOutageObservationPass } from "./hosted-autonomy-outage-observation.ts";
 import { runHostedQueueCustody } from "./hosted-autonomy-queue-pass.ts";
 import { protectQueueState } from "./hosted-autonomy-queue-state.ts";
 import type {
@@ -220,6 +221,7 @@ export async function runHostedAutonomy(
       const [phase, pass, tag] of [
         ["base_repair", runHostedBaseRepairPass, "base-repair"],
         ["ci_resume", runHostedCiResumePass, "ci-resume"],
+        ["ci_outage", runOutagePass, "ci-outage"],
       ] as const
     ) {
       const finish = beginMaintenanceProgress(phase);
@@ -242,6 +244,25 @@ export async function runHostedAutonomy(
     await deps.onQueueCustodyReady?.(false);
     throw error;
   }
+}
+
+/**
+ * The CI-outage notice pass over the surfaces' own capabilities: Sentinel's
+ * tracker on the self scope and each target's tip start class.
+ */
+function runOutagePass(
+  deps: HostedAutonomyDepsV1,
+  passDeadline: number,
+): Promise<string[]> {
+  // A host without Sentinel's tracker files nothing and reports nothing.
+  const tracker = deps.githubFor(HOSTED_AUTONOMY_SELF_SCOPE)?.ciOutageTracker;
+  if (tracker === undefined) return Promise.resolve([]);
+  return runHostedOutageObservationPass(deps, {
+    tracker,
+    classifyTip: (repository, tip) =>
+      deps.githubFor(repository)?.classifyTipStart?.(tip) ??
+        Promise.resolve(null),
+  }, passDeadline);
 }
 
 /**

@@ -30,6 +30,12 @@ import {
   RUN_LISTING_PAGE_SIZE,
 } from "./hosted-autonomy-github-listing.ts";
 import { createHostedFollowUpIssues } from "./hosted-autonomy-github-issues.ts";
+import { createHostedRetryLabel } from "./hosted-autonomy-retry-label.ts";
+import {
+  classifyTipChecks,
+  createHostedOutageTracker,
+} from "./hosted-autonomy-outage-observation.ts";
+import { completedJobNeverStarted } from "../src/github/never-started-job.ts";
 import { createHostedActionsJobReads } from "./hosted-autonomy-github-jobs.ts";
 import { createMergeBaseTreeChanges } from "./hosted-autonomy-github-trees.ts";
 import {
@@ -674,6 +680,37 @@ export function createHostedAutonomyGitHub(
         .join("");
     },
     followUpIssues: createHostedFollowUpIssues(request, repository),
+    retryLabel: createHostedRetryLabel(request, repository),
+    ciOutageTracker: createHostedOutageTracker(request, repository),
+    async classifyTipStart(tip: string) {
+      const runs = await readCompleteCheckRuns(tip);
+      if (runs === null) return null;
+      return classifyTipChecks(
+        runs.map((run) => ({
+          id: Number(run["id"]),
+          name: String(run["name"]),
+          status: String(run["status"]),
+          conclusion: typeof run["conclusion"] === "string"
+            ? run["conclusion"]
+            : null,
+        })),
+        async (run) => {
+          if (!Number.isSafeInteger(run.id) || run.id <= 0) return "unknown";
+          const job = await request(
+            "GET",
+            `/repos/${scope}/actions/jobs/${run.id}`,
+          );
+          const verdict = job === null
+            ? null
+            : completedJobNeverStarted(job, run.id, tip);
+          return verdict === true
+            ? "not_started"
+            : verdict === false
+            ? "started"
+            : "unknown";
+        },
+      );
+    },
     async merge(number: number, head: string, message?: string) {
       const response = await request(
         "PUT",

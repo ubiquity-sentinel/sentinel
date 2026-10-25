@@ -291,6 +291,18 @@ export interface HostedAutonomyGitHubV1 {
    * Absent means no label exit is read or taken.
    */
   retryLabel?: HostedRetryLabelV1;
+  /** Sentinel's own CI-outage tracker (used on the self scope only). */
+  ciOutageTracker?:
+    import("./hosted-autonomy-outage-observation.ts").OutageTrackerV1;
+  /**
+   * The start class of one target tip's complete check listing (never
+   * started, started, undetermined), or null when it cannot be read.
+   */
+  classifyTipStart?(
+    tip: string,
+  ): Promise<
+    import("./hosted-autonomy-outage-observation.ts").OutageTipStartV1 | null
+  >;
 }
 
 /** The owner's one-label re-admission handle (redesign 2026-10-25, C6). */
