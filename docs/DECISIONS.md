@@ -3272,7 +3272,12 @@ standing approval above. Applied as follows.
   and the merge-commit parent check. Within one repository the bound is
   unchanged: once merge was called there, whatever it answered, every later open
   pull request of that repository is `merge_deferred` for the pass, because a
-  second merge would land on a tree no CI ran on.
+  second merge would land on a tree no CI ran on. Correction (stage-1 review,
+  2026-10-25): this holds for foreign targets only. A Gateway or self merge or
+  booking writes the delivery state and ends the delivery phase for the pass
+  (`ops/hosted-autonomy-delivery-pass.ts`), and records are visited in id order,
+  so an ai.ubq.fi booking still defers the Passport and Sentinel merges to the
+  next pass. This costs throughput only; every per-merge gate holds.
 - `retried` is decided only from the three lines the retry pass pushes after its
   own verified write: `retry:<id>:grant=<n>:…`, `retry:<id>:readmit:…` and
   `retry:<id>:parked:repeat_failure:…`

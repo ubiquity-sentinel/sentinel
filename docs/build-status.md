@@ -7,7 +7,38 @@ grant. Muse ownership is retired. Current policy belongs in
 checkpoints below retain their original text and do not establish current
 ownership, authority or acceptance.
 
-## Latest checkpoint (2026-10-25 03:20 UTC)
+## Latest checkpoint (2026-10-25 04:15 UTC)
+
+- Owner directive: "Get them unstuck". Open work: Sentinel 15 issues (10
+  `sentinel:skip` or owner actions), ai.ubq.fi 9, Passport 71 (61 waiting on CI
+  GitHub never starts).
+- Installed: launcher `25f9eb703c` (stage 1, backup CI WP1-WP3, act pin
+  `v0.2.89`, eight Passport calibration commits, mode defaulting to `on`), with
+  `sentinel-backup-legs` at the same SHA. Supervisor runs stay green.
+- First live backup passes (03:57 UTC) planned nothing: the target read token
+  lacked `statuses: read`. Fixed with logging in `024d2c31c0`; it changes a
+  workflow file, so its advance is manual, together with the legs ref.
+- Stage-1 adversarial review (41 agents) upheld 10 findings: 3 P1, 3 P2, 4 P3.
+  Fixed in `024d2c31c0`: the `OWNER_LANDING_REQUIRED` dead end, the red-base
+  line rule for spent heads, the CI resume attempt bound and canary with every
+  never-started run re-run, the outage notice's `sentinel:skip` label, close
+  ordering and the follow-ups prefix. The per-repository merge bound claim is
+  corrected in DECISIONS. Open, narrow (P3): the ai.ubq.fi parent-proof
+  exemption on an observed merge, and an unreadable job read counted as a real
+  failure.
+- Landed by hand: #207 (PR 211's diagnostic, `308b665dba`); #214 closed (one red
+  CI run on a development push).
+- Remaining parks needing the owner or the other ai.ubq.fi/Passport agent:
+  protected-path candidates (ai.ubq.fi 6, Passport 9; they edit owner-protected
+  files) and ai.ubq.fi 1213 (three model-route outages; re-arm by editing the
+  issue or changing the route). Sentinel #177 and #187 are protected-path parks
+  of Sentinel's own authority code; PR 195's queue-guard change flips a safety
+  assertion and needs review before landing.
+- Owner actions unchanged: Actions billing for `ubiquity`;
+  `SENTINEL_AUTO_FOLLOW` (the session cannot write repository variables);
+  Actions concurrency.
+
+## Prior checkpoint (2026-10-25 03:20 UTC)
 
 - Owner directives (2026-10-24/25): "Redesign the system ... unblock permanent
   solutions"; backup CI: "primary path is to use the org's own ci but backup
@@ -16,8 +47,8 @@ ownership, authority or acceptance.
 - Live diagnosis: four runs planned 0 matrix cells and admitted 0/0/0/1 items.
   Passport (71 open issues) is wedged because GitHub has started no Passport
   Actions job since 06:40 UTC (org billing or spending limit; owner action);
-  Sentinel read never-started jobs as red, held 39 records on `base_red` and
-  22 reviewed PRs behind them in the serial delivery line, and the runtime had
+  Sentinel read never-started jobs as red, held 39 records on `base_red` and 22
+  reviewed PRs behind them in the serial delivery line, and the runtime had
   merged two Passport PRs off their reviewed bases.
 - Design: `docs/redesign-2026-10-25.md` (judge panel of three proposals) and
   `docs/backup-ci-spec.md` (architect plus security and correctness critics).
@@ -32,8 +63,8 @@ ownership, authority or acceptance.
     re-review passes; git background maintenance race fixed (`b0b9d35c15`);
   - native review envelope recovery installed (`d5ed52d612`);
   - inert, behind switches: backup CI WP1-WP3 (`6ff3414156`, `be0d86e8ab`,
-    `d8c1c60e08`; mode off, act pin unfilled, calibration empty) and the delivery
-    train pure core (`3e81808875`).
+    `d8c1c60e08`; mode off, act pin unfilled, calibration empty) and the
+    delivery train pure core (`3e81808875`).
 - Launcher: `d5ed52d612`. The next advance installs stage 1 once its adversarial
   review (five lenses, three skeptics per finding) is clean and its upheld
   findings are fixed. `d8c1c60e08` changes workflow files, so that advance is
@@ -52,8 +83,8 @@ ownership, authority or acceptance.
   `434f829e80` (#169, #152, #161/#162, #185, #191, five review rounds) and
   `d4cd606318` (#156).
 - Closed: #185, #191, #152, #169 (PR 171 closed as superseded), #161, #162 and
-  #156. #155 closes once `1ebc914d52` is installed; its item 2 (one more
-  legacy final round) was dropped after review and stays an owner decision.
+  #156. #155 closes once `1ebc914d52` is installed; its item 2 (one more legacy
+  final round) was dropped after review and stays an owner decision.
 - Reviews (owner report on PR 211): native review mode ran, but its result
   failed strict parsing (`json_syntax`) on about one review in three. Root
   cause: Codex 0.154.0 review mode has no output schema, so the reviewer escapes
