@@ -7,7 +7,43 @@ grant. Muse ownership is retired. Current policy belongs in
 checkpoints below retain their original text and do not establish current
 ownership, authority or acceptance.
 
-## Latest checkpoint (2026-10-24 22:40 UTC)
+## Latest checkpoint (2026-10-25 03:20 UTC)
+
+- Owner directives (2026-10-24/25): "Redesign the system ... unblock permanent
+  solutions"; backup CI: "primary path is to use the org's own ci but backup
+  path is to use ubiquity-sentinel org as the backup" (recorded in AGENTS.md and
+  DECISIONS).
+- Live diagnosis: four runs planned 0 matrix cells and admitted 0/0/0/1 items.
+  Passport (71 open issues) is wedged because GitHub has started no Passport
+  Actions job since 06:40 UTC (org billing or spending limit; owner action);
+  Sentinel read never-started jobs as red, held 39 records on `base_red` and
+  22 reviewed PRs behind them in the serial delivery line, and the runtime had
+  merged two Passport PRs off their reviewed bases.
+- Design: `docs/redesign-2026-10-25.md` (judge panel of three proposals) and
+  `docs/backup-ci-spec.md` (architect plus security and correctness critics).
+- On `development` (CI green at `f6c9df4306`; WP2/WP3 pushed at `d8c1c60e08`):
+  - stage 1: merge base CAS (`a787f87cb4`), never-started CI is no evidence and
+    re-runs itself (`173eee6f06`), caps lifted and one merge per repository per
+    pass (`1c46c5eb5d`), a red-base-held head holds no delivery line and retired
+    records cost no read (`2b95bd38f9`), plan diagnostic, step lines, CI outage
+    notice and wedge report (`7b4306a14d`, `f49b532b1d`), protected paths named
+    in the prompt plus the `sentinel:retry` exit (`bcde4cba8e`, `16ca2a785c`);
+  - base-repair lane reworked after review (`55c2b5a868`), filing off until its
+    re-review passes; git background maintenance race fixed (`b0b9d35c15`);
+  - native review envelope recovery installed (`d5ed52d612`);
+  - inert, behind switches: backup CI WP1-WP3 (`6ff3414156`, `be0d86e8ab`,
+    `d8c1c60e08`; mode off, act pin unfilled, calibration empty) and the delivery
+    train pure core (`3e81808875`).
+- Launcher: `d5ed52d612`. The next advance installs stage 1 once its adversarial
+  review (five lenses, three skeptics per finding) is clean and its upheld
+  findings are fixed. `d8c1c60e08` changes workflow files, so that advance is
+  manual.
+- Owner actions: restore Actions billing or raise the spending limit for the
+  `ubiquity` org (Passport); set `SENTINEL_AUTO_FOLLOW` to `on` or delete it;
+  for hundreds of concurrent jobs, a higher Actions concurrency plan or
+  self-hosted runners (the org runs about 16-20 jobs at once).
+
+## Prior checkpoint (2026-10-24 22:40 UTC)
 
 - Runtime: every supervisor run since 17:43 UTC settled green. Launcher
   `1ebc914d52` (manual, 22:27; CI green on its re-run) is waiting for the next
