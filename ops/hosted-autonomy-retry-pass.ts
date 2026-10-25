@@ -88,6 +88,12 @@ import {
   retryParkAction,
   retryReadmitAction,
 } from "./hosted-autonomy-retry-actions.ts";
+import {
+  dropProtectedCandidates,
+  planProtectedReadmissions,
+  protectedReadmissionPlan,
+  takeProtectedReadmissions,
+} from "./hosted-autonomy-protected-readmission.ts";
 
 /** Legacy class drift lines reported per pass (the rest are counted). */
 export const LEGACY_DRIFT_REPORTS_PER_PASS = 12;
@@ -594,6 +600,24 @@ export async function runHostedRetryPass(
       legacyCutoff,
     ),
   );
+  // C6: an open issue's `sentinel:retry` label is the owner's exit for a
+  // protected-path park. The label is removed first; only a confirmed removal
+  // returns the record to `work` in this same write, as an ordinary uncharged
+  // work plan over the dropped candidate (hosted-autonomy-protected-readmission.ts).
+  const owned = new Set(
+    [...plans, ...readmissions, ...parks].map((entry) => entry.id),
+  );
+  const protectedTaken = await takeProtectedReadmissions(
+    planProtectedReadmissions(
+      snapshot,
+      closedIssues,
+      (id) => settled(id) || owned.has(id),
+      deps.clock.now(),
+    ),
+    scopeFor,
+    actions,
+  );
+  plans.push(...protectedTaken.map(protectedReadmissionPlan));
   if (plans.length > 0 || readmissions.length > 0 || parks.length > 0) {
     const now = deps.clock.now();
     if (!Number.isSafeInteger(now) || now < snapshot.updatedAt) {
@@ -603,7 +627,12 @@ export async function runHostedRetryPass(
     try {
       next = applyBaseRefreshReadmissions(
         applyRepeatFailureParks(
-          applyHostedRetries(snapshot, observedHead as GitSha, plans, now),
+          applyHostedRetries(
+            dropProtectedCandidates(snapshot, protectedTaken),
+            observedHead as GitSha,
+            plans,
+            now,
+          ),
           parks,
           now,
         ),

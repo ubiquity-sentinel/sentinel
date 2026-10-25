@@ -9,6 +9,7 @@ import {
 } from "../contracts/ports.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { ModelRunOptionsV1 } from "../contracts/ports-model.ts";
+import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { ModelRouteV1 } from "./model-route.ts";
 import { CodexSubprocessSession } from "../repair/codex-transport.ts";
 import {
@@ -132,6 +133,27 @@ export interface LocalModelInputV1 {
   prepareCheckoutDependencies?: PrepareCheckoutDependenciesV1;
   /** Trusted exact-base frozen Passport preparation, before any client starts. */
   preparePassportDependencies?: PreparePassportDependenciesV1;
+  /**
+   * The run's trusted target configs. The prompt names the configured
+   * protected path prefixes of the REQUESTED repository's config; a request
+   * for an unconfigured repository names none (the candidate's own
+   * protected-path check is unchanged either way).
+   */
+  targetConfigs?: readonly Pick<
+    RepositoryConfigV1,
+    "repository" | "protectedPaths"
+  >[];
+}
+
+/** The configured protected prefixes of exactly `repository`, or none. */
+export function protectedPathsFor(
+  configs: LocalModelInputV1["targetConfigs"],
+  repository: RepositoryIdentityV1,
+): readonly string[] {
+  return configs?.find((config) =>
+    config.repository.owner === repository.owner &&
+    config.repository.name === repository.name
+  )?.protectedPaths ?? [];
 }
 
 /**
@@ -376,6 +398,10 @@ export class LocalCheckoutModelPort implements ImplementationPort {
       sessionStartedAt,
       permissionProfile: "sentinel-local",
       commitCandidate: committer,
+      protectedPaths: protectedPathsFor(
+        this.input.targetConfigs,
+        request.repository,
+      ),
       ...(planned === null
         ? {}
         : { checkout: new LocalMergeResolver(prepared.checkout, planned) }),

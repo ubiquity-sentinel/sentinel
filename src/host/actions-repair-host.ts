@@ -591,6 +591,7 @@ export async function runActionsRepairHost(
     modelId: modelRoute.model,
     failoverModelId: modelRoute.failoverModel,
     localIteration: false,
+    targetConfigs,
     preparePassportDependencies: createPassportDependencyPreparer({
       scratch,
       trustedPath,

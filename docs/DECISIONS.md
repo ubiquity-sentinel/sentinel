@@ -3055,6 +3055,34 @@ standing approval above. Applied as follows.
   `unavailable` keep precedence. An unreadable state gives `wedges: null` and
   changes nothing. The report decides nothing.
 
+## 2026-10-25: protected paths named in the prompt, and the `sentinel:retry` exit
+
+- Finding (redesign 2026-10-25, C6): 96 records were parked "candidate touches a
+  protected path" (44 ai.ubq.fi, 43 Sentinel, 9 Passport; of these, 6, 2 and 9
+  had an open issue on 2026-10-25). The prompt said "do not modify protected
+  paths" without naming them, and no rule could ever re-admit such a park.
+- The implementer prompt's role paragraph now names the exact trusted configured
+  prefixes of the requested repository (deduplicated, sorted, JSON-quoted, at
+  most 60 within 4,000 characters, the rest counted) and says: if the fix
+  requires one of these paths, make no change and say
+  `OWNER_LANDING_REQUIRED: <paths>`. The list reaches the port through the
+  host's trusted target configs, never through the request, its digest or a
+  receipt. A repository without configured prefixes gets the earlier prompt byte
+  for byte. The candidate's own protected-path check stays the enforcement.
+- Owner exit: the launcher retry pass lists each target's open issues labelled
+  `sentinel:retry` once per pass. For a record blocked with exactly that
+  message, in the fresh park shape (no PR, no published head, no review), whose
+  issue is listed, it removes the label first and re-admits the record only if
+  GitHub confirms the removal. The re-admission is an ordinary uncharged work
+  plan in the pass's one batch write: the protected head, checkpoint and
+  candidate state are dropped (the runtime's own proven-absence target shape),
+  so the next start is charged normally and begins at the current base. A failed
+  removal, a closed or unlisted issue, or a lost state write re-admits nothing;
+  after a lost write the owner labels the issue again, so one label is at most
+  one re-admission. A park over a published pull request is not touched by this
+  exit and keeps its label.
+- No stored shape is added; nothing is pushed, refunded or re-counted.
+
 ## 2026-10-24: backup CI in the ubiquity-sentinel org (owner decision)
 
 - Owner decision (2026-10-24): "primary path is to use the org's own ci but

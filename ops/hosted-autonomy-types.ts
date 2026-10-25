@@ -284,6 +284,28 @@ export interface HostedAutonomyGitHubV1 {
    * repository for review follow-ups. Absent means no follow-up is filed.
    */
   followUpIssues?: HostedFollowUpIssuesV1;
+
+  /**
+   * Optional trusted launcher capability: the owner's `sentinel:retry` label
+   * on THIS repository's issues (`ops/hosted-autonomy-retry-label.ts`).
+   * Absent means no label exit is read or taken.
+   */
+  retryLabel?: HostedRetryLabelV1;
+}
+
+/** The owner's one-label re-admission handle (redesign 2026-10-25, C6). */
+export interface HostedRetryLabelV1 {
+  /**
+   * Numbers of THIS repository's OPEN issues (never pull requests) that carry
+   * the `sentinel:retry` label, from one complete bounded listing; null when
+   * the listing cannot be proven complete and well formed.
+   */
+  listOpenRetryLabeled(): Promise<ReadonlySet<number> | null>;
+  /**
+   * Remove `sentinel:retry` from one issue: true only when GitHub accepted
+   * the removal and its answer (the remaining labels) no longer carries it.
+   */
+  removeRetryLabel(number: number): Promise<boolean>;
 }
 
 /** One issue or pull request of a created-since listing. */
