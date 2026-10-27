@@ -252,6 +252,21 @@ Deno.test("scan cursor interleaves classes and reaches a blocked head behind 17 
   ]);
 });
 
+Deno.test("current validation retains oldest-first order independently of run ID", () => {
+  const candidates = [
+    { priority: 5 as const, label: "old delivery" },
+    { priority: 2 as const, currentHead: true, label: "oldest wait" },
+    { priority: 2 as const, currentHead: true, label: "next wait" },
+    { priority: 0 as const, label: "confirm red" },
+  ];
+  for (const run of [0, 1, 9009]) {
+    assert.deepEqual(
+      backupCiScanOrder(candidates, run, 3).map((row) => row.label),
+      ["confirm red", "oldest wait", "next wait"],
+    );
+  }
+});
+
 Deno.test("only reds of the mode class and runner without an attempt 2 are confirmed", () => {
   const red = result(key(), { conclusion: "failure" });
   assert.equal(unconfirmedReds(commitFile([red]), "on", RUNNER).length, 1);

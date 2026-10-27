@@ -9,14 +9,15 @@
  * 1 calibration commits while the runner is uncalibrated (at most 2 per
  * pass); 2 the live base tip; 3 record bases a backed-up head needs for
  * attribution; 4 peers; 5-8 heads at delivery, review, work and blocked
- * re-admission candidates (ties by `wait.since`, then record id).
+ * re-admission candidates. Exact-tip validation demand precedes the fallback
+ * scan in stable oldest-first order, after confirmation and calibration.
  *
  * The read bound is applied to a fair scan (`backupCiScanOrder`), not to the
  * plain concatenation: a large class that needs no unit (17 green delivery
  * heads on live Passport, 2026-10-25) consumed all 12 reads and starved the
  * 53 blocked pre-review parks behind it. The scan takes one candidate from
- * each present class per round, with that class's cursor advanced by the run
- * id, so every class is examined without losing the per-round priority order.
+ * each fallback class per round, with that class's cursor advanced by the run
+ * id. Store-known complete/in-flight keys are pruned before this read bound.
  */
 import type { GitSha } from "../src/contracts/brands.ts";
 import {
@@ -35,6 +36,10 @@ import {
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import { ACTIONS_APP_SLUG } from "../src/github/never-started-job.ts";
 import { greenReadmissionCandidate } from "./hosted-autonomy-green-readmission.ts";
+import {
+  compareCiReadiness,
+  currentCiValidation,
+} from "../src/repair/ci-readiness.ts";
 
 /** The billing stop annotation of a job that never started (§5, A4). */
 export const BACKUP_CI_BILLING_ANNOTATION =
@@ -46,6 +51,8 @@ export type BackupCiPriorityV1 = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 /** One commit to read, with what a unit planned on it would be for. */
 export interface BackupCiCandidateV1 {
   priority: BackupCiPriorityV1;
+  /** Exact-tip validation demand keeps its stable age order before fallback scans. */
+  currentHead?: boolean;
   commit: GitSha;
   purpose: BackupCiPurposeV1;
   /** The record whose head or base this is (null: tip or calibration). */
@@ -236,9 +243,24 @@ export function backupCiCandidates(
       branch: record.target.branch ?? input.defaultBranch,
     }));
   }
+  const demand = input.records.filter((record) =>
+    currentCiValidation(record, input.baseTip)
+  )
+    .sort(compareCiReadiness).map((record) =>
+      base(2, record.target.head!, "stand_in", {
+        currentHead: true,
+        recordId: record.id,
+        pullRequest: record.target.pr,
+        base: record.target.base,
+        branch: record.target.branch!,
+      })
+    );
   const seen = new Set<string>();
-  return out.filter((c) => {
-    const id = `${c.commit}:${c.purpose}:${c.attempt}:${JSON.stringify(c.key)}`;
+  return [...demand, ...out].filter((c) => {
+    const id =
+      `${c.commit}:${c.purpose}:${c.attempt}:${c.pullRequest}:${c.base}:${c.branch}:${
+        JSON.stringify(c.key)
+      }`;
     if (seen.has(id)) return false;
     seen.add(id);
     return true;
@@ -252,14 +274,20 @@ export function backupCiCandidates(
  * whose candidates need no unit cannot consume every read and starve a lower
  * class forever. Priorities still decide the order within each round.
  */
-export function backupCiScanOrder<T extends { priority: BackupCiPriorityV1 }>(
+export function backupCiScanOrder<
+  T extends { priority: BackupCiPriorityV1; currentHead?: boolean },
+>(
   candidates: readonly T[],
   runId: number,
   limit: number,
 ): T[] {
   if (limit <= 0 || candidates.length === 0) return [];
+  // Confirmation/calibration retain precedence. Exact-tip demand is already
+  // oldest-first; unrelated workflow run IDs must not shuffle that work.
+  const urgent = candidates.filter((c) => c.priority < 2 || c.currentHead);
+  const fallback = candidates.filter((c) => c.priority >= 2 && !c.currentHead);
   const groups = new Map<BackupCiPriorityV1, T[]>();
-  for (const candidate of candidates) {
+  for (const candidate of fallback) {
     const group = groups.get(candidate.priority) ?? [];
     group.push(candidate);
     groups.set(candidate.priority, group);
@@ -275,7 +303,8 @@ export function backupCiScanOrder<T extends { priority: BackupCiPriorityV1 }>(
   const taken = new Map<BackupCiPriorityV1, number>(
     priorities.map((priority) => [priority, 0]),
   );
-  const out: T[] = [];
+  const out: T[] = urgent.sort((a, b) => a.priority - b.priority);
+  if (out.length >= limit) return out.slice(0, limit);
   while (out.length < limit) {
     let progressed = false;
     for (const priority of priorities) {
@@ -290,6 +319,40 @@ export function backupCiScanOrder<T extends { priority: BackupCiPriorityV1 }>(
     if (!progressed) break;
   }
   return out;
+}
+
+/** Exact known key coverage can skip an expensive observation read, never invent it. */
+export function backupCiCandidateDisposition(
+  candidate: BackupCiCandidateV1,
+  file: BackupCiCommitFileV1 | null,
+  mode: "shadow" | "on",
+  runnerId: string,
+  now: number,
+): ReturnType<typeof backupCiDedupe> {
+  const context = candidate.key?.context ??
+    (candidate.pullRequest === null ? "push" : "pull_request");
+  const keys = candidate.key === null
+    ? file?.workflows.filter((row) => row.event === context && row.supported)
+      .flatMap((row) =>
+        row.expected.map((checkName) => ({
+          context,
+          workflowPath: row.path,
+          checkName,
+          base: context === "pull_request" ? candidate.base : null,
+          attempt: candidate.attempt,
+        }))
+      ) ?? []
+    : [{ ...candidate.key, attempt: candidate.attempt }];
+  if (keys.length === 0) return null;
+  const reasons = keys.map((key) =>
+    backupCiDedupe(file, key, mode, runnerId, now)
+  );
+  if (reasons.some((reason) => reason === null)) return null;
+  return reasons.includes("in_flight")
+    ? "in_flight"
+    : reasons.includes("backoff")
+    ? "backoff"
+    : reasons[0];
 }
 
 /** One observation as the planner reads it (raw check run plus job verdict). */

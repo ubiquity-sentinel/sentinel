@@ -37,7 +37,15 @@ import type {
   BackupCiTargetReadsV1,
 } from "../../ops/backup-ci-plan-reads.ts";
 import { workRecord } from "../state/helpers.ts";
-import { commitFile, result, RUNNER } from "../github/backup-ci-fixtures.ts";
+import {
+  commitFile,
+  coverage,
+  dispatched,
+  key,
+  result,
+  RUNNER,
+  unit,
+} from "../github/backup-ci-fixtures.ts";
 import {
   PASSPORT_WORKFLOW,
   targetRepo,
@@ -588,7 +596,7 @@ Deno.test("the pass bounds commit reads but still reaches a later never-started 
         nextStep: "work",
         target: {
           base: w.base,
-          branch: `b${i}`,
+          branch: i === 9 ? "sentinel/fix-7" : `b${i}`,
           checkpoint: null,
           head: i === 9
             ? w.head
@@ -654,6 +662,124 @@ Deno.test("the pass bounds commit reads but still reaches a later never-started 
       passDeps(w, { snapshot, runnerId: null }),
     );
     assert.equal(unpinned.units.length, 0);
+  } finally {
+    await w.repo.close();
+  }
+});
+
+Deno.test("current-head demand skips completed and in-flight coverage before spending read slots", async () => {
+  const w = await world();
+  const logs: string[] = [];
+  try {
+    const files = new Map<string, unknown>();
+    const records = Array.from({ length: 38 }, (_, i) => {
+      const head = i === 17
+        ? w.head
+        : (i + 20).toString(16).padStart(2, "0").repeat(20) as GitSha;
+      const waiting = i >= 17;
+      if (!waiting || i >= 36) {
+        const k = key({ context: "pull_request", base: w.base });
+        files.set(
+          backupCiCommitPath(REPO.owner, REPO.name, head),
+          commitFile(
+            [
+              i >= 36
+                ? dispatched(unit(k, { commit: head }))
+                : result(k, { commit: head }),
+            ],
+            {
+              commit: head,
+              workflows: [
+                coverage({ event: "pull_request", expected: ["deno"] }),
+              ],
+            },
+          ),
+        );
+      }
+      return workRecord(`r${i}`, {
+        repository: { owner: REPO.owner, name: REPO.name, installationId: 7 },
+        nextStep: waiting ? "work" : "delivery",
+        wait: waiting
+          ? { reason: "ci_pending", since: T0 + i, until: T0 + 300_000 }
+          : null,
+        target: {
+          base: w.base,
+          branch: i === 17 ? "sentinel/fix-7" : `b${i}`,
+          checkpoint: null,
+          head,
+          pr: i === 17 ? 7 : 100 + i,
+        },
+      });
+    });
+    const snapshot = {
+      work: records,
+      reservations: [],
+      reviews: [],
+      releaseRequests: [],
+    } as unknown as RepairStateSnapshotV1;
+    const pass = await runBackupCiPass(passDeps(w, {
+      snapshot,
+      log: (line) => logs.push(line),
+      store: {
+        read: (path) => Promise.resolve(files.get(path) ?? null),
+        pathsContaining: () => Promise.resolve([]),
+      },
+    }));
+    assert(
+      pass.files.some((file) =>
+        file.commit === w.head && file.coverage.length > 0
+      ),
+      `oldest useful head reaches materialization: ${logs.join("; ")}`,
+    );
+    for (const record of records.filter((_, i) => i < 17 || i >= 36)) {
+      assert(
+        !w.calls.some((c) => c.endsWith(record.target.head!.slice(0, 7))),
+        "known completed/in-flight tuple costs no observation read",
+      );
+    }
+    assert(
+      w.calls.filter((c) => c.startsWith("checkRuns:latest")).length <= 12,
+    );
+  } finally {
+    await w.repo.close();
+  }
+});
+
+Deno.test("a planned tuple is rechecked after materialization before packing", async () => {
+  const w = await world();
+  const logs: string[] = [];
+  try {
+    const base = passDeps(w);
+    const record = workRecord("ready", {
+      repository: { owner: REPO.owner, name: REPO.name, installationId: 7 },
+      wait: { reason: "ci_pending", since: T0, until: T0 + 300_000 },
+      target: {
+        base: w.base,
+        head: w.head,
+        branch: "sentinel/fix-7",
+        pr: 7,
+        checkpoint: null,
+      },
+    });
+    const pass = await runBackupCiPass(passDeps(w, {
+      snapshot: {
+        work: [record],
+        reservations: [],
+        reviews: [],
+        releaseRequests: [],
+      } as unknown as RepairStateSnapshotV1,
+      log: (line) => logs.push(line),
+      actionSource(local) {
+        w.pull!.head.sha = "1".repeat(40);
+        return base.actionSource(local);
+      },
+    }));
+    assert.equal(pass.units.length, 0);
+    assert(logs.some((line) => line.endsWith(":superseded")));
+    assert(
+      !logs.some((line) => line.includes("tar_failed")),
+      "stale tuple never reaches the packer",
+    );
   } finally {
     await w.repo.close();
   }

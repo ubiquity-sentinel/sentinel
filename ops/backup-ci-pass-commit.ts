@@ -22,7 +22,7 @@ import {
   type BackupCiActionCacheV1,
   resolveBackupCiActions,
 } from "./backup-ci-actions.ts";
-import { buildEventPayload } from "./backup-ci-act.ts";
+import { BACKUP_CI_ACTOR, buildEventPayload } from "./backup-ci-act.ts";
 import { BACKUP_CI_CONTEXT_GREP } from "./backup-ci-expressions.ts";
 import { trustedCheckName } from "../src/repair/ci-rejection.ts";
 import type { BackupCiBareRepo } from "./backup-ci-materialize.ts";
@@ -191,7 +191,17 @@ export async function planBackupCiCommit(
       chosen.forEach((g) => refuse(keyOf(g), "pr_not_open"));
       return [];
     }
-    if (pull.head.sha !== commit || pull.base.ref !== info.defaultBranch) {
+    const repository = `${repo.owner}/${repo.name}`;
+    const tip = candidate.purpose === "stand_in"
+      ? await reads.branchTip(info.defaultBranch)
+      : base;
+    if (
+      pull.head.sha !== commit || pull.base.ref !== info.defaultBranch ||
+      pull.head.ref !== candidate.branch || pull.user !== BACKUP_CI_ACTOR ||
+      pull.draft ||
+      pull.head.repo.full_name !== repository ||
+      pull.base.repo.full_name !== repository || tip !== base
+    ) {
       chosen.forEach((g) => refuse(keyOf(g), "pr_moved"));
       return [];
     }
