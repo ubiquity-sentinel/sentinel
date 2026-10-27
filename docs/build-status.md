@@ -16,6 +16,14 @@ Evidence handbacks: /tmp/sentinel-throughput-implementation-20261027/m05-evidenc
 
 Acceptance requires all five integrated changes, meaningful local consumer checks, native development review, current exact-input hosted CI, safe self-install and live supervised delivery/throughput evidence. Keep review/accounting/CAS/promotion/target budget gates and sentinel-release disablement; no billing, retention, route or credential changes are included. Audit evidence and release receipts are in /tmp/sentinel-throughput-audit-20261027 and /tmp/sentinel-throughput-implementation-20261027. No performance gain is claimed before measurement.
 
+### Frozen implementation preparation (19:09 UTC)
+
+All six Sentinel module tips are integrated with ancestry preserved: m01 528adc8ecbe4a6516969a9d3a7514f6b7b73238d, m02 17cafcfc5fd028b2b72e1ba06bb0d9be12c199e7, m03 4819d0911ffc725b391fad2bd388599d0faa8786, m04 6eeb40462d718695308f82cf815ff676023d23b4, m05 8e987831708dc5d9ffab905e3841799dbfbb3dad and m06 a00c3243e6d268ea4760abf3f6bd581f45dcf27f. All workers stopped writing. m04 final exact-commit lifecycle checks passed 12 cases; its realistic three-target fifty-five-minute window and static/size gates passed. m03's 5 direct and 41 affected cases passed; m06's 19 cases/13 substeps and actual Git-store duplicate-completion proof passed. Earlier zero-test selections and platform setup failures are excluded from acceptance counts.
+
+The independent fresh evidence audit verified supplied ancestry, exact owned-file bytes and available actual output counts. Some earliest m01/m02 raw regression entries were evicted by the existing sixty-four-attempt evidence retention; historical handback references remain qualified, and final integrated checks will retain actual output copies without changing retention. Final integrated/native/hosted/install/live gates remain pending, so these local results do not establish production throughput.
+
+AI m07 is ready in its separate isolated lane at 0baaa2abfa72f6b344d5f28c70735360f4cd686f, based on 783fcfd92cdc2b6c48e6f9aa534bcc42b9fa1ff4. Actual native review on predecessor 8149fefc650eac880bd143fe76e8f17b11e048a6 completed once and identified one P2: reserved GITHUB_BASE_REF cannot supply manual dispatch context. The same review-round correction reads existing dispatch-event JSON; a real reserved-empty CLI regression failed six cases before the correction and all 39 cases passed afterward, with strict no-emit and scoped static checks. No new native verdict is claimed for the correction and no extra review was launched for P2 alone. Its full native macOS/ARM hosted coverage and publication are still pending; the selector remains a coverage rule, not authentication or merge authority.
+
 This is the single current task, ownership and acceptance ledger, maintained by
 the primary integration owner under the 2026-10-13 takeover and 2026-10-20 owner
 grant. Muse ownership is retired. Current policy belongs in

@@ -21,6 +21,8 @@ Historical producer discovery may use a reconstructible derived index in sentine
 
 Independent target producers and native reviewers may overlap while one coordinator serializes authoritative lifecycle advances and every owned session is settled. Authenticated controller completion events request protected ingestion and reconciliation; active-run requests coalesce into the existing handoff. Foreign target events have no implicit controller ingress, so the existing bounded recovery remains until an actual authenticated event path exists. Keep original deadlines, exact integrated CI/native review/merge gates and exclusive promotion ownership; sentinel-release stays disabled.
 
+The shared drain replaces earlier-target serial drains. Matrix observation therefore removes only the obsolete two-drain reservation for three targets; it retains the full twenty-minute review bound, existing five-minute operation margins, per-target preparation lead and original absolute deadline. A three-target fifty-five-minute local consumer case proves a ten-minute observation window without renewing tokens, resetting invocation origin or lowering configured safeguards.
+
 Ordinary CI runs automatically for PRs and canonical master/development pushes. Explicit workflow dispatch supports branch checks; automatic codex/** pushes are redundant and removed. Event-qualified concurrency prevents a branch run from cancelling the PR-only native receipt producer, while preserving development-run protection. These decisions are an implementation contract; actual local, hosted, installed and live acceptance belongs only in the ledger.
 
 ### Gateway pre-merge CI dispatch and authority inventory (2026-10-23)
