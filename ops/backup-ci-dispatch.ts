@@ -21,6 +21,7 @@ import {
   type BackupCiCommitFileV1,
   backupCiCommitPath,
   type BackupCiDispatchedEntryV1,
+  backupCiEntrySortKey,
   backupCiSuspensionPath,
   type BackupCiSuspensionV1,
   parseBackupCiCalibration,
@@ -228,7 +229,7 @@ export async function backupCiStoreChanges(
 export async function commitBackupCiPass(
   deps: BackupCiCommitDepsV1,
 ): Promise<BackupCiCommitResultV1> {
-  const counts: Record<string, number> = {};
+  const counts: Record<string, number> = { receipt_advanced: 0 };
   const count = (key: string) => counts[key] = (counts[key] ?? 0) + 1;
   if (backupCiBytesDigest(deps.passBytes) !== deps.expectedDigest) {
     deps.log("backup-ci:commit:pass_digest_mismatch");
@@ -299,15 +300,50 @@ export async function commitBackupCiPass(
     for (const r of file.results) count(`result:${r.conclusion}`);
     for (const e of file.noEvidence) count(e.reason);
   }
-  const written = await deps.writeStore((view) =>
-    backupCiStoreChanges(pass, dispatched, refused, view, now, deps.log)
-  );
+  let advanced = 0;
+  const written = await deps.writeStore(async (view) => {
+    const changes = await backupCiStoreChanges(
+      pass,
+      dispatched,
+      refused,
+      view,
+      now,
+      deps.log,
+    );
+    // Recompute against EACH CAS view: a competing writer may have accepted
+    // the receipt before a retry. Only retained results can prompt fresh reads.
+    advanced = 0;
+    for (
+      const path of new Set(pass.files.map((file) =>
+        backupCiCommitPath(
+          file.repository.owner,
+          file.repository.name,
+          file.commit,
+        )
+      ))
+    ) {
+      const before = await current(view, path, parseBackupCiCommitFile);
+      const after = changes.get(path) as BackupCiCommitFileV1 | undefined;
+      const known = new Set(
+        (before?.entries ?? []).filter((entry) => entry.state === "result").map(
+          backupCiEntrySortKey,
+        ),
+      );
+      advanced += (after?.entries ?? []).filter((entry) =>
+        entry.state === "result" && entry.mode === "evidence" &&
+        entry.purpose !== "calibration" &&
+        !known.has(backupCiEntrySortKey(entry))
+      ).length;
+    }
+    return changes;
+  });
   if (written.kind === "failed") {
     deps.log(
       `backup-ci:commit:store_failed:${written.detail.replace(/[^a-z ]/g, "")}`,
     );
     return { code: 1, counts };
   }
+  if (written.kind === "committed") counts.receipt_advanced = advanced;
   for (const { entry } of dispatched) {
     const sent = await deps.api.send(
       "POST",

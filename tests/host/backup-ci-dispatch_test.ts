@@ -103,7 +103,12 @@ function passFile(units = 1): BackupCiPassFileV1 {
 async function commit(
   pass: BackupCiPassFileV1,
   state: Parameters<typeof api>[0],
-  over: { digest?: string; trees?: (string | undefined)[] } = {},
+  over: {
+    digest?: string;
+    trees?: (string | undefined)[];
+    views?: (BackupCiCommitFileV1 | null)[];
+    storeOutcome?: "committed" | "unchanged" | "failed";
+  } = {},
 ) {
   const bytes = new TextEncoder().encode(canonicalStringify(pass));
   const { api: fake, sent } = api(state);
@@ -119,10 +124,18 @@ async function commit(
     api: fake,
     repository: REPO,
     async writeStore(mutate) {
-      const view = {
-        read: () => Promise.resolve(null),
-      } as unknown as BackupCiStoreView;
-      written.push(await mutate(view));
+      for (const existing of over.views ?? [null]) {
+        const view = {
+          read: () => Promise.resolve(existing),
+        } as unknown as BackupCiStoreView;
+        written.push(await mutate(view));
+      }
+      if (over.storeOutcome === "unchanged") {
+        return { kind: "unchanged", tip: null };
+      }
+      if (over.storeOutcome === "failed") {
+        return { kind: "failed", detail: "CAS conflict" };
+      }
       return {
         kind: "committed",
         commit: "1".repeat(40) as never,
@@ -178,6 +191,52 @@ Deno.test("one store commit, then one leg dispatch with string inputs", async ()
   assert(
     !sent.some((s) => s.method === "PATCH"),
     "an equal legs ref is not moved",
+  );
+});
+
+Deno.test("receipt wake count requires newly accepted evidence on the committed CAS view", async () => {
+  const pass = passFile(0);
+  const fresh = await commit(pass, { legs: LAUNCHER });
+  assert.equal(fresh.out.counts.receipt_advanced, 1);
+  assert.equal(
+    (await commit(pass, { legs: LAUNCHER }, { views: [fresh.file!] })).out
+      .counts.receipt_advanced,
+    0,
+  );
+  assert.equal(
+    (await commit(pass, { legs: LAUNCHER }, { views: [null, fresh.file!] })).out
+      .counts.receipt_advanced,
+    0,
+    "CAS retry uses the newest view",
+  );
+  for (const storeOutcome of ["unchanged", "failed"] as const) {
+    assert.equal(
+      (await commit(pass, { legs: LAUNCHER }, { storeOutcome })).out.counts
+        .receipt_advanced,
+      0,
+    );
+  }
+  const calibration = structuredClone(pass);
+  calibration.files[0].results[0].purpose = "calibration";
+  assert.equal(
+    (await commit(calibration, { legs: LAUNCHER })).out.counts.receipt_advanced,
+    0,
+  );
+  const planning = passFile();
+  planning.files = [];
+  assert.equal(
+    (await commit(planning, { legs: LAUNCHER })).out.counts.receipt_advanced,
+    0,
+  );
+  const conflict = structuredClone(pass);
+  conflict.files[0].results[0].resultDigest = "9".repeat(64);
+  const refused = await commit(conflict, { legs: LAUNCHER }, {
+    views: [fresh.file!],
+  });
+  assert.equal(
+    refused.out.counts.receipt_advanced,
+    0,
+    "a refused conflicting result is no new evidence",
   );
 });
 

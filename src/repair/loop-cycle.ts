@@ -395,6 +395,7 @@ export async function runRepairCycle(
     }
     didWork = true;
     tracking.steps++;
+    if (result.yield === true) deferred.add(selected.id);
   }
 }
 

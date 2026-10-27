@@ -9,6 +9,20 @@ continuation.
 
 ## Runtime and dispatch
 
+### Production throughput implementation contract (2026-10-27)
+
+The owner requested the current source be released as v1 before implementing all five findings from the production throughput audit. Annotated tag v1 preserves f731b9602af55e54b7789e26134b1ce42eb3e7bd; it does not change the installed runtime or claim exact-head CI acceptance. The implementation contract is docs/plans/production-throughput-20261027.md and the current acceptance ledger remains build-status.md.
+
+Unchanged publication and CI-wait observations must not generate repeated authoritative state writes or retain a runner through repeated selection. A genuine persisted wait may yield its record while retaining progress accounting; preserve the original CI deadline, exact head/base, current reads, reservations and all failure paths. Completion notifications prompt trusted observation and never constitute CI or review evidence themselves.
+
+Backup CI prioritizes current, delivery-relevant exact-head demand using stable ordering and the existing capacity bounds. Base refreshes reuse delivery readiness so background refreshes do not invalidate proof faster than it can be consumed. Only newly accepted result entries committed and read back through expected-head CAS emit receipt_advanced; planning, in-flight, calibration and unchanged stores cannot produce wake loops. Preserve native target CI priority, real failures, calibrated backup fidelity and the target's closed/manual Actions policy.
+
+Historical producer discovery may use a reconstructible derived index in sentinel-state/maintenance-index, separate from strict repair/release records. It binds the controller and release identity, verified anchor/cursor ranges and immutable producer proof locations. Every selected producer still passes fresh custody, artifact and accounting checks. Missing or corrupt acceleration cannot authorize skipped evidence; no negative artifact cache, retention change, new credential or model-visible authority is introduced.
+
+Independent target producers and native reviewers may overlap while one coordinator serializes authoritative lifecycle advances and every owned session is settled. Authenticated controller completion events request protected ingestion and reconciliation; active-run requests coalesce into the existing handoff. Foreign target events have no implicit controller ingress, so the existing bounded recovery remains until an actual authenticated event path exists. Keep original deadlines, exact integrated CI/native review/merge gates and exclusive promotion ownership; sentinel-release stays disabled.
+
+Ordinary CI runs automatically for PRs and canonical master/development pushes. Explicit workflow dispatch supports branch checks; automatic codex/** pushes are redundant and removed. Event-qualified concurrency prevents a branch run from cancelling the PR-only native receipt producer, while preserving development-run protection. These decisions are an implementation contract; actual local, hosted, installed and live acceptance belongs only in the ledger.
+
 ### Gateway pre-merge CI dispatch and authority inventory (2026-10-23)
 
 `ubiquity/ai.ubq.fi` runs `Gateway CI` (`.github/workflows/deno-deploy.yml`)
