@@ -22,6 +22,7 @@ import type {
 } from "./hosted-autonomy-types.ts";
 import { HISTORICAL_C63 } from "./hosted-autonomy-matrix-bindings.ts";
 import { beginMaintenanceProgress } from "./hosted-autonomy-state.ts";
+import { CurrentMatrixScan } from "./hosted-autonomy-current-scan.ts";
 import {
   blockedRecoveryBinding,
   blockedRecoveryMatchesProducer,
@@ -186,6 +187,40 @@ export async function recoverHostedCurrentMatrix(
         expectedHead: current.head,
       });
   };
+  const discovery: { value: CurrentMatrixScan | null } = { value: null };
+  let indexOpened = false;
+  /** Original complete walk remains the fallback for absent/untrusted metadata. */
+  const fullHistory = async function* (step: () => boolean) {
+    let producer = current;
+    const snapshots = new Set<string>();
+    while (true) {
+      if (snapshots.has(producer.head)) {
+        throw integrityFailure("current matrix history cycle");
+      }
+      snapshots.add(producer.head);
+      yield producer;
+      const parent = producer.snapshot.stateHead;
+      if (parent === null) {
+        if (producer.snapshot.sequence !== 1) {
+          throw integrityFailure("current matrix history root unavailable");
+        }
+        return;
+      }
+      if (!step()) return;
+      if (snapshots.has(parent) || !deps.state.readReleaseAt) {
+        throw integrityFailure("current matrix history unavailable");
+      }
+      const prior = await readParent(parent);
+      if (
+        !prior.ok || prior.value.status !== "found" ||
+        prior.value.head !== parent ||
+        prior.value.snapshot.sequence !== producer.snapshot.sequence - 1
+      ) {
+        throw integrityFailure("current matrix history ancestry unavailable");
+      }
+      producer = prior.value;
+    }
+  };
   /**
    * One newest-to-oldest traversal under every history refusal. `visit`
    * sees each ordinary producer once, at the newest snapshot holding its
@@ -198,10 +233,22 @@ export async function recoverHostedCurrentMatrix(
     ) => Promise<boolean>,
     step: () => boolean,
   ): Promise<void> => {
+    if (!indexOpened) {
+      indexOpened = true;
+      if (deps.currentMatrixIndex && deps.state.readReleaseAt) {
+        discovery.value = await CurrentMatrixScan.open({
+          port: deps.currentMatrixIndex,
+          current,
+          readParent,
+          fault: integrityFailure,
+        });
+      }
+    }
     const snapshots = new Set<string>();
     const proofs = new Map<string, string>();
-    let producer = current;
-    while (true) {
+    for await (
+      const producer of discovery.value?.walk(step) ?? fullHistory(step)
+    ) {
       if (deps.clock.now() >= deadlineAt) {
         throw new Error(CURRENT_MATRIX_HISTORY_DEADLINE_MESSAGE);
       }
@@ -258,27 +305,6 @@ export async function recoverHostedCurrentMatrix(
           }
         }
       }
-      const parent = producer.snapshot.stateHead;
-      if (parent === null) {
-        if (producer.snapshot.sequence !== 1) {
-          throw integrityFailure("current matrix history root unavailable");
-        }
-        return;
-      }
-      if (!step()) return;
-      // Unauthenticated or tampered release history stays fail-closed: the
-      // offline-history controls pin a rejection for missing, wrong-head,
-      // wrong-sequence and cycle faults.
-      if (snapshots.has(parent) || !deps.state.readReleaseAt) {
-        throw integrityFailure("current matrix history unavailable");
-      }
-      const prior = await readParent(parent);
-      if (
-        !prior.ok || prior.value.status !== "found" ||
-        prior.value.head !== parent ||
-        prior.value.snapshot.sequence !== producer.snapshot.sequence - 1
-      ) throw integrityFailure("current matrix history ancestry unavailable");
-      producer = prior.value;
     }
   };
   const recover = (producer: typeof current, scope: HostedProducerScopeV1) => {
@@ -424,9 +450,14 @@ export async function recoverHostedCurrentMatrix(
   };
   const finishScan = beginMaintenanceProgress("current_matrix_scan");
   try {
-    return await scan();
+    const result = await scan();
+    await discovery.value?.save();
+    return result;
   } catch (error) {
-    if (isDeferredCurrentMatrixHistoryBudget(error)) report("deferred_budget");
+    if (isDeferredCurrentMatrixHistoryBudget(error)) {
+      await discovery.value?.save();
+      report("deferred_budget");
+    }
     throw error;
   } finally {
     finishScan();

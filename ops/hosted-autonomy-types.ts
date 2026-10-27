@@ -467,6 +467,9 @@ export interface HostedAutonomyDepsV1 {
     import("./hosted-autonomy-queue-context.ts").HostedQueueCustodyContext;
   onQueueCustodyReady?(ready: boolean): void | Promise<void>;
   state: StateReadView & RepairStateWriter;
+  /** Trusted derived discovery only, never work/charge/settlement authority. */
+  currentMatrixIndex?:
+    import("../src/contracts/maintenance-index.ts").CurrentMatrixIndexPortV1;
   /**
    * Resolve the GitHub surface for one exact repository identity. A null (or
    * throwing) resolver is an unreadable surface: the affected record is

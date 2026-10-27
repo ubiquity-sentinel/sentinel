@@ -69,6 +69,9 @@ Deno.test("hosted authority: actual repair keeps forbidden candidates charged an
       ".github/actions/hosted-runtime-control/action.yml",
       "ops/hosted-autonomy-original-candidate.ts",
       "ops/hosted-autonomy-original-candidate-pass.ts",
+      "ops/hosted-autonomy-current-scan.ts",
+      "src/contracts/maintenance-index.ts",
+      "src/state/maintenance-index.ts",
     ]
   ) {
     await t.step(path, () => assertForbiddenCandidate(path));
