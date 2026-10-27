@@ -200,7 +200,11 @@ Deno.test("matrix consumer: a producer this execution planned is still waited fo
   assert.deepEqual(run.waits, run.scans.slice(1).map(() => MINUTE));
   // Every later scan downloads for this execution's own producer only.
   for (const scan of run.scans.slice(1)) assert.deepEqual(scan.ids, run.own);
-  assert.equal(run.cycles[0]!.at, last);
+  assert.equal(
+    run.cycles[0]!.at,
+    run.origin,
+    "target work starts after the first scan, before the producer observation window ends",
+  );
   // Every live producer, own or earlier, stays charged and unresolved.
   assert.deepEqual(run.after.reservations, run.before.reservations);
   assert.deepEqual(run.after.work, run.before.work);

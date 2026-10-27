@@ -200,6 +200,8 @@ export interface GitHubPort {
    * reconciled inside the supplied deadline. Never starts a model, never
    * reserves budget and never writes repair state.
    */
+  /** Local owned-completion notification; only prompts authenticated observation. */
+  onReviewCompletion?(listener: (operationKey: string) => void): () => void;
   drainReviews(
     request: ReviewDrainRequestV1,
   ): Promise<PortResultV1<ReviewDrainReportV1>>;
