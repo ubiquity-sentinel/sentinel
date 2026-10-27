@@ -566,6 +566,17 @@ async function driveFleet(rig: Awaited<ReturnType<typeof fleet>>) {
     for (const merge of rig.github.launcherMerges.slice(before)) {
       mergedAt.set(merge.pr, run);
     }
+    if (run === 0) {
+      // The on-tip heads' initial CI completes before its first eligible
+      // poll. They become reviewable through real CI progress, rather than
+      // relying on a base refresh to replace a permanently pending head.
+      for (const pr of ON_TIP) {
+        const head = rig.records.find((row) => row.target.pr === pr)!.target
+          .head!;
+        rig.github.checksByHead.delete(head);
+      }
+      rig.clock.advance(5 * 60_000 + 1);
+    }
     // 103's reviewed head turns green before the third pass's runtime run.
     if (run === 2) {
       const head = rig.records.find((row) => row.target.pr === 103)!.target

@@ -8,7 +8,10 @@ import {
   DELIVERY_QUEUE_STALL_LIMIT,
   deliveryQueueAhead,
 } from "./delivery-queue.ts";
-import { sameRepositoryIdentity } from "./loop-records.ts";
+import {
+  releaseRequestMatchesDelivery,
+  sameRepositoryIdentity,
+} from "./loop-records.ts";
 import type { LegacyCutoff } from "./review-round-cap.ts";
 
 type Snapshot = Pick<
@@ -78,7 +81,10 @@ export function ciRefreshAhead(
   const candidates = snapshot.work.filter((other) =>
     other.id !== record.id &&
     sameRepositoryIdentity(other.repository, record.repository) &&
-    publishedCiCandidate(other) && live(other, now)
+    publishedCiCandidate(other) && live(other, now) &&
+    !snapshot.releaseRequests.some((request) =>
+      releaseRequestMatchesDelivery(request, other)
+    )
   ).sort(compareCiReadiness);
   const validating = candidates.find((other) =>
     (other.intent?.kind === "base_refresh" &&

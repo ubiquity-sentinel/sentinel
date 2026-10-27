@@ -15,7 +15,15 @@ import {
   currentCiValidation,
 } from "../../src/repair/ci-readiness.ts";
 import { PRE_REVIEW_CI_BOUND_MS } from "../../src/repair/ci-first-policy.ts";
-import { REPO, SHA1, SHA2, SHA3, T0, workRecord } from "../state/helpers.ts";
+import {
+  releaseRequest,
+  REPO,
+  SHA1,
+  SHA2,
+  SHA3,
+  T0,
+  workRecord,
+} from "../state/helpers.ts";
 import { exactOpenPr } from "./loop-candidate-fixtures.ts";
 import { seededSnapshot } from "./loop-rig.ts";
 import {
@@ -153,4 +161,68 @@ Deno.test("only the oldest ready moved-base candidate refreshes before validatio
   const snapshot = seededSnapshot([next, first]);
   assert.equal(ciRefreshAhead(snapshot, next, SHA2, T0 + 1000)?.id, first.id);
   assert.equal(ciRefreshAhead(snapshot, first, SHA2, T0 + 1000), null);
+});
+
+Deno.test("readiness: an exact booked delivery cannot hold a pending candidate's refresh", () => {
+  const record = published("issue-2", SHA1, 8);
+  record.wait = { reason: "ci_pending", since: T0, until: T0 + 300_000 };
+  const booked = published("issue-1");
+  booked.nextStep = "delivery";
+  booked.wait = { reason: "unavailable", since: T0, until: null };
+  const request = releaseRequest("booked-release", {
+    source: {
+      pullRequest: booked.target.pr,
+      head: booked.target.head,
+      base: booked.target.base,
+      reviewRequestId: "review-req-booked",
+      reviewReceiptId: null,
+    },
+  });
+  const snapshot = seededSnapshot([record, booked], {
+    releaseRequests: [request],
+  });
+  assert.equal(
+    ciRefreshAhead(snapshot, record, SHA2, T0 + 1000),
+    null,
+    "disabled release bookkeeping is not an unmerged refresh contender",
+  );
+  const mismatches = [
+    ["owner", {
+      target: {
+        ...request.target,
+        repository: { ...REPO, owner: "other-owner" },
+      },
+    }],
+    ["repository", {
+      target: {
+        ...request.target,
+        repository: { ...REPO, name: "other-repository" },
+      },
+    }],
+    ["installation", {
+      target: {
+        ...request.target,
+        repository: { ...REPO, installationId: REPO.installationId + 1 },
+      },
+    }],
+    ["environment", { target: { ...request.target, environment: "isolated" } }],
+    ["pull request", { source: { ...request.source, pullRequest: 9 } }],
+    ["head", { source: { ...request.source, head: SHA2 } }],
+    ["base", { source: { ...request.source, base: SHA2 } }],
+  ] as const;
+  for (const [label, overrides] of mismatches) {
+    assert.equal(
+      ciRefreshAhead(
+        {
+          ...snapshot,
+          releaseRequests: [releaseRequest("unrelated-release", overrides)],
+        },
+        record,
+        SHA2,
+        T0 + 1000,
+      )?.id,
+      booked.id,
+      `a request for another ${label} cannot remove a live contender`,
+    );
+  }
 });
