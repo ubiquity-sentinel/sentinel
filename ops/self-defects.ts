@@ -77,6 +77,11 @@ const SELF_DEFECT_TEST_SHARD_NAMES = [
   "test-shards (host-1)",
   "test-shards (host-2)",
   "test-shards (host-3)",
+  "test-shards (modules, 4)",
+  "test-shards (integration, 1)",
+  "test-shards (host-1, 4)",
+  "test-shards (host-2, 4)",
+  "test-shards (host-3, 4)",
 ] as const;
 
 function safeWorkflow(value: string): string {
@@ -85,7 +90,7 @@ function safeWorkflow(value: string): string {
 
 function safeJob(value: string): string {
   if (SELF_DEFECT_JOBS.some((job) => job === value)) return value;
-  // The Actions API appends a fixed matrix value to this logical job name.
+  // The Actions API appends the fixed shard and worker matrix values.
   return SELF_DEFECT_TEST_SHARD_NAMES.some((job) => job === value)
     ? "test-shards"
     : "unknown-job";
@@ -134,7 +139,10 @@ export function extractSelfFailureSignature(
       summary: "a test assertion failed",
     };
   }
-  const genericError = logText.match(/^error: ([^\n]+)$/m);
+  // Actions prefixes raw log lines with UTC timestamps and error annotations.
+  const genericError = logText.match(
+    /^(?:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z )?(?:##\[error\])?error: ([^\n]+)$/m,
+  );
   if (genericError !== null) {
     return {
       key: keyOf("error", context),
