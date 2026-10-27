@@ -17,6 +17,7 @@ import {
   parseBackupCiUnit,
 } from "../../src/contracts/backup-ci.ts";
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
+import { mergeBackupCiFile } from "../../src/github/backup-ci-store.ts";
 import {
   createBackupCiGit,
   fetchBackupCiBare,
@@ -639,13 +640,20 @@ Deno.test("the pass bounds commit reads but still reaches a later never-started 
       await fileSha256(`${w.repo.root}/work/trees/0.tar`),
       one.units[0].treeSha256,
     );
-    assert.equal(one.files.length, 1);
-    assert.equal(one.files[0].commit, w.head);
+    const headFile = one.files.find((file) => file.commit === w.head)!;
+    assert(headFile);
+    assert(
+      one.files.every((file) =>
+        file.commit === w.head ||
+        file.coverage.length + file.results.length + file.noEvidence.length ===
+          0
+      ),
+    );
     assert.equal(
       backupCiCommitPath(
-        one.files[0].repository.owner,
-        one.files[0].repository.name,
-        one.files[0].commit,
+        headFile.repository.owner,
+        headFile.repository.name,
+        headFile.commit,
       ),
       `v1/ubiquity/passport.ubq.fi/${w.head.slice(0, 2)}/${w.head}.json`,
     );
@@ -779,6 +787,183 @@ Deno.test("a planned tuple is rechecked after materialization before packing", a
     assert(
       !logs.some((line) => line.includes("tar_failed")),
       "stale tuple never reaches the packer",
+    );
+  } finally {
+    await w.repo.close();
+  }
+});
+
+Deno.test("review regression: ordinary urgent misses age across passes so later heads and fallback progress", async () => {
+  const w = await world();
+  const files = new Map<string, ReturnType<typeof commitFile>>();
+  let now = T0;
+  try {
+    const records = Array.from(
+      { length: 14 },
+      (_, i) =>
+        workRecord(`fair-${i}`, {
+          repository: { owner: REPO.owner, name: REPO.name, installationId: 7 },
+          nextStep: i === 13 ? "delivery" : "work",
+          wait: i === 13
+            ? null
+            : { reason: "ci_pending", since: T0 + i, until: T0 + 300_000 },
+          target: {
+            base: w.base,
+            head: i === 12
+              ? w.head
+              : (i + 30).toString(16).repeat(20) as GitSha,
+            branch: i === 12 ? "sentinel/fix-7" : `b${i}`,
+            pr: i === 12 ? 7 : 100 + i,
+            checkpoint: null,
+          },
+        }),
+    );
+    const snapshot = {
+      work: records,
+      reservations: [],
+      reviews: [],
+      releaseRequests: [],
+    } as unknown as RepairStateSnapshotV1;
+    const run = () =>
+      runBackupCiPass(passDeps(w, {
+        snapshot,
+        now: () => now,
+        store: {
+          read: (path) => Promise.resolve(files.get(path) ?? null),
+          pathsContaining: () => Promise.resolve([]),
+        },
+      }));
+    const first = await run();
+    assert.equal(
+      w.calls.filter((c) => c.startsWith("checkRuns:latest")).length,
+      12,
+    );
+    assert(
+      !w.calls.some((c) => c.endsWith(w.head.slice(0, 7))),
+      "first pass preserves oldest current demand priority",
+    );
+    for (const file of first.files) {
+      const path = backupCiCommitPath(
+        file.repository.owner,
+        file.repository.name,
+        file.commit,
+      );
+      files.set(
+        path,
+        mergeBackupCiFile(files.get(path) ?? null, { ...file, now }).file,
+      );
+      assert.equal(
+        file.coverage.length + file.results.length + file.noEvidence.length,
+        0,
+        "a read miss is metadata, never evidence",
+      );
+    }
+    now += 1000;
+    w.calls.length = 0;
+    const second = await run();
+    assert(
+      second.files.some((f) => f.commit === w.head && f.coverage.length > 0),
+      "head13 reaches real workflow planning on the next pass",
+    );
+    assert(
+      w.calls.some((c) => c.endsWith(records[13].target.head!.slice(0, 7))),
+      "unseen fallback gets a read too",
+    );
+    assert(
+      w.calls.filter((c) => c.startsWith("checkRuns:latest")).length <= 12,
+    );
+  } finally {
+    await w.repo.close();
+  }
+});
+
+Deno.test("review regression: unavailable observations cannot create coverage or a result", async () => {
+  const w = await world();
+  try {
+    const record = workRecord("unavailable", {
+      repository: { owner: REPO.owner, name: REPO.name, installationId: 7 },
+      wait: { reason: "ci_pending", since: T0, until: T0 + 300_000 },
+      target: {
+        base: w.base,
+        head: w.head,
+        branch: "sentinel/fix-7",
+        pr: 7,
+        checkpoint: null,
+      },
+    });
+    const pass = await runBackupCiPass(passDeps(w, {
+      snapshot: {
+        work: [record],
+        reservations: [],
+        reviews: [],
+        releaseRequests: [],
+      } as unknown as RepairStateSnapshotV1,
+      targetReads: () => ({
+        ...reads(w),
+        checkRuns: () => Promise.resolve(null),
+      }),
+    }));
+    assert.equal(pass.units.length, 0);
+    assert(
+      pass.files.every((file) =>
+        file.coverage.length + file.results.length + file.noEvidence.length ===
+          0
+      ),
+    );
+  } finally {
+    await w.repo.close();
+  }
+});
+
+Deno.test("review regression: legacy trusted publication author passes both planner identity gates", async () => {
+  const w = await world();
+  const logs: string[] = [];
+  try {
+    w.pull!.user = "github-actions[bot]";
+    assert.equal(
+      (await plan(w)).units.length,
+      1,
+      "supported legacy author remains plannable",
+    );
+    const record = workRecord("legacy", {
+      repository: { owner: REPO.owner, name: REPO.name, installationId: 7 },
+      wait: { reason: "ci_pending", since: T0, until: T0 + 300_000 },
+      target: {
+        base: w.base,
+        head: w.head,
+        branch: "sentinel/fix-7",
+        pr: 7,
+        checkpoint: null,
+      },
+    });
+    const pass = await runBackupCiPass(passDeps(w, {
+      log: (line) => logs.push(line),
+      snapshot: {
+        work: [record],
+        reservations: [],
+        reviews: [],
+        releaseRequests: [],
+      } as unknown as RepairStateSnapshotV1,
+    }));
+    assert(
+      pass.files.some((file) =>
+        file.commit === w.head && file.coverage.length > 0
+      ),
+    );
+    assert(
+      !logs.some((line) => line.endsWith(":superseded")),
+      "last tuple check uses the same trusted author policy",
+    );
+    assert(
+      pass.units.length === 1 ||
+        logs.some((line) => line.endsWith(":tar_failed")),
+      "valid tuple reaches the platform pack boundary",
+    );
+    w.pull!.user = "arbitrary-bot[bot]";
+    assert.equal(
+      (await plan(w)).units.length,
+      0,
+      "untrusted authors remain refused",
     );
   } finally {
     await w.repo.close();
