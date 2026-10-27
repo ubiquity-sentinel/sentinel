@@ -20,6 +20,7 @@ import {
 import { canonicalStringify } from "../src/contracts/canonical.ts";
 import { HOSTED_CONTROLLER_REMOTE } from "../src/contracts/hosted-controller-deployment.ts";
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
+import { wakeBackupCiReceipt } from "../src/host/backup-ci-completion.ts";
 import { createRepairStateStore, DenoGitRunner } from "../src/state/mod.ts";
 import { backupCiRunnerId, parseBackupCiPins } from "./backup-ci-act.ts";
 import { rawGithubActionSource } from "./backup-ci-actions.ts";
@@ -260,6 +261,8 @@ async function commit(): Promise<number> {
     log: (line) => console.log(line),
   });
   summary("sentinel-backup-ci commit", result.counts);
+  const wake = await wakeBackupCiReceipt(result, createBackupCiApi(token));
+  console.log(JSON.stringify({ event: "backup_ci_receipt_wake", ...wake }));
   return result.code;
 }
 
