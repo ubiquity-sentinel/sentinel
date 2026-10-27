@@ -65,9 +65,19 @@ jobs:
           # is a check it cannot stand in for); without it every read is null.
           permission-statuses: read
           permission-actions: read
+      - name: Mint the scoped self dispatch token
+        id: self-token
+        if: steps.targets.outputs.repositories != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: Iv23liHUJNXds9mU3j7Q
+          private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
+          owner: ubiquity-sentinel
+          repositories: sentinel
+          permission-actions: write
       - name: Ingest finished legs and plan new units
         id: pass
-        if: steps.targets.outputs.repositories != ''
+        if: steps.targets.outputs.repositories != '' && steps.self-token.outputs.token != ''
         env:
           GITHUB_TOKEN: ${{ github.token }}
           SENTINEL_TARGET_READ_TOKEN: ${{ steps.target-token.outputs.token }}
@@ -101,6 +111,7 @@ jobs:
         if: steps.pass.outputs.hasWork == 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          SENTINEL_SELF_TOKEN: ${{ steps.self-token.outputs.token }}
           SENTINEL_BACKUP_CI: ${{ vars.SENTINEL_BACKUP_CI || 'on' }}
           SENTINEL_BACKUP_PASS_DIGEST: ${{ steps.pass.outputs.passDigest }}
           SENTINEL_BACKUP_TREE0: ${{ steps.tree0.outputs.artifact-id }}
@@ -108,5 +119,5 @@ jobs:
         run: >-
           deno run --no-lock --allow-read --allow-write --allow-run=git
           --allow-net=api.github.com,github.com
-          --allow-env=HOME,PATH,RUNNER_TEMP,GITHUB_STEP_SUMMARY,GITHUB_TOKEN,GITHUB_RUN_ID,GITHUB_REPOSITORY,GITHUB_SHA,SENTINEL_BACKUP_CI,SENTINEL_BACKUP_PASS_DIGEST,SENTINEL_BACKUP_TREE0,SENTINEL_BACKUP_TREE1
+          --allow-env=HOME,PATH,RUNNER_TEMP,GITHUB_STEP_SUMMARY,GITHUB_TOKEN,SENTINEL_SELF_TOKEN,GITHUB_RUN_ID,GITHUB_REPOSITORY,GITHUB_SHA,SENTINEL_BACKUP_CI,SENTINEL_BACKUP_PASS_DIGEST,SENTINEL_BACKUP_TREE0,SENTINEL_BACKUP_TREE1
           ops/backup-ci-main.ts commit

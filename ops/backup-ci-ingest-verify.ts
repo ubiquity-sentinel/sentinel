@@ -18,9 +18,12 @@ import {
 } from "../src/contracts/backup-ci.ts";
 import { isSetupAction } from "./backup-ci-act.ts";
 import { BACKUP_CI_SENTINEL_REPOSITORY } from "./backup-ci-ingest-reads.ts";
+import { SENTINEL_APP_SLUG } from "../src/host/hosted-app-grant.ts";
 import { backupCiExcerpt } from "./backup-ci-log-sanitize.ts";
 export const BACKUP_CI_WINDOW_TOLERANCE_MS = 2_000;
 const LEG_ACTOR = "github-actions[bot]";
+// Public /users/ubiquity-sentinel[bot] identity of the existing official App.
+const SELF_APP_BOT_ID = 319834869;
 const MARKER_KEYS = "artifactId,kind,resultDigest,unitDigest,unitId";
 
 type Obj = Record<string, unknown>;
@@ -29,6 +32,14 @@ const row = (v: unknown): Obj | null =>
   typeof v === "object" && v !== null && !Array.isArray(v) ? v as Obj : null;
 const posInt = (v: unknown): number | null =>
   typeof v === "number" && Number.isSafeInteger(v) && v > 0 ? v : null;
+
+/** Supplemental actor check; callers still prove every stored/native binding. */
+export function backupCiLegActorBinds(actor: unknown): boolean {
+  const value = row(actor);
+  return value?.login === LEG_ACTOR ||
+    (value?.login === `${SENTINEL_APP_SLUG}[bot]` &&
+      value.id === SELF_APP_BOT_ID && value.type === "Bot");
+}
 
 /** Epoch ms of a GitHub timestamp (any fraction), or null. */
 export function backupCiTime(value: unknown): number | null {
@@ -58,7 +69,7 @@ export function legRunBinds(run: Obj, unit: BackupCiUnitV1): boolean {
     run.head_sha === unit.plan.launcherSha &&
     row(run.head_repository)?.full_name === BACKUP_CI_SENTINEL_REPOSITORY &&
     row(run.repository)?.full_name === BACKUP_CI_SENTINEL_REPOSITORY &&
-    row(run.triggering_actor)?.login === LEG_ACTOR &&
+    backupCiLegActorBinds(run.triggering_actor) &&
     run.display_title === `sentinel-backup-ci-leg ${unit.unitId}`;
 }
 

@@ -15,6 +15,10 @@ import {
   BACKUP_CI_LEG_STEPS,
   parseBackupCiTargets,
 } from "../../src/contracts/backup-ci.ts";
+import {
+  backupCiRunnerId,
+  parseBackupCiPins,
+} from "../../ops/backup-ci-act.ts";
 
 type Obj = Record<string, unknown>;
 
@@ -213,4 +217,51 @@ Deno.test("the target read token can read commit statuses, checks, runs and pull
     "permission-statuses": "read",
     "permission-actions": "read",
   });
+});
+
+Deno.test("the official self App dispatch token is scoped to the trusted commit only", async () => {
+  const trusted = jobs(await workflow("backup-ci.yml")).backup_ci;
+  const list = steps(trusted);
+  const mint = list.find((s) => s.id === "self-token");
+  const pass = list.find((s) => s.id === "pass");
+  const commit = list.find((s) =>
+    s.name === "Record results and dispatch legs"
+  );
+  assert(mint && pass && commit);
+  assert.equal(
+    mint.uses,
+    "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1",
+  );
+  assert.deepEqual(mint.with, {
+    "client-id": "Iv23liHUJNXds9mU3j7Q",
+    "private-key": "${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}",
+    owner: "ubiquity-sentinel",
+    repositories: "sentinel",
+    "permission-actions": "write",
+  });
+  assert(list.indexOf(mint) < list.indexOf(pass));
+  assert(String(pass.if).includes("steps.self-token.outputs.token != ''"));
+  assert.equal((pass.env as Obj).GITHUB_TOKEN, "${{ github.token }}");
+  assert.equal("SENTINEL_SELF_TOKEN" in (pass.env as Obj), false);
+  assert.equal((commit.env as Obj).GITHUB_TOKEN, "${{ github.token }}");
+  assert.equal(
+    (commit.env as Obj).SENTINEL_SELF_TOKEN,
+    "${{ steps.self-token.outputs.token }}",
+  );
+  for (const step of list.filter((s) => s !== commit)) {
+    assert.equal("SENTINEL_SELF_TOKEN" in ((step.env ?? {}) as Obj), false);
+    assert(
+      !JSON.stringify(step.with ?? {}).includes(
+        "steps.self-token.outputs.token",
+      ),
+    );
+  }
+  const leg = await Deno.readTextFile(".github/workflows/backup-ci-leg.yml");
+  assert(!leg.includes("SENTINEL_SELF_TOKEN"));
+  assert(!leg.includes("permission-actions: write"));
+  const pins = parseBackupCiPins(
+    JSON.parse(await Deno.readTextFile("ops/backup-ci-pins.json")),
+  );
+  assert(pins !== null);
+  assert.equal(backupCiRunnerId(pins), "916ad9eaff49fe9d");
 });

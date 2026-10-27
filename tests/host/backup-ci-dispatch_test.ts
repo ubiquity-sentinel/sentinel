@@ -20,13 +20,18 @@ import { canonicalStringify } from "../../src/contracts/canonical.ts";
 import {
   advanceBackupCiLegs,
   commitBackupCiPass,
+  createBackupCiLegDispatcher,
 } from "../../ops/backup-ci-dispatch.ts";
 import {
   backupCiIdentity,
   parseBackupCiCalibrationCommits,
 } from "../../ops/backup-ci-main.ts";
 import type { BackupCiPassFileV1 } from "../../ops/backup-ci-pass.ts";
-import type { BackupCiApiV1 } from "../../ops/backup-ci-plan-reads.ts";
+import {
+  type BackupCiApiV1,
+  createBackupCiApi,
+} from "../../ops/backup-ci-plan-reads.ts";
+import { wakeBackupCiReceipt } from "../../src/host/backup-ci-completion.ts";
 import type { BackupCiStoreView } from "../../ops/backup-ci-store-writer.ts";
 import {
   H,
@@ -108,11 +113,13 @@ async function commit(
     trees?: (string | undefined)[];
     views?: (BackupCiCommitFileV1 | null)[];
     storeOutcome?: "committed" | "unchanged" | "failed";
+    missingSelfAuthority?: boolean;
   } = {},
 ) {
   const bytes = new TextEncoder().encode(canonicalStringify(pass));
   const { api: fake, sent } = api(state);
   const written: Map<string, unknown>[] = [];
+  const legSent: { method: string; path: string; body: unknown }[] = [];
   const log: string[] = [];
   const out = await commitBackupCiPass({
     passBytes: bytes,
@@ -122,6 +129,17 @@ async function commit(
     runId: 9001,
     now: () => T0 + 1000,
     api: fake,
+    legDispatcher: over.missingSelfAuthority ? null : {
+      dispatch(body) {
+        assert(written.length > 0, "durable store admission precedes App POST");
+        legSent.push({
+          method: "POST",
+          path: `/repos/${REPO}/actions/workflows/backup-ci-leg.yml/dispatches`,
+          body,
+        });
+        return Promise.resolve((state.dispatch ?? 204) === 204);
+      },
+    },
     repository: REPO,
     async writeStore(mutate) {
       for (const existing of over.views ?? [null]) {
@@ -149,16 +167,23 @@ async function commit(
   const file = written[0]?.get(path) as BackupCiCommitFileV1 | undefined;
   return {
     out,
-    sent,
+    sent: [...sent, ...legSent],
+    nativeSent: sent,
+    legSent,
+    written,
     file: file === undefined ? undefined : parseBackupCiCommitFile(file),
     log,
   };
 }
 
 Deno.test("one store commit, then one leg dispatch with string inputs", async () => {
-  const { out, sent, file } = await commit(passFile(), { legs: LAUNCHER });
+  const { out, sent, file, nativeSent, legSent } = await commit(passFile(), {
+    legs: LAUNCHER,
+  });
   assert.equal(out.code, 0);
   assert.equal(out.counts.dispatched, 1);
+  assert.equal(nativeSent.filter((s) => s.method === "POST").length, 0);
+  assert.equal(legSent.length, 1);
   assert.deepEqual(
     file?.entries.map((e) => [e.state, e.key.checkName]).sort(),
     [
@@ -192,6 +217,129 @@ Deno.test("one store commit, then one leg dispatch with string inputs", async ()
     !sent.some((s) => s.method === "PATCH"),
     "an equal legs ref is not moved",
   );
+});
+
+Deno.test("the App capability sends only the fixed leg POST with the App header", async () => {
+  const requests: {
+    url: string;
+    method: string;
+    auth: string | null;
+    body: unknown;
+  }[] = [];
+  const dispatcher = createBackupCiLegDispatcher("synthetic-self-app-token", (
+    input,
+    init,
+  ) => {
+    requests.push({
+      url: String(input),
+      method: init?.method ?? "GET",
+      auth: new Headers(init?.headers).get("authorization"),
+      body: JSON.parse(String(init?.body)),
+    });
+    return Promise.resolve(new Response(null, { status: 204 }));
+  });
+  assert(dispatcher !== null);
+  assert.deepEqual(Object.keys(dispatcher), ["dispatch"]);
+  assert.equal(await dispatcher.dispatch({ ref: "development" }), false);
+  assert.equal(requests.length, 0);
+  const body = {
+    ref: "sentinel-backup-legs",
+    inputs: { unit: "a".repeat(24) },
+  };
+  assert.equal(await dispatcher.dispatch(body), true);
+  assert.deepEqual(requests, [{
+    url:
+      "https://api.github.com/repos/ubiquity-sentinel/sentinel/actions/workflows/backup-ci-leg.yml/dispatches",
+    method: "POST",
+    auth: "Bearer synthetic-self-app-token",
+    body,
+  }]);
+});
+
+Deno.test("missing App authority refuses before legs-ref movement, store admission or native fallback", async () => {
+  assert.equal(createBackupCiLegDispatcher(""), null);
+  assert.equal(createBackupCiLegDispatcher("   "), null);
+  const refused = await commit(passFile(), { legs: OLD }, {
+    missingSelfAuthority: true,
+  });
+  assert.equal(refused.out.code, 1);
+  assert.equal(refused.nativeSent.length, 0);
+  assert.equal(refused.legSent.length, 0);
+  assert.equal(refused.written.length, 0);
+  assert(refused.log.includes("backup-ci:commit:self_dispatch_unavailable"));
+  const ingest = await commit(passFile(0), { legs: LAUNCHER }, {
+    missingSelfAuthority: true,
+  });
+  assert.equal(ingest.out.code, 0);
+  assert.equal(ingest.out.counts.receipt_advanced, 1);
+  assert.equal(ingest.legSent.length, 0);
+});
+
+Deno.test("actual native and App API headers stay separated through commit and receipt wake", async () => {
+  const calls: { path: string; method: string; auth: string | null }[] = [];
+  let committed = false;
+  const fetcher: typeof fetch = (input, init) => {
+    const path = new URL(String(input)).pathname;
+    const method = init?.method ?? "GET";
+    calls.push({
+      path,
+      method,
+      auth: new Headers(init?.headers).get("authorization"),
+    });
+    if (path.endsWith("/backup-ci-leg.yml/dispatches")) {
+      assert(committed, "App POST follows the successful CAS");
+      return Promise.resolve(new Response(null, { status: 204 }));
+    }
+    if (method === "POST") {
+      return Promise.resolve(new Response(null, { status: 204 }));
+    }
+    return Promise.resolve(
+      Response.json(
+        path.endsWith("/sentinel-backup-legs")
+          ? { object: { sha: LAUNCHER } }
+          : { full_name: REPO, default_branch: "development" },
+      ),
+    );
+  };
+  const native = createBackupCiApi("synthetic-native-token", fetcher);
+  const pass = passFile();
+  const bytes = new TextEncoder().encode(canonicalStringify(pass));
+  const out = await commitBackupCiPass({
+    passBytes: bytes,
+    expectedDigest: backupCiBytesDigest(bytes),
+    trees: ["7001"],
+    githubSha: LAUNCHER,
+    runId: 9001,
+    now: () => T0 + 1000,
+    api: native,
+    legDispatcher: createBackupCiLegDispatcher(
+      "synthetic-self-app-token",
+      fetcher,
+    ),
+    repository: REPO,
+    async writeStore(mutate) {
+      await mutate(
+        { read: () => Promise.resolve(null) } as unknown as BackupCiStoreView,
+      );
+      committed = true;
+      return { kind: "committed", commit: H, parent: null, attempts: 1 };
+    },
+    log: () => {},
+  });
+  assert.equal(out.code, 0);
+  assert.equal((await wakeBackupCiReceipt(out, native)).decision, "requested");
+  assert.equal(
+    calls.filter((x) => x.auth === "Bearer synthetic-self-app-token").length,
+    1,
+  );
+  for (const call of calls) {
+    assert.equal(
+      call.auth,
+      call.path.endsWith("/backup-ci-leg.yml/dispatches")
+        ? "Bearer synthetic-self-app-token"
+        : "Bearer synthetic-native-token",
+    );
+  }
 });
 
 Deno.test("receipt wake count requires newly accepted evidence on the committed CAS view", async () => {
