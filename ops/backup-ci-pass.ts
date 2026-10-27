@@ -42,6 +42,7 @@ import {
   packBackupCiBare,
 } from "./backup-ci-materialize.ts";
 import {
+  backupCiCandidateDisposition,
   backupCiCandidates,
   backupCiFairSelect,
   backupCiFreeSlots,
@@ -295,10 +296,40 @@ async function planTarget(
     mode: deps.mode,
     runnerId,
   });
+  const dispositions = new Map(
+    candidates.map((
+      candidate,
+    ) => [
+      candidate,
+      backupCiCandidateDisposition(
+        candidate,
+        files.get(candidate.commit) ?? null,
+        deps.mode,
+        runnerId,
+        deps.now(),
+      ),
+    ]),
+  );
+  const demand = candidates.filter((candidate) => candidate.currentHead);
+  const summary = {
+    repository: target.repository,
+    current: demand.length,
+    completed:
+      demand.filter((candidate) => dispositions.get(candidate) === "final")
+        .length,
+    inflight:
+      demand.filter((candidate) => dispositions.get(candidate) === "in_flight")
+        .length,
+    missing:
+      demand.filter((candidate) => dispositions.get(candidate) === null).length,
+    skipped:
+      candidates.filter((candidate) => dispositions.get(candidate) !== null)
+        .length,
+  };
   const out: BackupCiPlannedUnitV1[] = [];
   for (
     const candidate of backupCiScanOrder(
-      candidates,
+      candidates.filter((candidate) => dispositions.get(candidate) === null),
       deps.runId,
       BACKUP_CI_MAX_COMMITS_READ_PER_TARGET,
     )
@@ -325,7 +356,34 @@ async function planTarget(
       );
     }
   }
+  deps.log(
+    `sentinel_backup_ci_demand ${
+      JSON.stringify({ ...summary, selected: out.length })
+    }`,
+  );
   return out;
+}
+
+/** Last fresh identity read before a target tree is packed for dispatch. */
+async function currentPlannedUnit(
+  deps: BackupCiPassDepsV1,
+  planned: BackupCiPlannedUnitV1,
+): Promise<boolean> {
+  const { unit } = planned;
+  if (unit.pullRequest === null) return true;
+  const reads = deps.targetReads(unit.repository.owner, unit.repository.name);
+  const pull = await reads.pull(unit.pullRequest.number);
+  const tip = unit.purpose === "stand_in"
+    ? await reads.branchTip(unit.pullRequest.baseRef)
+    : unit.pullRequest.base;
+  const repository = `${unit.repository.owner}/${unit.repository.name}`;
+  return pull !== null && pull.state === "open" && !pull.draft &&
+    pull.user === "ubiquity-sentinel[bot]" &&
+    pull.head.sha === unit.commit &&
+    pull.head.ref === unit.pullRequest.headRef &&
+    pull.head.repo.full_name === repository &&
+    pull.base.repo.full_name === repository &&
+    pull.base.ref === unit.pullRequest.baseRef && tip === unit.pullRequest.base;
 }
 
 /** The whole pass; trees[k] is slot k's tar (`<workDir>/trees/<k>.tar`). */
@@ -365,6 +423,10 @@ export async function runBackupCiPass(
       const selected = backupCiFairSelect(perTarget, deps.runId, free, p);
       await Deno.mkdir(`${deps.workDir}/trees`, { recursive: true });
       for (const planned of selected) {
+        if (!await currentPlannedUnit(deps, planned)) {
+          deps.log(`backup-ci:plan:${planned.unit.unitId}:superseded`);
+          continue;
+        }
         const slot = units.length;
         const ok = await planned.bare.setExec(planned.unit.exec.commit);
         if (!ok) continue;
