@@ -63,11 +63,17 @@ export async function freshMatrixArtifacts(
     const originalPreservers = [...r.github.values()].map((port) =>
       port.preserveCandidate.bind(port)
     );
+    const preservationAttempts = new Map<string, number>();
     for (const port of r.github.values()) {
-      port.preserveCandidate = () =>
-        Promise.resolve(
+      port.preserveCandidate = (request) => {
+        preservationAttempts.set(
+          request.taskId,
+          (preservationAttempts.get(request.taskId) ?? 0) + 1,
+        );
+        return Promise.resolve(
           portError("unavailable", "injected preservation outage"),
         );
+      };
     }
     let isolationWriteFailure: "conflict" | "ambiguous" | null = null;
     const aggregate = async function (
@@ -320,9 +326,9 @@ export async function freshMatrixArtifacts(
               state.work.find((row) => row.id === taskId)?.intent?.kind ?? null;
             const reservationOf = (taskId: string) =>
               state.reservations.find((row) => row.taskId === taskId);
-            // Ingestion itself preserves the charge/attempt/retry/review
-            // accounting and adds no stalled execution: this snapshot is read
-            // before the ordinary lifecycle runs.
+            // Ready targets already ran before this protocol wait. Ingestion
+            // stages the preservation intent without executing it; the one
+            // unavailable lifecycle attempt is counted as stalled once.
             for (const record of state.work) {
               const prior = beforeWork.find((row) => row.id === record.id);
               assert.ok(prior);
@@ -332,7 +338,14 @@ export async function freshMatrixArtifacts(
                 record.counters.reviewRounds,
                 prior.counters.reviewRounds,
               );
-              assert.equal(record.counters.stalled ?? 0, 0);
+              const ingested = record.intent?.kind === "candidate_preservation";
+              assert.equal(record.counters.stalled ?? 0, ingested ? 1 : 0);
+              assert.equal(
+                preservationAttempts.get(record.id) ?? 0,
+                ingested ? 1 : 0,
+                "exactly one ready-target preservation attempt; no retry while waiting",
+              );
+              if (ingested) assert.equal(record.wait?.reason, "unavailable");
             }
             observed.push({
               fast: intentOf(fast.taskId) === "candidate_preservation",

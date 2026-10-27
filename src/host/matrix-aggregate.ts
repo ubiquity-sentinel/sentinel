@@ -396,12 +396,11 @@ export async function runActionsMatrixAggregateCycles(
             progressed = true;
             flow.wake(config, cells.map((cell) => cell.taskId));
           }
-          // The same coordinator authenticates/imports and advances targets serially.
-          while (
-            await flow.advance()
-          ) { /* ready target work precedes another scan */ }
         }
       }
+      // Hydrate every available bundle in this authenticated scan before any
+      // target retries preservation; a later target may belong to another wave.
+      // Ready work still advances before waiting for any missing producer.
       while (
         await flow.advance()
       ) { /* existing work also advances on empty scans */ }
