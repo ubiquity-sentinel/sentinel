@@ -139,8 +139,11 @@ export async function executePublishStep(
         nextHead: head,
       });
       if (custody !== null) return custody;
+      if (candidateState.publishedHead === head) {
+        return continuePublication(deps, context, record, config);
+      }
       // The exact candidate is already published: adopt the completed push and
-      // persist the publication proof before any PR/review continuation.
+      // persist only a missing proof before any PR/review continuation.
       const adopted = withPublishedHead(record, head, deps.clock.now());
       const persisted = await persistWork(
         deps,
@@ -149,7 +152,15 @@ export async function executePublishStep(
         hasTakeoverCustody(record) ? context.head! : undefined,
       );
       if (persisted.kind !== "progress") return persisted;
-      return continuePublication(deps, context, adopted, config);
+      const continued = await continuePublication(
+        deps,
+        context,
+        adopted,
+        config,
+      );
+      return continued.kind === "deferred"
+        ? { kind: "progress", yield: true }
+        : continued;
     }
     if (
       ref.value !== null && ref.value.sha !== candidateState.publishedHead
@@ -198,6 +209,15 @@ export async function executePublishStep(
           now,
         ),
       );
+    }
+    if (ref.value.sha === head) {
+      const custody = await checkExistingPrOperation(deps, context, record, {
+        operation: "publish",
+        expectedHead: head,
+        nextHead: head,
+      });
+      if (custody !== null) return custody;
+      return continuePublication(deps, context, record, config);
     }
     expectedRemoteHead = ref.value.sha;
   }

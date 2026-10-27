@@ -125,12 +125,12 @@ function holdForCi(
 }
 
 /**
- * The bounded pre-review CI wait: re-polled every `CHECK_POLL_MS` with its
- * original `since`, and parked with `detail` once `PRE_REVIEW_CI_BOUND_MS`
- * has passed. A head reviewed clean on this base is never parked (see
- * `holdForCi`): its missing-acceptance recovery re-polls it like R79 does.
+ * The bounded pre-review CI wait keeps its original `since`. An unchanged
+ * pending observation defers without rewriting the wait; a later invocation
+ * reads the head again, and the original bound still parks it. A head reviewed
+ * clean on this base keeps its existing missing-acceptance recovery exception.
  */
-function awaitChecks(
+async function awaitChecks(
   deps: RepairCycleDepsV1,
   context: LoopContextV1,
   record: WorkRecordV1,
@@ -149,7 +149,17 @@ function awaitChecks(
       markBlocked(record, "other", detail(checks), now),
     );
   }
-  return persistWork(
+  const waitingStep = headAcceptedByReview(context.snapshot, record)
+    ? record.nextStep
+    : "work";
+  if (
+    record.wait?.reason === "ci_pending" &&
+    record.nextStep === waitingStep && record.blocker === null &&
+    record.intent === null
+  ) {
+    return { kind: "deferred", detail: "CI remains pending" };
+  }
+  const held = await persistWork(
     deps,
     context,
     holdForCi(context, record, {
@@ -158,6 +168,9 @@ function awaitChecks(
       until: deps.clock.now() + CHECK_POLL_MS,
     }, now),
   );
+  // A slow checkpoint can cross its own poll interval. Count the actual
+  // write, then yield this record instead of immediately observing it again.
+  return held.kind === "progress" ? { ...held, yield: true } : held;
 }
 
 /** A candidate-caused failure on the head a review was about to judge. */
