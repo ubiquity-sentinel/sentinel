@@ -7,6 +7,13 @@ import {
 } from "../../src/contracts/maintenance-index.ts";
 import { gitRun, T0, testGitEnv } from "../state/helpers.ts";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
+import { isDeferredCurrentMatrixHistoryBudget } from "../../ops/hosted-autonomy-policy.ts";
+import {
+  portError,
+  portOk,
+  type ReleaseHistoryViewV1,
+  type StateReadView,
+} from "../../src/contracts/ports.ts";
 import {
   ARCHIVE,
   blocked,
@@ -14,6 +21,7 @@ import {
   FIRST_RUN,
   proof,
   walkRig,
+  working,
 } from "./hosted-autonomy-history-reach-fixtures.ts";
 
 const index = (root: string, remoteUrl: string) =>
@@ -58,6 +66,115 @@ Deno.test("current matrix scan resumes authenticated discovery on the next maint
         firstReads: before,
         resumedReads: reads.length - before,
       }),
+    );
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+Deno.test("current matrix cached producer reads preserve the in-flight recovery reserve", async () => {
+  let slow = false;
+  let ordinaryStarted = false;
+  let failure: "none" | "unavailable" | "throw" = "none";
+  let failingHead: string | undefined;
+  let failedReads = 0;
+  let sidecar: GitMaintenanceIndex;
+  const rows = [
+    blocked("parked-oldest", FIRST_RUN, 7001),
+    working("in-flight"),
+  ];
+  const original = structuredClone(rows);
+  const rig = await walkRig({
+    producers: 20,
+    rows,
+    index: (root, remote) => sidecar = index(root, remote),
+    settlesNothing: () => {
+      ordinaryStarted = true;
+      return true;
+    },
+    gitCost: (args) => slow && args[0] === "merge-base" ? 15_000 : 0,
+    wrapState: (state) => {
+      const open = state
+        .openReleaseHistory as StateReadView["openReleaseHistory"];
+      assert(open);
+      state.openReleaseHistory = async (input: Parameters<typeof open>[0]) => {
+        const opened = await open(input);
+        if (!opened.ok) return opened;
+        const view = opened.value;
+        return portOk<ReleaseHistoryViewV1>({
+          ...view,
+          readAt: async (head) => {
+            if (
+              slow && !ordinaryStarted && head === failingHead &&
+              failure !== "none"
+            ) {
+              failedReads++;
+              if (failure === "throw") {
+                throw new Error("injected producer read failure");
+              }
+              return portError("unavailable", "injected producer read failure");
+            }
+            return await view.readAt(head);
+          },
+        });
+      };
+    },
+  });
+  try {
+    const warmed = await captured(rig.walk);
+    assert.equal(warmed.error, null);
+    const saved = await sidecar!.read();
+    assert(saved.ok && saved.value.index !== null);
+    assert(
+      saved.value.index.producers.length >= 18,
+      "the warm pass must retain a substantial cached producer prefix",
+    );
+    slow = true;
+    failingHead = saved.value.index.producers.find((row) => row.sequence === 11)
+      ?.head;
+    assert(failingHead);
+    for (const mode of ["none", "unavailable", "throw"] as const) {
+      failure = mode;
+      ordinaryStarted = false;
+      const before = rig.calls.recovered.length;
+      const resumed = await captured(rig.walk);
+      assert(
+        rig.calls.recovered.slice(before).includes(FIRST_RUN + 19),
+        `cached parked discovery consumed the in-flight producer's reserved time: ${mode}`,
+      );
+      assert(
+        resumed.error === null ||
+          isDeferredCurrentMatrixHistoryBudget(resumed.error),
+        String(resumed.error),
+      );
+      assert.equal(
+        failedReads,
+        0,
+        "no late read may start after the reserve cutoff",
+      );
+    }
+    // Failure before the cutoff remains a real source failure, not empty history
+    // or an invented budget deferral. The same warmed cursor remains requestable.
+    failingHead = saved.value.index.producers.find((row) => row.sequence === 20)
+      ?.head;
+    assert(failingHead);
+    for (const mode of ["unavailable", "throw"] as const) {
+      failure = mode;
+      ordinaryStarted = false;
+      const failed = await captured(rig.walk);
+      assert(failed.error instanceof Error);
+      assert.equal(isDeferredCurrentMatrixHistoryBudget(failed.error), false);
+    }
+    assert.equal(failedReads, 2);
+    assert.deepEqual(
+      rows,
+      original,
+      "discovery must preserve pending work and charges",
+    );
+    const after = await sidecar!.read();
+    assert(
+      after.ok && after.value.head === saved.value.head,
+      "a budget deferral must retain the authenticated cursor",
     );
   } finally {
     await rig.cleanup();

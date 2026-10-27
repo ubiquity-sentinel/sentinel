@@ -211,6 +211,9 @@ export class CurrentMatrixScan {
         )
           .sort((a, b) => b.sequence - a.sequence);
         for (const producer of producers) {
+          // Reused discovery keeps the same reserve as an uncached walk,
+          // before each read, including reads that may fail or be unavailable.
+          if (!step()) return;
           const source = producer.head === row.head
             ? row
             : await this.read(producer);
