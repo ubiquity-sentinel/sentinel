@@ -203,3 +203,60 @@ Deno.test("self observation: arbitrary diagnostic text never enters issue titles
     );
   }
 });
+
+Deno.test("self observation: a cancelled sibling does not mask a failed job", async (t) => {
+  for (const conclusion of ["failure", "timed_out", "startup_failure"]) {
+    await t.step(conclusion, async () => {
+      const { surface, filed } = fakeSurface({
+        runs: [{ ...FAILED_RUNS[2]!, conclusion }],
+        jobs: [
+          { id: 11, name: "maintenance", conclusion: "cancelled" },
+          { id: 12, name: "finalize", conclusion },
+        ],
+        logs: { 11: "##[error]The operation was canceled.\n", 12: "" },
+        bodies: [],
+      });
+      const reads: number[] = [];
+      const readJobLog = surface.selfObservation!.readJobLog;
+      surface.selfObservation!.readJobLog = (request) => {
+        reads.push(request.jobId);
+        return readJobLog(request);
+      };
+
+      await runSelfObservationPass({
+        github: surface,
+        now: Date.parse("2026-09-23T19:00:00Z"),
+      });
+
+      assert.deepEqual(reads, [12], "read only the primary failure's log");
+      assert.equal(filed.length, 1);
+      assert.ok(filed[0]!.body.includes("- job: `finalize`"));
+      assert.ok(filed[0]!.body.includes(`- conclusion: \`${conclusion}\``));
+      assert.ok(!filed[0]!.title.includes("cancelled"));
+    });
+  }
+});
+
+Deno.test("self observation: cancellation remains reportable without a failed sibling", async () => {
+  const { surface, filed } = fakeSurface({
+    runs: [FAILED_RUNS[2]!],
+    jobs: [
+      { id: 10, name: "prepare", conclusion: "success" },
+      { id: 11, name: "maintenance", conclusion: "cancelled" },
+    ],
+    logs: { 11: "##[error]The operation was canceled.\n" },
+    bodies: [],
+  });
+
+  await runSelfObservationPass({
+    github: surface,
+    now: Date.parse("2026-09-23T19:00:00Z"),
+  });
+
+  assert.equal(filed.length, 1);
+  assert.ok(
+    filed[0]!.body.includes(
+      "sentinel-supervisor:maintenance:cancelled:observed",
+    ),
+  );
+});
