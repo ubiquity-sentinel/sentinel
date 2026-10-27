@@ -401,8 +401,9 @@ Deno.test("existing-PR corrections are not blocked by the unfinished-PR cap", as
     github: {
       candidateLifecycle: {
         ...positiveLifecycle(),
-        refs: { "refs/heads/sentinel/repair/issue-1": SHA3 },
-        pullRequests: [exactOpenPr(7, SHA3, "sentinel/repair/issue-1")],
+        // The new correction SHA3 has not replaced the existing PR head yet.
+        refs: { "refs/heads/sentinel/repair/issue-1": SHA2 },
+        pullRequests: [exactOpenPr(7, SHA2, "sentinel/repair/issue-1")],
       },
     },
   });
@@ -465,6 +466,11 @@ Deno.test("existing-PR corrections are not blocked by the unfinished-PR cap", as
       1,
       "the corrected head was pushed to its existing branch",
     );
+    assert.deepEqual(rig.github.pushes[0], {
+      ref: "refs/heads/sentinel/repair/issue-1",
+      sha: SHA3,
+      expected: SHA2,
+    }, "the correction actually advances the previous published head");
     assert.equal(
       rig.github.calls.filter((call) => call === "requestReview").length,
       1,
