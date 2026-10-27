@@ -1,5 +1,15 @@
 # Build status
 
+## Production throughput implementation (2026-10-27)
+
+The owner requested a v1 baseline release followed by all five 2026-10-27 throughput audit suggestions. The current primary GPT-6 Astra coordinator owns this bounded implementation, integration and ledger updates. Original goal and module identities remain unchanged; the occupied root and original canonical worktree contain unrelated edits and are preserved.
+
+Published baseline: annotated v1 tag object 2f55efdd45c3525314089827b11c4edefe0bff30 points to development f731b9602af55e54b7789e26134b1ce42eb3e7bd; release https://github.com/ubiquity-sentinel/sentinel/releases/tag/v1 (425800187). This is source preservation, not a claim of exact-head CI or a new installation. Bootstrap observed protected/installed 92a8fcb43050a431c4072f68a25695e497aaf77a, generation 121, active execution 40547640261:1:repair; live state must be rechecked before writes.
+
+Task contract: docs/plans/production-throughput-20261027.md. Isolated integration branch codex/production-throughput-20261027-g4459c2249b starts from exact v1. Modules m01-ci-wait, m02-head-ci, m03-maintenance, m04-target-flow and m05-ci-trigger have disjoint owners recorded there; m04 waits for the scheduler foundation and required readiness interfaces. All code is pending implementation and validation. The primary alone owns shared decisions, acceptance, publication and installation; workers return scoped commits and evidence.
+
+Acceptance requires all five integrated changes, meaningful local consumer checks, native development review, current exact-input hosted CI, safe self-install and live supervised delivery/throughput evidence. Keep review/accounting/CAS/promotion/target budget gates and sentinel-release disablement; no billing, retention, route or credential changes are included. Audit evidence and release receipts are in /tmp/sentinel-throughput-audit-20261027 and /tmp/sentinel-throughput-implementation-20261027. No performance gain is claimed before measurement.
+
 This is the single current task, ownership and acceptance ledger, maintained by
 the primary integration owner under the 2026-10-13 takeover and 2026-10-20 owner
 grant. Muse ownership is retired. Current policy belongs in
