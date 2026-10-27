@@ -218,18 +218,28 @@ export function createActionsTargetFlow(input: ActionsTargetCyclesInputV1) {
   };
   const finish = async (): Promise<ActionsTargetCyclesResultV1> => {
     try {
-      // Drains settle sessions/journals only; all following state writes remain serial.
-      await Promise.allSettled(slots.map((slot) => slot.invocation?.drain()));
-      for (const slot of slots) {
+      // Native drains overlap, but each settled target's continuation runs
+      // immediately and serially instead of waiting for unrelated producers.
+      const pending = new Map(slots.map((slot, index) => [
+        index,
+        // finish reuses the same memoized drain, including any rejection.
+        Promise.resolve(slot.invocation?.drain()).then(
+          () => index,
+          () => index,
+        ),
+      ]));
+      const outcomes = new Map<number, RepairCycleOutcomeV1>();
+      const faults = new Map<number, unknown>();
+      while (pending.size > 0) {
+        const index = await Promise.race(pending.values());
+        pending.delete(index);
+        const slot = slots[index];
         try {
           if (slot.invocation !== null) {
-            outcome = await slot.invocation.finish();
+            outcomes.set(index, await slot.invocation.finish());
           }
         } catch (error) {
-          if (!failedAdvance) {
-            failedAdvance = true;
-            fault = error;
-          }
+          faults.set(index, error);
         }
         if (input.progressComments !== undefined && slot.before !== null) {
           try {
@@ -238,6 +248,15 @@ export function createActionsTargetFlow(input: ActionsTargetCyclesInputV1) {
               await input.progressComments(slot.config, slot.before, after);
             }
           } catch { /* advisory progress comments never fail lifecycle work */ }
+        }
+      }
+      // Keep the public disposition and first-fault precedence in setting
+      // order, independently of native completion order. Every drain is done.
+      for (const index of slots.keys()) {
+        if (outcomes.has(index)) outcome = outcomes.get(index)!;
+        if (!failedAdvance && faults.has(index)) {
+          failedAdvance = true;
+          fault = faults.get(index);
         }
       }
       if (failedAdvance) throw fault;
