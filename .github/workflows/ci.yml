@@ -7,17 +7,18 @@ name: sentinel-ci
 
 on:
   pull_request:
+  # Explicit branch checks remain available before opening a pull request.
+  workflow_dispatch: {}
   push:
     branches:
       - master
       - development
-      - "codex/**"
 
 permissions:
   contents: read
 
 concurrency:
-  group: sentinel-ci-${{ github.head_ref || github.ref_name }}
+  group: sentinel-ci-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/heads/development') }}
 
 jobs:
