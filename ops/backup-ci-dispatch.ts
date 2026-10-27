@@ -36,8 +36,12 @@ import {
   mergeSuspension,
 } from "../src/github/backup-ci-store.ts";
 import type { BackupCiPassFileV1 } from "./backup-ci-pass.ts";
-import type { BackupCiApiV1 } from "./backup-ci-plan-reads.ts";
+import {
+  type BackupCiApiV1,
+  createBackupCiApi,
+} from "./backup-ci-plan-reads.ts";
 import { backupCiBytesDigest } from "../src/contracts/backup-ci.ts";
+import { HOSTED_CONTROLLER_REPOSITORY } from "../src/contracts/hosted-controller-deployment.ts";
 import type {
   BackupCiStoreChangesV1,
   BackupCiStoreView,
@@ -49,6 +53,30 @@ const LEG_WORKFLOW = BACKUP_CI_LEG_WORKFLOW_PATH.slice(
   BACKUP_CI_LEG_WORKFLOW_PATH.lastIndexOf("/") + 1,
 );
 
+/** The official self App capability is deliberately limited to this one POST. */
+export interface BackupCiLegDispatcherV1 {
+  dispatch(body: Record<string, unknown>): Promise<boolean>;
+}
+
+export function createBackupCiLegDispatcher(
+  selfToken: string,
+  fetcher: typeof fetch = fetch,
+): BackupCiLegDispatcherV1 | null {
+  if (selfToken.trim() === "") return null;
+  const app = createBackupCiApi(selfToken, fetcher);
+  return {
+    async dispatch(body) {
+      if (body.ref !== LEGS_BRANCH) return false;
+      const response = await app.send(
+        "POST",
+        `/repos/${HOSTED_CONTROLLER_REPOSITORY}/actions/workflows/${LEG_WORKFLOW}/dispatches`,
+        body,
+      );
+      return response?.status === 204;
+    },
+  };
+}
+
 export interface BackupCiCommitDepsV1 {
   passBytes: Uint8Array;
   expectedDigest: string;
@@ -59,6 +87,8 @@ export interface BackupCiCommitDepsV1 {
   now(): number;
   /** Sentinel repository REST (native token). */
   api: BackupCiApiV1;
+  /** App dispatch only; native read/ref/store/wake authority stays separate. */
+  legDispatcher: BackupCiLegDispatcherV1 | null;
   repository: string;
   writeStore(
     mutate: (view: BackupCiStoreView) => Promise<BackupCiStoreChangesV1>,
@@ -245,6 +275,12 @@ export async function commitBackupCiPass(
     deps.log("backup-ci:commit:pass_binding_mismatch");
     return { code: 1, counts };
   }
+  // Refuse before the legs ref or durable dispatch admissions can change.
+  // Ingest-only passes need no App capability and preserve old pending units.
+  if (pass.units.length > 0 && deps.legDispatcher == null) {
+    deps.log("backup-ci:commit:self_dispatch_unavailable");
+    return { code: 1, counts };
+  }
   const now = deps.now();
   const legsReady = pass.units.length === 0 ||
     await advanceBackupCiLegs(deps.api, deps.repository, deps.githubSha);
@@ -345,9 +381,7 @@ export async function commitBackupCiPass(
   }
   if (written.kind === "committed") counts.receipt_advanced = advanced;
   for (const { entry } of dispatched) {
-    const sent = await deps.api.send(
-      "POST",
-      `/repos/${deps.repository}/actions/workflows/${LEG_WORKFLOW}/dispatches`,
+    const sent = await deps.legDispatcher!.dispatch(
       {
         ref: LEGS_BRANCH,
         inputs: {
@@ -361,9 +395,7 @@ export async function commitBackupCiPass(
         },
       },
     );
-    count(
-      sent !== null && sent.status === 204 ? "dispatched" : "dispatch_failed",
-    );
+    count(sent ? "dispatched" : "dispatch_failed");
   }
   return { code: 0, counts };
 }

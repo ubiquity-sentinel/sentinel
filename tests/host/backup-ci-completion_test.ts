@@ -115,6 +115,17 @@ Deno.test("the exact planned native leg completion requests only protected inges
   }]);
 });
 
+Deno.test("the official App dispatched leg requests protected ingestion with its exact actor identity", async () => {
+  const s = scenario();
+  s.native.triggering_actor = {
+    login: "ubiquity-sentinel[bot]",
+    id: 319834869,
+    type: "Bot",
+  };
+  assert.equal((await s.route()).decision, "requested");
+  assert.equal(s.posts.length, 1);
+});
+
 Deno.test("a completed failed leg requests reconciliation without becoming green evidence", async () => {
   const s = scenario();
   s.native.conclusion = "failure";
@@ -150,6 +161,24 @@ Deno.test("foreign, stale, rerun and unplanned completions cannot request ingest
       (s.responses.get(`${ROOT}/actions/runs/5001`) as Obj).run_attempt = 2;
     },
     "wrong native actor": (s) => s.native.triggering_actor = { login: "human" },
+    "copied official login with wrong id": (s) =>
+      s.native.triggering_actor = {
+        login: "ubiquity-sentinel[bot]",
+        id: 1,
+        type: "Bot",
+      },
+    "official id with wrong login": (s) =>
+      s.native.triggering_actor = {
+        login: "foreign[bot]",
+        id: 319834869,
+        type: "Bot",
+      },
+    "official identity with wrong type": (s) =>
+      s.native.triggering_actor = {
+        login: "ubiquity-sentinel[bot]",
+        id: 319834869,
+        type: "User",
+      },
     "wrong planner SHA": (s) => s.planner.head_sha = "f".repeat(40),
     "wrong planner ref": (s) => s.planner.head_branch = "development",
     "wrong planner attempt": (s) => s.planner.run_attempt = 2,
@@ -291,6 +320,7 @@ Deno.test("a real receipt commit wakes once; active coalescing preserves it for 
         ...s.api,
         redirected: () => Promise.resolve(null),
       } as BackupCiApiV1,
+      legDispatcher: null,
       async writeStore(mutate) {
         const changes = await mutate({
           read: (path: string) => Promise.resolve(store.get(path) ?? null),
