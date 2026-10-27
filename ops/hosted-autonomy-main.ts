@@ -18,6 +18,7 @@ import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import { buildMemoryLessonsV1 } from "../src/repair/memory-lessons.ts";
 import { githubGitAuthEnv } from "../src/host/local.ts";
 import { createRepairStateStore, DenoGitRunner } from "../src/state/mod.ts";
+import { GitMaintenanceIndex } from "../src/state/maintenance-index.ts";
 import type { StateReadView } from "../src/contracts/ports.ts";
 import {
   HOSTED_CONTROLLER_REMOTE,
@@ -266,6 +267,11 @@ export async function runHostedAutonomyMain(input?: {
       try {
         result = await runHostedAutonomy({
           state,
+          currentMatrixIndex: new GitMaintenanceIndex({
+            scratchDir: `${scratch}/maintenance-index`,
+            remoteUrl: HOSTED_CONTROLLER_REMOTE,
+            runner,
+          }),
           githubFor,
           clock: { now: () => Date.now() },
           queue: createHostedQueueCoordinator({
