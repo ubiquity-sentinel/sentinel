@@ -7,6 +7,7 @@
  * dispatches the legs. Only hex, enum and integer values are logged.
  */
 import type { GitSha } from "../src/contracts/brands.ts";
+import { HOSTED_AUTONOMY_TRUSTED_AUTHORS } from "./hosted-autonomy-policy.ts";
 import {
   BACKUP_CI_MAX_COMMITS_READ_PER_TARGET,
   backupCiCalibrationPath,
@@ -354,6 +355,10 @@ async function planTarget(
           candidate.commit.slice(0, 12)
         }:plan_error`,
       );
+    } finally {
+      // Keep only the existing file's last-observation timestamp for fairness.
+      // Empty rows assert no coverage/result and cannot authorize a wake.
+      changes.of(repo, candidate.commit);
     }
   }
   deps.log(
@@ -378,7 +383,7 @@ async function currentPlannedUnit(
     : unit.pullRequest.base;
   const repository = `${unit.repository.owner}/${unit.repository.name}`;
   return pull !== null && pull.state === "open" && !pull.draft &&
-    pull.user === "ubiquity-sentinel[bot]" &&
+    HOSTED_AUTONOMY_TRUSTED_AUTHORS.includes(pull.user) &&
     pull.head.sha === unit.commit &&
     pull.head.ref === unit.pullRequest.headRef &&
     pull.head.repo.full_name === repository &&
@@ -470,9 +475,7 @@ export async function runBackupCiPass(
     mode: deps.mode,
     runnerId: deps.runnerId,
     createdAt: deps.now(),
-    files: [...changes.files.values()].filter((f) =>
-      f.coverage.length + f.results.length + f.noEvidence.length > 0
-    ),
+    files: [...changes.files.values()],
     comparisons: [...changes.comparisons.values()],
     units,
   };

@@ -267,6 +267,33 @@ Deno.test("current validation retains oldest-first order independently of run ID
   }
 });
 
+Deno.test("ordinary scan age permits progress without demoting required confirmation or calibration", () => {
+  const candidates = [
+    {
+      priority: 2 as const,
+      currentHead: true,
+      lastObservedAt: T0,
+      label: "observed current",
+    },
+    { priority: 5 as const, lastObservedAt: 0, label: "unseen fallback" },
+    {
+      priority: 2 as const,
+      currentHead: true,
+      lastObservedAt: 0,
+      label: "unseen current",
+    },
+    { priority: 1 as const, lastObservedAt: T0 + 1, label: "calibration" },
+    { priority: 0 as const, lastObservedAt: T0 + 1, label: "confirmation" },
+  ];
+  assert.deepEqual(backupCiScanOrder(candidates, 9009, 5).map((c) => c.label), [
+    "confirmation",
+    "calibration",
+    "unseen current",
+    "unseen fallback",
+    "observed current",
+  ]);
+});
+
 Deno.test("only reds of the mode class and runner without an attempt 2 are confirmed", () => {
   const red = result(key(), { conclusion: "failure" });
   assert.equal(unconfirmedReds(commitFile([red]), "on", RUNNER).length, 1);

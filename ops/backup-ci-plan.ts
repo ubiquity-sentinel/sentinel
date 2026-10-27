@@ -9,8 +9,9 @@
  * 1 calibration commits while the runner is uncalibrated (at most 2 per
  * pass); 2 the live base tip; 3 record bases a backed-up head needs for
  * attribution; 4 peers; 5-8 heads at delivery, review, work and blocked
- * re-admission candidates. Exact-tip validation demand precedes the fallback
- * scan in stable oldest-first order, after confirmation and calibration.
+ * re-admission candidates. After confirmation/calibration, ordinary candidates
+ * advance by durable last-observation round, with exact-tip demand first and
+ * stable oldest-wait ordering inside each round.
  *
  * The read bound is applied to a fair scan (`backupCiScanOrder`), not to the
  * plain concatenation: a large class that needs no unit (17 green delivery
@@ -51,8 +52,10 @@ export type BackupCiPriorityV1 = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 /** One commit to read, with what a unit planned on it would be for. */
 export interface BackupCiCandidateV1 {
   priority: BackupCiPriorityV1;
-  /** Exact-tip validation demand keeps its stable age order before fallback scans. */
+  /** Exact-tip validation demand keeps its stable wait order within a scan round. */
   currentHead?: boolean;
+  /** Existing commit-store observation time; zero means no attempt is recorded. */
+  lastObservedAt?: number;
   commit: GitSha;
   purpose: BackupCiPurposeV1;
   /** The record whose head or base this is (null: tip or calibration). */
@@ -264,26 +267,59 @@ export function backupCiCandidates(
     if (seen.has(id)) return false;
     seen.add(id);
     return true;
-  });
+  }).map((candidate) => ({
+    ...candidate,
+    lastObservedAt: input.files.get(candidate.commit)?.updatedAt ?? 0,
+  }));
 }
 
 /**
- * The fair scan order over already-prioritized candidates: one candidate from
- * each present priority class per round, starting each class at
- * `runId % class.length`. The read bound is applied to this order, so a class
- * whose candidates need no unit cannot consume every read and starve a lower
- * class forever. Priorities still decide the order within each round.
+ * Confirmation/calibration lead absolutely. Ordinary demand is read in
+ * least-recently-observed rounds, using existing durable store metadata.
+ * Within each round current demand retains its stable wait order, followed
+ * by the fair fallback-class scan. An unplannable prefix ages after each
+ * actual visit instead of occupying the whole read bound on every pass.
  */
 export function backupCiScanOrder<
-  T extends { priority: BackupCiPriorityV1; currentHead?: boolean },
+  T extends {
+    priority: BackupCiPriorityV1;
+    currentHead?: boolean;
+    lastObservedAt?: number;
+  },
 >(
   candidates: readonly T[],
   runId: number,
   limit: number,
 ): T[] {
   if (limit <= 0 || candidates.length === 0) return [];
-  // Confirmation/calibration retain precedence. Exact-tip demand is already
-  // oldest-first; unrelated workflow run IDs must not shuffle that work.
+  const out = candidates.filter((c) => c.priority < 2).sort((a, b) =>
+    a.priority - b.priority
+  ).slice(0, limit);
+  const rounds = new Map<number, T[]>();
+  for (const candidate of candidates.filter((c) => c.priority >= 2)) {
+    const at = candidate.lastObservedAt ?? 0;
+    const round = rounds.get(at) ?? [];
+    round.push(candidate);
+    rounds.set(at, round);
+  }
+  for (const at of [...rounds.keys()].sort((a, b) => a - b)) {
+    if (out.length >= limit) break;
+    out.push(
+      ...scanObservationRound(rounds.get(at)!, runId, limit - out.length),
+    );
+  }
+  return out;
+}
+
+function scanObservationRound<
+  T extends { priority: BackupCiPriorityV1; currentHead?: boolean },
+>(
+  candidates: readonly T[],
+  runId: number,
+  limit: number,
+): T[] {
+  // Exact-tip demand is already oldest-first within this observation round;
+  // unrelated workflow run IDs only rotate the fallback classes.
   const urgent = candidates.filter((c) => c.priority < 2 || c.currentHead);
   const fallback = candidates.filter((c) => c.priority >= 2 && !c.currentHead);
   const groups = new Map<BackupCiPriorityV1, T[]>();

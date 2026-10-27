@@ -228,6 +228,17 @@ Deno.test("receipt wake count requires newly accepted evidence on the committed 
     (await commit(planning, { legs: LAUNCHER })).out.counts.receipt_advanced,
     0,
   );
+  const observationOnly = passFile(0);
+  observationOnly.files[0].results = [];
+  const observed = await commit(observationOnly, { legs: LAUNCHER });
+  assert.equal(observed.out.code, 0);
+  assert.equal(observed.file!.entries.length, 0);
+  assert.equal(observed.file!.workflows.length, 0);
+  assert.equal(
+    observed.out.counts.receipt_advanced,
+    0,
+    "scan age bookkeeping never wakes reconciliation",
+  );
   const conflict = structuredClone(pass);
   conflict.files[0].results[0].resultDigest = "9".repeat(64);
   const refused = await commit(conflict, { legs: LAUNCHER }, {
