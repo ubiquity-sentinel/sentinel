@@ -142,6 +142,8 @@ export interface ReviewServiceTransportV1 {
    * the supplied absolute deadline. Never starts a model, reserves no budget
    * and writes no repair state.
    */
+  /** Local owned-completion notification; only prompts authenticated observation. */
+  onReviewCompletion?(listener: (operationKey: string) => void): () => void;
   drain(
     request: ReviewDrainRequestV1,
   ): Promise<ReviewDrainReportV1>;

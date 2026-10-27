@@ -32,7 +32,6 @@ const REVIEW_LEAD_MS = 5 * MINUTE;
  * minutes from submission to completion at the median, about 10 at p75 and
  * 18.4 at most; this scenario drains the p75 review.
  */
-const EARLIER_REVIEW_DRAIN_MS = 10 * MINUTE;
 
 interface CycleCallV1 {
   slug: string;
@@ -56,6 +55,7 @@ async function runScenario(
   tokenWindow: boolean,
   mintLeadMs = MINT_TO_ORIGIN_MS,
   scanMs = 0,
+  cycleLeadMs = REVIEW_LEAD_MS,
 ) {
   const r = await rig();
   try {
@@ -75,6 +75,8 @@ async function runScenario(
     );
     const before = await r.store.readRepair();
     assert.ok(before.ok && before.value.status === "found");
+    const beforeRelease = await r.release.readRelease();
+    assert.ok(beforeRelease.ok && beforeRelease.value.status === "found");
     const origin = r.clock.now();
     const notAfter = deriveAppTokenNotAfterV1(
       String(origin - mintLeadMs),
@@ -111,10 +113,7 @@ async function runScenario(
                 deadline: options.deadline,
                 modelStartsEnabled: options.modelStartsEnabled !== false,
               });
-              r.clock.advance(REVIEW_LEAD_MS);
-              if (cycles.length < input.configs.length) {
-                r.clock.advance(EARLIER_REVIEW_DRAIN_MS);
-              }
+              r.clock.advance(cycleLeadMs);
               return Promise.resolve({ status: "idle", detail: "fixture" });
             },
           },
@@ -164,6 +163,7 @@ async function runScenario(
       before: before.value.snapshot,
       after: after.value.snapshot,
       release: release.value.snapshot,
+      beforeRelease: beforeRelease.value.snapshot,
     };
   } finally {
     await r.cleanup();
@@ -195,7 +195,11 @@ Deno.test("matrix consumer: live cells in an App-token-bounded run still leave t
   }
   // The consumer still polled the live producers (about three minutes here),
   // each later scan starting with its whole scan budget before the cutoff.
-  assert.ok(run.waits.length >= 3, JSON.stringify(run.waits));
+  assert.equal(
+    run.cycles[0]!.at,
+    run.origin,
+    "ready work no longer waits for the artifact phase",
+  );
   assert.ok(run.scans.length === run.waits.length + 1);
   // Live: sentinel's own review drain (median 6.6 minutes, p75 about 10)
   // pushed ai.ubq.fi past its last review start; it still requests one.
@@ -203,8 +207,8 @@ Deno.test("matrix consumer: live cells in an App-token-bounded run still leave t
   const second = run.cycles[1]!;
   assert.equal(
     second.at - first.at,
-    REVIEW_LEAD_MS + EARLIER_REVIEW_DRAIN_MS,
-    "the earlier target drained its own review first",
+    REVIEW_LEAD_MS,
+    "the earlier target's review drain is no longer between target advances",
   );
   const latest = latestReviewStart(second.deadline);
   assert.ok(
@@ -320,6 +324,7 @@ Deno.test("matrix consumer: a later scan starts only with its whole scan budget 
       true,
       APP_TOKEN_SAFE_WINDOW_MS - reserve - cutoffAfterStart,
       scanMs,
+      0,
     );
     assert.ok(run.notAfter !== undefined);
     const cutoff = run.notAfter - reserve;
@@ -343,7 +348,7 @@ Deno.test("matrix consumer: a later scan starts only with its whole scan budget 
 
 Deno.test({
   name:
-    "matrix consumer: every snapshot a token-bounded consumer run leaves parses under the rollback generation",
+    "matrix consumer: repair writes parse under rollback and the release fixture remains unchanged",
   ignore: !await gen76Available(),
   fn: async () => {
     const run = await runScenario(true);
@@ -353,6 +358,28 @@ Deno.test({
     const repair = JSON.parse(JSON.stringify(run.after));
     assert.deepEqual(gen76.parseRepairStateSnapshotV1(repair), repair);
     const release = JSON.parse(JSON.stringify(run.release));
+    const baseline = JSON.parse(JSON.stringify(run.beforeRelease));
+    assert.deepEqual(
+      release,
+      baseline,
+      "the repair consumer has no release-writing authority",
+    );
+    // This fixture's post-transfer hosted runtime id predates neither this
+    // consumer nor its writes. Prove a rejection exists on the untouched
+    // baseline rather than attributing that old namespace mismatch to m04.
+    try {
+      gen76.parseReleaseStateSnapshotV1(baseline);
+    } catch (error) {
+      assert.match(
+        String(error),
+        /hosted runtime id is not the fixed self production runtime/,
+      );
+      assert.throws(
+        () => gen76.parseReleaseStateSnapshotV1(release),
+        /hosted runtime id is not the fixed self production runtime/,
+      );
+      return;
+    }
     assert.deepEqual(gen76.parseReleaseStateSnapshotV1(release), release);
   },
 });
