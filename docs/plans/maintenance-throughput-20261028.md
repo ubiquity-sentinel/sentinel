@@ -22,7 +22,7 @@ Preserve this plan path and its derived identity. This is a bounded continuation
 | Canonical branch | codex/maintenance-throughput-20261028-gee28e37ed1 |
 | Exact source base | e6ac2213e27f124db21d13b757a9271066c434c9 |
 | Base ref at capture | origin/development |
-| Current state | Created from exact recorded base on 2026-10-28 04:17 UTC after access and ownership reconciliation; validation pending |
+| Current state | Both recorded modules integrated locally on 2026-10-28 04:51 UTC; combined validation, native review, hosted CI, installation and live measurement pending |
 | Integration and ledger owner | The current primary continuing this contract after reconciling ownership |
 
 Goal: As orchestrator, read AGENTS.md and /Users/nv/repos/ubiquity/sentinel/docs/plans/maintenance-throughput-20261028.md, reconcile access and ownership, use canonical worktree maintenance-throughput-20261028-gee28e37ed1 at /Users/nv/repos/ubiquity/sentinel/.codex-worktrees/maintenance-throughput-20261028-gee28e37ed1 on branch codex/maintenance-throughput-20261028-gee28e37ed1, validate and integrate the prepared maintenance optimizations through the recorded worker lanes, then publish, install and prove reduced maintenance work without weakening recovery, custody, accounting, review, CI or merge gates.
@@ -82,6 +82,8 @@ Both module source candidates are disjoint and based on exact e6ac2213. They may
 | m02-closure-reads | maintenance-throughput-20261028-m02-closure-reads-ad2bfd0b8f9; codex/maintenance-throughput-20261028-m02-closure-reads-ad2bfd0b8f9; /Users/nv/repos/ubiquity/sentinel/.codex-worktrees/maintenance-throughput-20261028-m02-closure-reads-ad2bfd0b8f9 | e6ac2213e27f124db21d13b757a9271066c434c9; disjoint source, integrates after m01 |
 
 m01 owns src/contracts/maintenance-index.ts; ops/hosted-autonomy-current-scan.ts; ops/hosted-autonomy-current-recovery.ts; ops/hosted-autonomy-producer-recovery.ts; ops/hosted-autonomy-producer-requests.ts; tests/state/maintenance-index_test.ts; and new tests/host/hosted-autonomy-producer-membership_test.ts. It owns no closure/status interfaces or shared fixture changes.
+
+Integration-owner scope clarification, 2026-10-28 04:33 UTC: m01 also owns the focused exact-event-key and successful-completion assertions in tests/host/hosted-autonomy-history-reach_test.ts because the existing current_matrix_walk event gains numeric membership/source-check counters for the requested live measurement. It may update those assertions and format this additional touched test within the existing two-pass maximum. Keep existing event outcomes and add one completed-walk event; counters expose observations only, with no identifiers, authority, scheduling or request-policy change. The original fourteen-file artifact remains preserved unchanged; this is a separately recorded validation/observability correction.
 
 m02 owns ops/hosted-autonomy-types.ts; ops/hosted-autonomy-github.ts; ops/hosted-autonomy-scopes.ts; ops/hosted-autonomy-closure-pass.ts; tests/host/hosted-autonomy-retirements_test.ts; tests/host/hosted-autonomy-retirement-intents_test.ts; and new tests/host/hosted-autonomy-closure-prefilter_test.ts. It owns no producer/index changes or retry expansion. Existing shared fixtures remain unchanged.
 

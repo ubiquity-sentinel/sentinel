@@ -9,6 +9,14 @@ continuation.
 
 ## Runtime and dispatch
 
+### Maintenance throughput contract (2026-10-28)
+
+The reconstructible maintenance index may retain the complete positive reservation membership of an authenticated immutable producer plan. Membership binds the exact execution, fresh source proof fingerprint, plan digest and planner job. A fresh scan may avoid full recovery only when every current exact pending reservation is disjoint from that complete membership. Matching, new, unknown, missing, partial or invalid evidence retains ordinary recovery and late-result handling. Contradictory metadata disables acceleration safely; it cannot authorize absence, settlement, refunds, admission or authoritative state writes. Reuse the existing matrix-cell bound without truncation and preserve unknown sidecars, CAS/readback and older readers' full-recovery fallback.
+
+Retirement may use an optional narrow pull-request status capability carrying only the observed number, open/closed state and an explicit merged boolean. The production capability uses one strict authenticated GET; it grants no ancestry or delivery authority. An absent capability may project the existing full reader's observed identity, while a present capability's refusal never falls back. The final non-Gateway closure pass filters impossible exact review receipts after historical publication reconstruction and before task reads. Eligible final task rereads, full delivery ancestry, review, CI, ownership, custody, accounting, CAS/readback and Gateway carried authorization remain required.
+
+Existing current-matrix walk diagnostics expose numeric membership hits/skips and source checks alongside steps and producer recovery attempts, including a successful completion row. Logical source checks are distinguished from underlying network I/O. Controlled local consumer tests establish causal request reductions; exact hosted inputs, state identities and phase timings establish operational behavior separately. Keep the existing event-driven schedule, original deadlines, protected installation and exact-prior rollback; measured bookkeeping work is not new issue delivery or billed savings. Actual acceptance belongs in the sole build-status ledger.
+
 ### Production throughput implementation contract (2026-10-27)
 
 The owner requested the current source be released as v1 before implementing all five findings from the production throughput audit. Annotated tag v1 preserves f731b9602af55e54b7789e26134b1ce42eb3e7bd; it does not change the installed runtime or claim exact-head CI acceptance. The implementation contract is docs/plans/production-throughput-20261027.md and the current acceptance ledger remains build-status.md.
