@@ -172,11 +172,96 @@ Deno.test(
           `/repos/ubiquity-sentinel/sentinel/compare/${BASE}...`,
         ),
       );
+      assert.ok(github.readPullStatus, "native status capability is required");
+      assert.deepEqual(await github.readPullStatus(51), {
+        number: 51,
+        state: "closed",
+        merged: true,
+      });
+      assert.equal(requests.length, 6, "status adds only the pull GET");
+      assert.ok(requests[5].endsWith("/pulls/51"));
     } finally {
       globalThis.fetch = original;
     }
   },
 );
+
+Deno.test("hosted autonomy: native pull status requires explicit exact facts in one GET", async (t) => {
+  const cases: {
+    name: string;
+    body: unknown;
+    status?: number;
+    throws?: boolean;
+    accepted?: { number: number; state: "open" | "closed"; merged: boolean };
+  }[] = [
+    {
+      name: "closed unmerged",
+      body: { number: 51, state: "closed", merged: false },
+      accepted: { number: 51, state: "closed", merged: false },
+    },
+    {
+      name: "open",
+      body: { number: 51, state: "open", merged: false },
+      accepted: { number: 51, state: "open", merged: false },
+    },
+    {
+      name: "merged",
+      body: { number: 51, state: "closed", merged: true },
+      accepted: { number: 51, state: "closed", merged: true },
+    },
+    {
+      name: "wrong number",
+      body: { number: 52, state: "closed", merged: false },
+    },
+    { name: "missing number", body: { state: "closed", merged: false } },
+    { name: "missing merged", body: { number: 51, state: "closed" } },
+    {
+      name: "unknown merged",
+      body: { number: 51, state: "closed", merged: null },
+    },
+    {
+      name: "unknown state",
+      body: { number: 51, state: "unknown", merged: false },
+    },
+    { name: "malformed", body: [] },
+    { name: "unavailable", body: null, status: 503 },
+    { name: "transport failure", body: null, throws: true },
+  ];
+  for (const entry of cases) {
+    await t.step(entry.name, async () => {
+      const original = globalThis.fetch;
+      const requests: string[] = [];
+      globalThis.fetch =
+        ((input: string | URL | Request, init?: RequestInit) => {
+          requests.push(String(input));
+          assert.equal(init?.method, "GET");
+          assert.equal(
+            new Headers(init?.headers).get("authorization"),
+            "Bearer fixture-token",
+          );
+          if (entry.throws) return Promise.reject(new Error("offline"));
+          return Promise.resolve(
+            new Response(JSON.stringify(entry.body), {
+              status: entry.status ?? 200,
+            }),
+          );
+        }) as typeof fetch;
+      try {
+        const github = createHostedAutonomyGitHub("fixture-token", SELF_REPO);
+        assert.ok(github.readPullStatus);
+        assert.deepEqual(
+          await github.readPullStatus(51),
+          entry.accepted ?? null,
+        );
+        assert.deepEqual(requests, [
+          "https://api.github.com/repos/ubiquity-sentinel/sentinel/pulls/51",
+        ]);
+      } finally {
+        globalThis.fetch = original;
+      }
+    });
+  }
+});
 
 Deno.test(
   "hosted autonomy: a blocked task with an open pull request is retried in one write",

@@ -77,6 +77,13 @@ export interface HostedAutonomyPullV1 {
   mergeable?: boolean | null;
 }
 
+/** Fresh pull status only; never a merged-delivery or ancestry proof. */
+export interface HostedAutonomyPullStatusV1 {
+  readonly number: number;
+  readonly state: "open" | "closed";
+  readonly merged: boolean;
+}
+
 /**
  * One pull request whose head is EXACTLY a branch of the same repository (no
  * fork), as listed by head ref. Only the identity facts the base-refresh
@@ -181,6 +188,14 @@ export interface HostedAutonomyGitHubV1 {
     number: number,
     baseBranch: string | null,
   ): Promise<HostedAutonomyPullV1 | null>;
+  /**
+   * Exact current pull status for retirement only. No ancestry is read or
+   * authorized. Malformed or unavailable evidence cannot retire. A surface
+   * without this capability retains its existing full-reader path.
+   */
+  readPullStatus?(
+    number: number,
+  ): Promise<HostedAutonomyPullStatusV1 | null>;
   /**
    * Every pull request (any state) whose head is exactly `branch` of THIS
    * repository, or null when that listing cannot be read and proven complete.
