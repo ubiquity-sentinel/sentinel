@@ -1,0 +1,29 @@
+{
+  "status": "unvalidated_handoff_artifacts",
+  "base": "e6ac2213e27f124db21d13b757a9271066c434c9",
+  "hashes": {
+    "candidate.patch": "b1236d5e835510639f8823485fe4268de4f86f6bf0538c96c5b743bc6cfdca68",
+    "candidate-manifest.json": "f6641b9e0eec51c5c776609facf6d54dc4a4271699f67aab148e270ba2ca255f",
+    "access-blockers.json": "61c58582618ef473f175988618e242e94ea5d95ea3b398f31a9cc3daa8119f09",
+    "producer-membership-handoff.md": "3f2bf20bf78a8eee84602fd736cb88e28ebe034feeb73665e648b69f3e83937b",
+    "producer-membership-prepared-evidence.json": "a1cb68d10e482aae51d06da4052ec95c09e34fe0df88bf98c830d94c8f6b9611",
+    "closure-handoff.md": "88b1c1216aacd1a8f49441de93a047937552f75d45d012ed02b3f4d0d10b9994"
+  },
+  "plan": "/Users/nv/repos/ubiquity/sentinel/docs/plans/maintenance-throughput-20261028.md",
+  "modules": [
+    {
+      "id": "m01-producer-membership",
+      "suffix": "3194030afe",
+      "lane": "maintenance-throughput-20261028-m01-producer-membership-a3194030afe",
+      "branch": "codex/maintenance-throughput-20261028-m01-producer-membership-a3194030afe",
+      "path": "/Users/nv/repos/ubiquity/sentinel/.codex-worktrees/maintenance-throughput-20261028-m01-producer-membership-a3194030afe"
+    },
+    {
+      "id": "m02-closure-reads",
+      "suffix": "d2bfd0b8f9",
+      "lane": "maintenance-throughput-20261028-m02-closure-reads-ad2bfd0b8f9",
+      "branch": "codex/maintenance-throughput-20261028-m02-closure-reads-ad2bfd0b8f9",
+      "path": "/Users/nv/repos/ubiquity/sentinel/.codex-worktrees/maintenance-throughput-20261028-m02-closure-reads-ad2bfd0b8f9"
+    }
+  ]
+}

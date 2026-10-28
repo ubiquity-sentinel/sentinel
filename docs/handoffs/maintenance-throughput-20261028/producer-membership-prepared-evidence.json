@@ -1,0 +1,330 @@
+{
+  "status": "PREPARED ONLY; DO NOT EXECUTE UNTIL REQUIRED ACCESS IS RESTORED",
+  "tool": "/Users/nv/.codex/agents/assets/test-evidence/evidence.ts",
+  "requiredCwd": "/Users/nv/repos/ubiquity/sentinel/.codex-worktrees/maintenance-throughput-20261028-gee28e37ed1",
+  "operations": [
+    {
+      "registration": {
+        "op": "register",
+        "target": "membership-red-baseline",
+        "definition": {
+          "command": [
+            "/Users/nv/.codex/bin/gtimeout",
+            "--kill-after=5s",
+            "300s",
+            "deno",
+            "test",
+            "--frozen",
+            "--allow-read=.,/usr,/bin,/opt/homebrew/bin/deno",
+            "--allow-run",
+            "--allow-write",
+            "--allow-env=PATH,NODE_V8_COVERAGE",
+            "--no-check",
+            "--filter",
+            "current matrix positive plan membership resumes past unrelated producers and retains late results",
+            "tests/host/hosted-autonomy-producer-membership_test.ts"
+          ],
+          "cwd": "."
+        },
+        "reason": "Exact baseline plus new regression only; expected semantic restart-budget failure. No-check is baseline-only because the new optional sidecar type does not exist in the original source; candidate checks below keep native typechecking."
+      },
+      "execution": {
+        "op": "run",
+        "target": "membership-red-baseline",
+        "mode": "capture",
+        "reason": "Exact baseline plus new regression only; expected semantic restart-budget failure. No-check is baseline-only because the new optional sidecar type does not exist in the original source; candidate checks below keep native typechecking."
+      }
+    },
+    {
+      "registration": {
+        "op": "register",
+        "target": "membership-green",
+        "definition": {
+          "command": [
+            "/Users/nv/.codex/bin/gtimeout",
+            "--kill-after=5s",
+            "300s",
+            "deno",
+            "test",
+            "--frozen",
+            "--allow-read=.,/usr,/bin,/opt/homebrew/bin/deno",
+            "--allow-run",
+            "--allow-write",
+            "--allow-env=PATH,NODE_V8_COVERAGE",
+            "--filter",
+            "current matrix positive plan membership resumes past unrelated producers and retains late results",
+            "tests/host/hosted-autonomy-producer-membership_test.ts"
+          ],
+          "cwd": "."
+        },
+        "reason": "Unvalidated candidate semantic restart/late-result/new-producer regression; native typechecking retained."
+      },
+      "execution": {
+        "op": "run",
+        "target": "membership-green",
+        "mode": "capture",
+        "reason": "Unvalidated candidate semantic restart/late-result/new-producer regression; native typechecking retained."
+      }
+    },
+    {
+      "registration": {
+        "op": "register",
+        "target": "membership-module",
+        "definition": {
+          "command": [
+            "/Users/nv/.codex/bin/gtimeout",
+            "--kill-after=5s",
+            "300s",
+            "deno",
+            "test",
+            "--frozen",
+            "--allow-read=.,/usr,/bin,/opt/homebrew/bin/deno",
+            "--allow-run",
+            "--allow-write",
+            "--allow-env=PATH,NODE_V8_COVERAGE",
+            "tests/host/hosted-autonomy-producer-membership_test.ts",
+            "tests/state/maintenance-index_test.ts"
+          ],
+          "cwd": "."
+        },
+        "reason": "Complete positive descriptor, legacy/corrupt/contradictory sidecar, fresh source/custody and existing independent CAS/lost-response boundary."
+      },
+      "execution": {
+        "op": "run",
+        "target": "membership-module",
+        "mode": "capture",
+        "reason": "Complete positive descriptor, legacy/corrupt/contradictory sidecar, fresh source/custody and existing independent CAS/lost-response boundary."
+      }
+    },
+    {
+      "registration": {
+        "op": "register",
+        "target": "membership-scan-boundary",
+        "definition": {
+          "command": [
+            "/Users/nv/.codex/bin/gtimeout",
+            "--kill-after=5s",
+            "300s",
+            "deno",
+            "test",
+            "--frozen",
+            "--allow-read=.,/usr,/bin,/opt/homebrew/bin/deno",
+            "--allow-run",
+            "--allow-write",
+            "--allow-env=PATH,NODE_V8_COVERAGE",
+            "tests/host/hosted-autonomy-current-scan_test.ts",
+            "tests/host/hosted-autonomy-producer-deadline_test.ts"
+          ],
+          "cwd": "."
+        },
+        "reason": "Existing history reserve, late artifacts, corrupt metadata and producer deadline consumers."
+      },
+      "execution": {
+        "op": "run",
+        "target": "membership-scan-boundary",
+        "mode": "capture",
+        "reason": "Existing history reserve, late artifacts, corrupt metadata and producer deadline consumers."
+      }
+    },
+    {
+      "registration": {
+        "op": "register",
+        "target": "membership-history-boundary",
+        "definition": {
+          "command": [
+            "/Users/nv/.codex/bin/gtimeout",
+            "--kill-after=5s",
+            "300s",
+            "deno",
+            "test",
+            "--frozen",
+            "--allow-read=.,/usr,/bin,/opt/homebrew/bin/deno",
+            "--allow-run",
+            "--allow-write",
+            "--allow-env=PATH,NODE_V8_COVERAGE",
+            "tests/host/hosted-autonomy-history-reach_test.ts"
+          ],
+          "cwd": "."
+        },
+        "reason": "Affected original history/source/custody/accounting consumers; one bounded module, not a whole suite."
+      },
+      "execution": {
+        "op": "run",
+        "target": "membership-history-boundary",
+        "mode": "capture",
+        "reason": "Affected original history/source/custody/accounting consumers; one bounded module, not a whole suite."
+      }
+    },
+    {
+      "registration": {
+        "op": "register",
+        "target": "membership-lifecycle",
+        "definition": {
+          "command": [
+            "/Users/nv/.codex/bin/gtimeout",
+            "--kill-after=5s",
+            "300s",
+            "deno",
+            "test",
+            "--frozen",
+            "--allow-read=.,/usr,/bin,/opt/homebrew/bin/deno",
+            "--allow-run",
+            "--allow-write",
+            "--allow-env=PATH,NODE_V8_COVERAGE",
+            "--filter",
+            "prior ordinary history: newer healthy proof preserves failed result and real candidate recovery",
+            "tests/host/hosted-autonomy-recovery_test.ts"
+          ],
+          "cwd": "."
+        },
+        "reason": "Named real failed-result/candidate recovery lifecycle on exact integrated candidate."
+      },
+      "execution": {
+        "op": "run",
+        "target": "membership-lifecycle",
+        "mode": "capture",
+        "reason": "Named real failed-result/candidate recovery lifecycle on exact integrated candidate."
+      }
+    },
+    {
+      "registration": {
+        "op": "register",
+        "target": "membership-check",
+        "definition": {
+          "command": [
+            "/Users/nv/.codex/bin/gtimeout",
+            "--kill-after=5s",
+            "300s",
+            "deno",
+            "check",
+            "--frozen",
+            "src/contracts/maintenance-index.ts",
+            "ops/hosted-autonomy-current-scan.ts",
+            "ops/hosted-autonomy-current-recovery.ts",
+            "ops/hosted-autonomy-producer-recovery.ts",
+            "ops/hosted-autonomy-producer-requests.ts",
+            "tests/state/maintenance-index_test.ts",
+            "tests/host/hosted-autonomy-producer-membership_test.ts"
+          ],
+          "cwd": "."
+        },
+        "reason": "Scoped native typecheck on exact seven changed source/test files."
+      },
+      "execution": {
+        "op": "run",
+        "target": "membership-check",
+        "mode": "capture",
+        "reason": "Scoped native typecheck on exact seven changed source/test files."
+      }
+    },
+    {
+      "registration": {
+        "op": "register",
+        "target": "membership-lint",
+        "definition": {
+          "command": [
+            "/Users/nv/.codex/bin/gtimeout",
+            "--kill-after=5s",
+            "300s",
+            "deno",
+            "lint",
+            "src/contracts/maintenance-index.ts",
+            "ops/hosted-autonomy-current-scan.ts",
+            "ops/hosted-autonomy-current-recovery.ts",
+            "ops/hosted-autonomy-producer-recovery.ts",
+            "ops/hosted-autonomy-producer-requests.ts",
+            "tests/state/maintenance-index_test.ts",
+            "tests/host/hosted-autonomy-producer-membership_test.ts"
+          ],
+          "cwd": "."
+        },
+        "reason": "Scoped lint; no formatting mutation."
+      },
+      "execution": {
+        "op": "run",
+        "target": "membership-lint",
+        "mode": "capture",
+        "reason": "Scoped lint; no formatting mutation."
+      }
+    },
+    {
+      "registration": {
+        "op": "register",
+        "target": "membership-fmt-check",
+        "definition": {
+          "command": [
+            "/Users/nv/.codex/bin/gtimeout",
+            "--kill-after=5s",
+            "300s",
+            "deno",
+            "fmt",
+            "--check",
+            "src/contracts/maintenance-index.ts",
+            "ops/hosted-autonomy-current-scan.ts",
+            "ops/hosted-autonomy-current-recovery.ts",
+            "ops/hosted-autonomy-producer-recovery.ts",
+            "ops/hosted-autonomy-producer-requests.ts",
+            "tests/state/maintenance-index_test.ts",
+            "tests/host/hosted-autonomy-producer-membership_test.ts"
+          ],
+          "cwd": "."
+        },
+        "reason": "Read-only format check; formatting mutation authorization remains none."
+      },
+      "execution": {
+        "op": "run",
+        "target": "membership-fmt-check",
+        "mode": "capture",
+        "reason": "Read-only format check; formatting mutation authorization remains none."
+      }
+    },
+    {
+      "registration": {
+        "op": "register",
+        "target": "membership-size",
+        "definition": {
+          "command": [
+            "/Users/nv/.codex/bin/gtimeout",
+            "--kill-after=5s",
+            "300s",
+            "deno",
+            "task",
+            "size:check"
+          ],
+          "cwd": "."
+        },
+        "reason": "Existing cheap physical file-size constraint on the future canonical Git lane; no validation run here."
+      },
+      "execution": {
+        "op": "run",
+        "target": "membership-size",
+        "mode": "capture",
+        "reason": "Existing cheap physical file-size constraint on the future canonical Git lane; no validation run here."
+      }
+    },
+    {
+      "registration": {
+        "op": "register",
+        "target": "membership-whitespace",
+        "definition": {
+          "command": [
+            "/Users/nv/.codex/bin/gtimeout",
+            "--kill-after=5s",
+            "300s",
+            "git",
+            "diff",
+            "--check"
+          ],
+          "cwd": "."
+        },
+        "reason": "Exact future canonical candidate whitespace check; no Git operation was run here."
+      },
+      "execution": {
+        "op": "run",
+        "target": "membership-whitespace",
+        "mode": "capture",
+        "reason": "Exact future canonical candidate whitespace check; no Git operation was run here."
+      }
+    }
+  ]
+}

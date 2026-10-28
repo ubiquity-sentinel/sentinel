@@ -1,5 +1,15 @@
 # Build status
 
+## Maintenance throughput implementation (2026-10-28)
+
+Current primary integration and ledger owner: session `01a180b6-034b-7853-a42b-5e1713365a77`, orchestrator, actual own-turn model `gpt-6-astra` with `max` effort. The owner requested execution of [the maintenance plan](plans/maintenance-throughput-20261028.md); this bounded continuation preserves the original goal and all unrelated ownership. Development workers use `gpt-6.1-sol/max` under the installed routing policy.
+
+Access and ownership reconciled at 04:17 UTC: remote `development` remains `e6ac2213e27f124db21d13b757a9271066c434c9`, protected `sentinel-supervisor` remains `f2f1d5da53e4a3b868cc39ff6702d347367fb8c4`, and `sentinel-release` is disabled. All three recorded paths and branches were absent and unclaimed; their exact worktrees were created from `e6ac2213`. The prior production-throughput lanes are clean and preserved, and all six current prior module tips are ancestors of the baseline. Root `development@395f54637e` and its pre-existing dirt are untouched. Source bundle hashes and all fourteen before/after file hashes match the preserved manifest.
+
+Canonical continuation is `codex/maintenance-throughput-20261028-gee28e37ed1` at `/Users/nv/repos/ubiquity/sentinel/.codex-worktrees/maintenance-throughput-20261028-gee28e37ed1`. Module reservations are `m01-producer-membership` in recorded lane `maintenance-throughput-20261028-m01-producer-membership-a3194030afe` and `m02-closure-reads` in recorded lane `maintenance-throughput-20261028-m02-closure-reads-ad2bfd0b8f9`, both at exact baseline `e6ac2213`. They own only the seven paths each listed in the plan; m01 integrates before m02 with ancestry preserved. The primary owns all shared documentation, conflicts, publication, protected writes and acceptance. Read-only workers own access reconciliation and runtime-evidence preparation only.
+
+Status: prepared artifacts adopted for validation, not accepted source. Baseline regressions, corrected focused cases, module boundaries, combined lifecycle, native review, independent audit, hosted CI, exact self-install and cold/warm measurements remain pending. No maintenance speedup or new issue delivery is claimed. Evidence scratch is `/tmp/sentinel-maintenance-implementation-20261028`; raw private evidence remains outside public Git. Keep recovery, custody, accounting, native review, CI, merge and rollback gates unchanged.
+
 ## Production throughput implementation (2026-10-27)
 
 ### Final installed throughput checkpoint (23:48 UTC)
