@@ -631,6 +631,7 @@ Deno.test("current matrix positive plan membership resumes past unrelated produc
     const consumed = await captured(rig.run);
     assert.equal(consumed.error, null);
     assert.equal(consumed.value?.status, "applied");
+    assert.deepEqual(walkRows(consumed.lines), []);
     const after = await rig.snapshot();
     assert.equal(after.snapshot.work[0].nextStep, "blocked");
     assert.deepEqual(after.snapshot.work[0].intent, rig.pending.record.intent);

@@ -161,6 +161,8 @@ export async function recoverHostedCurrentMatrix(
     membershipSkips: 0,
     sequence: current.snapshot.sequence,
   };
+  let ordinaryWalkExhausted = false;
+  let ordinaryRequestsCovered = false;
   let deferredReported = false;
   const report = (
     outcome: "completed" | "deferred_budget" | "deferred_producer",
@@ -243,7 +245,7 @@ export async function recoverHostedCurrentMatrix(
       execution: HostedExecutionIntentV1,
     ) => Promise<boolean>,
     step: () => boolean,
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     if (!indexOpened) {
       indexOpened = true;
       if (deps.currentMatrixIndex && deps.state.readReleaseAt) {
@@ -312,11 +314,12 @@ export async function recoverHostedCurrentMatrix(
                 "current matrix producer custody unavailable",
               );
             }
-            if (await visit(producer, saved.execution)) return;
+            if (await visit(producer, saved.execution)) return false;
           }
         }
       }
     }
+    return true;
   };
   const recover = async (
     producer: typeof current,
@@ -439,7 +442,7 @@ export async function recoverHostedCurrentMatrix(
       // producer was just tried: the walk below would only repeat those passes.
       if (!inFlight) return null;
     }
-    await traverse(async (producer, execution) => {
+    ordinaryWalkExhausted = await traverse(async (producer, execution) => {
       // A producer no pending record can bind to costs no custody, target or
       // artifact read: nothing could be recovered from it.
       if (!producerWanted(pending, execution, excluded)) return false;
@@ -476,9 +479,10 @@ export async function recoverHostedCurrentMatrix(
         for (const id of lost.reservations) excluded.add(id);
         unrecoverable(execution, lost);
       }
-      return pending.every((row) =>
+      ordinaryRequestsCovered = pending.every((row) =>
         row.intent?.requestId && covered.has(row.intent.requestId)
       );
+      return ordinaryRequestsCovered;
     }, () => true);
     return walked.result;
   };
@@ -486,7 +490,10 @@ export async function recoverHostedCurrentMatrix(
   try {
     const result = await scan();
     await discovery.value?.save();
-    if (!deferredReported) report("completed");
+    if (
+      !deferredReported &&
+      (ordinaryWalkExhausted || ordinaryRequestsCovered)
+    ) report("completed");
     return result;
   } catch (error) {
     if (isDeferredCurrentMatrixHistoryBudget(error)) {
