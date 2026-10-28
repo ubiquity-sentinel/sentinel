@@ -74,9 +74,12 @@ Deno.test("a parked traversal stopped at its reserve logs a bounded step diagnos
     const [row] = diagnostics;
     assert.deepEqual(Object.keys(row).sort(), [
       "kind",
+      "membershipHits",
+      "membershipSkips",
       "outcome",
       "producers",
       "sequence",
+      "sourceChecks",
       "steps",
     ]);
     assert.equal(row.outcome, "deferred_budget");

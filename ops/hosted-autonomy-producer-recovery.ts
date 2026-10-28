@@ -11,6 +11,10 @@ import {
 import type { ReleaseStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import type { GitSha } from "../src/contracts/brands.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
+import {
+  type MatrixProducerPlanMembershipV1,
+  parseMatrixProducerPlanMembershipV1,
+} from "../src/contracts/maintenance-index.ts";
 import type {
   PortResultV1,
   RepairStateWriter,
@@ -466,6 +470,18 @@ async function recoverProducerWithinBudget(
   const intersection = wave.plan.cells.filter((cell) =>
     requests.some((request) => request.reservationId === cell.reservationId)
   );
+  // The transport authenticates the complete plan before selecting results.
+  // This positive descriptor says nothing about missing or late artifacts.
+  let plan: MatrixProducerPlanMembershipV1 | undefined;
+  try {
+    plan = parseMatrixProducerPlanMembershipV1({
+      planDigest: wave.planDigest,
+      plannerJobId: wave.provenance.plannerJobId,
+      reservationIds: wave.plan.cells.map((cell) => cell.reservationId),
+    });
+  } catch {
+    // An older composed reader without complete provenance cannot accelerate.
+  }
   if (intersection.length === 0) {
     await custody();
     const fresh = await state.readRepair();
@@ -479,7 +495,11 @@ async function recoverProducerWithinBudget(
     ) {
       throw integrityFault("current matrix repair custody changed");
     }
-    return { result: null, deferred: false };
+    return {
+      result: null,
+      deferred: false,
+      ...(plan === undefined ? {} : { plan }),
+    };
   }
   const fresh = await state.readRepair();
   if (!fresh.ok || fresh.value.status !== "found") {
@@ -759,5 +779,11 @@ async function recoverProducerWithinBudget(
       revisions: [],
     },
     deferred: false,
+    ...(plan === undefined ||
+        intersection.some((cell) =>
+          !wave.results.some((result) => result.cellId === cell.cellId)
+        )
+      ? {}
+      : { plan }),
   };
 }
