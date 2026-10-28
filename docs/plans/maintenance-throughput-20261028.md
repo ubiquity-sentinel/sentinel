@@ -4,9 +4,9 @@
 
 Reduce Sentinel's recurring maintenance delay by avoiding unrelated historical producer recovery and unnecessary closure reads, while preserving complete recovery, current source/custody checks, durable accounting, exact-head review/CI, target ownership, expected-head CAS and rollback safety. The owner authorized implementation with "okay proceed with performance optimization", then requested this handoff and goal. Continue the already-authorized task; no new chat or goal is required to execute it.
 
-The concrete candidate is prepared but entirely unvalidated. Fourteen files change: nine production files and five test files. No typecheck, lint, formatter, test, benchmark, native review, publication, installation or runtime performance measurement has run on this candidate. Production remains on the previously accepted code. Do not interpret authored assertions, file hashes or this handoff as a passing gate.
+At the original preparation handoff, the fourteen-file candidate was entirely unvalidated: nine production files and five test files had been authored, but no typecheck, lint, formatter, test, benchmark, native review, publication, installation or runtime performance measurement had run. Subsequent execution status and exact evidence are recorded in the canonical task lane's docs/build-status.md; the original artifact hashes remain preparation provenance rather than acceptance evidence.
 
-The only new repository files from this preparation are this plan and its supporting handoff bundle. Existing source changes in the stale root checkout and previous worktrees remain untouched. The temporary candidate writers and profiler have settled, with no running descendants or background jobs. Planner/coordinator session is 01a1752a-4c5b-72d1-9ede-0782a06ccc21; its latest verified model was gpt-6-astra/max. Select future workers under the current installed model-routing procedure rather than treating that identity as a model change instruction.
+The original preparation added only this plan and its supporting handoff bundle. Existing source changes in the stale root checkout and previous worktrees remain untouched. That preparation's temporary candidate writers and profiler settled with no running descendants or background jobs. The original planner/coordinator session was 01a1752a-4c5b-72d1-9ede-0782a06ccc21; its latest verified model was gpt-6-astra/max. Current execution ownership is recorded in the sole ledger; select workers under the installed model-routing procedure rather than treating a historical identity as a model change instruction.
 
 ## Canonical Goal Identity
 
@@ -50,7 +50,7 @@ Root-cause evidence: producer discovery is cached, but unresolved work still ask
 
 ## Durable candidate bundle
 
-The required source and continuation instructions are preserved under /Users/nv/repos/ubiquity/sentinel/docs/handoffs/maintenance-throughput-20261028, outside volatile /tmp. These files are currently uncommitted. The bundle contains authored source/test diffs and documentation only; do not add raw private logs, target source, credentials or full diagnostic snapshots to public Git.
+The original source and continuation instructions are preserved under /Users/nv/repos/ubiquity/sentinel/docs/handoffs/maintenance-throughput-20261028, outside volatile /tmp. Those root-checkout copies were uncommitted at handoff; the canonical task lane now tracks the adopted copies and execution updates. The bundle contains authored source/test diffs and documentation only; do not add raw private logs, target source, credentials or full diagnostic snapshots to public Git.
 
 | Artifact | Role / SHA-256 |
 | --- | --- |
