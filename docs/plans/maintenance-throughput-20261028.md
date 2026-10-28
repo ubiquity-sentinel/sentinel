@@ -22,7 +22,7 @@ Preserve this plan path and its derived identity. This is a bounded continuation
 | Canonical branch | codex/maintenance-throughput-20261028-gee28e37ed1 |
 | Exact source base | e6ac2213e27f124db21d13b757a9271066c434c9 |
 | Base ref at capture | origin/development |
-| Current state | Both recorded modules integrated locally on 2026-10-28 04:51 UTC; combined validation, native review, hosted CI, installation and live measurement pending |
+| Current state | Both modules integrated and all ten combined local gates passed; native review, hosted CI, installation and live measurement remain pending at the 2026-10-28 05:09 UTC checkpoint |
 | Integration and ledger owner | The current primary continuing this contract after reconciling ownership |
 
 Goal: As orchestrator, read AGENTS.md and /Users/nv/repos/ubiquity/sentinel/docs/plans/maintenance-throughput-20261028.md, reconcile access and ownership, use canonical worktree maintenance-throughput-20261028-gee28e37ed1 at /Users/nv/repos/ubiquity/sentinel/.codex-worktrees/maintenance-throughput-20261028-gee28e37ed1 on branch codex/maintenance-throughput-20261028-gee28e37ed1, validate and integrate the prepared maintenance optimizations through the recorded worker lanes, then publish, install and prove reduced maintenance work without weakening recovery, custody, accounting, review, CI or merge gates.
@@ -35,7 +35,7 @@ The prior implementation coordinator 01a17d5f-c856-74b0-9ab6-10080f4e3611 comple
 
 ## Baseline and measured problem
 
-The last verified shipping base (2026-10-27 23:48 UTC) is e6ac2213e27f124db21d13b757a9271066c434c9 is a ledger-only child of installed f2f1d5da53e4a3b868cc39ff6702d347367fb8c4, generation 123. The installed revision passed all seven canonical CI jobs in run 40600520027, then accepted model-disabled bootstrap 40601446648. The separate App-dispatch completion fix is already live and proved completion-to-router in 2 seconds and completion-to-durable-receipt in 72.398 seconds. Do not redo that fix or include it as this candidate's new success. Refresh current live refs/pointer before publication; these are dated identities.
+The last verified shipping base (2026-10-27 23:48 UTC), e6ac2213e27f124db21d13b757a9271066c434c9, is a ledger-only child of installed f2f1d5da53e4a3b868cc39ff6702d347367fb8c4, generation 123. The installed revision passed all seven canonical CI jobs in run 40600520027, then accepted model-disabled bootstrap 40601446648. The separate App-dispatch completion fix is already live and proved completion-to-router in 2 seconds and completion-to-durable-receipt in 72.398 seconds. Do not redo that fix or include it as this candidate's new success. Refresh current live refs/pointer before publication; these are dated identities.
 
 The read-only profile captured between 00:09 and 00:17 UTC on 2026-10-28 shows the remaining cost persists with populated indexes:
 
@@ -64,7 +64,9 @@ The original source and continuation instructions are preserved under /Users/nv/
 
 The original combined source snapshot is /tmp/sentinel-maintenance-perf-20261028/combined-candidate. It is a plain archive, not a Git worktree. Nothing depends on its survival: recreate the exact base from Git and apply the preserved patch. Original scratch paths inside the bundled manifests/handbacks are provenance; use the durable files above if /tmp is absent. Patch content and per-file hashes must match before adoption.
 
-## Access blockers and first continuation action
+## Original access blockers and continuation sequence
+
+This section preserves the original handoff's access failures and required continuation sequence. The receiving session resolved normal Git, recorder and GitHub access, created the exact recorded lanes and registered ownership at 04:17 UTC; current evidence and status are in docs/build-status.md. The historical commands and limits below remain provenance.
 
 Normal worktree creation failed, exit 255, when Git could not create /Users/nv/repos/ubiquity/sentinel/.git/refs/heads/codex/maintenance-throughput-20261028-gee28e37ed1.lock: Operation not permitted. The planned branch and path were not created. Evidence registration failed, exit 1, opening /Users/nv/.local/state/dsh-evidence/cc48556d9d6816f2605c36c352452867e2de5be694f7aa26c8a9330e9268c576/managed.lock. Registration did not execute validation. The installed recorder fixes storage beneath ~/.local/state/dsh-evidence and has no documented storage override.
 
@@ -97,7 +99,7 @@ Closure status carries only exact observed PR number, open/closed state and expl
 
 Preserve event-driven scheduling, existing deadlines and protected authority. Do not add cron/polling, arbitrary start/retention/lifetime caps, negative artifact caches, new credentials/options/environment variables, billing changes, branch protection/rulesets, model-route changes or source-policy reorganizations. Keep sentinel-release disabled. Raw restricted evidence stays outside public Git and model credentials.
 
-## Validation matrix and known unproved assumptions
+## Validation matrix and original preparation assumptions
 
 All commands require the existing recorder, a 300-second deadline and bounded process-group teardown. Inspect installed gtimeout/Deno paths before using the prepared registrations; their paths were discovered on this Mac and may drift. Preserve declared permissions, monitor active cases within 30 seconds, diagnose 60 seconds without useful output, and retain actual command/exit/elapsed/candidate/output references. Do not run a whole-repository local sweep or repeat a failed unchanged command.
 
@@ -113,7 +115,7 @@ All commands require the existing recorder, a 300-second deadline and bounded pr
 | Hosted CI | Exact canonical SHA and, where relevant, its actual merge input pass native CI; Linux-specific packaging gaps remain separate from local success |
 | Installed/live | Exact candidate/prior journal, model-disabled healthy accepted bootstrap, ordinary cycles, phase timings and useful outcomes; no fabricated review or delivery receipt |
 
-The authored membership regression injects native settlement as a strict external port while the real artifact transport authenticates attempts/jobs/markers/ZIP; its separate named real candidate-recovery lifecycle remains required. Fake response shapes, injected timing, type/lint/format behavior and expected state transitions are all unexecuted. A baseline --no-check proposal exists only to avoid an additive metadata type blocking the semantic red case; candidate commands must typecheck normally, and a setup failure cannot count as the intended regression. No speedup, request reduction or passing test is yet claimed for this patch.
+At original preparation, the authored membership regression injected native settlement as a strict external port while the real artifact transport authenticated attempts/jobs/markers/ZIP, and its separate named real candidate-recovery lifecycle still required execution. The fake responses, timing, static checks and state transitions were unproved then. Executed module and combined consumer evidence now establishes the local controlled request reductions and recovery boundaries recorded in the sole ledger; native review, hosted CI, installation and live performance remain separate gates. Baseline --no-check was used solely to avoid the additive metadata type blocking the intended semantic red case; candidate commands typechecked normally, and setup failures were not counted as regression evidence. Controlled local request counts are not live latency or billed savings.
 
 Review must use the real native mode if invoked; never substitute a general-model chat or relabel an unavailable verdict. Apply current project development-review/delivery policy and the applicable bounded review sequence. Earlier throughput reviews covered earlier revisions and do not review this patch or authorize a fourth round in that prior loop. Autonomous runtime target PRs still require exact current-head native review evidence under the session's P0/P1 requirement.
 
