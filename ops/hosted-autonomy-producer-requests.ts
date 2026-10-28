@@ -9,6 +9,7 @@ import type { GitSha } from "../src/contracts/brands.ts";
 import type { BudgetReservationV1 } from "../src/contracts/budget-reservation.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
 import type { HostedExecutionIntentV1 } from "../src/contracts/hosted-supervisor.ts";
+import type { MatrixProducerPlanMembershipV1 } from "../src/contracts/maintenance-index.ts";
 import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
 import type { MatrixArtifactRequestV1 } from "../src/host/matrix-artifact-port.ts";
 import {
@@ -131,6 +132,8 @@ export interface HostedProducerRecoveryV1 {
   result: HostedAutonomyResultV1 | null;
   deferred: boolean;
   mayHaveWritten: boolean;
+  /** Complete positive plan membership; no result-availability verdict. */
+  plan?: MatrixProducerPlanMembershipV1;
   unrecoverable?: {
     kind: "expired" | "unlisted";
     reservations: readonly string[];

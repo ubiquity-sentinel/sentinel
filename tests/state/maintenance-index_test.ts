@@ -4,8 +4,10 @@ import {
   MAINTENANCE_INDEX_REF,
   MATRIX_INDEX_RELEASE_REF,
   parseCurrentMatrixIndexV1,
+  parseMatrixProducerPlanMembershipV1,
 } from "../../src/contracts/maintenance-index.ts";
 import { HOSTED_CONTROLLER_REPOSITORY } from "../../src/contracts/hosted-controller-deployment.ts";
+import { MAX_MATRIX_CELLS } from "../../src/contracts/matrix.ts";
 import { GitMaintenanceIndex } from "../../src/state/maintenance-index.ts";
 import { DenoGitRunner } from "../../src/state/mod.ts";
 import type { GitRunnerV1 } from "../../src/state/state-git.ts";
@@ -35,6 +37,39 @@ Deno.test("maintenance index rejects foreign identity and a false complete parti
       }],
     })
   );
+});
+
+Deno.test("maintenance index positive plan membership rejects incomplete and ambiguous descriptors", () => {
+  const plan = {
+    planDigest: "1".repeat(64),
+    plannerJobId: 17,
+    reservationIds: ["2".repeat(64), "3".repeat(64)],
+  };
+  assert.deepEqual(parseMatrixProducerPlanMembershipV1(plan), plan);
+  assert.deepEqual(
+    parseMatrixProducerPlanMembershipV1({
+      ...plan,
+      reservationIds: [],
+    }).reservationIds,
+    [],
+  );
+  for (
+    const invalid of [
+      { ...plan, plannerJobId: 0 },
+      { ...plan, planDigest: "unknown" },
+      { ...plan, reservationIds: ["2".repeat(64), "2".repeat(64)] },
+      { ...plan, reservationIds: ["missing"] },
+      { ...plan, unavailable: true },
+      {
+        ...plan,
+        reservationIds: Array.from(
+          { length: MAX_MATRIX_CELLS + 1 },
+          (_, i) => i.toString(16).padStart(64, "0"),
+        ),
+      },
+      { planDigest: plan.planDigest, plannerJobId: plan.plannerJobId },
+    ]
+  ) assert.throws(() => parseMatrixProducerPlanMembershipV1(invalid));
 });
 
 Deno.test("maintenance index uses independent nonforce creation CAS and reconciles a lost push response", async () => {

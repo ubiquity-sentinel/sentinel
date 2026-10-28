@@ -154,14 +154,24 @@ export async function recoverHostedCurrentMatrix(
   const progress = {
     steps: 0,
     producers: 0,
+    // Calls through the walk's logical source/proof reader, including cached
+    // history-view checks; this is not a count of Git or network requests.
+    sourceChecks: 0,
+    membershipHits: 0,
+    membershipSkips: 0,
     sequence: current.snapshot.sequence,
   };
-  const report = (outcome: "deferred_budget" | "deferred_producer") =>
+  let deferredReported = false;
+  const report = (
+    outcome: "completed" | "deferred_budget" | "deferred_producer",
+  ) => {
+    if (outcome !== "completed") deferredReported = true;
     console.log(JSON.stringify({
       kind: "sentinel_current_matrix_walk",
       outcome,
       ...progress,
     }));
+  };
   // One complete release fetch serves the whole walk; when the bounded view
   // is unavailable the walk keeps its exact per-step history reads. Either
   // reader's result passes the same head, sequence and cycle refusals below.
@@ -169,6 +179,7 @@ export async function recoverHostedCurrentMatrix(
     view: undefined,
   };
   const readParent = async (commit: GitSha) => {
+    progress.sourceChecks++;
     if (history.view === undefined) {
       history.view = null;
       try {
@@ -307,9 +318,12 @@ export async function recoverHostedCurrentMatrix(
       }
     }
   };
-  const recover = (producer: typeof current, scope: HostedProducerScopeV1) => {
+  const recover = async (
+    producer: typeof current,
+    scope: HostedProducerScopeV1,
+  ) => {
     progress.producers++;
-    return recoverHostedMatrixProducer(
+    const recovered = await recoverHostedMatrixProducer(
       deps,
       current,
       producer,
@@ -320,6 +334,10 @@ export async function recoverHostedCurrentMatrix(
       readParent,
       scope,
     );
+    if (recovered.plan !== undefined) {
+      await discovery.value?.rememberPlan(producer, recovered.plan);
+    }
+    return recovered;
   };
   // The requests each lost plan was already reported withholding.
   const reported = new Map<string, Set<string>>();
@@ -425,6 +443,22 @@ export async function recoverHostedCurrentMatrix(
       // A producer no pending record can bind to costs no custody, target or
       // artifact read: nothing could be recovered from it.
       if (!producerWanted(pending, execution, excluded)) return false;
+      const requests = pending.flatMap((row) =>
+        row.intent?.requestId && !excluded.has(row.intent.requestId)
+          ? [row.intent.requestId]
+          : []
+      );
+      const membership = await discovery.value?.planMembership(
+        producer,
+        requests,
+      );
+      if (membership === "matching" || membership === "disjoint") {
+        progress.membershipHits++;
+      }
+      if (membership === "disjoint") {
+        progress.membershipSkips++;
+        return false;
+      }
       const produced = await recover(producer, "all");
       // An unresolved newer producer stops older-history recovery: an older
       // wave must never settle a reservation whose newer producer outcome is
@@ -452,6 +486,7 @@ export async function recoverHostedCurrentMatrix(
   try {
     const result = await scan();
     await discovery.value?.save();
+    if (!deferredReported) report("completed");
     return result;
   } catch (error) {
     if (isDeferredCurrentMatrixHistoryBudget(error)) {
