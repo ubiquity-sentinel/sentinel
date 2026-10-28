@@ -22,7 +22,7 @@ Preserve this plan path and its derived identity. This is a bounded continuation
 | Canonical branch | codex/maintenance-throughput-20261028-gee28e37ed1 |
 | Exact source base | e6ac2213e27f124db21d13b757a9271066c434c9 |
 | Base ref at capture | origin/development |
-| Current state | Initial source received native review; first hosted CI exposed four telemetry failures; the bounded two-file correction passed its local gates at 2026-10-28 06:03 UTC; corrected hosted CI, installation and live measurement remain pending |
+| Current state | Bounded plan accepted at 2026-10-28 09:35 UTC: exact CI-green source 037057bd installed at generation 124, cold/ordinary warm reuse and guarded matching historical failed-result replay verified; qualifications and receipts are in the sole build-status ledger |
 | Integration and ledger owner | The current primary continuing this contract after reconciling ownership |
 
 Goal: As orchestrator, read AGENTS.md and /Users/nv/repos/ubiquity/sentinel/docs/plans/maintenance-throughput-20261028.md, reconcile access and ownership, use canonical worktree maintenance-throughput-20261028-gee28e37ed1 at /Users/nv/repos/ubiquity/sentinel/.codex-worktrees/maintenance-throughput-20261028-gee28e37ed1 on branch codex/maintenance-throughput-20261028-gee28e37ed1, validate and integrate the prepared maintenance optimizations through the recorded worker lanes, then publish, install and prove reduced maintenance work without weakening recovery, custody, accounting, review, CI or merge gates.
