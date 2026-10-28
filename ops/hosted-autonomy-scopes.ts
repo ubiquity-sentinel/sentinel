@@ -11,6 +11,7 @@ import {
 import type {
   HostedAutonomyDepsV1,
   HostedAutonomyGitHubV1,
+  HostedAutonomyPullStatusV1,
   HostedAutonomyPullV1,
 } from "./hosted-autonomy-types.ts";
 import type { HostedDeliveryProof } from "./hosted-autonomy-delivery-proof.ts";
@@ -20,6 +21,31 @@ export interface HostedAutonomyScopeV1 {
   readonly key: string;
   readonly surface: HostedAutonomyGitHubV1 | null;
   readonly baseBranch: string | null;
+}
+
+/**
+ * A status read cannot stand in for the full delivery reader below. Existing
+ * ports may still supply their full read; its observed number is preserved.
+ */
+export async function readHostedPullStatus(
+  scope: HostedAutonomyScopeV1,
+  number: number,
+): Promise<HostedAutonomyPullStatusV1 | null> {
+  if (!Number.isSafeInteger(number) || number <= 0) return null;
+  const surface = scope.surface;
+  if (surface === null) return null;
+  try {
+    const status = surface.readPullStatus === undefined
+      ? await surface.readPull(number, scope.baseBranch)
+      : await surface.readPullStatus(number);
+    return status !== null && status.number === number &&
+        (status.state === "open" || status.state === "closed") &&
+        typeof status.merged === "boolean"
+      ? { number: status.number, state: status.state, merged: status.merged }
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Cache repository surfaces for one pass without borrowing another scope. */
