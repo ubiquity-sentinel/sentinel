@@ -34,6 +34,9 @@ import {
 } from "../../src/repair/keys.ts";
 import { REPO } from "../state/helpers.ts";
 import { PR, TASK } from "../repair/conflict-resolution-rig.ts";
+import { MAX_BASE_REFRESH_FAILURES } from "../../src/repair/loop-base-refresh-failure.ts";
+import { resolvedConflictCandidate } from "../../src/host/matrix-conflict-candidate.ts";
+import { isMatrixRecoveryPending } from "../../src/host/matrix-blocked-candidate.ts";
 import {
   chargedCell,
   composeMirrorPreservation,
@@ -161,6 +164,25 @@ Deno.test("hosted conflict resolution: consumed-result hydration refuses stale b
       ["ambiguous charge", ({ state }) => {
         state.reservations[0].outcome = "ambiguous";
       }, "binding_mismatch"],
+      ["duplicate current charge", ({ state }) => {
+        state.reservations.push({
+          ...state.reservations[0],
+          id: "e".repeat(64),
+        });
+      }, "binding_mismatch"],
+      ["unsettled submitted charge", ({ state }) => {
+        state.reservations[0].settledAt = null;
+      }, "binding_mismatch"],
+      ["wrong charge source", ({ state }) => {
+        state.reservations[0].head = rig.ctx.base;
+      }, "binding_mismatch"],
+      ["charge after resolved operation", ({ state }) => {
+        state.reservations[0].createdAt = state.work[0].intent!.startedAt + 1;
+        state.reservations[0].settledAt = state.reservations[0].createdAt;
+      }, "binding_mismatch"],
+      ["spent failure budget", ({ state }) => {
+        state.work[0].intent!.failure!.attempts = MAX_BASE_REFRESH_FAILURES + 1;
+      }, "binding_mismatch"],
       ["newer attempt", ({ state }) => {
         state.work[0].counters.attempts++;
       }, "binding_mismatch"],
@@ -174,6 +196,27 @@ Deno.test("hosted conflict resolution: consumed-result hydration refuses stale b
         cell.result.bundle!.digest = "f".repeat(64);
       }, "candidate_unavailable"],
     ];
+    const exact = await resolvedConflictCandidate(
+      baseline.work[0],
+      baseline.reservations,
+    );
+    assert(exact !== null);
+    assert.equal(isMatrixRecoveryPending(baseline.work[0], exact), true);
+    const stale = structuredClone(baseline.work[0]);
+    stale.intent!.resultId = rig.ctx.head;
+    assert.equal(
+      isMatrixRecoveryPending(stale, exact),
+      false,
+      "a typed hint must bind this exact row",
+    );
+    assert.equal(
+      isMatrixRecoveryPending(baseline.work[0], {
+        ...exact,
+        candidate: { ...exact.candidate, head: rig.ctx.head },
+      }),
+      false,
+      "a typed hint cannot substitute its tuple",
+    );
     for (const [name, mutate, expected] of controls) {
       await t.step(name, async () => {
         const input = {

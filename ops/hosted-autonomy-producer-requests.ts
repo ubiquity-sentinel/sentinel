@@ -18,6 +18,7 @@ import {
   blockedRecoveryMatchesProducer,
 } from "../src/host/matrix-blocked-candidate.ts";
 import { implementationIntentKey } from "../src/repair/keys.ts";
+import { resolvedConflictCandidate } from "../src/host/matrix-conflict-candidate.ts";
 import type { HostedAutonomyResultV1 } from "./hosted-autonomy-types.ts";
 
 /**
@@ -49,9 +50,12 @@ export function producerWanted(
   pending: readonly WorkRecordV1[],
   execution: HostedExecutionIntentV1,
   excluded: ReadonlySet<string>,
+  requestIds: ReadonlyMap<string, string> = new Map(),
 ): boolean {
   return pending.some((record) =>
-    !excluded.has(record.intent?.requestId ?? "") &&
+    !excluded.has(
+      requestIds.get(record.id) ?? record.intent?.requestId ?? "",
+    ) &&
     (record.nextStep === "work" ||
       blockedRecoveryMatchesProducer(record, execution))
   );
@@ -64,7 +68,7 @@ export function producerWanted(
  * parked candidates bound to exactly this producer, after every record has
  * passed the same binding refusal.
  */
-export function producerRequests(
+export async function producerRequests(
   snapshot: {
     work: readonly WorkRecordV1[];
     reservations: readonly BudgetReservationV1[];
@@ -73,8 +77,34 @@ export function producerRequests(
   dedicated: ReadonlySet<string>,
   fault: (message: string) => Error,
   scope: HostedProducerScopeV1 = "all",
-): MatrixArtifactRequestV1[] {
-  return snapshot.work.flatMap((record) => {
+): Promise<MatrixArtifactRequestV1[]> {
+  const requests: MatrixArtifactRequestV1[] = [];
+  for (const record of snapshot.work) {
+    const resolved = await resolvedConflictCandidate(
+      record,
+      snapshot.reservations,
+    );
+    if (resolved !== null) {
+      if (scope === "all" && !dedicated.has(resolved.reservationId)) {
+        const {
+          taskId,
+          repository,
+          reservationId,
+          intentKey,
+          expectedBase,
+          attempt,
+        } = resolved;
+        requests.push({
+          taskId,
+          repository,
+          reservationId,
+          intentKey,
+          expectedBase,
+          attempt,
+        });
+      }
+      continue;
+    }
     const intent = record.intent;
     if (
       (record.nextStep !== "work" &&
@@ -82,7 +112,7 @@ export function producerRequests(
       !intent ||
       !["implementation", "candidate_preservation"].includes(intent.kind) ||
       dedicated.has(intent.requestId ?? "")
-    ) return [];
+    ) continue;
     const charge = snapshot.reservations.find((row) =>
       row.id === intent.requestId
     );
@@ -107,16 +137,17 @@ export function producerRequests(
     }
     if (
       scope === "blocked" && !blockedRecoveryMatchesProducer(record, execution)
-    ) return [];
-    return [{
+    ) continue;
+    requests.push({
       taskId: record.id,
       repository: record.repository,
       reservationId: charge.id,
       intentKey: intent.key,
       expectedBase: record.target.base,
       attempt: record.counters.attempts,
-    }];
-  });
+    });
+  }
+  return requests;
 }
 
 /**

@@ -2,6 +2,7 @@ import { ingestMatrixResults } from "../src/host/matrix.ts";
 import type { MatrixIngestOptionsV1 } from "../src/host/matrix-ingest.ts";
 import { CandidateProofPassV1 } from "../src/host/actions-candidates-proof.ts";
 import { matrixDigestV1 } from "../src/contracts/matrix.ts";
+import { resolvedConflictCandidate } from "../src/host/matrix-conflict-candidate.ts";
 import {
   HOSTED_RUNTIME_ID,
   type HostedExecutionSettlementV1,
@@ -265,7 +266,7 @@ async function recoverProducerWithinBudget(
   // The exact request bindings are pure facts of the repair snapshot: compute
   // them before building any matrix port, so a producer no record binds to
   // costs no target or artifact read.
-  const bound = producerRequests(
+  const bound = await producerRequests(
     before.snapshot,
     saved.execution,
     dedicated,
@@ -655,6 +656,67 @@ async function recoverProducerWithinBudget(
     }
     for (const cell of cells) {
       const entry = report.entries.find((row) => row.cellId === cell.cellId);
+      if (
+        entry?.disposition === "duplicate" &&
+        entry.detail ===
+          "receipt already consumed; exact conflict result rehydrated"
+      ) {
+        await custody();
+        const read = await state.readRepair();
+        const record = before.snapshot.work.find((row) =>
+          row.id === cell.taskId
+        );
+        const fresh = read.ok && read.value.status === "found"
+          ? read.value.snapshot.work.find((row) => row.id === cell.taskId)
+          : undefined;
+        const binding = fresh && record &&
+            canonicalStringify(fresh) === canonicalStringify(record) &&
+            read.ok && read.value.status === "found"
+          ? await resolvedConflictCandidate(
+            fresh,
+            read.value.snapshot.reservations,
+          )
+          : null;
+        if (
+          binding === null || binding.reservationId !== cell.reservationId ||
+          binding.intentKey !== cell.intentKey
+        ) {
+          unfinished++;
+          continue;
+        }
+        const github = ports.cycleFor(config, proofs).github;
+        checkDeadline();
+        const preserved = await github.preserveCandidate({
+          taskId: binding.taskId,
+          candidate: binding.candidate,
+          publishedHead: binding.publishedHead,
+        });
+        // An admitted effect completes all custody/ref/state readbacks even if
+        // its own bounded proof consumed the remainder of this walk's budget.
+        await custody(false);
+        const observed = preserved.ok
+          ? await github.readRef(binding.candidate.ref)
+          : null;
+        const afterPreserve = await state.readRepair();
+        await custody(false);
+        if (
+          !afterPreserve.ok || afterPreserve.value.status !== "found" ||
+          !read.ok || read.value.status !== "found" ||
+          afterPreserve.value.head !== read.value.head ||
+          canonicalStringify(afterPreserve.value.snapshot) !==
+            canonicalStringify(read.value.snapshot)
+        ) {
+          throw integrityFault(
+            "current matrix conflict preservation readback changed",
+          );
+        }
+        if (
+          !preserved.ok || !observed?.ok ||
+          observed.value?.sha !== binding.candidate.head
+        ) unfinished++;
+        else ingested++;
+        continue;
+      }
       let record: (typeof settled)[number];
       let restore: typeof restoreInflightCandidate;
       if (entry?.disposition === "ingested") {

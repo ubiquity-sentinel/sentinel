@@ -6,6 +6,10 @@ import {
   isHostedReleaseTerminal,
 } from "../src/contracts/hosted-supervisor.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
+import {
+  resolvedConflictCandidate,
+  type ResolvedConflictCandidateV1,
+} from "../src/host/matrix-conflict-candidate.ts";
 import type { GitSha } from "../src/contracts/brands.ts";
 import type { ReleaseHistoryViewV1 } from "../src/contracts/ports.ts";
 import {
@@ -101,11 +105,30 @@ export async function recoverHostedCurrentMatrix(
     onDeferred();
     return null;
   }
+  const resolved = new Map<string, ResolvedConflictCandidateV1>();
+  const requestIds = new Map<string, string>();
+  for (const row of repair.value.snapshot.work) {
+    if (deps.clock.now() >= deadlineAt) {
+      onDeferred();
+      return null;
+    }
+    const binding = await resolvedConflictCandidate(
+      row,
+      repair.value.snapshot.reservations,
+    );
+    if (deps.clock.now() >= deadlineAt) {
+      onDeferred();
+      return null;
+    }
+    if (binding !== null) resolved.set(row.id, binding);
+    const requestId = binding?.reservationId ?? row.intent?.requestId;
+    if (requestId) requestIds.set(row.id, requestId);
+  }
   if (
     !repair.value.snapshot.work.some((row) =>
       !queueRecordProtected(row, deps.queueCustody) &&
-      isMatrixRecoveryPending(row) &&
-      !dedicated.has(row.intent?.requestId ?? "")
+      isMatrixRecoveryPending(row, resolved.get(row.id)) &&
+      !dedicated.has(requestIds.get(row.id) ?? "")
     )
   ) return null;
   const current = release.value;
@@ -147,8 +170,8 @@ export async function recoverHostedCurrentMatrix(
   );
   const pending = repair.value.snapshot.work.filter((row) =>
     !queueRecordProtected(row, deps.queueCustody) &&
-    isMatrixRecoveryPending(row) &&
-    !dedicated.has(row.intent?.requestId ?? "")
+    isMatrixRecoveryPending(row, resolved.get(row.id)) &&
+    !dedicated.has(requestIds.get(row.id) ?? "")
   );
   // Bounded diagnostic counters only: integers, never record content.
   const progress = {
@@ -445,12 +468,13 @@ export async function recoverHostedCurrentMatrix(
     ordinaryWalkExhausted = await traverse(async (producer, execution) => {
       // A producer no pending record can bind to costs no custody, target or
       // artifact read: nothing could be recovered from it.
-      if (!producerWanted(pending, execution, excluded)) return false;
-      const requests = pending.flatMap((row) =>
-        row.intent?.requestId && !excluded.has(row.intent.requestId)
-          ? [row.intent.requestId]
-          : []
-      );
+      if (!producerWanted(pending, execution, excluded, requestIds)) {
+        return false;
+      }
+      const requests = pending.flatMap((row) => {
+        const id = requestIds.get(row.id);
+        return id && !excluded.has(id) ? [id] : [];
+      });
       const membership = await discovery.value?.planMembership(
         producer,
         requests,
@@ -480,7 +504,7 @@ export async function recoverHostedCurrentMatrix(
         unrecoverable(execution, lost);
       }
       ordinaryRequestsCovered = pending.every((row) =>
-        row.intent?.requestId && covered.has(row.intent.requestId)
+        requestIds.has(row.id) && covered.has(requestIds.get(row.id)!)
       );
       return ordinaryRequestsCovered;
     }, () => true);

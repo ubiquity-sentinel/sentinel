@@ -2,6 +2,10 @@
 import type { GitSha } from "../contracts/brands.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { candidateBranch, implementationIntentKey } from "../repair/keys.ts";
+import {
+  resolvedConflictCandidateMatches,
+  type ResolvedConflictCandidateV1,
+} from "./matrix-conflict-candidate.ts";
 
 const MISMATCH =
   /^authenticated historical matrix runtime mismatch; producer=([1-9][0-9]*):([1-9][0-9]*); runtime=([0-9a-f]{40}); plan=([0-9a-f]{64}); artifact=([1-9][0-9]*); archive=sha256:([0-9a-f]{64}); planner=([1-9][0-9]*); result=([0-9a-f]{64}); original admission retained$/;
@@ -74,12 +78,16 @@ export function blockedRecoveryBinding(record: WorkRecordV1) {
 }
 
 /** Normal pending work or an exactly bound historical result. */
-export function isMatrixRecoveryPending(record: WorkRecordV1): boolean {
+export function isMatrixRecoveryPending(
+  record: WorkRecordV1,
+  resolved?: ResolvedConflictCandidateV1 | null,
+): boolean {
   return (record.nextStep === "work" && record.intent !== null &&
     ["implementation", "candidate_preservation"].includes(
       record.intent.kind,
     )) ||
-    blockedRecoveryBinding(record) !== null;
+    blockedRecoveryBinding(record) !== null ||
+    resolvedConflictCandidateMatches(record, resolved);
 }
 
 /** Blocked records may be read only through their exact authenticated producer. */

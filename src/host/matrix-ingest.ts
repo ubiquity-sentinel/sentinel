@@ -5,13 +5,10 @@ import {
   type MatrixCellResultV1,
   type MatrixPlanV1,
 } from "../contracts/matrix.ts";
-import {
-  baseRefreshIntentKey,
-  candidateBranch,
-  candidatePreservationRef,
-  implementationIntentKey,
-} from "../repair/keys.ts";
+import { candidateBranch, candidatePreservationRef } from "../repair/keys.ts";
 import { resolvedConflictResolution } from "../repair/conflict-resolution.ts";
+import { HOSTED_ACTIONS_CLOCK_TOLERANCE_MS } from "../contracts/hosted-supervisor.ts";
+import { resolvedConflictCandidate } from "./matrix-conflict-candidate.ts";
 import {
   createRunBounds,
   handleModelReceipt,
@@ -215,30 +212,24 @@ export async function ingestMatrixResults(
       // Restore only that exact operation's objects, without consuming again,
       // reopening a blocked record or granting any publication authority.
       const candidate = result.receipt?.candidate;
-      const state = record.target.candidateState;
-      const preserved = state?.preserved;
-      const { head, pr, branch } = record.target;
+      const binding = await resolvedConflictCandidate(
+        record,
+        context.snapshot.reservations,
+      );
       if (
-        record.nextStep !== "work" || head === null || pr === null ||
-        branch === null || reservation.purpose !== "retry" ||
-        reservation.outcome !== "submitted" || reservation.settledAt === null ||
-        intent.expectedHead !== head || intent.pr !== pr ||
-        intent.branch !== branch || intent.requestId !== null ||
-        cell.request.checkoutBase !== head ||
+        binding === null || binding.reservationId !== cell.reservationId ||
+        binding.intentKey !== cell.intentKey ||
+        cell.request.checkoutBase !== binding.publishedHead ||
         cell.request.mergeBase !== intent.observedBase ||
+        cell.request.reviewFindings !== undefined ||
         intent.observedBase === null ||
-        intent.key !== baseRefreshIntentKey(pr, head, intent.observedBase) ||
-        cell.intentKey !== implementationIntentKey(cell.reservationId) ||
         result.status !== "completed" || result.receipt === null ||
         candidate?.head !== resolved || candidate.checkpointSha !== null ||
-        state?.publishedHead !== head || preserved === null ||
-        preserved === undefined || preserved.base !== record.target.base ||
-        preserved.head !== head ||
-        preserved.ref !== await candidatePreservationRef(
-            record.repository,
-            record.id,
-            preserved.operationKey,
-          ) ||
+        result.completedAt >
+          intent.startedAt + HOSTED_ACTIONS_CLOCK_TOLERANCE_MS ||
+        reservation.settledAt === null ||
+        result.completedAt >
+          reservation.settledAt + HOSTED_ACTIONS_CLOCK_TOLERANCE_MS ||
         !verifyMatrixReceiptV1(
           result.receipt,
           cell.request,
@@ -264,7 +255,7 @@ export async function ingestMatrixResults(
           digest: result.bundle.digest,
           head: resolved,
           checkpointSha: null,
-          ancestors: [head, intent.observedBase],
+          ancestors: [binding.publishedHead, intent.observedBase],
         })
       ) {
         entries.push({

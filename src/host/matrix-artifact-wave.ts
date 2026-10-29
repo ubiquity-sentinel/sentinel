@@ -20,6 +20,7 @@ import {
 import { candidateBranch } from "../repair/keys.ts";
 import { isCiCorrectionFinding } from "../repair/ci-rejection.ts";
 import { conflictResolutionInFlight } from "../repair/conflict-resolution.ts";
+import { resolvedConflictCandidate } from "./matrix-conflict-candidate.ts";
 import {
   MATRIX_CELL_LOG_SETTLE_MS,
   type MatrixArtifactRequestV1,
@@ -244,6 +245,19 @@ export async function recoverMatrixArtifactWaves(context: {
         row.id === cell.taskId &&
         sameRepo(row.repository, cell.repository)
       )!;
+      const resolved = await resolvedConflictCandidate(
+        task,
+        snapshot.reservations,
+      );
+      if (task.intent?.kind === "base_refresh") {
+        if (
+          resolved === null || resolved.reservationId !== cell.reservationId ||
+          cell.request.checkoutBase !== resolved.publishedHead ||
+          cell.request.mergeBase !== resolved.candidate.base ||
+          cell.request.reviewFindings !== undefined ||
+          cell.request.issue?.number !== task.related.issueNumber
+        ) refuse();
+      }
       if (
         task.intent?.kind === "implementation" &&
         cell.request.checkoutBase !== undefined &&
@@ -472,6 +486,26 @@ export async function recoverMatrixArtifactWaves(context: {
         row.id === cell.taskId &&
         sameRepo(row.repository, cell.repository)
       )!;
+      if (task.intent?.kind === "base_refresh") {
+        const resolved = await resolvedConflictCandidate(
+          task,
+          snapshot.reservations,
+        );
+        const reservation = snapshot.reservations.find((row) =>
+          row.id === cell.reservationId
+        )!;
+        if (
+          resolved === null || result.status !== "completed" ||
+          result.receipt?.outcome !== "completed" ||
+          result.bundle?.head !== resolved.candidate.head ||
+          result.receipt.candidate?.head !== resolved.candidate.head ||
+          result.bundle.checkpointSha !== null ||
+          result.receipt.candidate.checkpointSha !== null ||
+          reservation.settledAt === null ||
+          reservation.settledAt + TOLERANCE < result.completedAt ||
+          task.intent.startedAt + TOLERANCE < result.completedAt
+        ) refuse();
+      }
       if (
         input.rejectionProof && (result.status !== "not_started" ||
           result.receipt !== null || result.bundle !== null)
