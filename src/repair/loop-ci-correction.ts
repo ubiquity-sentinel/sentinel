@@ -19,20 +19,21 @@
  * memory and in the correction request; the durable record holds the ordinary
  * lifecycle step, wait or blocker message.
  */
+import { ownBaseRed } from "./base-repair.ts";
 import type { GitHubCheckV1 } from "../contracts/ports.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import {
   attributeFailedChecks,
+  baseRepairFindingOpen,
   ciCorrectable,
   ciCorrectionFinding,
   ciCorrectionRouteOpen,
   type CiDispositionV1,
   ciFixExhaustedDetail,
-  decideCiDisposition,
   failedChecks,
   unattributedDetail,
 } from "./ci-rejection.ts";
-import { ciFixesLeft } from "./ci-first-policy.ts";
+import { ciFixesLeft, RED_BASE_RECHECK_MS } from "./ci-first-policy.ts";
 import { CHECK_POLL_MS } from "./loop-bounds.ts";
 import {
   headAcceptedByReview,
@@ -53,8 +54,11 @@ import {
   setWait,
 } from "./transitions.ts";
 
-/** Re-observation interval while the reviewed base itself is red. */
-export const RED_BASE_RECHECK_MS = 30 * 60_000;
+/**
+ * Re-observation interval while the reviewed base itself is red (defined with
+ * the pure red-base hold, `isRedBaseHold`, which the delivery line reads).
+ */
+export { RED_BASE_RECHECK_MS };
 
 const UNAVAILABLE: StepResultV1 = {
   kind: "deferred",
@@ -64,7 +68,8 @@ const UNAVAILABLE: StepResultV1 = {
 /**
  * Attribute the failed head checks through one base observation. The base read
  * is an ordinary GitHub read under the caller's cooldown gate; a failed read
- * attributes nothing (null).
+ * attributes nothing (null), and so does an unavailable base-repair
+ * recognition or tip read (`ownBaseRed`).
  */
 async function attributeAgainstBase(
   deps: RepairCycleDepsV1,
@@ -77,7 +82,11 @@ async function attributeAgainstBase(
     new Set(failed.map((check) => check.name)),
   );
   if (!base.ok) return null;
-  return decideCiDisposition(attributeFailedChecks(failed, base.value.checks));
+  return ownBaseRed(
+    deps,
+    record,
+    attributeFailedChecks(failed, base.value.checks),
+  );
 }
 
 /**
@@ -264,7 +273,11 @@ export async function confirmCiCorrection(
   if (observed.kind === "candidate") {
     return {
       kind: "confirmed",
-      finding: ciCorrectionFinding(record.target.base, observed.checks),
+      finding: ciCorrectionFinding(
+        record.target.base,
+        observed.checks,
+        observed.redBase === true && baseRepairFindingOpen(deps),
+      ),
     };
   }
   const now = deps.clock.now();

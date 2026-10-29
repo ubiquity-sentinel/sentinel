@@ -102,6 +102,9 @@ const MAINTENANCE_PROGRESS_PHASES = [
   "closure",
   "self_observation",
   "followup",
+  "base_repair",
+  "ci_resume",
+  "ci_outage",
   "summary_memory",
   "summary_park",
   "artifact_cleanup",
@@ -188,4 +191,23 @@ export function maintenanceFailureCategory(
 export function isHardAutonomyFailure(reason: HostedAutonomyReasonV1): boolean {
   return reason === "identity_rejected" || reason === "unexpected_failure" ||
     reason === "historical_quarantine_incomplete";
+}
+
+/**
+ * A view of `state` whose first `readRepair` result is reused by every later
+ * call: the read-only passes after the chain (follow-ups, base repair) share
+ * one state read, so the pass reads state once after its last write. Every
+ * other member is the original, bound to it.
+ */
+export function shareRepairRead<T extends StateReadView>(state: T): T {
+  let shared: ReturnType<StateReadView["readRepair"]> | null = null;
+  return new Proxy(state, {
+    get(target, property) {
+      if (property === "readRepair") {
+        return () => shared ??= target.readRepair();
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
 }

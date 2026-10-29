@@ -309,6 +309,7 @@ export async function runLocalRepairHost(
       clock,
       modelId: input.modelId,
       localIteration: true,
+      targetConfigs: [appliedConfig],
     });
     github.pushHead = () =>
       Promise.resolve(portError(

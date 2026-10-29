@@ -51,8 +51,12 @@ import {
   REPAIR_RUN_CEILING_MS,
   type RepairCycleOutcomeV1,
   type ReplayFixtureIdentitySourceV1,
-  runRepairCycle,
 } from "./repair/loop.ts";
+
+import {
+  advanceRepairCycle,
+  type RepairCycleAdvanceV1,
+} from "./repair/loop-cycle.ts";
 
 /** Static sanitized message of every mandatory drain failure. */
 export const REPAIR_REVIEW_DRAIN_ERROR_MESSAGE =
@@ -116,6 +120,8 @@ export interface RepairEntrypointDepsV1 {
 }
 
 export interface RepairEntrypointOptionsV1 {
+  /** Trusted hosted origin captured once before target preparation. */
+  runStartedAt?: number;
   /**
    * Absolute run deadline; declared operations must fit the remaining margin.
    * The caller-supplied deadline is bound by the fixed 120-minute run ceiling
@@ -151,6 +157,31 @@ export async function runRepairEntrypoint(
   deps: RepairEntrypointDepsV1,
   options: RepairEntrypointOptionsV1,
 ): Promise<RepairCycleOutcomeV1> {
+  const invocation = createRepairInvocation(deps, options);
+  try {
+    while (
+      (await invocation.advance()).kind === "progress"
+    ) { /* one observation */ }
+  } catch { /* finish retains the original exception and mandatory drain */ }
+  return await invocation.finish();
+}
+
+/** Internal hosted lifecycle; one coordinator awaits every advance. */
+export interface RepairInvocationV1 {
+  advance(
+    wake?: readonly string[],
+  ): Promise<
+    RepairCycleAdvanceV1 | { kind: "done"; outcome: RepairCycleOutcomeV1 }
+  >;
+  /** Session/journal settlement only; never writes repair state. */
+  drain(): Promise<void>;
+  finish(): Promise<RepairCycleOutcomeV1>;
+}
+
+export function createRepairInvocation(
+  deps: RepairEntrypointDepsV1,
+  options: RepairEntrypointOptionsV1,
+): RepairInvocationV1 {
   const configs = deps.configs.map((config) => parseRepositoryConfigV1(config));
   const agreement = resolveGlobalLiveStartLimits(configs);
   if (agreement.status === "conflict") {
@@ -166,7 +197,12 @@ export async function runRepairEntrypoint(
   // deadline is not a bound (its comparisons are all false) and must never
   // bypass the fixed ceiling, so it is normalized to unbounded and the
   // ceiling governs.
-  const runStartedAt = deps.clock.now();
+  const nowAtStart = deps.clock.now();
+  const runStartedAt = options.runStartedAt !== undefined &&
+      Number.isSafeInteger(options.runStartedAt) &&
+      options.runStartedAt <= nowAtStart
+    ? options.runStartedAt
+    : nowAtStart;
   const callerDeadline = Number.isNaN(options.deadline)
     ? Number.POSITIVE_INFINITY
     : options.deadline;
@@ -181,39 +217,61 @@ export async function runRepairEntrypoint(
   const postDrain: { continuation: PostDrainReviewContinuationV1 | null } = {
     continuation: null,
   };
-  try {
-    outcome = await runRepairCycle(
-      {
-        clock: deps.clock,
-        state: deps.state,
-        configs,
-        controllerSha: deps.controllerSha,
-        github: deps.github,
-        githubCooldown: deps.githubCooldown,
-        incidents: deps.incidents,
-        replay: deps.replay,
-        fixtureIdentities: deps.fixtureIdentities,
-        model: deps.model,
-        budget: deps.budget,
-        externalImplementations: deps.externalImplementations,
-        legacyReviewCutoff: deps.legacyReviewCutoff ?? null,
-      },
-      {
-        deadline: hardDeadline - OPERATION_MARGIN_MS,
-        stepLimit: options.stepLimit,
-        runStartedAt,
-        modelStartsEnabled: options.modelStartsEnabled,
-      },
-      (continuation) => {
-        postDrain.continuation = continuation;
-      },
-    );
-  } catch (error) {
-    // The original outcome/error is preserved: drain runs on this path too,
-    // and on a successful drain the original error is rethrown unchanged.
-    cycleThrew = true;
-    cycleError = error;
-  }
+  const cycle = advanceRepairCycle(
+    {
+      clock: deps.clock,
+      state: deps.state,
+      configs,
+      controllerSha: deps.controllerSha,
+      github: deps.github,
+      githubCooldown: deps.githubCooldown,
+      incidents: deps.incidents,
+      replay: deps.replay,
+      fixtureIdentities: deps.fixtureIdentities,
+      model: deps.model,
+      budget: deps.budget,
+      externalImplementations: deps.externalImplementations,
+      legacyReviewCutoff: deps.legacyReviewCutoff ?? null,
+    },
+    {
+      deadline: hardDeadline - OPERATION_MARGIN_MS,
+      stepLimit: options.stepLimit,
+      runStartedAt,
+      modelStartsEnabled: options.modelStartsEnabled,
+    },
+    (continuation) => {
+      postDrain.continuation = continuation;
+    },
+  );
+  let cycleDone = false;
+  let advancing = false;
+  let finalizing = false;
+  let drainedOnce: Promise<void> | null = null;
+  let finishedOnce: Promise<RepairCycleOutcomeV1> | null = null;
+  const advance: RepairInvocationV1["advance"] = async (wake) => {
+    if (advancing || finalizing) {
+      throw new Error("repair invocation advance is not serial");
+    }
+    if (cycleDone) return { kind: "done", outcome: outcome! };
+    advancing = true;
+    try {
+      const next = await cycle.next(wake);
+      if (next.done) {
+        cycleDone = true;
+        outcome = next.value;
+        return { kind: "done", outcome };
+      }
+      if (next.value.kind === "waiting") outcome = next.value.outcome;
+      return next.value;
+    } catch (error) {
+      cycleDone = true;
+      cycleThrew = true;
+      cycleError = error;
+      throw error;
+    } finally {
+      advancing = false;
+    }
+  };
 
   // Mandatory bounded finalization on EVERY return and error path, including
   // the double-failure path. Drain stops review admission, awaits or
@@ -223,62 +281,80 @@ export async function runRepairEntrypoint(
   let report: ReviewDrainReportV1 | null = null;
   let drainFailed = false;
   let drainCause: unknown = null;
-  try {
-    const drained = await deps.github.drainReviews({
-      deadline: hardDeadline,
-      interrupt: true,
-    });
-    if (drained.ok) {
-      report = drained.value;
-      drainFailed = report.ok === false;
-    } else {
-      drainFailed = true;
-      drainCause = drained.error;
+  const drain = (): Promise<void> =>
+    drainedOnce ??= (async () => {
+      if (advancing) {
+        throw new Error("repair invocation drain raced an advance");
+      }
+      finalizing = true;
+      try {
+        const drained = await deps.github.drainReviews({
+          deadline: hardDeadline,
+          interrupt: true,
+        });
+        if (drained.ok) {
+          report = drained.value;
+          drainFailed = report.ok === false;
+        } else {
+          drainFailed = true;
+          drainCause = drained.error;
+        }
+      } catch (error) {
+        drainFailed = true;
+        drainCause = error;
+      }
+    })();
+  const finish = async (): Promise<RepairCycleOutcomeV1> => {
+    if (!cycleDone) {
+      outcome ??= { status: "margin", detail: "repair invocation finalized" };
+      await cycle.return(outcome);
+      cycleDone = true;
     }
-  } catch (error) {
-    drainFailed = true;
-    drainCause = error;
-  }
-  if (drainFailed) {
-    // If the cycle itself failed, the drain failure is part of that failure:
-    // throw the typed error so both the drain report and the original error
-    // are visible. If the cycle succeeded, the drain is a best-effort
-    // cleanup/verification step; a drain that cannot prove settlement after
-    // successful work is a drain limitation, not a work failure. Log it and
-    // return the successful outcome instead of failing the run.
-    if (cycleThrew) {
-      throw new RepairReviewDrainError({
-        report,
-        outcome,
-        cause: cycleError,
-      });
+    await drain();
+    if (drainFailed) {
+      // If the cycle itself failed, the drain failure is part of that failure:
+      // throw the typed error so both the drain report and the original error
+      // are visible. If the cycle succeeded, the drain is a best-effort
+      // cleanup/verification step; a drain that cannot prove settlement after
+      // successful work is a drain limitation, not a work failure. Log it and
+      // return the successful outcome instead of failing the run.
+      if (cycleThrew) {
+        throw new RepairReviewDrainError({
+          report,
+          outcome,
+          cause: cycleError,
+        });
+      }
+      // Cycle succeeded but drain failed: do not fail the run. The cycle
+      // outcome (e.g. 33 matrix cells completed) is the primary evidence;
+      // the drain could not prove settlement/durability, which is logged
+      // here for diagnosis but does not invalidate the completed work.
+      console.error(
+        `[repair] review drain failed after successful cycle; ` +
+          `returning cycle outcome (drain fault: ` +
+          `${
+            drainCause instanceof Error
+              ? drainCause.message
+              : String(drainCause)
+          })`,
+      );
     }
-    // Cycle succeeded but drain failed: do not fail the run. The cycle
-    // outcome (e.g. 33 matrix cells completed) is the primary evidence;
-    // the drain could not prove settlement/durability, which is logged
-    // here for diagnosis but does not invalidate the completed work.
-    console.error(
-      `[repair] review drain failed after successful cycle; ` +
-        `returning cycle outcome (drain fault: ` +
-        `${
-          drainCause instanceof Error ? drainCause.message : String(drainCause)
-        })`,
-    );
-  }
-  if (cycleThrew) throw cycleError;
-  if (
-    report !== null && postDrain.continuation !== null &&
-    (outcome?.status === "idle" || outcome?.status === "margin")
-  ) {
-    const completedKeys = report.operations.filter((operation) =>
-      operation.processSettled && operation.durable &&
-      operation.outcome !== "faulted" &&
-      (operation.phase === "ready" || operation.phase === "published")
-    ).map((operation) => operation.operationKey);
-    const continued = await postDrain.continuation(completedKeys);
-    if (continued !== null) outcome = continued;
-  }
-  return outcome!;
+    if (cycleThrew) throw cycleError;
+    if (
+      report !== null && postDrain.continuation !== null &&
+      (outcome?.status === "idle" || outcome?.status === "margin")
+    ) {
+      const completedKeys = report.operations.filter((operation) =>
+        operation.processSettled && operation.durable &&
+        operation.outcome !== "faulted" &&
+        (operation.phase === "ready" || operation.phase === "published")
+      ).map((operation) => operation.operationKey);
+      const continued = await postDrain.continuation(completedKeys);
+      if (continued !== null) outcome = continued;
+    }
+    return outcome!;
+  };
+  return { advance, drain, finish: () => finishedOnce ??= finish() };
 }
 
 // ---------------------------------------------------------------------------

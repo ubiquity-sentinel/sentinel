@@ -316,6 +316,7 @@ export function composeRepairHost(
     // inside the port for the exact selected provider, and the provider is
     // submitted explicitly on thread/start.
     modelProvider: options.model.modelProvider,
+    protectedPaths: target.protectedPaths,
     commitCandidate: options.model.commitCandidate ??
       new LocalCandidateCommitter(options.model.checkoutDir),
   });

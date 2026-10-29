@@ -1,0 +1,2517 @@
+diff --git a/src/github/git-train-drift.ts b/src/github/git-train-drift.ts
+new file mode 100644
+index 0000000000..922793bdc6
+--- /dev/null
++++ b/src/github/git-train-drift.ts
+@@ -0,0 +1,388 @@
++/**
++ * Delivery-train runtime facts over the trusted local object store (redesign
++ * 2026-10-25 C12, WP3.4). The runtime handoff (`loop-train-handoff.ts`)
++ * decides from the same pure overlay rule as the launcher
++ * (`computeTrainOverlayV1`), so this module only reads git:
++ *
++ * - R_m, a member's reviewed patch: the raw tree change list between the
++ *   unique merge base of its reviewed base and its head, and the head
++ *   (`git diff-tree -r --raw --no-abbrev -z --no-renames`), as the
++ *   (path, oldMode, oldBlob, newMode, newBlob) tuples the launcher derives
++ *   from GitHub's Git trees (`mergeBaseTreeChanges`);
++ * - T's entries over exactly the paths the drift rule reads: every changed
++ *   path and every parent directory of an added path (`git ls-tree T --
++ *   <paths>`, literal pathspecs, non-recursive) and every non-directory path
++ *   under an added path (`git ls-tree -r T -- <added paths>`). Any other path
++ *   is "not known", so the rule can never pass on a fact it did not read;
++ * - a landing commit's parents and message (`git cat-file commit`) and one
++ *   ancestry fact (`git merge-base --is-ancestor`), for train landing
++ *   recognition (`verifyTrainLandingV1`).
++ *
++ * Every command only reads the local object store: no checkout, index or
++ * ref update, no hook, no network and no credential. A missing object, an
++ * ambiguous merge base, a bound or unparsable output is a typed failure,
++ * never a fact.
++ */
++import { type GitSha, isGitSha } from "../contracts/brands.ts";
++import { portError, portOk, type PortResultV1 } from "../contracts/ports.ts";
++import type {
++  TrainBaseTreeV1,
++  TrainTreeChangeV1,
++  TrainTreeEntryV1,
++} from "../repair/train-overlay.ts";
++import type { CarriedPatchGitRunV1 } from "./git-carried-patch.ts";
++
++/** One bounded git run over the trusted local store. */
++export type TrainGitRunV1 = CarriedPatchGitRunV1;
++
++/** Bound on one listing (bytes); a larger listing is no fact. */
++export const TRAIN_GIT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
++/** Bound on one commit object read (a maximal train message is ~70 KB). */
++const COMMIT_MAX_BYTES = 1024 * 1024;
++const SMALL_OUTPUT_BYTES = 64 * 1024;
++/** Pathspecs per `ls-tree` run (argv stays bounded). */
++const PATHSPEC_CHUNK = 256;
++/** Bound on one patch's changed paths; a larger patch is no fact. */
++export const TRAIN_GIT_MAX_CHANGES = 20_000;
++
++const STATIC_INPUT = "train git input is invalid";
++const STATIC_OBJECT = "train git input commit is unavailable";
++const STATIC_MERGE_BASE = "train git merge base is not unique";
++const STATIC_READ = "train git read failed";
++const STATIC_BOUND = "train git read exceeded its bound";
++const STATIC_OUTPUT = "train git output is invalid";
++
++const NULL_SHA = "0".repeat(40);
++const OBJECT_ID = /^[0-9a-f]{40}$/;
++const ENTRY_MODES = new Set(["100644", "100755", "120000", "160000"]);
++
++/** The member patch and T's entries over its paths. */
++export interface TrainMemberPatchV1 {
++  readonly changes: readonly TrainTreeChangeV1[];
++  readonly tree: TrainBaseTreeV1;
++}
++
++export interface TrainMemberPatchRequestV1 {
++  /** The base the authorizing receipt recorded (B0_m). */
++  readonly reviewedBase: GitSha;
++  /** The literal reviewed head (H_m). */
++  readonly head: GitSha;
++  /** The tip T the overlay is computed on. */
++  readonly base: GitSha;
++}
++
++/** A commit's exact parents and message. */
++export interface TrainGitCommitV1 {
++  readonly parents: readonly GitSha[];
++  readonly message: string;
++}
++
++function failure(result: { timeout?: boolean; overflow?: boolean }) {
++  return result.timeout === true || result.overflow === true
++    ? portError("unavailable", STATIC_BOUND)
++    : portError("unavailable", STATIC_READ);
++}
++
++/**
++ * The exact output text: a path or message that is not valid UTF-8 cannot
++ * be named exactly (nor through the Git Data API), so it is no fact.
++ */
++function exactText(
++  result: { stdout: string; stdoutBytes?: Uint8Array },
++): string | null {
++  if (result.stdoutBytes === undefined) return result.stdout;
++  try {
++    return new TextDecoder("utf-8", { fatal: true }).decode(
++      result.stdoutBytes,
++    );
++  } catch {
++    return null;
++  }
++}
++
++function byPath(a: string, b: string): number {
++  return a < b ? -1 : a > b ? 1 : 0;
++}
++
++function parentDirs(path: string): string[] {
++  const parts = path.split("/");
++  return parts.slice(1).map((_, index) => parts.slice(0, index + 1).join("/"));
++}
++
++async function commitExists(
++  run: TrainGitRunV1,
++  sha: GitSha,
++): Promise<PortResultV1<boolean>> {
++  const result = await run(
++    ["rev-parse", "--verify", "--quiet", `${sha}^{commit}`],
++    SMALL_OUTPUT_BYTES,
++  );
++  if (result.ok) return portOk(result.stdout.trim() === sha);
++  if (result.code === 1) return portOk(false);
++  return portError("unavailable", STATIC_OBJECT);
++}
++
++async function uniqueMergeBase(
++  run: TrainGitRunV1,
++  a: GitSha,
++  b: GitSha,
++): Promise<PortResultV1<GitSha>> {
++  const result = await run(["merge-base", "--all", a, b], SMALL_OUTPUT_BYTES);
++  if (!result.ok) {
++    return result.code === 1
++      ? portError("conflict", STATIC_MERGE_BASE)
++      : portError("unavailable", STATIC_MERGE_BASE);
++  }
++  const bases = result.stdout.split("\n").map((line) => line.trim())
++    .filter((line) => line.length > 0);
++  if (bases.length !== 1 || !isGitSha(bases[0])) {
++    return portError("conflict", STATIC_MERGE_BASE);
++  }
++  return portOk(bases[0] as GitSha);
++}
++
++function side(mode: string, sha: string) {
++  return mode === "000000" && sha === NULL_SHA
++    ? { mode: null, sha: null }
++    : { mode, sha };
++}
++
++/**
++ * Parses `diff-tree -r -z --raw --no-abbrev --no-renames` output: records
++ * `:<old> <new> <oldSha> <newSha> <status>` NUL `<path>` NUL. Null when the
++ * output is not exactly that shape.
++ */
++export function parseTrainRawDiffV1(
++  stdout: string,
++): TrainTreeChangeV1[] | null {
++  if (stdout.length === 0) return [];
++  if (!stdout.endsWith("\0")) return null;
++  const fields = stdout.slice(0, -1).split("\0");
++  if (fields.length % 2 !== 0) return null;
++  const changes: TrainTreeChangeV1[] = [];
++  for (let i = 0; i < fields.length; i += 2) {
++    const head =
++      /^:([0-7]{6}) ([0-7]{6}) ([0-9a-f]{40}) ([0-9a-f]{40}) ([ADMT])$/
++        .exec(fields[i]);
++    const path = fields[i + 1];
++    if (head === null || path.length === 0) return null;
++    const before = side(head[1], head[3]);
++    const after = side(head[2], head[4]);
++    if (
++      (before.mode !== null && !ENTRY_MODES.has(before.mode)) ||
++      (after.mode !== null && !ENTRY_MODES.has(after.mode))
++    ) return null;
++    changes.push({
++      path,
++      oldMode: before.mode,
++      oldSha: before.sha,
++      newMode: after.mode,
++      newSha: after.sha,
++    });
++  }
++  if (changes.length > TRAIN_GIT_MAX_CHANGES) return null;
++  return changes.sort((a, b) => byPath(a.path, b.path));
++}
++
++/** R_m: the raw change list from the unique merge base of B0 and H to H. */
++export async function readTrainMemberChangesWithGit(
++  run: TrainGitRunV1,
++  reviewedBase: GitSha,
++  head: GitSha,
++): Promise<PortResultV1<TrainTreeChangeV1[]>> {
++  const mergeBase = await uniqueMergeBase(run, reviewedBase, head);
++  if (!mergeBase.ok) return mergeBase;
++  const result = await run([
++    "diff-tree",
++    "-r",
++    "-z",
++    "--raw",
++    "--no-abbrev",
++    "--no-renames",
++    "--no-commit-id",
++    "--ignore-submodules=none",
++    mergeBase.value,
++    head,
++    "--",
++  ], TRAIN_GIT_MAX_OUTPUT_BYTES);
++  if (!result.ok) return failure(result);
++  const text = exactText(result);
++  const changes = text === null ? null : parseTrainRawDiffV1(text);
++  return changes === null
++    ? portError("invalid", STATIC_OUTPUT)
++    : portOk(changes);
++}
++
++interface LsTreeEntry {
++  readonly path: string;
++  readonly mode: string;
++  readonly type: string;
++  readonly sha: string;
++}
++
++/** Parses `ls-tree -z` output (`<mode> <type> <sha>` TAB `<path>` NUL). */
++export function parseTrainLsTreeV1(stdout: string): LsTreeEntry[] | null {
++  if (stdout.length === 0) return [];
++  if (!stdout.endsWith("\0")) return null;
++  const entries: LsTreeEntry[] = [];
++  for (const line of stdout.slice(0, -1).split("\0")) {
++    const match = /^([0-7]{6}) (blob|tree|commit) ([0-9a-f]{40})\t(.+)$/s
++      .exec(line);
++    if (match === null) return null;
++    const [, mode, type, sha, path] = match;
++    const valid = type === "tree"
++      ? mode === "040000"
++      : type === "commit"
++      ? mode === "160000"
++      : mode === "100644" || mode === "100755" || mode === "120000";
++    if (!valid || !OBJECT_ID.test(sha)) return null;
++    entries.push({ path, mode, type, sha });
++  }
++  return entries;
++}
++
++async function lsTree(
++  run: TrainGitRunV1,
++  base: GitSha,
++  paths: readonly string[],
++  recursive: boolean,
++): Promise<PortResultV1<LsTreeEntry[]>> {
++  const out: LsTreeEntry[] = [];
++  for (let i = 0; i < paths.length; i += PATHSPEC_CHUNK) {
++    const result = await run([
++      "--literal-pathspecs",
++      "ls-tree",
++      ...(recursive ? ["-r"] : []),
++      "-z",
++      "--full-tree",
++      base,
++      "--",
++      ...paths.slice(i, i + PATHSPEC_CHUNK),
++    ], TRAIN_GIT_MAX_OUTPUT_BYTES);
++    if (!result.ok) return failure(result);
++    const text = exactText(result);
++    const entries = text === null ? null : parseTrainLsTreeV1(text);
++    if (entries === null) return portError("invalid", STATIC_OUTPUT);
++    out.push(...entries);
++  }
++  return portOk(out);
++}
++
++/**
++ * T's entries over exactly the paths the drift rule reads for `changes`.
++ * `entry` answers for every changed path and every parent directory of an
++ * added path (a directory is no non-directory entry: null); `pathsUnder`
++ * answers for every added path. Every other path is `undefined`.
++ */
++export async function readTrainBaseTreeWithGit(
++  run: TrainGitRunV1,
++  base: GitSha,
++  changes: readonly TrainTreeChangeV1[],
++): Promise<PortResultV1<TrainBaseTreeV1>> {
++  const added = changes.filter((change) => change.newMode !== null)
++    .map((change) => change.path);
++  const known = new Set(changes.map((change) => change.path));
++  for (const path of added) parentDirs(path).forEach((dir) => known.add(dir));
++  const exact = await lsTree(run, base, [...known].sort(byPath), false);
++  if (!exact.ok) return exact;
++  const entries = new Map<string, TrainTreeEntryV1>();
++  for (const entry of exact.value) {
++    if (entry.type !== "tree" && known.has(entry.path)) {
++      entries.set(entry.path, { mode: entry.mode, sha: entry.sha });
++    }
++  }
++  const under = new Map<string, string[]>(added.map((path) => [path, []]));
++  if (added.length > 0) {
++    const listed = await lsTree(run, base, added, true);
++    if (!listed.ok) return listed;
++    for (const entry of listed.value) {
++      for (const dir of parentDirs(entry.path)) {
++        under.get(dir)?.push(entry.path);
++      }
++    }
++  }
++  return portOk({
++    entry: (path) => known.has(path) ? entries.get(path) ?? null : undefined,
++    pathsUnder: (dir) => under.get(dir),
++  });
++}
++
++/**
++ * The member's R_m and T's entries over its paths, after proving all three
++ * commits exist locally (the host restores them first).
++ */
++export async function readTrainMemberPatchWithGit(
++  run: TrainGitRunV1,
++  request: TrainMemberPatchRequestV1,
++): Promise<PortResultV1<TrainMemberPatchV1>> {
++  const { reviewedBase, head, base } = request;
++  if (![reviewedBase, head, base].every((sha) => isGitSha(sha))) {
++    return portError("invalid", STATIC_INPUT);
++  }
++  for (const sha of [reviewedBase, head, base]) {
++    const exists = await commitExists(run, sha);
++    if (!exists.ok) return exists;
++    if (!exists.value) return portError("unavailable", STATIC_OBJECT);
++  }
++  const changes = await readTrainMemberChangesWithGit(run, reviewedBase, head);
++  if (!changes.ok) return changes;
++  const tree = await readTrainBaseTreeWithGit(run, base, changes.value);
++  if (!tree.ok) return tree;
++  return portOk({ changes: changes.value, tree: tree.value });
++}
++
++/**
++ * Splits a raw commit object into its parents and message: headers up to
++ * the first blank line (continuation lines start with a space), then the
++ * message bytes exactly. Null when the object is not that shape.
++ */
++export function parseTrainCommitObjectV1(
++  text: string,
++): TrainGitCommitV1 | null {
++  const split = text.indexOf("\n\n");
++  if (split < 0) return null;
++  const headers = text.slice(0, split).split("\n");
++  if (!/^tree [0-9a-f]{40}$/.test(headers[0] ?? "")) return null;
++  const parents: GitSha[] = [];
++  for (const header of headers.slice(1)) {
++    if (!header.startsWith("parent ")) continue;
++    const sha = header.slice("parent ".length);
++    if (!isGitSha(sha)) return null;
++    parents.push(sha);
++  }
++  return { parents, message: text.slice(split + 2) };
++}
++
++/** One commit's parents and message; null when the object is absent. */
++export async function readTrainCommitWithGit(
++  run: TrainGitRunV1,
++  sha: GitSha,
++): Promise<PortResultV1<TrainGitCommitV1 | null>> {
++  if (!isGitSha(sha)) return portError("invalid", STATIC_INPUT);
++  const exists = await commitExists(run, sha);
++  if (!exists.ok) return exists;
++  if (!exists.value) return portOk(null);
++  const result = await run(["cat-file", "commit", sha], COMMIT_MAX_BYTES);
++  if (!result.ok) return failure(result);
++  const text = exactText(result);
++  const commit = text === null ? null : parseTrainCommitObjectV1(text);
++  return commit === null ? portError("invalid", STATIC_OUTPUT) : portOk(commit);
++}
++
++/** Whether `ancestor` is an ancestor of (or equal to) `descendant`. */
++export async function isTrainAncestorWithGit(
++  run: TrainGitRunV1,
++  ancestor: GitSha,
++  descendant: GitSha,
++): Promise<PortResultV1<boolean>> {
++  if (!isGitSha(ancestor) || !isGitSha(descendant)) {
++    return portError("invalid", STATIC_INPUT);
++  }
++  const result = await run(
++    ["merge-base", "--is-ancestor", ancestor, descendant],
++    SMALL_OUTPUT_BYTES,
++  );
++  if (result.ok) return portOk(true);
++  if (result.code === 1) return portOk(false);
++  return portError("unavailable", STATIC_READ);
++}
+diff --git a/src/host/target-policy.ts b/src/host/target-policy.ts
+index 0ccb7afcd4..2780f3a58e 100644
+--- a/src/host/target-policy.ts
++++ b/src/host/target-policy.ts
+@@ -127,6 +127,22 @@ export function premergeCiPolicyV1(
+   };
+ }
+ 
++/**
++ * The tested-tip delivery train mode of a target (redesign 2026-10-25 C12),
++ * read by the launcher and the runtime alike. A code constant, so
++ * auto-follow installs a change with no workflow change. Every target is
++ * "off": every existing delivery path is unchanged. The owner enables a
++ * target only after probes P1-P5 pass, the DECISIONS.md entry is recorded
++ * and an independent read-only audit passed. "plan_only" only logs
++ * sanitized plan lines and writes nothing; "on" lands by fast-forward and
++ * the runtime never merges there (`src/repair/loop-train-handoff.ts`).
++ */
++export function deliveryTrainModeV1(
++  _repository: Pick<RepositoryIdentityV1, "owner" | "name">,
++): "off" | "plan_only" | "on" {
++  return "off";
++}
++
+ /**
+  * Select only a host-authored policy for the exact repository identity. The
+  * existing trusted deployment template remains authoritative for Sentinel and
+diff --git a/src/repair/loop-base-refresh.ts b/src/repair/loop-base-refresh.ts
+index fd7804cc8b..75a441d0b5 100644
+--- a/src/repair/loop-base-refresh.ts
++++ b/src/repair/loop-base-refresh.ts
+@@ -41,6 +41,7 @@ import {
+ } from "./loop-base-refresh-failure.ts";
+ import { configFor, retireClosedPublication } from "./loop-records.ts";
+ import { legacyCutoff } from "./loop-review-round-cap.ts";
++import { trainHoldsRefresh } from "./loop-train-handoff.ts";
+ import { persistWork } from "./loop-state.ts";
+ import type {
+   LoopContextV1,
+@@ -97,12 +98,19 @@ export function baseRefreshIntentKey(
+  * null when the base did not move (the existing merge path is unchanged), or
+  * an explicit step result for a wait/refusal/deferral. `beforeRefresh` runs
+  * only once the base was observed to move, before the intent is written.
++ *
++ * Delivery-train hook (redesign C12): on a target whose train mode is "on" a
++ * moved base alone never refreshes a delivery-step record (null: its merge
++ * step then reaches the train handoff, which never merges). Only the
++ * handoff's ejection path passes `trainEjection` and refreshes it as today.
++ * With the mode "off" nothing changes.
+  */
+ export async function ensureBaseRefreshIntent(
+   deps: RepairCycleDepsV1,
+   context: LoopContextV1,
+   record: WorkRecordV1,
+   beforeRefresh?: (observedBase: GitSha) => Promise<StepResultV1 | null>,
++  options?: { readonly trainEjection?: true },
+ ): Promise<StepResultV1 | null> {
+   const queueGuard = await guardQueueOperation(
+     deps,
+@@ -111,6 +119,9 @@ export async function ensureBaseRefreshIntent(
+     "refresh",
+   );
+   if (queueGuard !== null) return queueGuard;
++  if (options?.trainEjection !== true && trainHoldsRefresh(deps, record)) {
++    return null;
++  }
+   const config = configFor(deps, record.repository);
+   if (config === null) return null;
+   if (
+diff --git a/src/repair/loop-merge.ts b/src/repair/loop-merge.ts
+index 6783c46120..654604f289 100644
+--- a/src/repair/loop-merge.ts
++++ b/src/repair/loop-merge.ts
+@@ -38,6 +38,7 @@ import { reviewRoundsSpentOut } from "./loop-review-round-cap.ts";
+ import { deliveryQueueDeferral } from "./loop-delivery-queue.ts";
+ import { spentOnMovedBase } from "./loop-carried-delivery.ts";
+ import { mergedOffTipMessage, observedMergeLanding } from "./merge-off-tip.ts";
++import { trainHandoff } from "./loop-train-handoff.ts";
+ import { persistTransition, persistWork } from "./loop-state.ts";
+ import {
+   deliveryTaskRefusal,
+@@ -204,6 +205,43 @@ export function parkSelfMergeRefusal(
+     );
+ }
+ 
++/**
++ * The legacy refresh of an ejected delivery-train member (C12), refresh only:
++ * the same moved-base settlement as every merge-step refresh (a spent record
++ * refreshes mechanically under its review, any other waits its turn in the
++ * delivery line) through the one durable refresh intent, for an issue task
++ * with the trusted capability and no merge intent sent within one poll.
++ */
++function refreshEjectedTrainMember(
++  deps: RepairCycleDepsV1,
++  context: LoopContextV1,
++  record: WorkRecordV1,
++): Promise<StepResultV1 | null> {
++  if (
++    record.source.kind !== "issue" ||
++    deps.github.prepareBaseRefresh === undefined ||
++    (record.intent !== null &&
++      deps.clock.now() - record.intent.startedAt < CHECK_POLL_MS)
++  ) return Promise.resolve(null);
++  return ensureBaseRefreshIntent(
++    deps,
++    context,
++    record,
++    async (observedBase) =>
++      reviewRoundsSpentOut(context, record)
++        ? await spentOnMovedBase(
++          deps,
++          context,
++          record.intent === null
++            ? record
++            : clearIntent(record, deps.clock.now()),
++          observedBase,
++        )
++        : deliveryQueueDeferral(deps, context, record, observedBase),
++    { trainEjection: true },
++  );
++}
++
+ export async function executeMerge(
+   deps: RepairCycleDepsV1,
+   context: LoopContextV1,
+@@ -213,6 +251,13 @@ export async function executeMerge(
+   if (queueGuard !== null) return queueGuard;
+   const takeoverSelf = await holdAdoptedSelfMerge(deps, context, record);
+   if (takeoverSelf !== null) return takeoverSelf;
++  // C12: on a delivery-train target nothing below merges. Every gate still
++  // runs, and the handoff then defers an admissible member with no write or
++  // refreshes an ejected one (`loop-train-handoff.ts`); "off": null.
++  const train = await trainHandoff(deps, context, record, {
++    refresh: () => refreshEjectedTrainMember(deps, context, record),
++  });
++  if (train !== null && train.kind !== "train_admitted") return train;
+   const now = deps.clock.now();
+   // Merge is a GitHub write: gate before any preparation or intent write (a
+   // cooling installation never writes a merge intent it cannot act on; the
+@@ -359,6 +404,7 @@ export async function executeMerge(
+       ),
+     );
+   }
++  if (train !== null) return await train.admit(receipt);
+   const intent = {
+     kind: "merge" as const,
+     key: mergeIntentKey(record.target.pr!, record.target.head!),
+@@ -606,6 +652,10 @@ export async function reconcileMergeIntent(
+   if (queueGuard !== null) return queueGuard;
+   const takeoverSelf = await holdAdoptedSelfMerge(deps, context, record);
+   if (takeoverSelf !== null) return takeoverSelf;
++  // C12 booking rule: a pull request a verified delivery train merged waits
++  // for the launcher's booking with no write (`train_booking_pending`).
++  const train = await trainHandoff(deps, context, record);
++  if (train !== null) return train;
+   if (record.intent?.selfMerge !== undefined) {
+     const receipt = mergeIntentReceipt(context.snapshot.reviews, record);
+     if (
+diff --git a/src/repair/loop-train-facts.ts b/src/repair/loop-train-facts.ts
+new file mode 100644
+index 0000000000..b679a2d41f
+--- /dev/null
++++ b/src/repair/loop-train-facts.ts
+@@ -0,0 +1,277 @@
++/**
++ * The facts the delivery-train runtime handoff reads (redesign 2026-10-25
++ * C12, WP3.4; the decisions are `loop-train-handoff.ts`). Every rule is a
++ * shared pure one: the overlay (`computeTrainOverlayV1`), red-singleton
++ * ejection (`trainEjectedMembersV1`) and landing recognition
++ * (`verifyTrainLandingV1`), so the runtime reaches the launcher's
++ * disposition from the same facts. An unreadable fact is "unknown", never a
++ * pass and never an ejection.
++ */
++import type { GitSha } from "../contracts/brands.ts";
++import {
++  type DeliveryTrainId,
++  deliveryTrainIdV1,
++  deliveryTrainManifestV1,
++  type DeliveryTrainMemberV1,
++  deliveryTrainRefV1,
++  hasDeliveryTrainTrailerV1,
++} from "../contracts/delivery-train.ts";
++import type { PortResultV1 } from "../contracts/ports.ts";
++import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
++import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
++import type { WorkRecordV1 } from "../contracts/work-record.ts";
++import type {
++  TrainGitCommitV1,
++  TrainMemberPatchRequestV1,
++  TrainMemberPatchV1,
++} from "../github/git-train-drift.ts";
++import type { deliveryTrainModeV1 } from "../host/target-policy.ts";
++import { failedChecks } from "./ci-rejection.ts";
++import type { RepairCycleDepsV1 } from "./loop-types.ts";
++import { mergedExactlyOnBase } from "./merge-off-tip.ts";
++import { type TrainCiFactV1, trainEjectedMembersV1 } from "./train-bisect.ts";
++import { computeTrainOverlayV1 } from "./train-overlay.ts";
++import { verifyTrainLandingV1 } from "./train-proof.ts";
++
++export type DeliveryTrainModeV1 = ReturnType<typeof deliveryTrainModeV1>;
++
++/**
++ * The train facts a trusted host gives the runtime handoff. Each capability
++ * is optional; an absent one is an unreadable fact (a deferral), never a
++ * pass. Model workers never receive it.
++ */
++export interface TrainHandoffPortV1 {
++  /**
++   * Test seam only: a production host never sets it, so the code constant
++   * `deliveryTrainModeV1` is the one production mode.
++   */
++  readonly mode?: (repository: RepositoryIdentityV1) => DeliveryTrainModeV1;
++  /** R_m and T's entries over its paths (`readTrainMemberPatchWithGit`). */
++  readonly readMemberPatch?: (
++    request: TrainMemberPatchRequestV1,
++  ) => Promise<PortResultV1<TrainMemberPatchV1>>;
++  /** The CI fact of one train commit, its rerun included (launcher's reading). */
++  readonly readTrainCi?: (
++    commit: GitSha,
++  ) => Promise<PortResultV1<TrainCiFactV1>>;
++  /** A commit's parents and message (`readTrainCommitWithGit`). */
++  readonly readCommit?: (
++    sha: GitSha,
++  ) => Promise<PortResultV1<TrainGitCommitV1 | null>>;
++  /** Ancestry (`isTrainAncestorWithGit`). */
++  readonly isAncestor?: (
++    ancestor: GitSha,
++    descendant: GitSha,
++  ) => Promise<PortResultV1<boolean>>;
++}
++
++/** The optional host dependency the handoff reads beside the loop's own. */
++export interface TrainHandoffDepsV1 {
++  readonly deliveryTrain?: TrainHandoffPortV1;
++}
++
++export function trainPort(
++  deps: RepairCycleDepsV1,
++): TrainHandoffPortV1 | undefined {
++  return (deps as RepairCycleDepsV1 & TrainHandoffDepsV1).deliveryTrain;
++}
++
++async function settled<T>(
++  read: Promise<PortResultV1<T>>,
++): Promise<PortResultV1<T> | null> {
++  try {
++    return await read;
++  } catch {
++    return null;
++  }
++}
++
++export type TrainLandingFactV1 =
++  | { readonly kind: "landed"; readonly trainId: DeliveryTrainId }
++  | { readonly kind: "not_train" }
++  | { readonly kind: "unknown" };
++
++/**
++ * How the merge `mergeSha` of the record's pull request landed: a verified
++ * train landing, provably no train commit, or unknown. Without the train
++ * commit read, only a merge on exactly [reviewed base, head] is provably
++ * no train landing.
++ */
++export async function trainLandingFact(
++  deps: RepairCycleDepsV1,
++  record: WorkRecordV1,
++  config: RepositoryConfigV1,
++  mergeSha: GitSha,
++): Promise<TrainLandingFactV1> {
++  const head = record.target.head!;
++  const port = trainPort(deps);
++  const commit = port?.readCommit === undefined
++    ? null
++    : await settled(port.readCommit(mergeSha));
++  if (commit === null || !commit.ok || commit.value === null) {
++    const read = deps.github.readCommitParents;
++    const parents = read === undefined
++      ? null
++      : await settled(read.call(deps.github, mergeSha));
++    return parents?.ok === true && parents.value !== null &&
++        mergedExactlyOnBase(parents.value, record.target.base, head)
++      ? { kind: "not_train" }
++      : { kind: "unknown" };
++  }
++  if (!hasDeliveryTrainTrailerV1(commit.value.message)) {
++    return { kind: "not_train" };
++  }
++  const tip = await deps.github.readRef(`refs/heads/${config.baseBranch}`);
++  if (!tip.ok || tip.value === null) return { kind: "unknown" };
++  let reachable: boolean | null = tip.value.sha === mergeSha ? true : null;
++  if (reachable === null && port?.isAncestor !== undefined) {
++    const ancestry = await settled(port.isAncestor(mergeSha, tip.value.sha));
++    reachable = ancestry?.ok === true ? ancestry.value : null;
++  }
++  const verdict = await verifyTrainLandingV1({
++    repository: {
++      owner: record.repository.owner,
++      name: record.repository.name,
++    },
++    branch: config.baseBranch,
++    recordId: record.id,
++    pr: record.target.pr!,
++    head,
++    commit: {
++      sha: mergeSha,
++      parents: commit.value.parents,
++      message: commit.value.message,
++    },
++    tip: tip.value.sha,
++    commitReachable: reachable,
++  });
++  if (verdict.ok) return { kind: "landed", trainId: verdict.trainId };
++  return verdict.reason === "not_landed" ||
++      verdict.reason === "ancestry_unknown"
++    ? { kind: "unknown" }
++    : { kind: "not_train" };
++}
++
++export type TrainEjectionV1 =
++  | "drift"
++  | "protected"
++  | "submodule"
++  | "singleton_red";
++
++/** The one-member overlay rule at T: included, ejected, or unknown. */
++async function patchFact(
++  deps: RepairCycleDepsV1,
++  config: RepositoryConfigV1,
++  member: DeliveryTrainMemberV1,
++  tip: GitSha,
++): Promise<"included" | "unknown" | TrainEjectionV1> {
++  const read = trainPort(deps)?.readMemberPatch;
++  if (read === undefined) return "unknown";
++  const patch = await settled(read({
++    reviewedBase: member.reviewedBase,
++    head: member.head,
++    base: tip,
++  }));
++  if (patch === null || !patch.ok) return "unknown";
++  const overlay = computeTrainOverlayV1({
++    base: tip,
++    tree: patch.value.tree,
++    protectedPaths: config.protectedPaths,
++    candidates: [{ member, changes: patch.value.changes }],
++  });
++  switch (overlay.results[0]?.disposition) {
++    case "included":
++      return "included";
++    case "ejected:drift":
++      return "drift";
++    case "ejected:protected":
++      return "protected";
++    case "ejected:submodule":
++      return "submodule";
++    default:
++      return "unknown";
++  }
++}
++
++type SingletonFact =
++  | { readonly kind: "absent" | "present"; readonly trainId: DeliveryTrainId }
++  | { readonly kind: "red" }
++  | { readonly kind: "unknown" };
++
++/** The singleton train `(T, [m])`: absent, present, red (ejects), unknown. */
++async function singletonFact(
++  deps: RepairCycleDepsV1,
++  record: WorkRecordV1,
++  config: RepositoryConfigV1,
++  member: DeliveryTrainMemberV1,
++  tip: GitSha,
++): Promise<SingletonFact> {
++  let trainId: DeliveryTrainId;
++  try {
++    trainId = await deliveryTrainIdV1(deliveryTrainManifestV1({
++      repository: {
++        owner: record.repository.owner,
++        name: record.repository.name,
++      },
++      branch: config.baseBranch,
++      base: tip,
++      members: [member],
++    }));
++  } catch {
++    return { kind: "unknown" };
++  }
++  const ref = await deps.github.readRef(deliveryTrainRefV1(trainId));
++  if (!ref.ok) return { kind: "unknown" };
++  if (ref.value === null) return { kind: "absent", trainId };
++  const read = trainPort(deps)?.readTrainCi;
++  const ci = read === undefined ? null : await settled(read(ref.value.sha));
++  if (ci === null || !ci.ok) return { kind: "unknown" };
++  if (ci.value.state !== "red") return { kind: "present", trainId };
++  const base = await deps.github.readChecks(tip);
++  const baseRed = base.ok
++    ? failedChecks(base.value.checks).map((check) => check.name)
++    : null;
++  if (trainEjectedMembersV1([{ member, ci: ci.value }], baseRed).length > 0) {
++    return { kind: "red" };
++  }
++  // Red before its rerun or on checks red on T too: no ejection, but an
++  // unread T after the rerun proves nothing either way.
++  return ci.value.rerun && baseRed === null
++    ? { kind: "unknown" }
++    : { kind: "present", trainId };
++}
++
++export type TrainMemberFactV1 =
++  | { readonly kind: "member"; readonly trainId: DeliveryTrainId | null }
++  | { readonly kind: "ejected"; readonly reason: TrainEjectionV1 }
++  | { readonly kind: "unknown"; readonly what: string };
++
++/**
++ * One admissible member at T: ejected (drift, protected path, submodule,
++ * red singleton), a member (with its singleton train's id when that ref
++ * exists), or unknown.
++ */
++export async function trainMemberFact(
++  deps: RepairCycleDepsV1,
++  record: WorkRecordV1,
++  config: RepositoryConfigV1,
++  member: DeliveryTrainMemberV1,
++  tip: GitSha,
++): Promise<TrainMemberFactV1> {
++  const patch = await patchFact(deps, config, member, tip);
++  if (patch !== "included" && patch !== "unknown") {
++    return { kind: "ejected", reason: patch };
++  }
++  const singleton = await singletonFact(deps, record, config, member, tip);
++  if (singleton.kind === "red") {
++    return { kind: "ejected", reason: "singleton_red" };
++  }
++  if (patch === "unknown") return { kind: "unknown", what: "member patch" };
++  if (singleton.kind === "unknown") {
++    return { kind: "unknown", what: "singleton train" };
++  }
++  return {
++    kind: "member",
++    trainId: singleton.kind === "present" ? singleton.trainId : null,
++  };
++}
+diff --git a/src/repair/loop-train-handoff.ts b/src/repair/loop-train-handoff.ts
+new file mode 100644
+index 0000000000..1f058604e2
+--- /dev/null
++++ b/src/repair/loop-train-handoff.ts
+@@ -0,0 +1,303 @@
++/**
++ * Delivery-train runtime handoff (redesign 2026-10-25 C12, WP3.4).
++ *
++ * On a target whose `deliveryTrainModeV1` is "on" the launcher delivers by
++ * train: it overlays the path-disjoint reviewed patches of every admissible
++ * member onto the tip T as one octopus commit, tests it and fast-forwards
++ * the default branch to it. The runtime then never merges there, and a
++ * moved base alone never refreshes a member (a refresh changes the head and
++ * spends a review round). `trainHandoff` runs at the top of
++ * `reconcileMergeIntent` and `executeMerge`:
++ *
++ * - a pull request a verified train landing merged (`verifyTrainLandingV1`)
++ *   defers with no write to the launcher's booking (`train_booking_pending`);
++ *   unprovable landing facts defer too, so a train landing is never parked
++ *   as a merge off its reviewed base;
++ * - an open pull request passes every existing merge gate first (queue
++ *   custody, takeover, cooldown, current-head receipt with no unresolved P0,
++ *   task re-read, exact-head CI), unchanged; a failing gate keeps its own
++ *   non-merge result. A record that passes them all is admissible: it
++ *   defers with no write (`delivery train: <trainId|pending>`) unless an
++ *   ejection fact holds (drift, a protected path or a submodule by the
++ *   shared overlay rule, or a red singleton train `(T, [m])`), and then only
++ *   the legacy refresh path runs (`loop-train-facts.ts`);
++ * - unreadable facts defer with no write; nothing is ever inferred from them.
++ *
++ * With "off" (every repository today) the handoff returns at once and every
++ * existing path is unchanged; "plan_only" only logs one sanitized line and
++ * keeps the legacy path. The base-refresh hook (`trainHoldsRefresh`) keeps
++ * a moved base from refreshing a delivery-step record on an "on" target, so
++ * that record reaches this handoff instead.
++ */
++import { parseDeliveryTrainMemberV1 } from "../contracts/delivery-train.ts";
++import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
++import type { ReviewReceiptV1 } from "../contracts/review-receipt.ts";
++import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
++import { tryParse } from "../contracts/validation.ts";
++import type { WorkRecordV1 } from "../contracts/work-record.ts";
++import { deliveryTrainModeV1 } from "../host/target-policy.ts";
++import { checkGithubCooldown } from "./loop-bounds.ts";
++import { configFor } from "./loop-records.ts";
++import {
++  type DeliveryTrainModeV1,
++  trainLandingFact,
++  trainMemberFact,
++  trainPort,
++} from "./loop-train-facts.ts";
++import type {
++  LoopContextV1,
++  RepairCycleDepsV1,
++  StepResultV1,
++} from "./loop-types.ts";
++
++export type {
++  DeliveryTrainModeV1,
++  TrainHandoffDepsV1,
++  TrainHandoffPortV1,
++} from "./loop-train-facts.ts";
++
++/** The merge entry's legacy refresh path (refresh only, never a merge). */
++export interface TrainMergeEntryV1 {
++  /** The moved-base refresh "as today"; null when the base has not moved. */
++  readonly refresh: () => Promise<StepResultV1 | null>;
++}
++
++/** An open pull request on an "on" target: run the merge gates, then admit. */
++export interface TrainAdmittedV1 {
++  readonly kind: "train_admitted";
++  /** After every merge gate passed with `receipt`: defer or refresh. */
++  admit(receipt: ReviewReceiptV1): Promise<StepResultV1>;
++}
++
++/** Closed decision names for the sanitized handoff line. */
++export type TrainHandoffDecisionV1 =
++  | "legacy"
++  | "member"
++  | "booking_pending"
++  | "ejected_drift"
++  | "ejected_protected"
++  | "ejected_submodule"
++  | "ejected_singleton_red"
++  | "not_open"
++  | "not_admissible"
++  | "facts_unavailable";
++
++/** Prefix of every handoff deferral detail. */
++export const TRAIN_HANDOFF_PREFIX = "delivery train: ";
++/** The booking deferral of a train-merged pull request. */
++export const TRAIN_BOOKING_PENDING = "train_booking_pending";
++
++/** The train mode the runtime applies to `repository`. */
++export function trainModeFor(
++  deps: RepairCycleDepsV1,
++  repository: RepositoryIdentityV1,
++): DeliveryTrainModeV1 {
++  return trainPort(deps)?.mode?.(repository) ??
++    deliveryTrainModeV1(repository);
++}
++
++/** A delivery-step record a train may deliver (no self-merge proof). */
++function trainMergePath(record: WorkRecordV1): boolean {
++  return record.nextStep === "delivery" &&
++    (record.intent === null ||
++      (record.intent.kind === "merge" &&
++        record.intent.selfMerge === undefined));
++}
++
++/**
++ * The base-refresh hook: on an "on" target a moved base alone never
++ * refreshes a delivery-step record. Only the handoff's ejection path
++ * refreshes it (`ensureBaseRefreshIntent`'s `trainEjection` option).
++ */
++export function trainHoldsRefresh(
++  deps: RepairCycleDepsV1,
++  record: WorkRecordV1,
++): boolean {
++  return trainMergePath(record) &&
++    trainModeFor(deps, record.repository) === "on";
++}
++
++function emitDecision(
++  mode: DeliveryTrainModeV1,
++  prNumber: number,
++  decision: TrainHandoffDecisionV1,
++): void {
++  console.log(JSON.stringify({
++    version: "v1",
++    kind: "sentinel_train_handoff",
++    mode,
++    prNumber,
++    decision,
++  }));
++}
++
++function defer(
++  pr: number,
++  decision: TrainHandoffDecisionV1,
++  detail: string,
++): StepResultV1 {
++  emitDecision("on", pr, decision);
++  return { kind: "deferred", detail: `${TRAIN_HANDOFF_PREFIX}${detail}` };
++}
++
++async function cooled(
++  deps: RepairCycleDepsV1,
++  context: LoopContextV1,
++  record: WorkRecordV1,
++): Promise<StepResultV1 | null> {
++  const cooling = await checkGithubCooldown(
++    deps,
++    record.repository,
++    context.bounds,
++  );
++  if (cooling.kind === "state_error") {
++    return { kind: "state_error", detail: cooling.detail };
++  }
++  return cooling.kind === "deferred"
++    ? { kind: "deferred", detail: cooling.detail }
++    : null;
++}
++
++async function notOpen(
++  pr: number,
++  merge: TrainMergeEntryV1,
++): Promise<StepResultV1> {
++  const step = await merge.refresh();
++  if (step !== null) {
++    emitDecision("on", pr, "not_open");
++    return step;
++  }
++  return defer(pr, "not_open", "pull request is not open");
++}
++
++/** After every merge gate passed: defer the member or refresh it. */
++async function admitMember(
++  deps: RepairCycleDepsV1,
++  context: LoopContextV1,
++  record: WorkRecordV1,
++  config: RepositoryConfigV1,
++  receipt: ReviewReceiptV1,
++  merge: TrainMergeEntryV1,
++): Promise<StepResultV1> {
++  const pr = record.target.pr!;
++  const member = tryParse(parseDeliveryTrainMemberV1, {
++    recordId: record.id,
++    pr,
++    head: record.target.head,
++    reviewedBase: receipt.pullRequest.base,
++    receiptId: receipt.id,
++    issueNumber: record.related.issueNumber,
++  });
++  if (!member.ok) {
++    return defer(pr, "facts_unavailable", "facts unavailable (member)");
++  }
++  const cooling = await cooled(deps, context, record);
++  if (cooling !== null) return cooling;
++  const tip = await deps.github.readRef(`refs/heads/${config.baseBranch}`);
++  if (!tip.ok || tip.value === null) {
++    return defer(pr, "facts_unavailable", "facts unavailable (tip)");
++  }
++  const fact = await trainMemberFact(
++    deps,
++    record,
++    config,
++    member.value,
++    tip.value.sha,
++  );
++  if (fact.kind === "unknown") {
++    return defer(pr, "facts_unavailable", `facts unavailable (${fact.what})`);
++  }
++  if (fact.kind === "member") {
++    return defer(pr, "member", fact.trainId ?? "pending");
++  }
++  const decision = `ejected_${fact.reason}` as const;
++  const step = await merge.refresh();
++  if (step !== null) {
++    emitDecision("on", pr, decision);
++    return step;
++  }
++  return defer(pr, decision, `ejected (${fact.reason}); refresh not due`);
++}
++
++/**
++ * The handoff at the top of `reconcileMergeIntent` (no `merge` entry) and
++ * `executeMerge` (with it). Null keeps the legacy path: mode "off" or
++ * "plan_only", a self-merge proof the reconciliation must finish, and on
++ * the reconciliation entry every pull request no train landed. Otherwise a
++ * step (a deferral with no write, or the legacy refresh), or, for an open
++ * pull request on the merge entry, the admission continuation that runs
++ * after the merge gates. On an "on" target the merge entry never yields
++ * null: nothing merges there.
++ */
++export function trainHandoff(
++  deps: RepairCycleDepsV1,
++  context: LoopContextV1,
++  record: WorkRecordV1,
++): Promise<StepResultV1 | null>;
++export function trainHandoff(
++  deps: RepairCycleDepsV1,
++  context: LoopContextV1,
++  record: WorkRecordV1,
++  merge: TrainMergeEntryV1,
++): Promise<StepResultV1 | TrainAdmittedV1 | null>;
++export async function trainHandoff(
++  deps: RepairCycleDepsV1,
++  context: LoopContextV1,
++  record: WorkRecordV1,
++  merge?: TrainMergeEntryV1,
++): Promise<StepResultV1 | TrainAdmittedV1 | null> {
++  const mode = trainModeFor(deps, record.repository);
++  if (mode === "off") return null;
++  const pr = record.target.pr;
++  const head = record.target.head;
++  if (mode === "plan_only") {
++    if (pr !== null) emitDecision("plan_only", pr, "legacy");
++    return null;
++  }
++  const config = configFor(deps, record.repository);
++  if (record.intent?.selfMerge !== undefined) {
++    // The self target keeps `executeSelfMerge`; its source-CAS proof is a
++    // write already made, which only the legacy reconciliation finishes.
++    return merge === undefined
++      ? null
++      : defer(pr ?? 0, "not_admissible", "self merge proof is no train member");
++  }
++  if (config === null || pr === null || head === null) {
++    return merge === undefined
++      ? null
++      : defer(pr ?? 0, "facts_unavailable", "facts unavailable (identity)");
++  }
++  const cooling = await cooled(deps, context, record);
++  if (cooling !== null) return cooling;
++  const read = await deps.github.readPullRequest(pr);
++  if (!read.ok || read.value === null) {
++    return merge === undefined
++      ? null
++      : defer(pr, "facts_unavailable", "facts unavailable (pull request)");
++  }
++  const pull = read.value;
++  if (pull.state === "merged" && pull.mergeSha !== null) {
++    const landing = await trainLandingFact(deps, record, config, pull.mergeSha);
++    if (landing.kind === "landed") {
++      return defer(
++        pr,
++        "booking_pending",
++        `${TRAIN_BOOKING_PENDING} ${landing.trainId}`,
++      );
++    }
++    if (landing.kind === "unknown") {
++      return defer(pr, "facts_unavailable", "facts unavailable (landing)");
++    }
++    return merge === undefined ? null : await notOpen(pr, merge);
++  }
++  if (merge === undefined) return null;
++  if (pull.state !== "open") return await notOpen(pr, merge);
++  if (pull.head !== head || pull.baseRef !== config.baseBranch) {
++    return defer(pr, "not_admissible", "pull request identity moved");
++  }
++  return {
++    kind: "train_admitted",
++    admit: (receipt) =>
++      admitMember(deps, context, record, config, receipt, merge),
++  };
++}
+diff --git a/tests/repair/train-drift_test.ts b/tests/repair/train-drift_test.ts
+new file mode 100644
+index 0000000000..9ae88d90f3
+--- /dev/null
++++ b/tests/repair/train-drift_test.ts
+@@ -0,0 +1,388 @@
++/**
++ * Delivery-train runtime facts over a REAL temporary Git repository
++ * (`src/github/git-train-drift.ts`, redesign 2026-10-25 C12, WP3.4): R_m is
++ * the exact merge-base tree change list, T's entries cover exactly the paths
++ * the shared overlay rule reads, and the landing commit and ancestry are
++ * read as facts. Decisions come from the shared pure overlay rule. Synthetic
++ * files only; no network, no credentials, no ref or index update.
++ */
++import assert from "node:assert/strict";
++import type { GitSha } from "../../src/contracts/brands.ts";
++import {
++  deliveryTrainCommitMessageV1,
++  deliveryTrainManifestV1,
++  deliveryTrainV1,
++} from "../../src/contracts/delivery-train.ts";
++import {
++  isTrainAncestorWithGit,
++  parseTrainCommitObjectV1,
++  parseTrainLsTreeV1,
++  parseTrainRawDiffV1,
++  readTrainCommitWithGit,
++  readTrainMemberChangesWithGit,
++  readTrainMemberPatchWithGit,
++} from "../../src/github/git-train-drift.ts";
++import {
++  computeTrainOverlayV1,
++  type TrainOverlayDispositionV1,
++} from "../../src/repair/train-overlay.ts";
++import { verifyTrainLandingV1 } from "../../src/repair/train-proof.ts";
++import { member, REPOSITORY } from "./train-fixtures.ts";
++import { makeTrainRepo, type TrainRepoV1 } from "./train-repo.ts";
++
++const BIN_OLD = new Uint8Array([0, 1, 2, 0xff, 0xfe, 0x80, 0, 3]);
++const BIN_NEW = new Uint8Array([0, 1, 2, 0xff, 0xfd, 0x81, 0, 3, 4]);
++
++/** B0, the reviewed head H on it (text, binary, mode, delete, new dir). */
++async function reviewed(repo: TrainRepoV1) {
++  const b0 = await repo.commit({
++    "a.txt": "a\n",
++    "bin.dat": BIN_OLD,
++    "run.sh": "echo run\n",
++    "old.txt": "old\n",
++  });
++  assert.ok((await repo.git(["checkout", "-q", "-b", "candidate"])).ok);
++  await Deno.chmod(`${repo.dir}/run.sh`, 0o755);
++  const h = await repo.commit({
++    "a.txt": "a reviewed\n",
++    "bin.dat": BIN_NEW,
++    "old.txt": null,
++    "dir/new.txt": "new\n",
++  });
++  assert.ok((await repo.git(["checkout", "-q", "development"])).ok);
++  return { b0, h };
++}
++
++async function disposition(
++  repo: TrainRepoV1,
++  b0: GitSha,
++  h: GitSha,
++  t: GitSha,
++  protectedPaths: readonly string[] = [],
++): Promise<{ disposition: TrainOverlayDispositionV1; path: string | null }> {
++  const patch = await readTrainMemberPatchWithGit(repo.run, {
++    reviewedBase: b0,
++    head: h,
++    base: t,
++  });
++  assert.ok(patch.ok, JSON.stringify(patch));
++  const overlay = computeTrainOverlayV1({
++    base: t,
++    tree: patch.value.tree,
++    protectedPaths,
++    candidates: [{
++      member: member(7, { head: h }),
++      changes: patch.value.changes,
++    }],
++  });
++  const result = overlay.results[0];
++  return { disposition: result.disposition, path: result.path };
++}
++
++Deno.test("train drift: R_m is the exact merge-base change list (text, binary, mode-only, delete, new directory)", async () => {
++  const repo = await makeTrainRepo();
++  try {
++    const { b0, h } = await reviewed(repo);
++    const t = await repo.commit({ "other.txt": "unrelated tip change\n" });
++    const patch = await readTrainMemberPatchWithGit(repo.run, {
++      reviewedBase: b0,
++      head: h,
++      base: t,
++    });
++    assert.ok(patch.ok, JSON.stringify(patch));
++    const blob = (rev: string) => repo.rev(rev);
++    assert.deepEqual(patch.value.changes, [
++      {
++        path: "a.txt",
++        oldMode: "100644",
++        oldSha: await blob(`${b0}:a.txt`),
++        newMode: "100644",
++        newSha: await blob(`${h}:a.txt`),
++      },
++      {
++        path: "bin.dat",
++        oldMode: "100644",
++        oldSha: await blob(`${b0}:bin.dat`),
++        newMode: "100644",
++        newSha: await blob(`${h}:bin.dat`),
++      },
++      {
++        path: "dir/new.txt",
++        oldMode: null,
++        oldSha: null,
++        newMode: "100644",
++        newSha: await blob(`${h}:dir/new.txt`),
++      },
++      {
++        path: "old.txt",
++        oldMode: "100644",
++        oldSha: await blob(`${b0}:old.txt`),
++        newMode: null,
++        newSha: null,
++      },
++      {
++        path: "run.sh",
++        oldMode: "100644",
++        oldSha: await blob(`${b0}:run.sh`),
++        newMode: "100755",
++        newSha: await blob(`${b0}:run.sh`),
++      },
++    ]);
++    // T's entries answer exactly for the paths the rule reads.
++    const tree = patch.value.tree;
++    assert.deepEqual(tree.entry("a.txt"), {
++      mode: "100644",
++      sha: await blob(`${t}:a.txt`),
++    });
++    assert.equal(tree.entry("dir"), null);
++    assert.equal(tree.entry("dir/new.txt"), null);
++    assert.equal(tree.entry("other.txt"), undefined, "never read: unknown");
++    assert.deepEqual(tree.pathsUnder("dir/new.txt"), []);
++    assert.deepEqual(tree.pathsUnder("a.txt"), []);
++    assert.equal(tree.pathsUnder("old.txt"), undefined, "deleted: not read");
++    assert.equal(tree.pathsUnder("dir"), undefined);
++    assert.deepEqual(await disposition(repo, b0, h, t), {
++      disposition: "included",
++      path: null,
++    });
++    // Read only: no ref moved and nothing staged.
++    assert.equal((await repo.git(["status", "--porcelain"])).stdout, "");
++    assert.equal(await repo.rev("development"), t);
++  } finally {
++    await repo.cleanup();
++  }
++});
++
++Deno.test("train drift: a tip that changed a reviewed path, or holds a file where the patch adds a directory, is drift", async () => {
++  const repo = await makeTrainRepo();
++  try {
++    const { b0, h } = await reviewed(repo);
++    const changed = await repo.commit({ "a.txt": "tip change\n" });
++    assert.deepEqual(await disposition(repo, b0, h, changed), {
++      disposition: "ejected:drift",
++      path: "a.txt",
++    });
++    assert.ok((await repo.git(["reset", "-q", "--hard", b0])).ok);
++    const deleted = await repo.commit({ "old.txt": null });
++    assert.deepEqual(await disposition(repo, b0, h, deleted), {
++      disposition: "ejected:drift",
++      path: "old.txt",
++    });
++    assert.ok((await repo.git(["reset", "-q", "--hard", b0])).ok);
++    const fileAtDir = await repo.commit({ "dir": "a file named dir\n" });
++    assert.deepEqual(await disposition(repo, b0, h, fileAtDir), {
++      disposition: "ejected:drift",
++      path: "dir",
++    });
++  } finally {
++    await repo.cleanup();
++  }
++});
++
++Deno.test("train drift: a tip that holds files under a path the patch adds as a file is drift", async () => {
++  const repo = await makeTrainRepo();
++  try {
++    const b0 = await repo.commit({ "keep.txt": "keep\n" });
++    assert.ok((await repo.git(["checkout", "-q", "-b", "candidate"])).ok);
++    const h = await repo.commit({ "x": "x is a file\n" });
++    assert.ok((await repo.git(["checkout", "-q", "development"])).ok);
++    const t = await repo.commit({ "x/y.txt": "x is a directory\n" });
++    assert.deepEqual(await disposition(repo, b0, h, t), {
++      disposition: "ejected:drift",
++      path: "x",
++    });
++  } finally {
++    await repo.cleanup();
++  }
++});
++
++Deno.test("train drift: a protected path or a submodule change ejects before drift", async () => {
++  const repo = await makeTrainRepo();
++  try {
++    const { b0, h } = await reviewed(repo);
++    const t = await repo.commit({ "other.txt": "unrelated\n" });
++    assert.deepEqual(await disposition(repo, b0, h, t, ["dir/"]), {
++      disposition: "ejected:protected",
++      path: "dir/new.txt",
++    });
++    assert.ok((await repo.git(["checkout", "-q", "candidate"])).ok);
++    assert.ok(
++      (await repo.git([
++        "update-index",
++        "--add",
++        "--cacheinfo",
++        `160000,${b0},vendor/sub`,
++      ])).ok,
++    );
++    assert.ok((await repo.git(["commit", "-q", "-m", "submodule"])).ok);
++    const withSubmodule = (await repo.rev("HEAD")) as GitSha;
++    assert.ok((await repo.git(["checkout", "-q", "development"])).ok);
++    assert.deepEqual(await disposition(repo, b0, withSubmodule, t), {
++      disposition: "ejected:submodule",
++      path: "vendor/sub",
++    });
++  } finally {
++    await repo.cleanup();
++  }
++});
++
++Deno.test("train drift: a missing commit or an ambiguous merge base is a typed failure, never a fact", async () => {
++  const repo = await makeTrainRepo();
++  try {
++    const { b0, h } = await reviewed(repo);
++    const missing = "1234567890abcdef1234567890abcdef12345678" as GitSha;
++    const absent = await readTrainMemberPatchWithGit(repo.run, {
++      reviewedBase: b0,
++      head: h,
++      base: missing,
++    });
++    assert.deepEqual(absent, {
++      ok: false,
++      error: {
++        kind: "unavailable",
++        detail: "train git input commit is unavailable",
++      },
++    });
++    assert.ok((await repo.git(["checkout", "-q", "--orphan", "other"])).ok);
++    assert.ok((await repo.git(["rm", "-q", "-rf", "."])).ok);
++    const unrelated = await repo.commit({ "z.txt": "z\n" });
++    const none = await readTrainMemberPatchWithGit(repo.run, {
++      reviewedBase: unrelated,
++      head: h,
++      base: b0,
++    });
++    assert.equal(none.ok, false);
++    assert.equal(!none.ok && none.error.kind, "conflict");
++    const invalid = await readTrainMemberPatchWithGit(repo.run, {
++      reviewedBase: "not-a-sha" as GitSha,
++      head: h,
++      base: b0,
++    });
++    assert.equal(!invalid.ok && invalid.error.kind, "invalid");
++  } finally {
++    await repo.cleanup();
++  }
++});
++
++Deno.test("train drift: a train commit's parents and message are read exactly and its landing verifies", async () => {
++  const repo = await makeTrainRepo();
++  try {
++    const { b0, h } = await reviewed(repo);
++    const t = await repo.commit({ "other.txt": "unrelated\n" });
++    const train = await deliveryTrainV1(deliveryTrainManifestV1({
++      repository: REPOSITORY,
++      branch: "development",
++      base: t,
++      members: [member(7, { head: h, reviewedBase: b0 })],
++    }));
++    const tree = await repo.rev(`${h}^{tree}`);
++    const built = await repo.git([
++      "commit-tree",
++      tree,
++      "-p",
++      t,
++      "-p",
++      h,
++      "-m",
++      deliveryTrainCommitMessageV1(train),
++    ]);
++    assert.ok(built.ok);
++    const c = built.stdout.trim() as GitSha;
++    const commit = await readTrainCommitWithGit(repo.run, c);
++    assert.ok(commit.ok && commit.value !== null, JSON.stringify(commit));
++    assert.deepEqual(commit.value.parents, [t, h]);
++    assert.equal(
++      commit.value.message,
++      `${deliveryTrainCommitMessageV1(train)}\n`,
++    );
++    assert.deepEqual(await isTrainAncestorWithGit(repo.run, t, c), {
++      ok: true,
++      value: true,
++    });
++    assert.deepEqual(await isTrainAncestorWithGit(repo.run, c, t), {
++      ok: true,
++      value: false,
++    });
++    const claim = {
++      repository: REPOSITORY,
++      branch: "development",
++      recordId: member(7).recordId,
++      pr: 7,
++      head: h,
++      commit: { sha: c, ...commit.value },
++    };
++    const landed = await verifyTrainLandingV1({
++      ...claim,
++      tip: c,
++      commitReachable: null,
++    });
++    assert.equal(landed.ok && landed.trainId, train.trainId);
++    const verdict = await verifyTrainLandingV1({
++      ...claim,
++      tip: t,
++      commitReachable: false,
++    });
++    assert.deepEqual(verdict, { ok: false, reason: "not_landed" });
++    const absent = await readTrainCommitWithGit(
++      repo.run,
++      "1234567890abcdef1234567890abcdef12345678" as GitSha,
++    );
++    assert.deepEqual(absent, { ok: true, value: null });
++  } finally {
++    await repo.cleanup();
++  }
++});
++
++Deno.test("train drift: malformed git output parses to nothing", () => {
++  const sha = "a".repeat(40);
++  assert.equal(parseTrainRawDiffV1(`:100644 100644 ${sha} ${sha} M\0a`), null);
++  assert.equal(
++    parseTrainRawDiffV1(`:100644 100644 ${sha} ${sha} R\0a\0`),
++    null,
++  );
++  assert.equal(
++    parseTrainRawDiffV1(`:040000 100644 ${sha} ${sha} M\0a\0`),
++    null,
++  );
++  assert.deepEqual(parseTrainRawDiffV1(""), []);
++  assert.equal(parseTrainLsTreeV1(`100644 tree ${sha}\ta\0`), null);
++  assert.equal(parseTrainLsTreeV1(`100644 blob ${sha} a\0`), null);
++  assert.deepEqual(parseTrainLsTreeV1(`100644 blob ${sha}\ta\tb\0`), [
++    { path: "a\tb", mode: "100644", type: "blob", sha },
++  ]);
++  assert.equal(parseTrainCommitObjectV1("tree x\n\nmessage"), null);
++  assert.equal(parseTrainCommitObjectV1(`tree ${sha}\nparent x\n\nm`), null);
++  assert.deepEqual(
++    parseTrainCommitObjectV1(
++      `tree ${sha}\nparent ${sha}\nauthor a\n gpg continuation\n\nm\n\nbody`,
++    ),
++    { parents: [sha], message: "m\n\nbody" },
++  );
++});
++
++Deno.test("train drift: output that is not exact UTF-8 is no fact", async () => {
++  const sha = "a".repeat(40) as GitSha;
++  const raw = new Uint8Array([
++    ...new TextEncoder().encode(`:100644 100644 ${sha} ${"b".repeat(40)} M\0`),
++    0x66,
++    0xff,
++    0x00,
++  ]);
++  const patch = await readTrainMemberChangesWithGit(
++    (args) =>
++      Promise.resolve(
++        args[0] === "merge-base" ? { ok: true, code: 0, stdout: `${sha}\n` } : {
++          ok: true,
++          code: 0,
++          stdout: new TextDecoder().decode(raw),
++          stdoutBytes: raw,
++        },
++      ),
++    sha,
++    "c".repeat(40) as GitSha,
++  );
++  assert.deepEqual(patch, {
++    ok: false,
++    error: { kind: "invalid", detail: "train git output is invalid" },
++  });
++});
+diff --git a/tests/repair/train-handoff-repo_test.ts b/tests/repair/train-handoff-repo_test.ts
+new file mode 100644
+index 0000000000..499cc58b86
+--- /dev/null
++++ b/tests/repair/train-handoff-repo_test.ts
+@@ -0,0 +1,133 @@
++/**
++ * The delivery-train runtime handoff over the production train facts
++ * (`src/github/git-train-drift.ts`) on a REAL temporary Git repository,
++ * through the real delivery step: a member whose reviewed paths the tip left
++ * alone defers with no write, a drifted one takes the legacy refresh, and
++ * once a train commit `[T, H]` carrying the manifest is the tip the pull
++ * request waits for the launcher's booking. Synthetic files only; the
++ * GitHub port is a fake and nothing is written to any remote.
++ */
++import assert from "node:assert/strict";
++import type { GitSha } from "../../src/contracts/brands.ts";
++import {
++  deliveryTrainCommitMessageV1,
++  deliveryTrainManifestV1,
++  deliveryTrainV1,
++} from "../../src/contracts/delivery-train.ts";
++import {
++  isTrainAncestorWithGit,
++  readTrainCommitWithGit,
++  readTrainMemberPatchWithGit,
++} from "../../src/github/git-train-drift.ts";
++import type { TrainHandoffPortV1 } from "../../src/repair/loop-train-handoff.ts";
++import { REPO, T0 } from "../state/helpers.ts";
++import {
++  authorizingReceipt,
++  BASE_BRANCH,
++  openPull,
++  reviewedRecord,
++  TrainGithub,
++  trainMember,
++  trainRig,
++} from "./train-handoff-rig.ts";
++import { makeTrainRepo, type TrainRepoV1 } from "./train-repo.ts";
++
++function gitFacts(repo: TrainRepoV1): TrainHandoffPortV1 {
++  return {
++    mode: () => "on",
++    readMemberPatch: (request) =>
++      readTrainMemberPatchWithGit(repo.run, request),
++    readCommit: (sha) => readTrainCommitWithGit(repo.run, sha),
++    isAncestor: (ancestor, descendant) =>
++      isTrainAncestorWithGit(repo.run, ancestor, descendant),
++  };
++}
++
++async function history(repo: TrainRepoV1) {
++  const b0 = await repo.commit({ "src/app.ts": "v0\n", "README": "r\n" });
++  assert.ok((await repo.git(["checkout", "-q", "-b", "candidate"])).ok);
++  const h = await repo.commit({ "src/app.ts": "v1\n" });
++  assert.ok((await repo.git(["checkout", "-q", "development"])).ok);
++  const clean = await repo.commit({ "README": "r2\n" });
++  assert.ok((await repo.git(["reset", "-q", "--hard", b0])).ok);
++  const drifted = await repo.commit({ "src/app.ts": "tip\n" });
++  return { b0, h, clean, drifted };
++}
++
++async function stepAt(
++  repo: TrainRepoV1,
++  b0: GitSha,
++  h: GitSha,
++  github: TrainGithub,
++) {
++  const receipt = await authorizingReceipt(h, b0);
++  const record = reviewedRecord(h, b0, receipt);
++  const rig = trainRig(github, gitFacts(repo), T0);
++  await rig.seed([record], { reviews: [receipt] });
++  const step = await rig.step();
++  return { step, rig, record, receipt };
++}
++
++Deno.test("train handoff over git: an untouched member defers, a drifted one refreshes, a landed one awaits booking", async () => {
++  const repo = await makeTrainRepo();
++  try {
++    const { b0, h, clean, drifted } = await history(repo);
++
++    const member = await stepAt(
++      repo,
++      b0,
++      h,
++      new TrainGithub(clean, openPull(h, b0)),
++    );
++    assert.deepEqual(member.step, {
++      kind: "deferred",
++      detail: "delivery train: pending",
++    });
++    assert.deepEqual((await member.rig.snapshot()).work[0], member.record);
++    assert.equal(member.rig.merges(), 0);
++
++    const drift = new TrainGithub(drifted, openPull(h, b0));
++    const ejected = await stepAt(repo, b0, h, drift);
++    assert.deepEqual(ejected.step, { kind: "progress" });
++    const refreshed = (await ejected.rig.snapshot()).work[0];
++    assert.equal(refreshed.intent?.kind, "base_refresh");
++    assert.equal(refreshed.intent?.observedBase, drifted);
++    assert.equal(refreshed.target.head, h, "the reviewed head is kept");
++    assert.equal(ejected.rig.merges(), 0);
++
++    // The launcher's train at `clean` lands as the octopus [clean, h].
++    const train = await deliveryTrainV1(deliveryTrainManifestV1({
++      repository: { owner: REPO.owner, name: REPO.name },
++      branch: BASE_BRANCH,
++      base: clean,
++      members: [trainMember(h, member.receipt)],
++    }));
++    const built = await repo.git([
++      "commit-tree",
++      await repo.rev(`${h}^{tree}`),
++      "-p",
++      clean,
++      "-p",
++      h,
++      "-m",
++      deliveryTrainCommitMessageV1(train),
++    ]);
++    assert.ok(built.ok);
++    const c = built.stdout.trim() as GitSha;
++    const landed = await stepAt(
++      repo,
++      b0,
++      h,
++      new TrainGithub(c, { ...openPull(h, b0), state: "merged", mergeSha: c }),
++    );
++    assert.deepEqual(landed.step, {
++      kind: "deferred",
++      detail: `delivery train: train_booking_pending ${train.trainId}`,
++    });
++    const after = await landed.rig.snapshot();
++    assert.deepEqual(after.work[0], landed.record);
++    assert.equal(after.releaseRequests.length, 0);
++  } finally {
++    await repo.cleanup();
++  }
++});
+diff --git a/tests/repair/train-handoff-rig.ts b/tests/repair/train-handoff-rig.ts
+new file mode 100644
+index 0000000000..6c242d19b7
+--- /dev/null
++++ b/tests/repair/train-handoff-rig.ts
+@@ -0,0 +1,309 @@
++/**
++ * The delivery-train runtime handoff rig: the REAL repair loop over
++ * in-memory state, a recording fake GitHub port serving one pull request,
++ * the tip, `sentinel-train/*` refs and per-commit checks, an injected clock
++ * and an optional injected train facts port. No network, no GitHub write,
++ * no model call.
++ */
++import assert from "node:assert/strict";
++import { RollingStartBudget } from "../../src/budget/mod.ts";
++import {
++  asWorkItemId,
++  type GitSha,
++  type WorkItemId,
++} from "../../src/contracts/brands.ts";
++import {
++  type DeliveryTrainId,
++  deliveryTrainIdV1,
++  deliveryTrainManifestV1,
++  type DeliveryTrainMemberV1,
++} from "../../src/contracts/delivery-train.ts";
++import type {
++  GitHubCheckV1,
++  GitHubPullRequestV1,
++  GitHubRefV1,
++  PortResultV1,
++} from "../../src/contracts/ports.ts";
++import { portError, portOk } from "../../src/contracts/ports.ts";
++import type { ReviewReceiptV1 } from "../../src/contracts/review-receipt.ts";
++import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
++import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
++import { DurableGitHubCooldownGate } from "../../src/repair/github-cooldown.ts";
++import {
++  mergeIntentKey,
++  reviewOperationKey,
++  reviewReceiptId,
++} from "../../src/repair/keys.ts";
++import { loadRepairContext, runRepairCycle } from "../../src/repair/loop.ts";
++import type {
++  RepairCycleDepsV1,
++  StepResultV1,
++} from "../../src/repair/loop-types.ts";
++import { executeDeliveryStep } from "../../src/repair/loop-work.ts";
++import type {
++  TrainHandoffDepsV1,
++  TrainHandoffPortV1,
++} from "../../src/repair/loop-train-handoff.ts";
++import { REPO, SHA1, T0 } from "../state/helpers.ts";
++import {
++  FakeClock,
++  FakeGithub,
++  type FakeGithubOptionsV1,
++  FakeIncidents,
++  FakeModel,
++  FakeReplay,
++  MemoryState,
++  repairConfigs,
++} from "./helpers.ts";
++import { exactOpenPr } from "./loop-candidate-fixtures.ts";
++import { seededSnapshot } from "./loop-rig.ts";
++import { completedReceipt, deliveryRecord } from "./loop-review-fixtures.ts";
++
++export const BRANCH = "sentinel/repair/issue-1";
++export const BASE_BRANCH = "development";
++export const RECORD_ID: WorkItemId = asWorkItemId("issue-1");
++
++function green(head: GitSha): GitHubCheckV1 {
++  return {
++    name: "ci",
++    status: "completed",
++    conclusion: "success",
++    head,
++    startedAt: 1,
++    completedAt: 2,
++  };
++}
++
++/** A fake port serving the tip, one pull request, train refs and checks. */
++export class TrainGithub extends FakeGithub {
++  tip: GitSha;
++  pull: GitHubPullRequestV1;
++  readonly trainRefs = new Map<string, GitSha>();
++  readonly checksBySha = new Map<string, GitHubCheckV1[]>();
++  readonly parentsBySha = new Map<string, GitSha[]>();
++  prepareCalls = 0;
++
++  constructor(
++    tip: GitSha,
++    pull: GitHubPullRequestV1,
++    options: FakeGithubOptionsV1 = {},
++  ) {
++    super(options);
++    this.tip = tip;
++    this.pull = pull;
++    this.prepareBaseRefresh = () => {
++      this.prepareCalls++;
++      return Promise.resolve(portError("unavailable", "prepared unavailable"));
++    };
++  }
++
++  override readRef(ref: string): Promise<PortResultV1<GitHubRefV1 | null>> {
++    this.calls.push(`readRef:${ref}`);
++    if (ref === `refs/heads/${BASE_BRANCH}`) {
++      return Promise.resolve(portOk({ ref, sha: this.tip }));
++    }
++    if (ref === `refs/heads/${BRANCH}`) {
++      return Promise.resolve(portOk({ ref, sha: this.pull.head }));
++    }
++    const train = this.trainRefs.get(ref);
++    return Promise.resolve(
++      portOk(train === undefined ? null : { ref, sha: train }),
++    );
++  }
++
++  override readPullRequest(
++    number: number,
++  ): Promise<PortResultV1<GitHubPullRequestV1 | null>> {
++    this.calls.push(`readPr:${number}`);
++    return Promise.resolve(
++      portOk(number === this.pull.number ? { ...this.pull } : null),
++    );
++  }
++
++  override findPullRequestByHeadRef(
++    headRef: string,
++  ): Promise<PortResultV1<GitHubPullRequestV1 | null>> {
++    this.calls.push(`findPr:${headRef}`);
++    return Promise.resolve(
++      portOk(headRef === this.pull.headRef ? { ...this.pull } : null),
++    );
++  }
++
++  override readChecks(head: GitSha) {
++    this.calls.push(`readChecks:${head}`);
++    return Promise.resolve(portOk({
++      head,
++      checks: this.checksBySha.get(head) ?? [green(head)],
++    }));
++  }
++
++  readCommitParents(sha: GitSha): Promise<PortResultV1<GitSha[] | null>> {
++    this.calls.push(`readParents:${sha}`);
++    return Promise.resolve(portOk(this.parentsBySha.get(sha) ?? null));
++  }
++}
++
++/** The clean current-head receipt that authorizes (7, head, base). */
++export async function authorizingReceipt(
++  head: GitSha,
++  base: GitSha = SHA1,
++): Promise<ReviewReceiptV1> {
++  return completedReceipt(7, head, base, {
++    id: await reviewReceiptId(reviewOperationKey(7, head, 1), head),
++  });
++}
++
++/** The reviewed delivery record of PR 7 at `head` on `base`. */
++export function reviewedRecord(
++  head: GitSha,
++  base: GitSha = SHA1,
++  receipt?: ReviewReceiptV1,
++  intentAt?: number,
++): WorkRecordV1 {
++  return deliveryRecord(head, {
++    target: { base, branch: BRANCH, checkpoint: null, head, pr: 7 },
++    intent: intentAt === undefined || receipt === undefined ? null : {
++      kind: "merge",
++      key: mergeIntentKey(7, head),
++      startedAt: intentAt,
++      branch: BRANCH,
++      expectedHead: head,
++      observedBase: base,
++      pr: 7,
++      requestId: receipt.requestId,
++      resultId: receipt.resultId,
++    },
++  });
++}
++
++/** The open pull request of the reviewed record. */
++export function openPull(head: GitSha, base: GitSha = SHA1) {
++  return exactOpenPr(7, head, BRANCH, base);
++}
++
++/** The exact member tuple the record and its receipt name. */
++export function trainMember(
++  head: GitSha,
++  receipt: ReviewReceiptV1,
++): DeliveryTrainMemberV1 {
++  return {
++    recordId: RECORD_ID,
++    pr: 7,
++    head,
++    reviewedBase: receipt.pullRequest.base,
++    receiptId: receipt.id,
++    issueNumber: 1,
++  };
++}
++
++/** The singleton train `(tip, [member])`'s id. */
++export function singletonId(
++  tip: GitSha,
++  member: DeliveryTrainMemberV1,
++): Promise<DeliveryTrainId> {
++  return deliveryTrainIdV1(deliveryTrainManifestV1({
++    repository: { owner: REPO.owner, name: REPO.name },
++    branch: BASE_BRANCH,
++    base: tip,
++    members: [member],
++  }));
++}
++
++export interface TrainRigV1 {
++  readonly clock: FakeClock;
++  readonly state: MemoryState;
++  readonly github: TrainGithub;
++  readonly model: FakeModel;
++  run(): Promise<Awaited<ReturnType<typeof runRepairCycle>>>;
++  /** One real delivery step of the first record (its exact result). */
++  step(): Promise<StepResultV1>;
++  snapshot(): Promise<RepairStateSnapshotV1>;
++  seed(
++    work: WorkRecordV1[],
++    extra?: Partial<RepairStateSnapshotV1>,
++  ): Promise<void>;
++  merges(): number;
++}
++
++/** `train` undefined: a host with no train facts port at all. */
++export function trainRig(
++  github: TrainGithub,
++  train?: TrainHandoffPortV1,
++  now: number = T0,
++): TrainRigV1 {
++  const clock = new FakeClock(now);
++  const state = new MemoryState();
++  const configs = repairConfigs({
++    adapter: { kind: "github" },
++    sessionBound: { maxDurationMs: 240_000, maxOutputChars: 200_000 },
++  });
++  const budget = new RollingStartBudget({ clock, state, configs });
++  const githubCooldown = new DurableGitHubCooldownGate({ state, clock });
++  const model = new FakeModel({ head: SHA1, changedPaths: ["src/app.ts"] });
++  const deps: RepairCycleDepsV1 & TrainHandoffDepsV1 = {
++    clock,
++    state,
++    configs,
++    controllerSha: SHA1,
++    github,
++    githubCooldown,
++    incidents: new FakeIncidents({ summaries: [], evidence: null }),
++    replay: new FakeReplay(),
++    model,
++    budget,
++    ...(train === undefined ? {} : { deliveryTrain: train }),
++  };
++  const snapshot = async () => {
++    const read = await state.readRepair();
++    assert.ok(read.ok && read.value.status === "found");
++    if (!read.ok || read.value.status !== "found") {
++      throw new Error("no repair state");
++    }
++    return read.value.snapshot;
++  };
++  return {
++    clock,
++    state,
++    github,
++    model,
++    run: () =>
++      runRepairCycle(deps, {
++        deadline: clock.now() + 60 * 60_000,
++        stepLimit: 16,
++      }),
++    step: async () => {
++      const at = clock.now();
++      const context = await loadRepairContext(deps, {
++        runDeadline: at + 60 * 60_000,
++        modelCutoff: at + 60 * 60_000,
++      });
++      assert.ok(context !== null);
++      return await executeDeliveryStep(deps, context, context.snapshot.work[0]);
++    },
++    snapshot,
++    seed: async (work, extra = {}) => {
++      const written = await state.writeRepair(
++        seededSnapshot(work, extra),
++        null,
++      );
++      assert.ok(written.ok && written.value.status === "applied");
++    },
++    merges: () => github.calls.filter((call) => call === "merge").length,
++  };
++}
++
++/** A facts port that fails the test if the handoff reads it. */
++export function untouchedPort(
++  mode: "off" | "plan_only",
++): TrainHandoffPortV1 {
++  const fail = (): never => {
++    throw new Error("a train fact was read");
++  };
++  return {
++    mode: () => mode,
++    readMemberPatch: fail,
++    readTrainCi: fail,
++    readCommit: fail,
++    isAncestor: fail,
++  };
++}
+diff --git a/tests/repair/train-handoff_test.ts b/tests/repair/train-handoff_test.ts
+new file mode 100644
+index 0000000000..1336569b55
+--- /dev/null
++++ b/tests/repair/train-handoff_test.ts
+@@ -0,0 +1,407 @@
++/**
++ * Delivery-train runtime handoff (redesign 2026-10-25 C12, WP3.4) through
++ * the REAL repair loop and its delivery step: on an "on" target an
++ * admissible member gives zero refresh intents and zero merge calls, every
++ * existing merge gate still runs, drift and a red singleton refresh exactly
++ * as the legacy path does, a verified train landing waits for the
++ * launcher's booking with no write, and unprovable facts never park or
++ * book. With the shipped mode "off" (and "plan_only") every path is
++ * unchanged. Fake GitHub port, in-memory state, injected clock; no network,
++ * no GitHub write, no model call.
++ */
++import assert from "node:assert/strict";
++import type { GitSha } from "../../src/contracts/brands.ts";
++import {
++  deliveryTrainCommitMessageV1,
++  deliveryTrainManifestV1,
++  deliveryTrainRefV1,
++  deliveryTrainV1,
++} from "../../src/contracts/delivery-train.ts";
++import { portOk } from "../../src/contracts/ports.ts";
++import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
++import type { TrainGitCommitV1 } from "../../src/github/git-train-drift.ts";
++import { deliveryTrainModeV1 } from "../../src/host/target-policy.ts";
++import { CHECK_POLL_MS } from "../../src/repair/loop-bounds.ts";
++import type { TrainHandoffPortV1 } from "../../src/repair/loop-train-handoff.ts";
++import type { TrainCiFactV1 } from "../../src/repair/train-bisect.ts";
++import { trainBaseTreeFromEntries } from "../../src/repair/train-overlay.ts";
++import { REPO, SHA1, SHA2, SHA3, T0 } from "../state/helpers.ts";
++import {
++  authorizingReceipt,
++  BASE_BRANCH,
++  openPull,
++  reviewedRecord,
++  singletonId,
++  TrainGithub,
++  trainMember,
++  trainRig,
++  untouchedPort,
++} from "./train-handoff-rig.ts";
++
++const HEAD = SHA3;
++const BASE = SHA1;
++const TIP = SHA2;
++const TRAIN_COMMIT = "c".repeat(40) as GitSha;
++const SINGLETON_COMMIT = "d".repeat(40) as GitSha;
++const OLD_BLOB = "1".repeat(40);
++const NEW_BLOB = "2".repeat(40);
++const TIP_BLOB = "3".repeat(40);
++const NOW = T0 + 2 * CHECK_POLL_MS;
++
++/** R_m = one modified file; T holds `tipBlob` there. */
++function facts(options: {
++  tipBlob?: string;
++  ci?: TrainCiFactV1;
++  commit?: TrainGitCommitV1;
++} = {}): TrainHandoffPortV1 {
++  return {
++    mode: () => "on",
++    readMemberPatch: () =>
++      Promise.resolve(portOk({
++        changes: [{
++          path: "src/app.ts",
++          oldMode: "100644",
++          oldSha: OLD_BLOB,
++          newMode: "100644",
++          newSha: NEW_BLOB,
++        }],
++        tree: trainBaseTreeFromEntries(
++          new Map([["src/app.ts", {
++            mode: "100644",
++            sha: options.tipBlob ?? OLD_BLOB,
++          }]]),
++        ),
++      })),
++    readTrainCi: () =>
++      Promise.resolve(portOk(options.ci ?? { state: "missing" })),
++    ...(options.commit === undefined ? {} : {
++      readCommit: () => Promise.resolve(portOk(options.commit!)),
++    }),
++    isAncestor: () => Promise.resolve(portOk(true)),
++  };
++}
++
++/** Captures the sanitized handoff lines a block emits. */
++async function handoffLines<T>(
++  block: () => Promise<T>,
++): Promise<{ value: T; lines: Record<string, unknown>[] }> {
++  const lines: Record<string, unknown>[] = [];
++  const original = console.log;
++  console.log = (line: unknown) => {
++    if (typeof line === "string" && line.includes("sentinel_train_handoff")) {
++      lines.push(JSON.parse(line));
++    } else original(line);
++  };
++  try {
++    return { value: await block(), lines };
++  } finally {
++    console.log = original;
++  }
++}
++
++async function seeded(
++  github: TrainGithub,
++  port: TrainHandoffPortV1 | undefined,
++  options: { intentAt?: number; head?: GitSha; base?: GitSha } = {},
++) {
++  const head = options.head ?? HEAD;
++  const base = options.base ?? BASE;
++  const receipt = await authorizingReceipt(head, base);
++  const record = reviewedRecord(head, base, receipt, options.intentAt);
++  const rig = trainRig(github, port, NOW);
++  await rig.seed([record], { reviews: [receipt] });
++  return { rig, record, receipt };
++}
++
++function assertUntouched(
++  after: { work: WorkRecordV1[]; sequence: number },
++  record: WorkRecordV1,
++) {
++  assert.deepEqual(after.work[0], record, "nothing is written");
++  assert.equal(after.sequence, 1);
++}
++
++Deno.test("train handoff: deliveryTrainModeV1 is off for every target", () => {
++  for (
++    const repository of [
++      { owner: "ubiquity-sentinel", name: "sentinel" },
++      { owner: "ubiquity", name: "ai.ubq.fi" },
++      { owner: "ubiquity", name: "passport.ubq.fi" },
++      { owner: "UBIQUITY", name: "Passport.ubq.fi" },
++      { owner: "example-org", name: "example.app" },
++    ]
++  ) assert.equal(deliveryTrainModeV1(repository), "off");
++});
++
++Deno.test("train handoff: an admissible member on a moved base gives zero refresh intents and zero merge calls", async () => {
++  for (const intentAt of [undefined, T0]) {
++    const github = new TrainGithub(TIP, openPull(HEAD));
++    const { rig, record } = await seeded(github, facts(), { intentAt });
++    const { value: outcome, lines } = await handoffLines(() => rig.run());
++    assert.deepEqual(outcome, {
++      status: "margin",
++      detail: "all eligible work is deferred (cooldown or run bounds)",
++    });
++    const after = await rig.snapshot();
++    assertUntouched(after, record);
++    assert.equal(rig.merges(), 0, "the runtime never merges a train target");
++    assert.equal(github.prepareCalls, 0, "no refresh is prepared");
++    assert.equal(after.releaseRequests.length, 0);
++    assert.equal(after.reservations.length, 0);
++    assert.equal(rig.model.requests.length, 0);
++    assert.deepEqual(lines.at(-1), {
++      version: "v1",
++      kind: "sentinel_train_handoff",
++      mode: "on",
++      prNumber: 7,
++      decision: "member",
++    });
++    // Every existing gate still ran before the deferral: the task re-read
++    // and the exact-head CI read.
++    assert.ok(github.calls.includes("readIssue:1"));
++    assert.ok(github.calls.includes(`readChecks:${HEAD}`));
++    assert.deepEqual(await rig.step(), {
++      kind: "deferred",
++      detail: "delivery train: pending",
++    });
++  }
++});
++
++Deno.test("train handoff: a member in flight names its singleton train and an unmoved base still never merges", async () => {
++  const github = new TrainGithub(BASE, openPull(HEAD));
++  const { rig, record, receipt } = await seeded(
++    github,
++    facts({ ci: { state: "pending", since: NOW } }),
++  );
++  const id = await singletonId(BASE, trainMember(HEAD, receipt));
++  github.trainRefs.set(deliveryTrainRefV1(id), SINGLETON_COMMIT);
++  assert.deepEqual(await rig.step(), {
++    kind: "deferred",
++    detail: `delivery train: ${id}`,
++  });
++  assertUntouched(await rig.snapshot(), record);
++  assert.equal(rig.merges(), 0);
++});
++
++Deno.test("train handoff: a failing gate keeps its own non-merge result (pending head CI waits as today)", async () => {
++  const github = new TrainGithub(TIP, openPull(HEAD));
++  github.checksBySha.set(HEAD, [{
++    name: "ci",
++    status: "in_progress",
++    conclusion: null,
++    head: HEAD,
++    startedAt: 1,
++    completedAt: null,
++  }]);
++  const { rig } = await seeded(github, facts());
++  assert.deepEqual(await rig.step(), { kind: "progress" });
++  const work = (await rig.snapshot()).work[0];
++  assert.equal(work.wait?.reason, "ci_pending");
++  assert.equal(work.intent, null, "no refresh and no merge intent");
++  assert.equal(rig.merges(), 0);
++  assert.equal(github.prepareCalls, 0);
++});
++
++/** The final record of one run of `port` on a moved base (legacy: no port). */
++async function finalRecord(
++  port: TrainHandoffPortV1 | undefined,
++  prepare?: (
++    github: TrainGithub,
++    receipt: Awaited<ReturnType<typeof authorizingReceipt>>,
++  ) => Promise<void>,
++) {
++  const github = new TrainGithub(TIP, openPull(HEAD));
++  const { rig, receipt } = await seeded(github, port);
++  await prepare?.(github, receipt);
++  const outcome = await rig.run();
++  assert.equal(outcome.status, "idle", JSON.stringify(outcome));
++  assert.equal(rig.merges(), 0);
++  return { work: (await rig.snapshot()).work[0], github };
++}
++
++Deno.test("train handoff: drift refreshes exactly as the legacy path does", async () => {
++  const legacy = await finalRecord(undefined);
++  assert.equal(legacy.work.intent?.kind, "base_refresh");
++  assert.equal(legacy.work.intent?.observedBase, TIP);
++  const drifted = await finalRecord(facts({ tipBlob: TIP_BLOB }));
++  assert.deepEqual(drifted.work, legacy.work, "the refresh is the legacy one");
++  assert.equal(drifted.github.prepareCalls, legacy.github.prepareCalls);
++});
++
++Deno.test("train handoff: a singleton train red after its rerun on checks green on the tip refreshes as today", async () => {
++  const legacy = await finalRecord(undefined);
++  const red = await finalRecord(
++    facts({ ci: { state: "red", failed: ["ci"], rerun: true } }),
++    async (github, receipt) => {
++      const id = await singletonId(TIP, trainMember(HEAD, receipt));
++      github.trainRefs.set(deliveryTrainRefV1(id), SINGLETON_COMMIT);
++    },
++  );
++  assert.equal(red.work.intent?.kind, "base_refresh");
++  assert.deepEqual(red.work, legacy.work);
++});
++
++Deno.test("train handoff: a red singleton before its rerun, or red on the tip too, ejects nobody", async () => {
++  for (
++    const variant of [
++      { ci: { state: "red", failed: ["ci"], rerun: false }, tipRed: false },
++      { ci: { state: "red", failed: ["ci"], rerun: true }, tipRed: true },
++    ] as const
++  ) {
++    const github = new TrainGithub(TIP, openPull(HEAD));
++    const { rig, record, receipt } = await seeded(
++      github,
++      facts({ ci: variant.ci }),
++    );
++    const id = await singletonId(TIP, trainMember(HEAD, receipt));
++    github.trainRefs.set(deliveryTrainRefV1(id), SINGLETON_COMMIT);
++    if (variant.tipRed) {
++      github.checksBySha.set(TIP, [{
++        name: "ci",
++        status: "completed",
++        conclusion: "failure",
++        head: TIP,
++        startedAt: 1,
++        completedAt: 2,
++      }]);
++    }
++    assert.deepEqual(await rig.step(), {
++      kind: "deferred",
++      detail: `delivery train: ${id}`,
++    });
++    assertUntouched(await rig.snapshot(), record);
++    assert.equal(github.prepareCalls, 0);
++  }
++});
++
++async function landedCommit(): Promise<{
++  commit: TrainGitCommitV1;
++  trainId: string;
++}> {
++  const receipt = await authorizingReceipt(HEAD);
++  const train = await deliveryTrainV1(deliveryTrainManifestV1({
++    repository: { owner: REPO.owner, name: REPO.name },
++    branch: BASE_BRANCH,
++    base: TIP,
++    members: [trainMember(HEAD, receipt)],
++  }));
++  return {
++    commit: {
++      parents: [TIP, HEAD],
++      message: `${deliveryTrainCommitMessageV1(train)}\n`,
++    },
++    trainId: train.trainId,
++  };
++}
++
++function mergedPull(mergeSha: GitSha) {
++  return { ...openPull(HEAD), state: "merged" as const, mergeSha };
++}
++
++Deno.test("train handoff: a pull request a verified train landed waits for the launcher's booking with no write", async () => {
++  const { commit, trainId } = await landedCommit();
++  for (const intentAt of [undefined, T0]) {
++    const github = new TrainGithub(TRAIN_COMMIT, mergedPull(TRAIN_COMMIT));
++    const { rig, record } = await seeded(github, facts({ commit }), {
++      intentAt,
++    });
++    assert.deepEqual(await rig.step(), {
++      kind: "deferred",
++      detail: `delivery train: train_booking_pending ${trainId}`,
++    });
++    const outcome = await rig.run();
++    assert.equal(outcome.status, "margin", JSON.stringify(outcome));
++    const after = await rig.snapshot();
++    assertUntouched(after, record);
++    assert.equal(after.releaseRequests.length, 0, "the launcher books it");
++    assert.equal(rig.merges(), 0);
++    assert.equal(github.prepareCalls, 0);
++  }
++});
++
++Deno.test("train handoff: an unprovable landing is never parked as a merge off its reviewed base", async () => {
++  // No train commit read and parents that are not [reviewed base, head].
++  const github = new TrainGithub(TRAIN_COMMIT, mergedPull(TRAIN_COMMIT));
++  github.parentsBySha.set(TRAIN_COMMIT, [TIP, HEAD]);
++  const port: TrainHandoffPortV1 = { mode: () => "on" };
++  const { rig, record } = await seeded(github, port, { intentAt: T0 });
++  assert.deepEqual(await rig.step(), {
++    kind: "deferred",
++    detail: "delivery train: facts unavailable (landing)",
++  });
++  assertUntouched(await rig.snapshot(), record);
++});
++
++Deno.test("train handoff: a legacy merge on exactly the reviewed base is still booked on a train target", async () => {
++  const merge = "e".repeat(40) as GitSha;
++  const github = new TrainGithub(merge, mergedPull(merge));
++  github.parentsBySha.set(merge, [BASE, HEAD]);
++  const plain = { parents: [BASE, HEAD], message: "Merge pull request #7\n" };
++  const { rig } = await seeded(github, facts({ commit: plain }), {
++    intentAt: T0,
++  });
++  assert.deepEqual(await rig.step(), { kind: "progress" });
++  const after = await rig.snapshot();
++  assert.equal(after.releaseRequests.length, 1, "booked as today");
++  assert.equal(after.releaseRequests[0].revision, merge);
++  assert.equal(after.work[0].intent, null);
++  assert.notEqual(after.work[0].nextStep, "blocked");
++  assert.equal(rig.merges(), 0);
++});
++
++Deno.test("train handoff: unreadable train facts defer with no write and no refresh", async () => {
++  const github = new TrainGithub(TIP, openPull(HEAD));
++  const { rig, record } = await seeded(github, { mode: () => "on" });
++  assert.deepEqual(await rig.step(), {
++    kind: "deferred",
++    detail: "delivery train: facts unavailable (member patch)",
++  });
++  assertUntouched(await rig.snapshot(), record);
++  assert.equal(github.prepareCalls, 0);
++  assert.equal(rig.merges(), 0);
++});
++
++/** One full run: the final snapshot, every port call and the prepares. */
++async function observed(
++  port: TrainHandoffPortV1 | undefined,
++  tip: GitSha,
++) {
++  const github = new TrainGithub(tip, openPull(HEAD), {
++    mergeOutcome: { outcome: "merged", head: HEAD, mergeSha: TRAIN_COMMIT },
++  });
++  github.parentsBySha.set(TRAIN_COMMIT, [BASE, HEAD]);
++  const { rig } = await seeded(github, port);
++  const outcome = await rig.run();
++  // The in-memory store names each write by a process-wide counter.
++  const snapshot = { ...await rig.snapshot(), stateHead: null };
++  return {
++    outcome,
++    snapshot,
++    calls: [...github.calls],
++    prepares: github.prepareCalls,
++    merges: rig.merges(),
++  };
++}
++
++Deno.test("train handoff: with mode off (or plan_only) the loop is byte-identical on the refresh and merge paths", async () => {
++  for (const tip of [TIP, BASE]) {
++    const legacy = await observed(undefined, tip);
++    const off = await observed(untouchedPort("off"), tip);
++    const { value: plan, lines } = await handoffLines(() =>
++      observed(untouchedPort("plan_only"), tip)
++    );
++    assert.deepEqual(off, legacy);
++    assert.deepEqual(plan, legacy);
++    assert.ok(lines.every((line) => line.decision === "legacy"));
++    // plan_only marks the merge step it would hand off; a moved base takes
++    // the legacy refresh first, so that run reaches no merge step.
++    assert.equal(lines.length > 0, tip === BASE);
++    if (tip === TIP) {
++      assert.equal(legacy.snapshot.work[0].intent?.kind, "base_refresh");
++      assert.equal(legacy.merges, 0);
++    } else {
++      assert.equal(legacy.merges, 1, "the legacy path merges");
++      assert.equal(legacy.snapshot.releaseRequests.length, 1);
++    }
++  }
++});
+diff --git a/tests/repair/train-repo.ts b/tests/repair/train-repo.ts
+new file mode 100644
+index 0000000000..692fd1d0f2
+--- /dev/null
++++ b/tests/repair/train-repo.ts
+@@ -0,0 +1,106 @@
++/**
++ * A real temporary Git repository for the delivery-train runtime facts
++ * (`src/github/git-train-drift.ts`): synthetic files only, no remote, no
++ * network and no credentials. The runner has the trusted executor's shape.
++ */
++import assert from "node:assert/strict";
++import type { GitSha } from "../../src/contracts/brands.ts";
++import type { TrainGitRunV1 } from "../../src/github/git-train-drift.ts";
++
++const HERE = new URL(import.meta.url);
++if (HERE.protocol !== "file:") throw new Error("expected a file: test module");
++const ROOT = decodeURIComponent(HERE.pathname).replace(
++  /\/tests\/repair\/train-repo\.ts$/,
++  "",
++);
++const TRUSTED_PATH = Deno.env.get("PATH") ?? "/usr/bin:/bin";
++
++export interface TrainRepoV1 {
++  readonly dir: string;
++  /** The bounded read-only runner the train facts take. */
++  readonly run: TrainGitRunV1;
++  git(args: string[]): Promise<{ ok: boolean; stdout: string }>;
++  /** Writes (string/bytes) or deletes (null) files, then commits them all. */
++  commit(files: Record<string, string | Uint8Array | null>): Promise<GitSha>;
++  /** `git rev-parse <rev>` (a commit, or `<commit>:<path>` for a blob). */
++  rev(rev: string): Promise<string>;
++  cleanup(): Promise<void>;
++}
++
++export async function makeTrainRepo(): Promise<TrainRepoV1> {
++  const tmp = await Deno.makeTempDir({ prefix: "sentinel-train-", dir: ROOT });
++  const env = {
++    PATH: TRUSTED_PATH,
++    HOME: `${tmp}/home`,
++    GIT_CONFIG_GLOBAL: "/dev/null",
++    GIT_CONFIG_SYSTEM: "/dev/null",
++    GIT_TERMINAL_PROMPT: "0",
++    GIT_AUTHOR_NAME: "sentinel-train-test",
++    GIT_AUTHOR_EMAIL: "sentinel-train-test@localhost",
++    GIT_COMMITTER_NAME: "sentinel-train-test",
++    GIT_COMMITTER_EMAIL: "sentinel-train-test@localhost",
++  };
++  await Deno.mkdir(`${tmp}/home`, { recursive: true });
++  const dir = `${tmp}/repo`;
++  await Deno.mkdir(dir, { recursive: true });
++  const exec = async (args: string[]) => {
++    const out = await new Deno.Command("git", {
++      args,
++      cwd: dir,
++      clearEnv: true,
++      env,
++      stdout: "piped",
++      stderr: "piped",
++    }).output();
++    return out;
++  };
++  const git = async (args: string[]) => {
++    const out = await exec(args);
++    return { ok: out.success, stdout: new TextDecoder().decode(out.stdout) };
++  };
++  const run: TrainGitRunV1 = async (args, maxOutputBytes) => {
++    const out = await exec(args);
++    const overflow = out.stdout.byteLength > maxOutputBytes;
++    return {
++      ok: out.success && !overflow,
++      code: out.code,
++      stdout: new TextDecoder().decode(out.stdout),
++      stdoutBytes: out.stdout,
++      ...(overflow ? { overflow: true } : {}),
++    };
++  };
++  assert.ok((await git(["init", "-q", "-b", "development"])).ok);
++  const commit = async (files: Record<string, string | Uint8Array | null>) => {
++    for (const [name, content] of Object.entries(files)) {
++      const path = `${dir}/${name}`;
++      if (content === null) {
++        await Deno.remove(path, { recursive: true });
++        continue;
++      }
++      const slash = name.lastIndexOf("/");
++      if (slash > 0) {
++        await Deno.mkdir(`${dir}/${name.slice(0, slash)}`, {
++          recursive: true,
++        });
++      }
++      if (typeof content === "string") await Deno.writeTextFile(path, content);
++      else await Deno.writeFile(path, content);
++    }
++    assert.ok((await git(["add", "-A"])).ok);
++    assert.ok((await git(["commit", "-q", "--allow-empty", "-m", "c"])).ok);
++    return (await git(["rev-parse", "HEAD"])).stdout.trim() as GitSha;
++  };
++  const rev = async (name: string) => {
++    const out = await git(["rev-parse", name]);
++    assert.ok(out.ok, `rev-parse ${name}`);
++    return out.stdout.trim();
++  };
++  return {
++    dir,
++    run,
++    git,
++    commit,
++    rev,
++    cleanup: () => Deno.remove(tmp, { recursive: true }).catch(() => {}),
++  };
++}

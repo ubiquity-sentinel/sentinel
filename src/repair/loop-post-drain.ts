@@ -14,6 +14,7 @@ import { observeStandingReview } from "./loop-review-observation.ts";
 import { standingReviewAttempt } from "./loop-review-records.ts";
 import { applyObservedReview } from "./loop-review-result.ts";
 import { loadSnapshot } from "./loop-state.ts";
+import { refreshMovedBaseBeforeMerge } from "./loop-work.ts";
 import type {
   PostDrainReviewContinuationV1,
   RepairCycleDepsV1,
@@ -39,7 +40,8 @@ export function createPostDrainContinuation(
     tracking.continued = true;
     // Reuse the original absolute bounds and remaining transitions. Disabling
     // starts is an additional guard; the narrow dispatcher below never selects
-    // intake, implementation, publication, refresh or a review request.
+    // intake, implementation, publication, a refresh execution or a review
+    // request (a moved base only persists the refresh intent).
     const continuationBounds = {
       ...bounds,
       modelCutoff: Number.NEGATIVE_INFINITY,
@@ -170,8 +172,13 @@ export function createPostDrainContinuation(
             const release = context.snapshot.releaseRequests.find((request) =>
               releaseRequestMatchesDelivery(request, record)
             );
+            // A fresh merge passes the same moved-base guard as the ordinary
+            // delivery step: a base that moved since the review persists the
+            // refresh intent (executed by a later run, never here) instead of
+            // merging a tree no CI ran on.
             result = release === undefined
-              ? await executeMerge(deps, context, record)
+              ? await refreshMovedBaseBeforeMerge(deps, context, record) ??
+                await executeMerge(deps, context, record)
               : await observeReleaseAcceptance(deps, context, record, release);
           }
         }

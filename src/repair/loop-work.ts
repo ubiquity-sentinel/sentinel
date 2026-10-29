@@ -384,48 +384,63 @@ export async function executeDeliveryStep(
     // never replaces or duplicates it.
     return observeReleaseAcceptance(deps, context, record, existingRequest);
   }
-  // Only an issue task with an existing candidate/PR, no other intent and an
-  // available prepareBaseRefresh capability may persist a base-refresh intent:
-  // an unsupported/fake port must never receive an intent it cannot execute.
-  // The check happens BEFORE the merge path and never touches immutable
-  // identities, counters, reviews or evidence.
-  if (
-    record.intent === null && record.source.kind === "issue" &&
-    deps.github.prepareBaseRefresh !== undefined
-  ) {
-    // A reviewed head whose own change already broke its checks is corrected
-    // before it could be refreshed onto the moved base (a legacy record whose
-    // final round is open included: that CI fix is its exception). At the
-    // hard ceiling the reviewed head's CI is read first and only a green head
-    // whose latest review authorizes it refreshes, mechanically, to carry
-    // that review (`spentOnMovedBase`; anything else parks). Every refresh
-    // waits its turn in the repository's delivery line.
-    const refresh = await ensureBaseRefreshIntent(
-      deps,
-      context,
-      record,
-      async (observedBase) => {
-        const spent = reviewRoundsSpentOut(context, record);
-        if (
-          !spent ||
-          legacyFinalRoundOpen(context.snapshot, record, legacyCutoff(context))
-        ) {
-          const corrected = await correctFailedHeadBeforeRefresh(
-            deps,
-            context,
-            record,
-          );
-          if (corrected !== null) return corrected;
-        }
-        if (spent) {
-          return await spentOnMovedBase(deps, context, record, observedBase);
-        }
-        return deliveryQueueDeferral(deps, context, record, observedBase);
-      },
-    );
-    if (refresh !== null) return refresh;
-  }
+  const refresh = await refreshMovedBaseBeforeMerge(deps, context, record);
+  if (refresh !== null) return refresh;
   return executeMerge(deps, context, record);
+}
+
+/**
+ * The moved-base guard every fresh merge of an intent-free delivery passes
+ * first (the ordinary delivery step and the post-drain continuation alike):
+ * null when the configured base still is the reviewed base, or the step that
+ * replaced the merge (a persisted refresh intent, a correction, a park or a
+ * delivery-line deferral).
+ *
+ * Only an issue task with an existing candidate/PR, no other intent and an
+ * available prepareBaseRefresh capability may persist a base-refresh intent:
+ * an unsupported/fake port must never receive an intent it cannot execute.
+ * The check happens BEFORE the merge path and never touches immutable
+ * identities, counters, reviews or evidence.
+ */
+export async function refreshMovedBaseBeforeMerge(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  record: WorkRecordV1,
+): Promise<StepResultV1 | null> {
+  if (
+    record.intent !== null || record.source.kind !== "issue" ||
+    deps.github.prepareBaseRefresh === undefined
+  ) return null;
+  // A reviewed head whose own change already broke its checks is corrected
+  // before it could be refreshed onto the moved base (a legacy record whose
+  // final round is open included: that CI fix is its exception). At the
+  // hard ceiling the reviewed head's CI is read first and only a green head
+  // whose latest review authorizes it refreshes, mechanically, to carry
+  // that review (`spentOnMovedBase`; anything else parks). Every refresh
+  // waits its turn in the repository's delivery line.
+  return await ensureBaseRefreshIntent(
+    deps,
+    context,
+    record,
+    async (observedBase) => {
+      const spent = reviewRoundsSpentOut(context, record);
+      if (
+        !spent ||
+        legacyFinalRoundOpen(context.snapshot, record, legacyCutoff(context))
+      ) {
+        const corrected = await correctFailedHeadBeforeRefresh(
+          deps,
+          context,
+          record,
+        );
+        if (corrected !== null) return corrected;
+      }
+      if (spent) {
+        return await spentOnMovedBase(deps, context, record, observedBase);
+      }
+      return deliveryQueueDeferral(deps, context, record, observedBase);
+    },
+  );
 }
 
 /**

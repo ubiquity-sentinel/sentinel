@@ -36,8 +36,9 @@
  * - `waiting`: not deliverable now: a reviewed head returned to `work` for
  *   its CI fix or correction, a reviewed head whose CI is still pending, a
  *   head waiting for its CI or its review on a moved base (its own review
- *   request refreshes it first), or a spent record without a clean review
- *   (it parks instead).
+ *   request refreshes it first), a head on the tip held by its red base
+ *   while that hold runs (`isRedBaseHold`), or a spent record without a
+ *   clean review (it parks instead).
  *
  * A record with no round left asking to refresh (deliverable now: its caller
  * read its reviewed head's CI green and its latest review authorizing it, or
@@ -70,11 +71,24 @@
  * hours). A refreshed head waiting on its CI and its review re-arms its wait
  * every poll and stays far inside both.
  *
- * Pure policy over the authenticated snapshot and the freshly observed tip.
- * It persists nothing, so it adds no state shape, blocker, wait or line: under
- * generation 80, the rollback target, a refresh this line admitted is a
- * `landing` contender too (a base-refresh intent, or a carried refreshed head
- * on the tip), and that runtime's line holds every other record behind it.
+ * A head on the tip whose failing check is red on the tip too (the CI-first
+ * gate's `base_red` backoff, or the pre-merge or carried gate's) waits for a
+ * base move, and only a merge moves the tip: holding the records whose merge
+ * could move it is a circle the stall rule broke only after 12 re-arms of a
+ * 30-minute hold (live Passport 2026-10-24: records 13 and 14 held 22
+ * reviewed records for 18 hours). It holds nobody while that hold runs; once
+ * it is due, it stands as before until its own step re-arms the hold or
+ * moves on. A running CI wait cannot be told from one whose jobs never
+ * started (the wait records neither), so it keeps holding, bounded by the
+ * stall rule at the five-minute poll.
+ *
+ * Pure policy over the authenticated snapshot, the freshly observed tip and
+ * the step's clock. It persists nothing, so it adds no state shape, blocker,
+ * wait or line: under generation 80, the rollback target, a refresh this line
+ * admitted is a `landing` contender too (a base-refresh intent, or a carried
+ * refreshed head on the tip), and that runtime's line holds every other
+ * record behind it (behind a head held by its red base as well, which is
+ * only slower).
  */
 import type { GitSha } from "../contracts/brands.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
@@ -84,6 +98,7 @@ import {
   sameRepositoryIdentity,
 } from "./loop-records.ts";
 import { carriedLine, latestPullReview } from "./carried-review.ts";
+import { isRedBaseHold } from "./ci-first-policy.ts";
 import {
   type LegacyCutoff,
   reviewRoundsLeft,
@@ -160,13 +175,14 @@ export type DeliveryLineStandingV1 =
   | "waiting";
 
 /**
- * Where `other` (a contender, `holdsDeliveryLine`) stands against `tip`
- * under the run's legacy `cutoff` (pure; see the module).
+ * Where `other` (a contender, `holdsDeliveryLine`) stands against `tip` at
+ * `now` under the run's legacy `cutoff` (pure; see the module).
  */
 export function lineStanding(
   snapshot: QueueSnapshot,
   other: WorkRecordV1,
   tip: GitSha,
+  now: number,
   cutoff?: LegacyCutoff,
 ): DeliveryLineStandingV1 {
   const spent = reviewRoundsLeft(snapshot, other, cutoff) === 0;
@@ -180,13 +196,15 @@ export function lineStanding(
     return spent ? "landing" : "re_review";
   }
   if (other.target.base === tip) {
-    if (other.nextStep === "delivery") return "landing";
-    if (other.nextStep === "review") return "re_review";
-    // At `work`: a refreshed head heading for its carried merge or for its
-    // next review; a reviewed head here awaits its CI fix or correction.
-    if (ownReview) return "waiting";
-    if (spent) return clean ? "landing" : "waiting";
-    return "re_review";
+    const standing = tipStanding(other, spent, clean, ownReview);
+    // Held by the tip's own red check with a round left: only a merge moves
+    // the tip, and this record would hold every record whose merge could
+    // (see the module). A spent or delivering head keeps standing `landing`:
+    // releasing the records behind it would only refresh them onto the red
+    // tip, where the carried gate's six-hour bound parks each one for good.
+    return standing === "re_review" && isRedBaseHold(other.wait, now)
+      ? "waiting"
+      : standing;
   }
   if (!spent) return other.nextStep === "delivery" ? "reviewed" : "waiting";
   if (!clean) return "waiting";
@@ -198,6 +216,22 @@ export function lineStanding(
       : "waiting";
   }
   return other.nextStep === "work" && !ownReview ? "ready" : "waiting";
+}
+
+/** A contender's standing on the tip (`lineStanding`, before a red base). */
+function tipStanding(
+  other: WorkRecordV1,
+  spent: boolean,
+  clean: boolean,
+  ownReview: boolean,
+): DeliveryLineStandingV1 {
+  if (other.nextStep === "delivery") return "landing";
+  if (other.nextStep === "review") return "re_review";
+  // At `work`: a refreshed head heading for its carried merge or for its
+  // next review; a reviewed head here awaits its CI fix or correction.
+  if (ownReview) return "waiting";
+  if (spent) return clean ? "landing" : "waiting";
+  return "re_review";
 }
 
 /** Precedence of the contenders that hold a record, for the deferral. */
@@ -231,7 +265,7 @@ export function deliveryQueueAhead(
       !sameRepositoryIdentity(other.repository, record.repository) ||
       !contender(snapshot, other, now)
     ) continue;
-    const standing = lineStanding(snapshot, other, tip, cutoff);
+    const standing = lineStanding(snapshot, other, tip, now, cutoff);
     const holds = standing === "landing" ||
       (standing === "ready" && (!deliverable || lineBefore(other, record))) ||
       (!deliverable &&

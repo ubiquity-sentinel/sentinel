@@ -37,6 +37,7 @@ import { standingReviewAttempt } from "./loop-review-records.ts";
 import { reviewRoundsSpentOut } from "./loop-review-round-cap.ts";
 import { deliveryQueueDeferral } from "./loop-delivery-queue.ts";
 import { spentOnMovedBase } from "./loop-carried-delivery.ts";
+import { mergedOffTipMessage, observedMergeLanding } from "./merge-off-tip.ts";
 import { persistTransition, persistWork } from "./loop-state.ts";
 import {
   deliveryTaskRefusal,
@@ -532,6 +533,21 @@ export async function handleMergeOutcome(
   if (outcome.outcome === "ambiguous") {
     return { kind: "progress" }; // reconciled via readPullRequest next run
   }
+  if (outcome.outcome === "merged_off_tip") {
+    // A tree no CI ran on is never booked: no release request, no delivery.
+    // The merge is resolved, so the intent is cleared and the record parks
+    // naming the merge and its parents (like the launcher's merged_off_tip).
+    return persistWork(
+      deps,
+      context,
+      markBlocked(
+        clearIntent(record, now),
+        "other",
+        mergedOffTipMessage(outcome, record.target.base),
+        now,
+      ),
+    );
+  }
   const reason = outcome.reason;
   if (
     reason === "checks_pending" && record.intent?.kind === "merge" &&
@@ -719,11 +735,34 @@ export async function reconcileMergeIntent(
         ),
       );
     }
-    return handleMergeOutcome(deps, context, record, {
-      outcome: "merged",
-      head: pull.head,
-      mergeSha: pull.mergeSha,
-    }, mergeIntentReceipt(context.snapshot.reviews, record));
+    // The observed merge is booked only on exactly the reviewed base (an
+    // earlier merge call whose response or state write was lost may have
+    // landed off it); an unreadable merge commit is re-read after one poll.
+    const landed = await observedMergeLanding(
+      deps,
+      record,
+      pull.head,
+      pull.mergeSha,
+    );
+    if (landed === "unavailable") {
+      const at = deps.clock.now();
+      return persistWork(
+        deps,
+        context,
+        setWait(
+          record,
+          { reason: "unavailable", since: at, until: at + CHECK_POLL_MS },
+          at,
+        ),
+      );
+    }
+    return handleMergeOutcome(
+      deps,
+      context,
+      record,
+      landed,
+      mergeIntentReceipt(context.snapshot.reviews, record),
+    );
   }
   if (pull.state === "closed") {
     return persistWork(

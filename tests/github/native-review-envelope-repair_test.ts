@@ -57,10 +57,19 @@ Deno.test("envelope recovery: each escaping slip parses to the intended value", 
     ['{\\"a\\":\\"b\\"}', { a: "b" }],
     ['{"a":"don\\\'t"}', { a: "don\\'t" }],
     ['{"a":["b",],}', { a: ["b"] }],
+    // `\u` without four hex digits is an invalid escape like any other.
+    ['{"a":"use \\u{1F600} here"}', { a: "use \\u{1F600} here" }],
+    ['{"a":"see src\\utils.ts"}', { a: "see src\\utils.ts" }],
+    // A doubled layer with a second slip inside it.
+    ['{\\"a\\":\\"line one\nok\\"}', { a: "line one\nok" }],
   ];
   for (const [text, expected] of cases) {
     assert.throws(() => JSON.parse(text), "each case is invalid strict JSON");
-    assert.deepEqual(expectEnvelopeJson(text, "$"), expected, text);
+    assert.deepEqual(
+      expectEnvelopeJson(text, "$"),
+      { value: expected, recovered: true },
+      text,
+    );
   }
   // Valid JSON is never rewritten.
   const valid = '{"a":"x\\ny","b":[1,2]}';
@@ -74,6 +83,9 @@ Deno.test("envelope recovery: duplicate keys, non-JSON and ambiguous quotes stil
       '{"a":RAW_JSON_SENTINEL not a result}',
       '{"a":"he said "yes", then left"}',
       '{"a":"b"} trailing',
+      // An array element's inner quotes could split or merge elements.
+      '{"a":["The test asserts "GET", "POST" are accepted"]}',
+      '{"a":["tests/a.ts covers it" "tests/b.ts too"]}',
     ]
   ) {
     assert.throws(() => expectEnvelopeJson(text, "$"), text);
@@ -141,6 +153,14 @@ Deno.test("native review: a recovered envelope bound to another snapshot is refu
 Deno.test("native review: an unrecoverable envelope keeps the fixed json_syntax category", async () => {
   assert.equal(
     await rejectedFinalCategory('{"verdict":"clean","verdict":"clean"}'),
+    `${MALFORMED_PREFIX}[json_syntax]`,
+  );
+  // A rewrite that parses but whose shape is then refused (here an invented
+  // key) is still reported as the escaping failure it is.
+  assert.equal(
+    await rejectedFinalCategory(
+      '{"verdict":"clean","summary":"Uses "a", "b": "c" now","findings":[]}',
+    ),
     `${MALFORMED_PREFIX}[json_syntax]`,
   );
 });

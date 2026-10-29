@@ -50,7 +50,7 @@ import {
 
 export const PASS_MS = 5 * MINUTE;
 
-/** A second foreign repository (the delivery cap is global). */
+/** A second foreign repository (the delivery cap is per repository). */
 export const OTHER: RepositoryIdentityV1 = {
   owner: "ubiquity",
   name: "other-target",
@@ -266,8 +266,9 @@ export async function retirementFairnessLive(): Promise<FairnessV1> {
 /**
  * Three reviewed, green, exact-base delivery records in two repositories; the
  * first in id order is refused by GitHub on every merge. The delivery pass
- * stops merging for the whole pass once `merge` was called, so the others
- * starve while the refused record holds the one merge slot.
+ * stops merging in a repository for the rest of the pass once `merge` was
+ * called there, so the other repository's record merges, while the refused
+ * record's sibling starves behind the one merge slot of their repository.
  */
 export async function mergeSlotFairness(): Promise<FairnessV1> {
   const shapes: RecordShapeV1[] = [0, 1, 2].map((index) => ({
@@ -304,9 +305,9 @@ export async function mergeSlotFairness(): Promise<FairnessV1> {
   return {
     id: "delivery:one-merge-per-pass",
     cap: anchor(
-      "f.mergeCalled",
+      "f.mergedRepositories",
       "ops/hosted-autonomy-delivery-pass.ts",
-      "      mergeCalled = true;",
+      "      mergedRepositories.add(scope.key);",
     ),
     fleet: parts.length,
     passes,

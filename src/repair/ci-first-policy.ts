@@ -141,6 +141,24 @@ export function isCiFixMarker(wait: WorkWaitV1 | null): boolean {
     wait.since === wait.until;
 }
 
+/** Re-observation interval while a head's base itself is red (30 minutes). */
+export const RED_BASE_RECHECK_MS = 30 * 60_000;
+
+/**
+ * True while `wait` is a red base's hold still running at `now`: a `backoff`
+ * whose recheck is `RED_BASE_RECHECK_MS` or more after its start, as every
+ * red-base hold's is (the CI-first gate's `base_red`, the pre-review fix's,
+ * the pre-merge correction's and the carried gate's each recheck that long
+ * after the re-arm, from a start at or before it). No other timed `backoff`
+ * is that long, and each of them starts at its own write: the CI fix marker
+ * is zero-length, the carried-merge marker four minutes and the merge port's
+ * refusal backoff `CHECK_POLL_MS`.
+ */
+export function isRedBaseHold(wait: WorkWaitV1 | null, now: number): boolean {
+  return wait !== null && wait.reason === "backoff" && wait.until !== null &&
+    wait.until - wait.since >= RED_BASE_RECHECK_MS && now < wait.until;
+}
+
 /**
  * One-time legacy exception (owner decision 2026-10-16): ai.ubq.fi records
  * that spent their review rounds under the old review-before-CI order and are

@@ -81,6 +81,7 @@ import {
   acceptanceOwnerGateActions,
   acceptanceOwnerGated,
 } from "./hosted-autonomy-acceptance.ts";
+import { retryWritten } from "./hosted-autonomy-retry-actions.ts";
 
 export async function runHostedDeliveryPass(
   context: HostedAutonomyPassContextV1,
@@ -214,9 +215,13 @@ export async function runHostedDeliveryPass(
     );
     if (hostedPassDeadlineReached(context)) return defer();
     if (selfTip === null) {
-      return actions.length > 0
-        ? skipped("retried", observedHead, actions)
-        : skipped("base_moved", observedHead, actions);
+      // `retried` only after a retry write of this pass (`retryWritten`); a
+      // repeated read-only denial or any other action leaves `base_moved`.
+      return skipped(
+        retryWritten(actions) ? "retried" : "base_moved",
+        observedHead,
+        actions,
+      );
     }
   }
 
@@ -262,12 +267,38 @@ export async function runHostedDeliveryPass(
   );
   // The tip's own CI, read at most once per repository per pass (a2).
   const tipGreen = new Map<string, boolean>();
-  // Set as soon as `surface.merge` is called, whatever it answers (merged,
-  // refused, lost, thrown): that merge may have landed, so the base tip and
-  // the tip CI read above are stale and every later gate would admit a merge
-  // onto a commit whose CI was never checked. No further merge is attempted
-  // in this pass; an already-merged pull is still settled read-only.
-  let mergeCalled = false;
+  // The scope key of every repository whose `surface.merge` this pass called,
+  // added as soon as it is called, whatever it answers (merged, refused,
+  // lost, thrown): that merge may have landed, so THAT repository's base tip
+  // and tip CI read above are stale and every later gate there would admit a
+  // merge onto a commit whose CI was never checked. No further merge is
+  // attempted in that repository in this pass; an already-merged pull is
+  // still settled read-only. A merge moves only its own repository's tip, so
+  // another repository's merge is gated as before.
+  const mergedRepositories = new Set<string>();
+  // A production release request already records this exact delivery.
+  const productionRecorded = (record: HostedAutonomyRecordV1) =>
+    snapshot.releaseRequests.some((request) =>
+      sameRepository(request.target.repository, record.repository) &&
+      request.source.pullRequest === record.target.pr &&
+      request.source.head === record.target.head &&
+      request.source.base === record.target.base &&
+      request.target.environment === "production"
+    );
+  // A non-carried review/delivery record outside the Gateway whose reviewed
+  // base is not the tip this pass ALREADY read for its repository (never an
+  // extra tip read): every merge gate it could reach refuses it `base_moved`
+  // before any effect (the moved-base rule is Gateway-only), so only its pull
+  // request is read, for the lost write of a merge that moved the tip itself
+  // (as `behindTip`). A self delivery already recorded keeps its read-free
+  // `already_recorded`.
+  const offReadTip = (record: HostedAutonomyRecordV1, key: string) => {
+    const tip = deliveryTips.get(key);
+    return typeof tip === "string" && tip !== record.target.base &&
+      boundReviewReceipts(snapshot, record).length > 0 &&
+      !isGatewayVpsRepository(record.repository) &&
+      !productionRecorded(record);
+  };
 
   for (const record of snapshot.work) {
     if (hostedPassDeadlineReached(context)) return defer();
@@ -332,10 +363,13 @@ export async function runHostedDeliveryPass(
     // #156 (3, 6): a record this pass can only adopt, never merge (a carried
     // head the runtime waits on with `unavailable`, which may precede any
     // merge, or a spent record behind the tip), reads its pull request first
-    // and nothing else unless that pull request is already merged.
+    // and nothing else unless that pull request is already merged. A
+    // review/delivery record outside the Gateway whose base is not the tip
+    // this pass already read for its repository is the same case: its gate
+    // can only answer `base_moved` (`offReadTip`).
     const onlyAdoptable = carried && !carriedMergeAwaited(record)
       ? "carried_awaiting_runtime"
-      : behindTip.has(record.id)
+      : behindTip.has(record.id) || (!parked && offReadTip(record, scope.key))
       ? "base_moved"
       : null;
     let prefetched: HostedAutonomyPullV1 | null = null;
@@ -379,15 +413,7 @@ export async function runHostedDeliveryPass(
     let receipt = verdict.receipt;
     const self = isHostedSelf(record.repository);
     const gateway = isGatewayVpsRepository(record.repository);
-    if (
-      (self || gateway) &&
-      snapshot.releaseRequests.some((request) =>
-        sameRepository(request.target.repository, record.repository) &&
-        request.source.pullRequest === pullRequest &&
-        request.source.head === head && request.source.base === base &&
-        request.target.environment === "production"
-      )
-    ) {
+    if ((self || gateway) && productionRecorded(record)) {
       actions.push(`delivery:${record.id}:already_recorded`);
       continue;
     }
@@ -437,7 +463,7 @@ export async function runHostedDeliveryPass(
         actions.push(`delivery:${record.id}:queue_context_unavailable`);
         continue;
       }
-      if (mergeCalled) {
+      if (mergedRepositories.has(scope.key)) {
         actions.push(`delivery:${record.id}:merge_deferred`);
         continue;
       }
@@ -548,7 +574,7 @@ export async function runHostedDeliveryPass(
       }
       if (proofLine !== null) actions.push(proofLine);
       let merged: { merged: boolean; sha: string | null } | null;
-      mergeCalled = true;
+      mergedRepositories.add(scope.key);
       // Once admitted, preserve the existing merge verification/bookkeeping
       // settlement even if the cutoff is crossed inside the effect.
       mergedThisRecord = true;
@@ -653,7 +679,7 @@ export async function runHostedDeliveryPass(
       receipt = foreignProof.receipt;
     }
     // A merge performed earlier in THIS pass is an external write and keeps
-    // the one-merge bound; an already-merged pull is read-only.
+    // its repository's one-merge bound; an already-merged pull is read-only.
     if (revision === null) revision = pull.mergeCommitSha;
     if (revision !== pull.mergeCommitSha) continue;
     // A carried merge is booked only when it landed exactly on the refreshed
@@ -726,8 +752,9 @@ export async function runHostedDeliveryPass(
       );
       actions.push(`delivery:${record.id}:foreign_merged`);
       revisions.push(revision);
-      // The direct effect cap only stops another merge. Already-merged queue
-      // deliveries can still be booked after this external merge.
+      // The direct effect cap only stops another merge in this repository.
+      // Other repositories' merges and already-merged queue deliveries can
+      // still follow this external merge.
       continue;
     }
 
@@ -876,9 +903,7 @@ async function writeDeliveryState(
   return {
     kind: "hosted_autonomy",
     status: "applied",
-    reason: actions.some((action) => action.startsWith("retry:"))
-      ? "retried"
-      : "applied",
+    reason: retryWritten(actions) ? "retried" : "applied",
     beforeHead: observedHead,
     appliedHead: write.value.head,
     actions,

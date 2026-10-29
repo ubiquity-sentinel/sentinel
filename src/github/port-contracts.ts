@@ -6,6 +6,7 @@ import type { HttpTransportV1 } from "./http.ts";
 import type { GitHubAuthProviderV1 } from "./auth.ts";
 import type { Clock, GitHubCooldownGateV1 } from "../contracts/ports.ts";
 import type { GitExecutorV1 } from "./git-executor.ts";
+import type { BackupCiConsumerV1 } from "./backup-ci-observations.ts";
 import type {
   HumanResolutionVerifierV1,
   ReviewServiceTransportV1,
@@ -61,6 +62,8 @@ export interface GitHubPortOptionsV1 {
   requestDeadlineMs?: number;
   /** Finding normalization cap (default the contract 256). */
   findingCap?: number;
+  /** Backup CI consumer for the port's one client (`client-backup-ci.ts`). */
+  backupCi?: BackupCiConsumerV1;
 }
 
 export const DEFAULT_FINDING_CAP = 256;

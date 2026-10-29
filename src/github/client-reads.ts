@@ -36,6 +36,11 @@ import type {
 import { GitHubClientIssues } from "./client-issues.ts";
 import { parseWire, parseWith, repoPath } from "./client-response.ts";
 import { REVIEW_DECISION_QUERY } from "./client-issue-wire.ts";
+import { neverStartedRunIndexes } from "./never-started-job.ts";
+import {
+  applyBackupCiToChecks,
+  type BackupCiClientReadsV1,
+} from "./client-backup-ci.ts";
 
 /**
  * The commit statuses an unfiltered head CI read reports (sentinel issue
@@ -86,6 +91,47 @@ function headStatuses(
 const COMMIT_PARENTS_MAX = 64;
 
 export abstract class GitHubClientReads extends GitHubClientIssues {
+  /** Never-started verdicts of completed Actions jobs (`never-started-job.ts`). */
+  private readonly jobVerdicts = new Map<string, boolean>();
+
+  /** One Actions job's parsed body, or null for any unreadable answer. */
+  private async readActionsJob(jobId: number): Promise<unknown> {
+    const response = await this.request(
+      "GET",
+      `/repos/${repoPath(this.repository)}/actions/jobs/${jobId}`,
+    );
+    if (!response.ok || response.value.status !== 200) return null;
+    try {
+      return JSON.parse(response.value.bodyText);
+    } catch {
+      return null;
+    }
+  }
+
+  /** The backup CI consumer's reads over this client, or null (§11.2). */
+  protected backupCiReads(): BackupCiClientReadsV1 | null {
+    const backupCi = this.options.backupCi;
+    if (backupCi === undefined) return null;
+    return {
+      ...backupCi,
+      repository: this.repository,
+      pages: (path, query, key) =>
+        this.collectPages(
+          `/repos/${repoPath(this.repository)}${path}`,
+          { ...query, per_page: String(this.perPage) },
+          (body) =>
+            expectArray(
+              key === null ? body : expectRecord(body, "$")[key],
+              "$",
+              this.maxItems,
+              (v) => v,
+            ) as unknown[],
+        ),
+      readJob: (jobId) => this.readActionsJob(jobId),
+      verdicts: this.jobVerdicts,
+    };
+  }
+
   /** Host-authored base-review jobs; unrelated supervisor jobs are not task CI. */
   async readBaseReviewChecks(
     sha: GitSha,
@@ -215,7 +261,8 @@ export abstract class GitHubClientReads extends GitHubClientIssues {
         : undefined;
       return typeof raw === "string" && names.has(raw);
     };
-    const checks = [];
+    const checks: GitHubCheckV1[] = [];
+    const items: unknown[] = [];
     for (const item of collected.value) {
       if (!wanted(item, "name")) continue;
       const parsed = parseWith(item, (v) => parseCheckRunWire(v, "$"));
@@ -230,6 +277,18 @@ export abstract class GitHubClientReads extends GitHubClientIssues {
         );
       }
       checks.push(parsed.value);
+      items.push(item);
+    }
+    // A failed Actions run whose job never started is marked (bounded job
+    // reads; an unreadable job keeps the run as reported).
+    const neverStarted = await neverStartedRunIndexes(
+      items,
+      sha,
+      (jobId) => this.readActionsJob(jobId),
+      this.jobVerdicts,
+    );
+    for (const index of neverStarted) {
+      checks[index] = { ...checks[index], neverStarted: true };
     }
     const statusesCollected = await this.collectPages(
       `/repos/${repoPath(this.repository)}/commits/${sha}/statuses`,
@@ -258,6 +317,20 @@ export abstract class GitHubClientReads extends GitHubClientIssues {
         "GitHub API checks collection size bound exceeded",
       );
     }
+    // Verified backup CI stand-ins for never-started runs, and peers, before
+    // the statuses are folded in (docs/backup-ci-spec.md §11.2).
+    checks.splice(
+      0,
+      checks.length,
+      ...await applyBackupCiToChecks(
+        this.backupCiReads(),
+        sha,
+        items,
+        checks,
+        statuses,
+        names !== undefined,
+      ),
+    );
     // A name-filtered read (the base attribution of given head failures)
     // judges no other check run of the commit: its statuses are as recorded.
     checks.push(

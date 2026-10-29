@@ -7,14 +7,19 @@ name: sentinel-ci
 
 on:
   pull_request:
+  # Explicit branch checks remain available before opening a pull request.
+  workflow_dispatch: {}
   push:
     branches:
       - master
       - development
-      - "codex/**"
 
 permissions:
   contents: read
+
+concurrency:
+  group: sentinel-ci-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/heads/development') }}
 
 jobs:
   quality:
@@ -25,11 +30,6 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 24.19.0
-      - name: Install locked App action dependencies for offline tests
-        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund --prefix .github/actions/sentinel-app-token
       - name: Check the local App action source
         run: |
           deno fmt --check .github/actions/sentinel-app-token
@@ -44,7 +44,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [modules, integration, host-1, host-2, host-3]
+        include:
+          - shard: modules
+            workers: 4
+          - shard: integration
+            workers: 1
+          - shard: host-1
+            workers: 4
+          - shard: host-2
+            workers: 4
+          - shard: host-3
+            workers: 4
     steps:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
@@ -72,9 +82,11 @@ jobs:
       - name: Install locked App action dependencies for offline tests
         run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund --prefix .github/actions/sentinel-app-token
       - name: Credential-free test shard
+        env:
+          SENTINEL_TEST_JOBS: ${{ matrix.workers }}
         run: |
           export PATH="/usr/local/bin:$PATH"
-          /usr/local/bin/deno run --frozen --allow-read=tests --allow-run=deno --allow-env=PATH ops/ci-shards.ts "${{ matrix.shard }}"
+          /usr/local/bin/deno run --frozen --allow-read=tests --allow-run=deno --allow-env=PATH,SENTINEL_TEST_JOBS ops/ci-shards.ts "${{ matrix.shard }}"
 
   test-local:
     if: ${{ always() }}

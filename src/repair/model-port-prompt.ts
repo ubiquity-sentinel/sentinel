@@ -10,6 +10,50 @@ import {
 } from "./model-port-policy.ts";
 import { renderCiEvidenceUnavailable } from "./ci-evidence-render.ts";
 
+/** At most this many protected path prefixes are named in the prompt. */
+export const MAX_PROMPT_PROTECTED_PATHS = 60;
+/** Bound on the named prefixes' rendered characters (the role stays intact). */
+export const MAX_PROMPT_PROTECTED_PATH_CHARS = 4_000;
+
+/**
+ * The role's protected-path sentence (C6): the exact trusted configured
+ * prefixes, deduplicated and sorted, JSON-quoted so a prefix never reads as
+ * prose, at most `MAX_PROMPT_PROTECTED_PATHS` of them within
+ * `MAX_PROMPT_PROTECTED_PATH_CHARS`; the rest are counted, never dropped
+ * silently. Empty without configured prefixes, so a prompt for a repository
+ * with none is byte-identical to the earlier one. The candidate's own
+ * protected-path check stays the enforcement: this only steers the model to
+ * a fix outside them. A candidate that still changes one parks as `candidate
+ * touches a protected path` (its owner comment and `sentinel:retry` exit). An
+ * instruction to make no change instead would land in the no-change
+ * base-review lane, which has no such exit.
+ */
+export function renderProtectedPaths(paths: readonly string[]): string {
+  const unique = [...new Set(paths)].sort();
+  if (unique.length === 0) return "";
+  const named: string[] = [];
+  let chars = 0;
+  for (const path of unique) {
+    const quoted = JSON.stringify(path);
+    if (
+      named.length >= MAX_PROMPT_PROTECTED_PATHS ||
+      chars + quoted.length + 2 > MAX_PROMPT_PROTECTED_PATH_CHARS
+    ) break;
+    named.push(quoted);
+    chars += quoted.length + 2;
+  }
+  const rest = unique.length - named.length;
+  return " The trusted repository configuration protects exactly these " +
+    `path prefixes (sorted): ${named.join(", ")}` +
+    (rest === 0
+      ? ""
+      : ` (and ${rest} more protected prefix${
+        rest === 1 ? "" : "es"
+      } not listed here)`) +
+    ". Fix the issue without changing them where you can; a candidate that " +
+    "changes one is parked for the repository owner to land.";
+}
+
 /**
  * The implementer prompt. `ciEvidence` is the trusted host's rendered CI
  * failure evidence section for a CI correction (fenced untrusted content,
@@ -20,11 +64,14 @@ import { renderCiEvidenceUnavailable } from "./ci-evidence-render.ts";
  * evidence-bearing prompt is only ever the user turn's input; the thread's
  * system-level base instructions are always the prompt without evidence
  * (`model-port-session.ts`), so CI output never arrives as instructions.
+ * `protectedPaths` are the trusted host's configured prefixes for the
+ * request's repository (`renderProtectedPaths`), never part of the request.
  */
 export function buildPrompt(
   request: ModelRunRequestV1,
   localIteration: boolean,
   ciEvidence?: string,
+  protectedPaths: readonly string[] = [],
 ): string {
   const parts: string[] = [
     `Repository: ${request.repository.owner}/${request.repository.name}`,
@@ -168,7 +215,9 @@ export function buildPrompt(
     `policy is fixed at ${request.model} with ${request.reasoning} ` +
     "reasoning; do not change it or introduce a fallback. Do not modify " +
     "protected paths, do not write or commit credentials, and do not " +
-    "rewrite expected test assertions to force success. Keep the change " +
+    "rewrite expected test assertions to force success." +
+    renderProtectedPaths(protectedPaths) +
+    " Keep the change " +
     "minimal and do not refactor beyond it. Keep every command's " +
     "max_output_tokens at or below 2000 and " +
     "keep individual command output bounded: prefer targeted symbol " +

@@ -1,11 +1,11 @@
-/** Bounded progressive authenticated matrix recovery and serial delivery. */
+/** Bounded authenticated matrix recovery interleaved with serial delivery. */
+import { createActionsTargetFlow } from "./actions-target-flow.ts";
 import { matrixDigestV1 } from "../contracts/matrix.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import { OPERATION_MARGIN_MS, REVIEW_BOUND_MS } from "../repair/loop-bounds.ts";
-import {
-  type ActionsTargetCyclesInputV1,
-  type ActionsTargetCyclesResultV1,
-  runActionsTargetCycles,
+import type {
+  ActionsTargetCyclesInputV1,
+  ActionsTargetCyclesResultV1,
 } from "./actions.ts";
 import { ingestMatrixResults } from "./matrix.ts";
 import { createGitBundleImporter } from "./matrix-git.ts";
@@ -51,15 +51,6 @@ const MATRIX_CONSUMER_MARGIN_MS = 5 * 60_000;
  * after another, so every later target also waits for the earlier cycles.
  */
 export const MATRIX_TARGET_REVIEW_LEAD_MS = 5 * 60_000;
-/**
- * An earlier target's own review, which its serial cycle drains before the
- * next target's cycle starts. Live (31 sentinel review receipts): submission
- * to completion took 6.6 minutes at the median, about 10 at p75 and 18.4 at
- * most. Reserved for every target except the last, whose own review start is
- * the bound itself; a longer review leaves a later target's review to the
- * next run instead of keeping live cells waiting.
- */
-export const MATRIX_TARGET_REVIEW_DRAIN_MS = 10 * 60_000;
 
 /** The progressive consumer's two bounds, fixed once when it starts. */
 export interface MatrixConsumerWindowV1 {
@@ -76,8 +67,9 @@ export interface MatrixConsumerWindowV1 {
  * runs to `deadline - OPERATION_MARGIN_MS` and a review must fit its full
  * bound before one more margin, so the last review start of any cycle is
  * `deadline - 2 * OPERATION_MARGIN_MS - REVIEW_BOUND_MS`. Before the last
- * target reaches it, every target needs its review lead and every earlier
- * target also drains its own review. A long run never reaches this bound; a
+ * target reaches it, every target needs its preparation/publication lead.
+ * Native reviews overlap and share one final drain, so no earlier-target
+ * serial drain reserve remains. A long run never reaches this bound; a
  * short one (an App-token window) waits less for live cells, which stay
  * charged for a later recovery, instead of leaving later targets no review.
  */
@@ -98,8 +90,7 @@ export function matrixConsumerWindowV1(input: {
     until: Math.min(
       window,
       input.deadline - 2 * OPERATION_MARGIN_MS - REVIEW_BOUND_MS -
-        input.targets * MATRIX_TARGET_REVIEW_LEAD_MS -
-        Math.max(0, input.targets - 1) * MATRIX_TARGET_REVIEW_DRAIN_MS,
+        input.targets * MATRIX_TARGET_REVIEW_LEAD_MS,
     ),
   };
 }
@@ -107,7 +98,7 @@ export function matrixConsumerWindowV1(input: {
 /** Deterministic seams for the progressive authenticated matrix consumer. */
 export interface MatrixAggregateOptionsV1 {
   /** Wall-clock wait between empty scans; tests inject a clock advance. */
-  pollWait?: (ms: number) => Promise<void>;
+  pollWait?: (ms: number, signal?: AbortSignal) => Promise<void>;
   /** Consumer window; 0 keeps exactly the original single-scan behavior. */
   maxWaitMs?: number;
 }
@@ -243,9 +234,16 @@ export async function runActionsMatrixAggregateCycles(
   }
   const transport = await transportFor(input, injectedTransport);
   const pollWait = options.pollWait ??
-    ((ms: number) =>
+    ((ms: number, signal?: AbortSignal) =>
       new Promise<void>((resolve) => {
-        setTimeout(resolve, ms);
+        const done = () => {
+          clearTimeout(timer);
+          signal?.removeEventListener("abort", done);
+          resolve();
+        };
+        const timer = setTimeout(done, ms);
+        if (signal?.aborted) done();
+        else signal?.addEventListener("abort", done, { once: true });
       }));
   // The ordinary lifecycle below may start models (and so reviews) only for
   // the native consumer of this run's own plan.
@@ -261,6 +259,18 @@ export async function runActionsMatrixAggregateCycles(
   });
   const consumerUntil = consumer.until;
   const prepared = new Set<string>();
+  const flow = createActionsTargetFlow({
+    ...input,
+    modelStartsEnabled: lifecycleModelStarts,
+    externalImplementations: true,
+    progressBaseline: input.progressBaseline ?? progressBaseline,
+    prepareTarget: async (config) => {
+      const key = config.repository.owner + "/" + config.repository.name;
+      if (prepared.has(key)) return;
+      await input.prepareTarget?.(config);
+      prepared.add(key);
+    },
+  });
   let firstScan = true;
   // Progressive authenticated consumption: every scan re-reads authoritative
   // state, recovers ONLY completed artifacts for the still-charged producers
@@ -275,136 +285,172 @@ export async function runActionsMatrixAggregateCycles(
   // unresolved instead of being terminalized as a failure or health verdict,
   // and repeated scans of an already-consumed cell are the existing duplicate
   // no-op.
-  for (;;) {
-    const scan = await input.state.readRepair();
-    if (!scan.ok || scan.value.status !== "found") {
-      throw new Error("matrix aggregate cannot read authoritative state");
-    }
-    const { charged, own } = matrixConsumerProducersV1(
-      scan.value.snapshot,
-      host.execution.createdAt,
-    );
-    const initialScan = firstScan;
-    const requests = initialScan ? charged : own;
-    firstScan = false;
-    if (requests.length === 0) break;
-    const unresolved = new Set(
-      requests.map((request) => request.reservationId),
-    );
-    let waves: Awaited<ReturnType<typeof recoverWithHistoricalIsolation>>;
-    try {
-      waves = await recoverWithHistoricalIsolation(input, transport, {
-        requests,
-        runtimeSha: input.controllerSha,
-        launcherSha: host.run.launcherSha,
-        consumerRun: host.run,
-        // The initial scan still runs when there is no polling window left:
-        // bounded by the consumer's own window even when the review cutoff is
-        // near or spent, else by the actual run deadline, and one shared
-        // transport budget. Subsequent scans and retries never renew that
-        // polling window.
-        deadline: Math.min(
-          input.deadline,
-          scanRecoveryBound(initialScan, consumer, input.deadline, input.clock),
-        ),
-        ...(carrier === undefined ? {} : { currentRun: host.run }),
-      });
-    } catch (error) {
-      // GitHub kept answering a server error: nothing was authenticated or
-      // ingested, so every charge stays unresolved exactly as for late
-      // artifacts, and the ordinary lifecycle below still runs.
-      if (!(error instanceof MatrixArtifactUnavailableError)) throw error;
-      console.log(JSON.stringify({
-        kind: "sentinel_matrix_artifacts_unavailable",
-        scan: initialScan ? "initial" : "own",
-        requests: requests.length,
-      }));
-      break;
-    }
-    let progressed = false;
-    for (const wave of waves) {
-      if (
-        await matrixDigestV1(wave.plan) !== wave.planDigest ||
-        wave.plan.run.runId !== wave.provenance.run.runId ||
-        wave.plan.run.runAttempt !== wave.provenance.run.runAttempt ||
-        wave.plan.run.launcherSha !== wave.provenance.run.launcherSha ||
-        !Number.isSafeInteger(wave.provenance.plannerJobId) ||
-        wave.provenance.plannerJobId <= 0
-      ) {
-        throw new Error("matrix artifact provenance is inconsistent");
+  try {
+    for (;;) {
+      const scan = await input.state.readRepair();
+      if (!scan.ok || scan.value.status !== "found") {
+        throw new Error("matrix aggregate cannot read authoritative state");
       }
-      if (
-        carrier !== undefined && wave.plan.run.runId === host.run.runId &&
-        wave.plan.run.runAttempt === host.run.runAttempt &&
-        wave.planDigest !== carrier.planDigest
-      ) {
-        throw new Error(
-          "matrix aggregate plan differs from native planner output",
-        );
-      }
-      for (const config of input.configs) {
-        const configKey = config.repository.owner + "/" +
-          config.repository.name;
-        const cells = wave.plan.cells.filter((cell) =>
-          cell.repository.owner === config.repository.owner &&
-          cell.repository.name === config.repository.name &&
-          cell.repository.installationId ===
-            config.repository.installationId &&
-          unresolved.has(cell.reservationId)
-        );
-        if (cells.length === 0) continue;
-        if (!prepared.has(configKey)) {
-          await input.prepareTarget?.(config);
-          prepared.add(configKey);
-        }
-        const report = await ingestMatrixResults(
-          targetDeps(input, config),
-          { ...wave.plan, cells },
-          wave.results.filter((entry) =>
-            cells.some((cell) => cell.cellId === entry.cellId)
+      const { charged, own } = matrixConsumerProducersV1(
+        scan.value.snapshot,
+        host.execution.createdAt,
+      );
+      const initialScan = firstScan;
+      const requests = initialScan ? charged : own;
+      firstScan = false;
+      if (requests.length === 0) break;
+      const unresolved = new Set(
+        requests.map((request) => request.reservationId),
+      );
+      let waves: Awaited<ReturnType<typeof recoverWithHistoricalIsolation>>;
+      try {
+        waves = await recoverWithHistoricalIsolation(input, transport, {
+          requests,
+          runtimeSha: input.controllerSha,
+          launcherSha: host.run.launcherSha,
+          consumerRun: host.run,
+          // The initial scan still runs when there is no polling window left:
+          // bounded by the consumer's own window even when the review cutoff is
+          // near or spent, else by the actual run deadline, and one shared
+          // transport budget. Subsequent scans and retries never renew that
+          // polling window.
+          deadline: Math.min(
+            input.deadline,
+            scanRecoveryBound(
+              initialScan,
+              consumer,
+              input.deadline,
+              input.clock,
+            ),
           ),
-          {
-            deadline: input.deadline,
-            expectedProvider: host.expectedProvider,
-            failoverModel: host.failoverModel,
-            bundleImporter: createGitBundleImporter({
-              repositoryDir: host.sourcePathFor(config),
-              bundlesDir: wave.bundlesDir,
-            }),
+          ...(carrier === undefined ? {} : { currentRun: host.run }),
+        });
+      } catch (error) {
+        // GitHub kept answering a server error: nothing was authenticated or
+        // ingested, so every charge stays unresolved exactly as for late
+        // artifacts, and the ordinary lifecycle below still runs.
+        if (!(error instanceof MatrixArtifactUnavailableError)) throw error;
+        console.log(JSON.stringify({
+          kind: "sentinel_matrix_artifacts_unavailable",
+          scan: initialScan ? "initial" : "own",
+          requests: requests.length,
+        }));
+        break;
+      }
+      let progressed = false;
+      for (const wave of waves) {
+        if (
+          await matrixDigestV1(wave.plan) !== wave.planDigest ||
+          wave.plan.run.runId !== wave.provenance.run.runId ||
+          wave.plan.run.runAttempt !== wave.provenance.run.runAttempt ||
+          wave.plan.run.launcherSha !== wave.provenance.run.launcherSha ||
+          !Number.isSafeInteger(wave.provenance.plannerJobId) ||
+          wave.provenance.plannerJobId <= 0
+        ) {
+          throw new Error("matrix artifact provenance is inconsistent");
+        }
+        if (
+          carrier !== undefined && wave.plan.run.runId === host.run.runId &&
+          wave.plan.run.runAttempt === host.run.runAttempt &&
+          wave.planDigest !== carrier.planDigest
+        ) {
+          throw new Error(
+            "matrix aggregate plan differs from native planner output",
+          );
+        }
+        for (const config of input.configs) {
+          const configKey = config.repository.owner + "/" +
+            config.repository.name;
+          const cells = wave.plan.cells.filter((cell) =>
+            cell.repository.owner === config.repository.owner &&
+            cell.repository.name === config.repository.name &&
+            cell.repository.installationId ===
+              config.repository.installationId &&
+            unresolved.has(cell.reservationId)
+          );
+          if (cells.length === 0) continue;
+          if (!prepared.has(configKey)) {
+            await input.prepareTarget?.(config);
+            prepared.add(configKey);
+          }
+          const report = await ingestMatrixResults(
+            targetDeps(input, config),
+            { ...wave.plan, cells },
+            wave.results.filter((entry) =>
+              cells.some((cell) => cell.cellId === entry.cellId)
+            ),
+            {
+              deadline: input.deadline,
+              expectedProvider: host.expectedProvider,
+              failoverModel: host.failoverModel,
+              bundleImporter: createGitBundleImporter({
+                repositoryDir: host.sourcePathFor(config),
+                bundlesDir: wave.bundlesDir,
+              }),
+            },
+          );
+          console.log(
+            JSON.stringify({ kind: "sentinel_matrix_ingest", ...report }),
+          );
+          if (report.ingested > 0) {
+            progressed = true;
+            flow.wake(config, cells.map((cell) => cell.taskId));
+          }
+        }
+      }
+      // Hydrate every available bundle in this authenticated scan before any
+      // target retries preservation; a later target may belong to another wave.
+      // Ready work still advances before waiting for any missing producer.
+      while (
+        await flow.advance()
+      ) { /* existing work also advances on empty scans */ }
+      // A later scan is bounded by `consumerUntil`, and one that reaches it
+      // mid-download refuses the whole run, so it starts only with its whole
+      // transport budget still before it: `maxWaitMs: 0`, or any window shorter
+      // than that budget, is exactly one authenticated recovery even when that
+      // scan consumed a cell.
+      if (input.clock.now() + MATRIX_ARTIFACT_RECOVERY_MAX_MS > consumerUntil) {
+        break;
+      }
+      if (progressed) continue;
+      // Nothing is left to wait for once every producer this execution planned
+      // has been consumed; a settled charge, or an earlier wave's producer still
+      // reserved after its run ended, is rehydrated by the ordinary lifecycle
+      // and by the next run's first scan, never by spinning here.
+      if (own.length === 0) break;
+      if (
+        input.clock.now() + MATRIX_CONSUMER_POLL_MS +
+            MATRIX_ARTIFACT_RECOVERY_MAX_MS > consumerUntil
+      ) break;
+      const waiting = new AbortController();
+      try {
+        // Native owned completion is an in-process event. Artifact availability
+        // retains its original single protocol timer: a review event advances
+        // its target without shortening or restarting the artifact interval.
+        let polled = false;
+        const poll = pollWait(MATRIX_CONSUMER_POLL_MS, waiting.signal).then(
+          () => {
+            polled = true;
           },
         );
-        console.log(
-          JSON.stringify({ kind: "sentinel_matrix_ingest", ...report }),
-        );
-        if (report.ingested > 0) progressed = true;
+        do {
+          await Promise.race([poll, flow.waitForReady(waiting.signal)]);
+          while (await flow.advance()) { /* event-driven target work */ }
+        } while (!polled);
+      } finally {
+        waiting.abort();
       }
     }
-    // A later scan is bounded by `consumerUntil`, and one that reaches it
-    // mid-download refuses the whole run, so it starts only with its whole
-    // transport budget still before it: `maxWaitMs: 0`, or any window shorter
-    // than that budget, is exactly one authenticated recovery even when that
-    // scan consumed a cell.
-    if (input.clock.now() + MATRIX_ARTIFACT_RECOVERY_MAX_MS > consumerUntil) {
-      break;
+    while (await flow.advance()) {
+      /* include the mandatory empty initial scan */
     }
-    if (progressed) continue;
-    // Nothing is left to wait for once every producer this execution planned
-    // has been consumed; a settled charge, or an earlier wave's producer still
-    // reserved after its run ended, is rehydrated by the ordinary lifecycle
-    // and by the next run's first scan, never by spinning here.
-    if (own.length === 0) break;
-    if (
-      input.clock.now() + MATRIX_CONSUMER_POLL_MS +
-          MATRIX_ARTIFACT_RECOVERY_MAX_MS > consumerUntil
-    ) break;
-    await pollWait(MATRIX_CONSUMER_POLL_MS);
+  } catch (error) {
+    // Producers remain owned on artifact/provenance failure; settle all of them
+    // without replacing that failure with a successful target outcome.
+    try {
+      await flow.finish();
+    } catch { /* preserve the original failure */ }
+    throw error;
   }
-  // Missing/unavailable cell artifacts stay charged and unresolved. Reviews and
-  // delivery retain the real ordinary lifecycle; implementation never falls back.
-  return await runActionsTargetCycles({
-    ...input,
-    modelStartsEnabled: lifecycleModelStarts,
-    externalImplementations: true,
-    progressBaseline: input.progressBaseline ?? progressBaseline,
-  });
+  return await flow.finish();
 }

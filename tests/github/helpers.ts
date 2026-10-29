@@ -862,6 +862,8 @@ export interface MakePortOptions {
   maxPages?: number;
   maxItems?: number;
   requestDeadlineMs?: number;
+  /** Backup CI consumer for the port and the client (spec §11.2). */
+  backupCi?: GitHubPortOptionsV1["backupCi"];
 }
 
 export function makePort(
@@ -893,6 +895,7 @@ export function makePort(
     maxPages: options.maxPages,
     maxItems: options.maxItems,
     requestDeadlineMs: options.requestDeadlineMs,
+    backupCi: options.backupCi,
   };
   const port = new GitHubPortImpl(portOptions);
   const client = new GitHubApiClient({
@@ -906,6 +909,7 @@ export function makePort(
     maxPages: portOptions.maxPages,
     maxItems: portOptions.maxItems,
     requestDeadlineMs: portOptions.requestDeadlineMs,
+    backupCi: portOptions.backupCi,
   });
   return { port, client, transport };
 }

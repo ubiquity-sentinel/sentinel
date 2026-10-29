@@ -8,6 +8,7 @@ import type { GitSha } from "../src/contracts/brands.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
 import { failed, readRepairSafely, skipped } from "./hosted-autonomy-state.ts";
 import {
+  boundReviewReceipts,
   historicalMergedPublication,
   readTrustedTask,
 } from "./hosted-autonomy-delivery.ts";
@@ -27,10 +28,14 @@ import {
   acceptedReleases,
   applyHostedClosures,
   applyHostedRetirements,
+  isHostedRetired,
   planHostedClosures,
   planHostedRetirements,
 } from "./hosted-autonomy-closures.ts";
-import type { HostedAutonomyPassContextV1 } from "./hosted-autonomy-scopes.ts";
+import {
+  type HostedAutonomyPassContextV1,
+  readHostedPullStatus,
+} from "./hosted-autonomy-scopes.ts";
 import {
   HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR,
   hostedDeliveryKey,
@@ -311,11 +316,12 @@ export async function runHostedClosurePass(
   // definitively closed without a merge can never deliver, whatever step it is
   // parked at. That verdict requires the read to succeed and the pull to be
   // neither merged nor open; a failed or empty read is not evidence and leaves
-  // the record alone.
+  // the record alone. An already retired record is never planned again
+  // (`planHostedRetirements`), so its pull request is not read.
   const closedUnmerged = new Set<string>();
   for (const record of snapshot.work) {
     if (
-      record.nextStep === "done" ||
+      record.nextStep === "done" || isHostedRetired(record) ||
       queueRecordProtected(record, deps.queueCustody)
     ) continue;
     const issueNumber = record.related.issueNumber;
@@ -331,9 +337,9 @@ export async function runHostedClosurePass(
     // a deferred release is never closed unmerged: nothing to read.
     if (gatewayReleaseDeferredIn(context, record)) continue;
     const scope = await scopeFor(record.repository);
-    const pull = await readPull(scope, pullRequest);
+    const pull = await readHostedPullStatus(scope, pullRequest);
     if (pull === null) continue;
-    if (pull.merged !== true && pull.state !== "open") {
+    if (pull.merged === false && pull.state === "closed") {
       closedUnmerged.add(record.id);
     }
   }
@@ -432,6 +438,13 @@ export async function runHostedClosurePass(
     }
     // Counted once by the delivery-only pass; nothing is read for it here.
     if (gatewayReleaseDeferredIn(context, record)) continue;
+    // A fresh task cannot authorize a record with no exact receipt. Historical
+    // publication reconstruction above must run first; carried Gateway
+    // authorization keeps its separate request-bound path.
+    if (
+      !isGatewayVpsRepository(record.repository) &&
+      boundReviewReceipts(snapshot, record).length === 0
+    ) continue;
     const key = hostedDeliveryKey(record.repository, pullRequest, head, base);
     // A prior capability is revalidated below against the fresh task and exact row.
     const scope = await scopeFor(record.repository);

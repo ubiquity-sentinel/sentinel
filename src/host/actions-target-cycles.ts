@@ -12,6 +12,7 @@ import type {
   StateReadView,
 } from "../contracts/ports.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
+import { createActionsTargetFlow } from "./actions-target-flow.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { RepairCycleOutcomeV1 } from "../repair/loop.ts";
@@ -24,8 +25,7 @@ import type { PortResultV1 } from "../contracts/ports.ts";
 import type { MatrixRunIdentityV1 } from "../contracts/matrix.ts";
 import type { MatrixArtifactTransportV1 } from "./matrix-artifact-port.ts";
 import type { HttpTransportV1 } from "../github/http.ts";
-import { runRepairEntrypoint } from "../main.ts";
-import { OPERATION_MARGIN_MS } from "../repair/loop-bounds.ts";
+import type { runRepairEntrypoint } from "../main.ts";
 import type { ActionsCiApprovalSummaryV1 } from "./actions-ci.ts";
 import type { TargetSlugV1 } from "./targets.ts";
 import type { ModelRouteV1 } from "./model-route.ts";
@@ -287,20 +287,6 @@ export interface ActionsTargetCyclesResultV1 {
   readonly failed: readonly string[];
 }
 
-/** The repair state's work records, or null when they cannot be read. */
-async function workSnapshot(
-  state: StateReadView,
-): Promise<readonly WorkRecordV1[] | null> {
-  try {
-    const read = await state.readRepair();
-    return read.ok && read.value.status === "found"
-      ? read.value.snapshot.work
-      : null;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Run ONE separately targeted repair cycle per committed target repository,
  * sequentially, over the shared state store, cooldown gate, admission budget,
@@ -317,133 +303,13 @@ async function workSnapshot(
 export async function runActionsTargetCycles(
   input: ActionsTargetCyclesInputV1,
 ): Promise<ActionsTargetCyclesResultV1> {
-  const runCycle = input.runCycle ?? runRepairEntrypoint;
-  const addressed: string[] = [];
-  const skipped: string[] = [];
-  const failed: string[] = [];
-  let outcome: RepairCycleOutcomeV1 | null = null;
-  /** Report every target not attempted because the absolute deadline ran out. */
-  const skipFrom = (index: number): void => {
-    for (const remaining of input.configs.slice(index)) {
-      skipped.push(
-        `${remaining.repository.owner}/${remaining.repository.name}`,
-      );
-    }
-  };
+  const flow = createActionsTargetFlow(input);
   try {
-    for (const [index, config] of input.configs.entries()) {
-      if (!(input.clock.now() < input.deadline)) {
-        // The deadline is absolute and the clock only moves forward: every
-        // remaining target is reported as not attempted, and none is started.
-        skipFrom(index);
-        break;
-      }
-      const slug = `${config.repository.owner}/${config.repository.name}`;
-      if (input.prepareTarget !== undefined) {
-        // An earlier cycle's mandatory review drain may run up to the
-        // deadline. A later target's preparation (an authenticated clone or
-        // fetch, each bounded only by its own Git timeout) is not begun
-        // inside the final operation margin, the same margin in which every
-        // cycle stops planning GitHub work, so it never runs into the end of
-        // the run's App-token window. The first addressed target keeps the
-        // existing rule, so a pass still reports an outcome exactly as before.
-        if (
-          addressed.length > 0 &&
-          input.deadline - input.clock.now() < OPERATION_MARGIN_MS
-        ) {
-          skipFrom(index);
-          break;
-        }
-        try {
-          await input.prepareTarget(config);
-        } catch (error) {
-          // This target's own private state could not be prepared. Record the
-          // exact reason and leave every other target untouched: a target that
-          // cannot be prepared was never addressed, so it is not reported as
-          // one.
-          const reason = error instanceof Error
-            ? error.message
-            : "target preparation failed";
-          failed.push(`${slug}: ${reason}`);
-          continue;
-        }
-        // A target's own preparation (its source mirror seed and that mirror's
-        // base refresh) is setup time charged against the SAME absolute
-        // deadline. A preparation that reached the deadline leaves no bounded
-        // work to start, so neither this target nor any remaining target is
-        // attempted instead of spending the run's remaining budget on a doomed
-        // cycle.
-        if (!(input.clock.now() < input.deadline)) {
-          skipFrom(index);
-          break;
-        }
-      }
-      addressed.push(slug);
-      if (input.premergeCi !== undefined) {
-        try {
-          await input.premergeCi(config);
-        } catch (error) {
-          console.log(JSON.stringify({
-            kind: "sentinel_premerge_ci",
-            repository: slug,
-            decision: "failed",
-            detail: error instanceof Error
-              ? error.message
-              : "pre-merge CI dispatch failed",
-          }));
-        }
-      }
-      const capabilities = input.resolveTargetCapabilities?.(config) ?? input;
-      const before = input.progressComments === undefined
-        ? null
-        : input.progressBaseline ?? await workSnapshot(input.state);
-      outcome = await runCycle({
-        clock: input.clock,
-        state: input.state,
-        configs: [config],
-        controllerSha: input.controllerSha,
-        github: input.composeGithub(config),
-        githubCooldown: input.githubCooldown,
-        incidents: capabilities.incidents,
-        replay: capabilities.replay,
-        model: input.model,
-        budget: input.budget,
-        externalImplementations: input.externalImplementations,
-        legacyReviewCutoff: input.legacyReviewCutoff ?? null,
-      }, {
-        deadline: input.deadline,
-        stepLimit: input.stepLimit,
-        modelStartsEnabled: input.modelStartsEnabled,
-      });
-      if (input.progressComments !== undefined && before !== null) {
-        try {
-          const after = await workSnapshot(input.state);
-          if (after !== null) {
-            await input.progressComments(config, before, after);
-          }
-        } catch (error) {
-          console.log(JSON.stringify({
-            kind: "sentinel_progress_comments",
-            repository: slug,
-            failed: true,
-            detail: error instanceof Error
-              ? error.message
-              : "progress comments failed",
-          }));
-        }
-      }
-    }
-  } finally {
-    // The advisory report is emitted even when a cycle threw, so the targets
-    // actually addressed are never silently lost.
-    input.report?.({
-      outcome,
-      addressed: [...addressed],
-      skipped: [...skipped],
-      failed: [...failed],
-    });
+    while (await flow.advance()) { /* one authoritative operation at a time */ }
+  } catch {
+    // finish settles all owned sessions and preserves the recorded failure.
   }
-  return { outcome, addressed, skipped, failed };
+  return await flow.finish();
 }
 
 /**

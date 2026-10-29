@@ -151,7 +151,12 @@ export interface RunBoundsV1 {
 export type StepResultV1 =
   // Non-enumerable and in-memory only: a persisted hold is loop progress,
   // but does not establish consumption of a producer result or receipt.
-  | { kind: "progress"; readonly queueHold?: true }
+  | {
+    kind: "progress";
+    readonly queueHold?: true;
+    /** Applied state remains progress, but this record waits for a later invocation. */
+    readonly yield?: true;
+  }
   | { kind: "idle" }
   | { kind: "margin"; detail: string }
   | { kind: "state_error"; detail: string }

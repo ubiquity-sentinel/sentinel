@@ -142,7 +142,16 @@ Deno.test("round cap: a reviewer that never returns a verdict gets exactly three
     charges.every((row) => row.outcome === "submitted"),
     "every charge stays submitted; nothing is refunded",
   );
-  assert.equal(rig.github.pushes.length, 1, "only the first publication");
+  assert.equal(
+    rig.github.pushes.length,
+    0,
+    "the exact published head is never pushed again",
+  );
+  assert.equal(
+    rig.github.remoteBranch,
+    SHA3,
+    "the original head is preserved through every round",
+  );
   assert.equal(rig.model.requests.length, 0);
   assert.equal(rig.github.merges, 0, "no merge without an accepted verdict");
   await assertStaysParked(rig);

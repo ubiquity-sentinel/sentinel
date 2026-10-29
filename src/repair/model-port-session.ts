@@ -118,6 +118,12 @@ export interface CodexImplementationPortOptionsV1 {
   commitCandidate?: CandidateCommitterV1;
   /** Grace for terminal settlement after an interrupt request. */
   interruptSettlementGraceMs?: number;
+  /**
+   * The trusted configured protected path prefixes of the checkout's
+   * repository, named in the prompt (`renderProtectedPaths`). Never part of
+   * the request, its digest or a receipt; omitted means none are named.
+   */
+  protectedPaths?: readonly string[];
 }
 
 export class CodexImplementationPort implements ImplementationPort {
@@ -331,10 +337,16 @@ export class CodexImplementationPort implements ImplementationPort {
       // only the trusted prompt. Untrusted CI evidence (output of running the
       // candidate's code) reaches the model only once, in the user turn, so
       // it never arrives with instruction authority.
-      const instructions = buildPrompt(request, this.localIteration);
+      const protectedPaths = this.options.protectedPaths ?? [];
+      const instructions = buildPrompt(
+        request,
+        this.localIteration,
+        undefined,
+        protectedPaths,
+      );
       const prompt = ciEvidence === undefined
         ? instructions
-        : buildPrompt(request, this.localIteration, ciEvidence);
+        : buildPrompt(request, this.localIteration, ciEvidence, protectedPaths);
       const thread = await this.startThread(session, request, instructions);
       const turn = await this.startTurn(
         session,

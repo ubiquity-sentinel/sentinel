@@ -12,6 +12,8 @@ import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { hasTakeoverCustody } from "../github/existing-pr-takeover-provenance.ts";
 import { checkExistingPrCustody } from "./loop-existing-pr.ts";
 import { ensureBaseRefreshIntent } from "./loop-base-refresh.ts";
+import { ciRefreshAhead } from "./ci-readiness.ts";
+import { legacyCutoff } from "./loop-review-round-cap.ts";
 import { configFor } from "./loop-records.ts";
 import type {
   LoopContextV1,
@@ -130,7 +132,21 @@ export async function ensureReviewFreshness(
     return { kind: "deferred", detail: "review base ref unavailable" };
   }
   if (base.value.sha !== record.target.base) {
-    return await ensureBaseRefreshIntent(deps, context, record);
+    return await ensureBaseRefreshIntent(deps, context, record, (tip) => {
+      const ahead = ciRefreshAhead(
+        context.snapshot,
+        record,
+        tip,
+        deps.clock.now(),
+        legacyCutoff(context),
+      );
+      return Promise.resolve<StepResultV1 | null>(
+        ahead === null ? null : {
+          kind: "deferred",
+          detail: `CI validation: ${ahead.id} goes first`,
+        },
+      );
+    });
   }
   return await checkExistingPrCustody(deps, context, record, "review");
 }

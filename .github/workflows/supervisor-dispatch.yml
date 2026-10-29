@@ -27,7 +27,7 @@ on:
   # workflow_run chain after three levels; the supervisor's finalize job sends
   # the durable workflow_dispatch handoff below instead.
   workflow_run:
-    workflows: ["sentinel-supervisor"]
+    workflows: ["sentinel-supervisor", "sentinel-backup-ci-leg", "sentinel-ci"]
     types: [completed]
   workflow_dispatch:
     inputs:
@@ -43,18 +43,49 @@ permissions:
   actions: write
   contents: write
 
-concurrency:
-  group: sentinel-supervisor-dispatch
-  cancel-in-progress: false
-
 jobs:
+  backup_completion:
+    if: >-
+      github.event_name == 'workflow_run' &&
+      (github.event.workflow_run.path == '.github/workflows/backup-ci-leg.yml' ||
+      github.event.workflow_run.path == '.github/workflows/ci.yml') &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    concurrency:
+      group: sentinel-backup-completion-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+      cancel-in-progress: false
+    steps:
+      - name: Check out trusted completion routing
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.9.7
+      - name: Reconcile the bound CI completion
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          deno run --frozen --allow-read --allow-write="$RUNNER_TEMP" --allow-run=git
+          --allow-net=api.github.com,github.com
+          --allow-env=HOME,PATH,RUNNER_TEMP,GITHUB_TOKEN,GITHUB_EVENT_PATH,GITHUB_EVENT_NAME
+          ops/backup-ci-completion-main.ts
   dispatch:
     if: >-
       github.event_name != 'workflow_run' ||
-      (github.event.workflow_run.head_branch == 'sentinel-supervisor' &&
+      (github.event.workflow_run.path == '.github/workflows/supervisor.yml' &&
+      github.event.workflow_run.head_branch == 'sentinel-supervisor' &&
       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    concurrency:
+      group: sentinel-supervisor-dispatch
+      cancel-in-progress: false
     steps:
       - name: Wait for the completed parent supervisor
         if: github.event_name == 'workflow_dispatch' && inputs.sentinel_parent_run_id != ''
@@ -98,3 +129,14 @@ jobs:
           --allow-net=api.github.com
           --allow-env=GH_TOKEN,SENTINEL_FOLLOW_SHA,SENTINEL_FOLLOW_READY
           src/host/supervisor-dispatch.ts
+      # Backup CI (docs/backup-ci-spec.md §8.4): one trusted pass per
+      # five-minute dispatch, only while the mode is shadow or on (unset is
+      # on; `off` disables it). Its failure never fails the supervisor
+      # dispatch.
+      - name: Dispatch the backup CI pass
+        if: contains(fromJSON('["shadow","on"]'), vars.SENTINEL_BACKUP_CI || 'on')
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run backup-ci.yml --ref sentinel-supervisor

@@ -20,7 +20,11 @@ import { createHostedCandidateRecoveryPort } from "../../ops/hosted-autonomy-can
 import { recoverHostedCurrentMatrix } from "../../ops/hosted-autonomy-current-recovery.ts";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
 import type { GitSha } from "../../src/contracts/brands.ts";
-import { matrixDigestV1 } from "../../src/contracts/matrix.ts";
+import {
+  type MatrixCellResultV1,
+  matrixDigestV1,
+  type MatrixPlanV1,
+} from "../../src/contracts/matrix.ts";
 import {
   portError,
   portOk,
@@ -31,7 +35,12 @@ import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.
 import { DenoGitExecutor } from "../../src/github/git-executor.ts";
 import { planMatrixWave } from "../../src/host/matrix.ts";
 import { createGitBundleImporter } from "../../src/host/matrix-git.ts";
-import { CLOSED_C_WAVE } from "../../src/host/modern-matrix-recovery.ts";
+import { createActionsMatrixArtifactTransport } from "../../src/host/matrix-artifacts.ts";
+import { ingestMatrixResults } from "../../src/host/matrix.ts";
+import {
+  CLOSED_C_WAVE,
+  type ClosedCWaveBindingV1,
+} from "../../src/host/modern-matrix-recovery.ts";
 import {
   CONFLICT_MERGE_PRESERVE_WINDOW_MS,
   conflictMarkerBase,
@@ -43,6 +52,7 @@ import {
   candidatePreservationRef,
 } from "../../src/repair/keys.ts";
 import { createReleaseStateStore, DenoGitRunner } from "../../src/state/mod.ts";
+import { GitMaintenanceIndex } from "../../src/state/maintenance-index.ts";
 import { REPO, T0 } from "../state/helpers.ts";
 import { assertGen78Parses } from "../state/gen77-contracts.ts";
 import { BRANCH, PR, TASK } from "../repair/conflict-resolution-rig.ts";
@@ -52,6 +62,7 @@ import { FakeGate } from "./actions-candidates-fixture.ts";
 import { RealRefHttp } from "./actions-candidates-preservation-fixture.ts";
 import { gen78Available, loadGen78Modules } from "./gen77-runtime-source.ts";
 import {
+  captured,
   execution,
   FIRST_RUN,
   GENERATION,
@@ -59,13 +70,17 @@ import {
   proof,
   releaseHistory,
   RUNTIME,
+  walkRows,
+  working,
 } from "./hosted-autonomy-history-reach-fixtures.ts";
 import {
+  composeMirrorPreservation,
   hostedConflictRig,
   jobMirror,
   present,
   remoteRef,
 } from "./matrix-conflict-hosted-rig.ts";
+import { producerArtifactFixture } from "./matrix-producer-artifact-fixture.ts";
 
 const HOUR = 60 * 60_000;
 const BINDING = "historical preservation binding unavailable";
@@ -83,11 +98,19 @@ interface WriteV1 {
  * cell ran (a `uos` route receipt and its bundle) and nothing consumed it. The
  * record carries a timeout streak from an earlier attempt.
  */
-async function conflictWalk() {
+async function conflictWalk(
+  consumed = false,
+  mutateArtifact?: (
+    input: { plan: MatrixPlanV1; result: MatrixCellResultV1 },
+  ) => Promise<void>,
+) {
   const rig = await hostedConflictRig({
     counters: { attempts: 1, retries: 0, reviewRounds: 1, timeouts: 1 },
   });
   const { ctx, hosted } = rig;
+  if (consumed) {
+    hosted.clock.advance(proof(FIRST_RUN).startedAt - hosted.clock.now());
+  }
   const root = `${ctx.tmp}/walk`;
   await Deno.mkdir(`${root}/scratch`, { recursive: true });
   const pending = await rig.runLoop();
@@ -112,14 +135,48 @@ async function conflictWalk() {
   // consumer imports brings M there.
   const mirror = await jobMirror(rig, "launcher-mirror");
   assert.equal(await present(rig, mirror, merge), false);
+  if (consumed) {
+    await ctx.git(["update-ref", `refs/heads/${BRANCH}`, ctx.head]);
+    composeMirrorPreservation(rig, {
+      current: { dir: mirror, fail: "not_found" },
+    });
+    const ingested = await ingestMatrixResults(rig.deps, plan, [result], {
+      deadline: hosted.clock.now() + HOUR,
+      expectedProvider: "uos",
+      bundleImporter: createGitBundleImporter({
+        repositoryDir: mirror,
+        bundlesDir: `${ctx.tmp}/mirror-bundles`,
+      }),
+    });
+    assert.equal(ingested.ingested, 1);
+    assert.equal(
+      resolvedConflictResolution((await hosted.snapshot()).work[0].intent),
+      merge,
+    );
+    hosted.clock.advance(1000);
+    // Keep one unrelated request pending so the real discovery iterator proves
+    // the parent's range before saving its reconstructible positive index.
+    const unrelated = working("unrelated-pending", "e".repeat(64));
+    unrelated.record.wait = {
+      reason: "unavailable",
+      since: T0,
+      until: hosted.clock.now() + HOUR,
+    };
+    hosted.state.repair!.work.push(unrelated.record);
+    hosted.state.repair!.reservations.push(unrelated.charge);
+    await Deno.remove(mirror, { recursive: true });
+    await jobMirror(rig, "launcher-mirror");
+    assert.equal(await present(rig, mirror, merge), false);
+  }
   const ref = await candidatePreservationRef(
     REPO,
     TASK,
     baseRefreshIntentKey(PR, ctx.head, ctx.base),
   );
+  const releaseRemote = await releaseHistory(root, 1);
   const release = createReleaseStateStore({
     scratchDir: `${root}/release`,
-    remoteUrl: await releaseHistory(root, 1),
+    remoteUrl: releaseRemote,
     runner: new DenoGitRunner(`${root}/git-home`),
   });
   const writes: WriteV1[] = [];
@@ -143,7 +200,7 @@ async function conflictWalk() {
   });
   const http = new RealRefHttp(
     new DenoGitExecutor({
-      localDir: mirror,
+      localDir: ctx.repo,
       remoteUrl: `file://${ctx.repo}`,
       gitHome: ctx.home,
       gitPath: "git",
@@ -204,7 +261,8 @@ async function conflictWalk() {
       throw error;
     }
   };
-  const port = (passState: StateReadView) =>
+  let sourcePath = mirror;
+  const port = (passState: StateReadView, source = sourcePath) =>
     createHostedCandidateRecoveryPort({
       state: passState,
       clock: hosted.clock,
@@ -212,7 +270,7 @@ async function conflictWalk() {
       config: hosted.configs[0]!,
       token: "offline-token",
       http: nativeHttp,
-      sourcePath: mirror,
+      sourcePath: source,
       scratch: `${root}/scratch`,
       remoteUrl: `file://${ctx.repo}`,
     });
@@ -226,6 +284,27 @@ async function conflictWalk() {
       bundlesDir: `${ctx.tmp}/mirror-bundles`,
     }],
   };
+  const artifactInput = {
+    plan: structuredClone(plan),
+    result: structuredClone(result),
+  };
+  await mutateArtifact?.(artifactInput);
+  const artifacts = consumed
+    ? await producerArtifactFixture({
+      ...artifactInput,
+      bundle: await Deno.readFile(
+        `${ctx.tmp}/mirror-bundles/${result.bundle!.file}`,
+      ),
+    })
+    : null;
+  let indexInvocation = 0;
+  const index = () =>
+    new GitMaintenanceIndex({
+      scratchDir: `${root}/index-${++indexInvocation}`,
+      remoteUrl: releaseRemote,
+      runner: new DenoGitRunner(`${root}/git-home`),
+    });
+  const requested: string[][] = [];
   const deps = {
     clock: hosted.clock,
     state,
@@ -250,19 +329,44 @@ async function conflictWalk() {
         }),
         prepareTarget: () => Promise.resolve(),
         importerFor: (_config: unknown, bundlesDir: string) =>
-          createGitBundleImporter({ repositoryDir: mirror, bundlesDir }),
-        transportFor: () => transport,
+          createGitBundleImporter({ repositoryDir: sourcePath, bundlesDir }),
+        transportFor: (producerState: StateReadView) => {
+          if (!artifacts) return transport;
+          const ordinary = createActionsMatrixArtifactTransport({
+            state: producerState,
+            clock: hosted.clock,
+            token: "offline-token",
+            artifactRoot: `${root}/artifacts`,
+            http: artifacts.http,
+          });
+          return {
+            ...ordinary,
+            recover: (input: Parameters<typeof ordinary.recover>[0]) => {
+              requested.push(input.requests.map((row) => row.reservationId));
+              return ordinary.recover(input);
+            },
+          };
+        },
         readExecution: (saved: { runId: number }) =>
           Promise.resolve(portOk(proof(saved.runId))),
       }),
   };
   let deferred = 0;
-  const walk = () =>
-    (recoverHostedCurrentMatrix as (...args: unknown[]) => Promise<unknown>)(
-      deps,
-      CLOSED_C_WAVE,
-      () => deferred++,
-    ) as Promise<{ status: string; actions: string[] } | null>;
+  const walk = async (binding: ClosedCWaveBindingV1 = CLOSED_C_WAVE) => {
+    const cwd = Deno.cwd();
+    if (consumed) Deno.chdir(sourcePath);
+    try {
+      return await (recoverHostedCurrentMatrix as (
+        ...args: unknown[]
+      ) => Promise<unknown>)(
+        { ...deps, ...(consumed ? { currentMatrixIndex: index() } : {}) },
+        binding,
+        () => deferred++,
+      ) as { status: string; actions: string[] } | null;
+    } finally {
+      if (consumed) Deno.chdir(cwd);
+    }
+  };
   const refs = async () =>
     (await ctx.git(["for-each-ref", "--format=%(refname) %(objectname)"]))
       .trim().split("\n").sort();
@@ -278,12 +382,245 @@ async function conflictWalk() {
     nativeReads,
     nativeErrors,
     nativeHttp,
+    artifacts,
+    requested,
+    index,
+    setSource: (source: string) => {
+      sourcePath = source;
+    },
     port,
     walk,
     refs,
     deferred: () => deferred,
   };
 }
+
+Deno.test("consumed conflict producer: authenticated indexed maintenance preserves M before scratch teardown and a third runtime publishes it", async () => {
+  const w = await conflictWalk(true);
+  const { rig } = w;
+  try {
+    const before = await rig.hosted.snapshot();
+    const reservation = before.reservations[0];
+    const refsBefore = await w.refs();
+    const first = await captured(w.walk);
+    assert.equal(first.error, null);
+    assert.equal(
+      await remoteRef(rig, w.ref),
+      w.merge,
+      "maintenance must make exact M durable before its mirror disappears",
+    );
+    assert.deepEqual(
+      await rig.hosted.snapshot(),
+      before,
+      "no repeat consumption, reservation, settlement or state write",
+    );
+    assert.equal(w.writes.length, 0);
+    assert.deepEqual(
+      w.requested,
+      [[reservation.id, "e".repeat(64)]],
+      "route the original submitted reservation despite null intent.requestId",
+    );
+    assert(w.artifacts!.calls.some((path) => path.endsWith("/artifacts")));
+    const index = await w.index().read();
+    assert(index.ok && index.value.index !== null);
+    assert.deepEqual(index.value.index.producers[0].plan?.reservationIds, [
+      reservation.id,
+    ]);
+
+    const repeated = await captured(w.walk);
+    assert.equal(repeated.error, null);
+    assert(
+      walkRows(repeated.lines).some((row) =>
+        row.membershipHits === 1 && row.membershipSkips === 0
+      ),
+      "complete positive membership selects the exact consumed reservation",
+    );
+    assert.deepEqual(w.requested, [[reservation.id, "e".repeat(64)], [
+      reservation.id,
+      "e".repeat(64),
+    ]]);
+    assert.deepEqual(await rig.hosted.snapshot(), before);
+    assert.equal(w.writes.length, 0);
+    assert.deepEqual(
+      await w.refs(),
+      [...refsBefore, `${w.ref} ${w.merge}`].sort(),
+    );
+
+    // A genuinely new ordinary job has only the target's base branch. It must
+    // fetch M from its durable operation ref; no replay or regeneration runs.
+    await Deno.remove(w.mirror, { recursive: true });
+    const third = `${rig.ctx.tmp}/third-runtime`;
+    await rig.ctx.git([
+      "clone",
+      "-q",
+      "--no-local",
+      "--single-branch",
+      "--branch",
+      "development",
+      `file://${rig.ctx.repo}`,
+      third,
+    ], rig.ctx.tmp);
+    assert.equal(await present(rig, third, w.merge), false);
+    const realPreserver = w.port(rig.hosted.state, third);
+    (rig.github as unknown as {
+      lifecycle: { preserveCandidate: typeof realPreserver.preserveCandidate };
+    }).lifecycle.preserveCandidate = realPreserver.preserveCandidate;
+    rig.github.prepareBaseRefresh = () => {
+      throw new Error("resolved M cannot be regenerated");
+    };
+    const checkedHeads: GitSha[] = [];
+    const readChecks = rig.github.readChecks.bind(rig.github);
+    rig.github.readChecks = (head) => {
+      checkedHeads.push(head);
+      return readChecks(head);
+    };
+    const publicationGit = new DenoGitExecutor({
+      localDir: third,
+      remoteUrl: `file://${rig.ctx.repo}`,
+      gitHome: rig.ctx.home,
+      gitPath: "git",
+    });
+    const pushHead = rig.github.pushHead.bind(rig.github);
+    rig.github.pushHead = async (ref, head, expected) => {
+      const pushed = await publicationGit.push(ref, head, expected);
+      assert(
+        pushed.ok && pushed.value.status === "applied",
+        JSON.stringify(pushed),
+      );
+      return pushHead(ref, head, expected);
+    };
+    const published = await rig.runLoop();
+    assert.notEqual(published.status, "state_error", JSON.stringify(published));
+    const after = await rig.hosted.snapshot();
+    assert.equal(
+      after.work[0].target.head,
+      w.merge,
+      JSON.stringify(after.work[0]),
+    );
+    assert.equal(after.work[0].target.base, rig.ctx.base);
+    assert.equal(after.work[0].target.pr, PR);
+    assert.equal(
+      await present(rig, third, w.merge),
+      true,
+      "ordinary preserver fetched exact durable M",
+    );
+    assert.deepEqual(
+      after.reservations.filter((row) => row.purpose !== "review_request"),
+      before.reservations,
+    );
+    assert(
+      checkedHeads.includes(w.merge),
+      "fresh exact-head CI gates the new review",
+    );
+    assert.equal(rig.github.pushes[0].sha, w.merge);
+    assert.equal(await remoteRef(rig, `refs/heads/${BRANCH}`), w.merge);
+    assert.equal(rig.github.reviewRequestIdentities[0].expectedHead, w.merge);
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+Deno.test("consumed conflict producer: authenticated source and preservation refusals retain the exact charged row", async (t) => {
+  for (
+    const field of ["checkoutBase", "mergeBase", "reviewFindings"] as const
+  ) {
+    await t.step(`wrong original ${field}`, async () => {
+      const w = await conflictWalk(true, async ({ plan, result }) => {
+        const cell = plan.cells[0];
+        if (field === "reviewFindings") {
+          cell.request.reviewFindings = [{
+            severity: "P0",
+            path: null,
+            message: "untrusted correction",
+          }];
+        } else cell.request[field] = cell.expectedBase;
+        cell.requestDigest = await matrixDigestV1(cell.request);
+        result.requestDigest = cell.requestDigest;
+      });
+      try {
+        const before = await w.rig.hosted.snapshot();
+        const outcome = await captured(w.walk);
+        assert(
+          outcome.error instanceof Error,
+          "the ordinary reader refuses the authenticated but wrong original cell",
+        );
+        assert.deepEqual(await w.rig.hosted.snapshot(), before);
+        assert.equal(await remoteRef(w.rig, w.ref), null);
+        assert.equal(await present(w.rig, w.mirror, w.merge), false);
+        assert.equal(w.writes.length, 0);
+      } finally {
+        await w.rig.cleanup();
+      }
+    });
+  }
+  await t.step("corrupt archive", async () => {
+    const w = await conflictWalk(true);
+    try {
+      const before = await w.rig.hosted.snapshot();
+      w.artifacts!.archives.set(FIRST_RUN * 10 + 4, new Uint8Array([0, 1, 2]));
+      const outcome = await captured(w.walk);
+      assert(outcome.error instanceof Error);
+      assert.deepEqual(await w.rig.hosted.snapshot(), before);
+      assert.equal(await remoteRef(w.rig, w.ref), null);
+      assert.equal(await present(w.rig, w.mirror, w.merge), false);
+    } finally {
+      await w.rig.cleanup();
+    }
+  });
+  await t.step("trusted validator refuses", async () => {
+    const w = await conflictWalk(true);
+    try {
+      const before = await w.rig.hosted.snapshot();
+      w.rig.hosted.configs[0].protectedPaths = ["src/app.ts"];
+      const outcome = await captured(w.walk);
+      assert.equal(outcome.error, null);
+      assert.equal(
+        await present(w.rig, w.mirror, w.merge),
+        true,
+        "the refused preservation follows authenticated hydration",
+      );
+      const refused = await w.port(w.rig.hosted.state).preserveCandidate({
+        taskId: TASK,
+        candidate: {
+          operationKey: before.work[0].intent!.key,
+          base: w.rig.ctx.base,
+          head: w.merge,
+          ref: w.ref,
+        },
+        publishedHead: w.rig.ctx.head,
+      });
+      assert(
+        !refused.ok && refused.error.kind === "invalid",
+        JSON.stringify(refused),
+      );
+      assert.deepEqual(await w.rig.hosted.snapshot(), before);
+      assert.equal(await remoteRef(w.rig, w.ref), null);
+      assert.equal(w.writes.length, 0);
+    } finally {
+      await w.rig.cleanup();
+    }
+  });
+  await t.step("dedicated recovery keeps its reservation", async () => {
+    const w = await conflictWalk(true);
+    try {
+      const before = await w.rig.hosted.snapshot();
+      await w.walk({
+        ...CLOSED_C_WAVE,
+        cells: [...CLOSED_C_WAVE.cells, {
+          ...CLOSED_C_WAVE.cells[0],
+          reservationId: before.reservations[0].id,
+        }],
+      });
+      assert(
+        w.requested.every((ids) => !ids.includes(before.reservations[0].id)),
+      );
+      assert.deepEqual(await w.rig.hosted.snapshot(), before);
+      assert.equal(await remoteRef(w.rig, w.ref), null);
+    } finally {
+      await w.rig.cleanup();
+    }
+  });
+});
 
 /** Every write the walk made passes R78's parser and transition validator. */
 async function assertRollbackAccepts(writes: readonly WriteV1[]) {
@@ -372,12 +709,13 @@ for (
       assert.equal(after.reservations[0].outcome, "submitted");
       await assertRollbackAccepts(w.writes);
 
-      // The resolved record is no longer matrix work: the next walk reads
-      // nothing and writes nothing.
+      // Replaying an already durable resolved operation only reconciles its
+      // exact ref; it cannot consume, settle or create another ref.
       const writes = w.writes.length;
       assert.equal(await w.walk(), null);
       assert.equal(w.writes.length, writes);
       assert.deepEqual(await rig.hosted.snapshot(), after);
+      assert.equal(await remoteRef(rig, w.ref), w.merge);
     } finally {
       await rig.cleanup();
     }

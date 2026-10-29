@@ -78,7 +78,16 @@ export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
     "ops/hosted-autonomy-original-candidate-pass.ts",
     // Trusted blocked-candidate selection and exact evidence before recovery ingestion.
     "src/host/matrix-blocked-candidate.ts",
+    "src/host/matrix-conflict-candidate.ts",
     "ops/hosted-autonomy-current-recovery.ts",
+    "ops/hosted-autonomy-current-scan.ts",
+    "src/contracts/maintenance-index.ts",
+    "src/state/maintenance-index.ts",
+    "src/host/backup-ci-completion.ts",
+    "ops/backup-ci-completion-main.ts",
+    "ops/backup-ci-main.ts",
+    "src/repair/ci-readiness.ts",
+    "src/host/actions-target-flow.ts",
     "ops/hosted-autonomy-producer-requests.ts",
     "ops/hosted-autonomy-producer-recovery.ts",
     // Exact mint artifact, takeover custody, principal/source proofs and dependency preparation.

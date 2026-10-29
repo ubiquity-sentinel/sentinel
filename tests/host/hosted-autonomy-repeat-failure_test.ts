@@ -689,6 +689,11 @@ Deno.test(
         JSON.stringify(second.actions),
       );
       assert.equal(rig.writes, writes, "a parked record is never rewritten");
+      // The park itself was a retry write; naming it again is not one, so
+      // the no-write pass reports its own class, never `retried`.
+      assert.equal(first.reason, "retried");
+      assert.equal(second.status, "skipped", JSON.stringify(second));
+      assert.notEqual(second.reason, "retried", JSON.stringify(second));
       // The owner switches the model route: the next pass re-arms it once.
       const route = repeatFailureRouteIdentity({
         baseUrl: "",

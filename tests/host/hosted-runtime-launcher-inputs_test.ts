@@ -8,6 +8,7 @@ import { buildChildEnvironment } from "../../src/host/hosted-runtime-child.ts";
 import type { HostedRuntimeJobV1 } from "../../src/host/hosted-runtime-identity.ts";
 import {
   HOSTED_RUNTIME_LAUNCHER_INPUT_KEYS,
+  HOSTED_RUNTIME_OPTIONAL_LAUNCHER_INPUT_KEYS,
   readHostedLauncherInputs,
   readJobScopedLauncherEnv,
 } from "../../src/host/hosted-runtime-main.ts";
@@ -78,7 +79,11 @@ Deno.test("hosted launcher: the workflow's cooldown switch reaches the child", (
 });
 
 Deno.test("hosted launcher: every host key the child builder reads is a launcher input", () => {
-  const read = new Set<string>(HOSTED_RUNTIME_LAUNCHER_INPUT_KEYS);
+  const read = new Set<string>([
+    ...HOSTED_RUNTIME_LAUNCHER_INPUT_KEYS,
+    // Read tolerantly: a step may not grant it yet (backup CI, §11.8).
+    ...HOSTED_RUNTIME_OPTIONAL_LAUNCHER_INPUT_KEYS,
+  ]);
   for (const job of LAUNCHER_JOBS) {
     // Record every key the production child builder consults, whatever list
     // it comes from, by offering a value for any key it asks for.

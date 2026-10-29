@@ -19,6 +19,10 @@ import {
 } from "./matrix.ts";
 import { createGitBundleExporter } from "./matrix-git.ts";
 import {
+  matrixPlanDiagnosticLineOf,
+  type MatrixPlanDiagnosticLineV1,
+} from "./matrix-plan-diagnostic.ts";
+import {
   type ActionsMatrixHostDepsV1,
   configured,
   disabledResult,
@@ -134,6 +138,17 @@ export async function runActionsMatrixHost(
           planDigest: result.planDigest,
           prepared: result.prepared,
         })));
+        // A zero-cell plan says why, per repository (C5.1), after the carrier.
+        if (planned.diagnostic !== undefined) {
+          printPlanDiagnostic(() =>
+            matrixPlanDiagnosticLineOf({
+              waveId: planned.plan.waveId,
+              prepared: planned.prepared,
+              cause: "planner",
+              diagnostic: planned.diagnostic,
+            })
+          );
+        }
         return cycles;
       }
       if (carrier === null) {
@@ -269,7 +284,23 @@ export async function runActionsMatrixHost(
         }),
       ),
     );
+    printPlanDiagnostic(() =>
+      matrixPlanDiagnosticLineOf({
+        waveId: plan.waveId,
+        prepared: 0,
+        cause: "queue_custody_idle",
+      })
+    );
   }
   if (result === null) throw new Error("matrix executable produced no result");
   return result;
+}
+
+/** Advisory only: building or printing the line never changes the plan. */
+function printPlanDiagnostic(line: () => MatrixPlanDiagnosticLineV1): void {
+  try {
+    console.log(JSON.stringify(line()));
+  } catch {
+    // The carrier already printed; the diagnostic is a convenience.
+  }
 }

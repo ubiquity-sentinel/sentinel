@@ -7,7 +7,61 @@ acceptance. Superseded choices, task-specific exceptions and consumed
 permissions remain in Git history; current task authorization governs
 continuation.
 
+## Merge policy clarification (2026-10-29)
+
+The owner reaffirmed that P0 is the only severity-based merge blocker; P1 and lower findings do not block merges and must be retained and backlogged as issues through the existing authorized issue workflow. The earlier P0-and-P1 selection was accidental and withdrawn. This preserves the 2026-10-24 P0-only runtime policy and does not require a severity-code change.
+
+This clarification supersedes every earlier P0/P1 merge, rejection or correction threshold in this document and contradictory task instructions. Dated earlier thresholds below remain historical evidence, not current authority. Current-head CI, completed native review, positive task acceptance, custody, durable accounting and all other existing gates remain unchanged. Lower-severity findings alone do not authorize another correction round, and existing review ceilings remain intact.
+
+Resume the original production-throughput goal and canonical module identities with serial `gpt-6.1-sol/max` implementation, preserving the separate AI Rust owner and keeping `sentinel-release` disabled. The acceptance ledger distinguishes reviewed source, hosted CI, publication, installation and live delivery; this clarification establishes no new runtime or delivery receipt.
+
+## Documentation interpretation (2026-10-29)
+
+Current documentation interpretation (2026-10-29): native Codex review mode owns reviewer selection, rubric and output protocol; a gateway model alias alone does not establish invocation mode or a runtime defect. Auto-follow defaults on in current source, and explicit off is a separate configured hold. Branch rules/rulesets are not required to exist; effective configured checks and approvals remain honoured. Backup CI substitutes only verified never-started target checks and never overrides a check that ran and failed. The current primary role owner is recorded in the build ledger, separately from actual model identity. Dated handoffs, redesign/spec snapshots and retained artifacts preserve their original source/times and grant no current ownership, permissions or acceptance. Queue proof remains dormant; the owner-run canary contract grants no production activation. Retained ceremony modules remain until their consumers are replaced and the integration owner supplies an approved dependency order; DESIGN.md is absent from this checkout.
+
 ## Runtime and dispatch
+
+### Maintenance throughput contract (2026-10-28)
+
+The reconstructible maintenance index may retain the complete positive reservation membership of an authenticated immutable producer plan. Membership binds the exact execution, fresh source proof fingerprint, plan digest and planner job. A fresh scan may avoid full recovery only when every current exact pending reservation is disjoint from that complete membership. Matching, new, unknown, missing, partial or invalid evidence retains ordinary recovery and late-result handling. Contradictory metadata disables acceleration safely; it cannot authorize absence, settlement, refunds, admission or authoritative state writes. Reuse the existing matrix-cell bound without truncation and preserve unknown sidecars, CAS/readback and older readers' full-recovery fallback.
+
+Retirement may use an optional narrow pull-request status capability carrying only the observed number, open/closed state and an explicit merged boolean. The production capability uses one strict authenticated GET; it grants no ancestry or delivery authority. An absent capability may project the existing full reader's observed identity, while a present capability's refusal never falls back. The final non-Gateway closure pass filters impossible exact review receipts after historical publication reconstruction and before task reads. Eligible final task rereads, full delivery ancestry, review, CI, ownership, custody, accounting, CAS/readback and Gateway carried authorization remain required.
+
+Existing current-matrix walk diagnostics expose numeric membership hits/skips and source checks alongside steps and producer recovery attempts. The completed outcome requires ordinary iterator exhaustion or the existing all-current-requests-covered stop after applied/deferred fences; parked, applied-result and possible-write fences retain their original early-stop behavior. Completion describes that pass's eligible request scope, while historical cursor coverage, result settlement and delivery remain separate evidence. Logical source checks are distinguished from underlying network I/O. Controlled local consumer tests establish causal request reductions; exact hosted inputs, state identities and phase timings establish operational behavior separately. Keep the existing event-driven schedule, original deadlines, protected installation and exact-prior rollback; measured bookkeeping work is not new issue delivery or billed savings. Actual acceptance belongs in the sole build-status ledger.
+
+### Production throughput implementation contract (2026-10-27)
+
+CI scheduling weights use conservative same-worker file-marker intervals from successful native Linux runs, with retained source/file-blob/toolchain provenance. These are historical scheduling costs, not current import-graph execution proof, CPU time or billed savings; changed or unmeasured files keep the existing fallback. The planner, worker count, private HOME/DENO_DIR isolation and full-suite aggregate remain unchanged. Quality retains its exact Deno static commands and runs in parallel with the shards; its unused Node/npm setup is removed after an actual credential-free consumer proof, while every shard keeps its pinned tools and dependencies. Cache seeding and incremental/no-check validation are not adopted without measured benefit and equivalent complete isolation/receipt evidence.
+
+Consumed conflict results require a complete restart path, not only duplicate detection. An at-work marked resolved `base_refresh` may derive one exact original submitted and settled retry from its current task/repository/attempt/base and retained publication descriptor, while preserving the existing failure limit, timing and run deadlines. Its full-row-bound routing identity supplies the existing reservation to maintenance membership/discovery and the ordinary authenticated artifact reader; it is not artifact or write authority. Revalidate the original checkout/merge base, operation/result, native source/plan/job/archive/receipt/bundle and custody, hydrate exact M, then preserve M through the existing validator, create-only operation ref and fresh-store proof before scratch teardown. A third fresh runtime must fetch that durable M and pass ordinary publication, CI and native-review gates. Duplicate maintenance creates no new state, settlement, charge or ref effect; terminal, ambiguous, stale, dedicated or otherwise excluded work stays excluded. The new trusted predicate is included in the existing authority-protected source inventory.
+
+The normal three-failure autonomous bound remains unchanged. A separately prepared exact coordinator intervention for already-produced historical work may use the existing dated state-write/retry grant, but must retain every failed attempt, charge and original timing, authenticate the complete historical/current binding, serialize effects and rehearse crash/CAS/refusal recovery before live use. Restoring a pre-terminal intent verbatim would erase its final failed attempt and is prohibited. This permits neither generic terminal re-admission nor a new model start, deadline reset, counter refund or stale-proof merge. Source, installed and live acceptance remain separate ledger facts.
+
+The owner requested the current source be released as v1 before implementing all five findings from the production throughput audit. Annotated tag v1 preserves f731b9602af55e54b7789e26134b1ce42eb3e7bd; it does not change the installed runtime or claim exact-head CI acceptance. The implementation contract is docs/plans/production-throughput-20261027.md and the current acceptance ledger remains build-status.md.
+
+Unchanged publication and CI-wait observations must not generate repeated authoritative state writes or retain a runner through repeated selection. A genuine persisted wait may yield its record while retaining progress accounting; preserve the original CI deadline, exact head/base, current reads, reservations and all failure paths. Completion notifications prompt trusted observation and never constitute CI or review evidence themselves.
+
+Backup CI prioritizes current, delivery-relevant exact-head demand using stable ordering and the existing capacity bounds. Base refreshes reuse delivery readiness so background refreshes do not invalidate proof faster than it can be consumed. Only newly accepted result entries committed and read back through expected-head CAS emit receipt_advanced; planning, in-flight, calibration and unchanged stores cannot produce wake loops. Preserve native target CI priority, real failures, calibrated backup fidelity and the target's closed/manual Actions policy.
+
+Ordinary backup candidates advance in durable least-recently-observed rounds using existing commit-file updatedAt metadata. Current-head priority and oldest-wait order break ties inside a round; confirmation and calibration retain absolute precedence. An observation-only row records an attempted read, grants no coverage/result, and cannot advance receipts. This preserves fairness past an unplannable urgent prefix without increasing the twelve-read bound or permanently caching unavailable evidence. Both PR identity checks use the existing trusted publication-author policy, including supported legacy authors.
+
+Historical producer discovery may use a reconstructible derived index in sentinel-state/maintenance-index, separate from strict repair/release records. It binds the controller and release identity, verified anchor/cursor ranges and immutable producer proof locations. Every selected producer still passes fresh custody, artifact and accounting checks. Missing or corrupt acceleration cannot authorize skipped evidence; no negative artifact cache, retention change, new credential or model-visible authority is introduced.
+
+Cached producer reads pass the same traversal-budget check as uncached reads, including unavailable/error paths, so parked recovery cannot consume the reserve for ordinary in-flight work. Concurrent native drains are joined individually: one coordinator runs each settled target's continuation immediately, while retaining ownership of every unfinished sibling and collecting failures until all drains settle. Final dispositions preserve configured target order.
+
+Readiness reuses the existing exact releaseRequestMatchesDelivery predicate to exclude already-booked deliveries, including release-disabled targets; unmatched requests cannot free a live contender. Matrix consumption hydrates every available bundle in one authenticated scan before advancing target lifecycles, then advances ready work before the next protocol observation wait. This preserves hydration-before-preservation without restoring the old all-producer or twenty-minute barrier.
+
+The live C3 backup completion event did not propagate for native-token-dispatched legs. The trusted backup parent now uses the existing official self App installation's scoped actions:write token solely for the fixed backup-leg dispatch POST. Native read/ref/store/receipt-wake operations remain separate, the untrusted leg VM retains read-only permissions, and its execution/result bytes and runner revision remain unchanged. Native observations accept the exact official App bot identity and the historical GitHub Actions actor only with all existing plan/unit/repository/ref/SHA/attempt/job bindings. Missing dispatch authority refuses before new ref/admission effects; there is no native-token dispatch fallback. No App registration, permission grant, secret, calibration reset or result schema is changed.
+
+The review-owner channel observes its reply promise immediately, before awaiting atomic request publication. An owner may reply after rename but before publication resolves; synchronous observation prevents a transient unhandled rejection while preserving publication-error precedence and rethrowing the original custody refusal to the caller. No custody predicate, timeout or caller-visible outcome is weakened.
+
+Development delivery retains its scoped local and hosted gates after the three completed native review rounds; no fourth review is requested and no native verdict is claimed for the final transport correction. The owner-directed direct-development policy is distinct from autonomous target repair review, which still requires exact current-head native evidence under the current P0-only severity policy, with positive task acceptance, current CI and all other gates retained. This records the scope of existing policy rather than waiving a runtime merge gate.
+
+Independent target producers and native reviewers may overlap while one coordinator serializes authoritative lifecycle advances and every owned session is settled. Authenticated controller completion events request protected ingestion and reconciliation; active-run requests coalesce into the existing handoff. Foreign target events have no implicit controller ingress, so the existing bounded recovery remains until an actual authenticated event path exists. Keep original deadlines, exact integrated CI/native review/merge gates and exclusive promotion ownership; sentinel-release stays disabled.
+
+The shared drain replaces earlier-target serial drains. Matrix observation therefore removes only the obsolete two-drain reservation for three targets; it retains the full twenty-minute review bound, existing five-minute operation margins, per-target preparation lead and original absolute deadline. A three-target fifty-five-minute local consumer case proves a ten-minute observation window without renewing tokens, resetting invocation origin or lowering configured safeguards.
+
+Ordinary CI runs automatically for PRs and canonical master/development pushes. Explicit workflow dispatch supports branch checks; automatic codex/** pushes are redundant and removed. Event-qualified concurrency prevents a branch run from cancelling the PR-only native receipt producer, while preserving development-run protection. These decisions are an implementation contract; actual local, hosted, installed and live acceptance belongs only in the ledger.
 
 ### Gateway pre-merge CI dispatch and authority inventory (2026-10-23)
 
@@ -230,6 +284,8 @@ https://learn.chatgpt.com/docs/app-server#review.
 
 ### Owner grant, scope and acceptance (2026-10-20 UTC)
 
+The dated grant remains in force for this effort. Its two-target acceptance scope was expanded by the 2026-10-23 three-target directive; current severity policy is the 2026-10-29 clarification, while all independent gates and historical receipts remain.
+
 For this Sentinel autonomy effort, the owner grants the orchestrator blanket
 authority to dispatch, rerun, cancel, enable and disable hosted Sentinel
 workflows; push directly to `development`; update launcher pins and runtime
@@ -244,7 +300,7 @@ authoritative state writes and promotion authority never reach model workers;
 (2) record exact revision SHAs and never select by time or list order; (3)
 durable admission/reservation precedes every model start and settlement follows
 it; (4) autonomous merge requires current CI and a completed internal structured
-review from native Codex review mode, with no unresolved P0/P1; (5) the
+review from native Codex review mode, with no unresolved P0 and receipt-bound issue follow-ups for P1 and lower; (5) the
 deterministic Deno controller exclusively owns promotion and `sentinel-release`
 stays disabled.
 
@@ -717,9 +773,7 @@ deadlines; do not rerun the unchanged failed candidate.
 ### Integration ownership after Muse retirement
 
 On 2026-10-13, the owner stated that Muse is retired and directed the current
-coordinator to take over Sentinel. The sole primary integration owner is now the
-current GPT-6.1 Sol coordinator; independent milestone audits use a fresh
-GPT-6.1 Sol/max agent. This replaces the Astra-specific development ownership
+coordinator to take over Sentinel. The then-current GPT-6.1 Sol coordinator received integration ownership; the current primary role owner is recorded in the authoritative build ledger. Independent milestone audits use a fresh GPT-6.1 Sol/max agent. This replaces the Astra-specific development ownership
 and auditor restriction, not runtime model/review policy, credential custody,
 CI, source/target identity or promotion ownership. Preserve existing dirty work
 and recorded lane identities; only the primary writes the authoritative
@@ -1002,12 +1056,11 @@ safeguards.
 
 ## Runtime model policy and trusted route configuration
 
+The declared 2026-10-18/20 implementation policy is `gpt-reserve` primary with the existing HTTP-429 `gpt-6-luna` failover, at max reasoning. The resolver default is `gpt-reserve`; the supervisor workflow supplies `vars.SENTINEL_IMPLEMENTATION_MODEL_ID || 'gpt-6.1-sol'`. The captured repository override at 2026-10-29 20:22:45 UTC is `gpt-6.1-sol`, so configured submission selection differs from the declared policy. These are separate policy, source-default and configuration facts; none proves an actual executed model/provider/effort without bound execution evidence. Documentation maintenance does not change that override, either default, credentials or production routing.
+
 Owner decision 2026-10-18 supersedes the earlier runtime model selections below:
 use `gpt-reserve` as the runtime implementation primary and `gpt-6-luna` for the
-existing HTTP 429 failover, both with max reasoning. Set the existing trusted
-`SENTINEL_IMPLEMENTATION_MODEL_ID` repository override to `gpt-reserve`; retain
-`SENTINEL_MODEL_FAILOVER_ID`'s existing `gpt-6-luna` default, the same endpoint
-and credentials, execution deadlines and durable admission/accounting. Preserve
+existing HTTP 429 failover, both with max reasoning. That decision directed the trusted `SENTINEL_IMPLEMENTATION_MODEL_ID` repository override to `gpt-reserve`; it is historical policy provenance, not an instruction to overwrite later configured values during documentation maintenance. Retain the existing `gpt-6-luna` failover default, endpoint, credentials, execution deadlines and durable admission/accounting. Preserve
 the supported route interfaces below. Local coding-agent routing or a
 task-scoped worker model does not change production routing, and this decision
 alone does not prove the live route.
@@ -1019,18 +1072,17 @@ configuration and the previously owner-authorized DeepSeek-direct route selected
 by `SENTINEL_MODEL_FALLBACK=deepseek` with the existing scoped key. Those
 interfaces are retained; this consolidation neither selects a route nor asserts
 which route is live. Reconcile the approved policy and actual installed
-configuration before a future route change. Invalid/incomplete configuration
-refuses, and receipts bind the submitted model/provider to actual
+configuration before a future route change. Trusted configuration retains its existing consumer validation and route-resolution refusal/fallback behaviour, and receipts bind the submitted model/provider to actual
 thread/turn/routing evidence. Max reasoning remains required.
 
-On 2026-10-17 the owner chose `gpt-6.1-sol` on the ai.ubq.fi gateway as the
+Historical configuration provenance: on 2026-10-17 the owner chose `gpt-6.1-sol` on the ai.ubq.fi gateway as the
 implementation model, once generation 80 had six consecutive clean supervisor
 runs. The supervisor workflow binds `SENTINEL_MODEL_ID` to
 `vars.SENTINEL_IMPLEMENTATION_MODEL_ID || 'gpt-6.1-sol'` in the plan, cell and
 repair jobs alike, so a nonempty `SENTINEL_IMPLEMENTATION_MODEL_ID` repository
 variable overrides it. The older `SENTINEL_MODEL_ID` repository variable, which
 held `gpt-reserve`, is no longer read and can be deleted. Reasoning stays `max`,
-the 429 failover stays `gpt-6-luna` and reviews stay on `codex-auto-review`.
+the 429 failover stays `gpt-6-luna`. Reviewer model naming does not establish invocation mode: the current actual path uses native Codex review, with selection owned by Codex.
 
 ## Review and development delivery
 
@@ -1066,9 +1118,12 @@ target PRs. Those PRs use native Codex review mode through the internal review
 service, with reviewer selection delegated to Codex as clarified above. A model
 alias and a normal review-prompted turn do not meet that contract. Silence, a
 reaction or absence of comments does not establish a completed review. No
-unresolved P0/P1 may pass the gate; changed candidate bytes need matching
-evidence. The separate development-review preference above does not satisfy this
+unresolved P0 may pass the severity gate; P1 and lower findings remain in their original receipts and use the existing authorized issue-backlog workflow. Positive task acceptance and every independent gate remain required; changed candidate bytes need matching evidence. The separate development-review preference above does not satisfy this
 runtime gate.
+
+Current runtime task ceilings are selected by `reviewRoundCeilingFor`: five for eligible CI-first-era records, three for legacy or unknown-era records; historical legacy exceptions remain as implemented. This production-throughput development loop has consumed its three rounds and has no fourth. The dated mechanics below preserve their original source; their severity thresholds, universal-three-round claims and branch-protection-existence requirements are superseded by the 2026-10-24/29 decisions.
+
+### Historical 2026-10-16–17 review and carried-delivery record
 
 Review rounds are capped at three per task, hard, everywhere (owner decision
 2026-10-16, after ai.ubq.fi issue 684 / PR 1059 reached 44 rounds). A task's
@@ -1411,19 +1466,19 @@ R79 and R80 alike (unchanged at fresh state 1937e2825, sequence 40384, last
 written 2026-10-14T00:12Z); idle for more than 2 hours, it holds no one's
 delivery line.
 
-The reviewer vendors `openai/codex` tag `rust-v0.162.0`,
+### Vendored rubric provenance and current native execution
+
+The historical reviewer vendors `openai/codex` tag `rust-v0.162.0`,
 `codex-rs/prompts/templates/review/rubric.md`, SHA-256
 `ec60e7f36a1d1c2679ce095c0205ecc56f7dd8fb57707a13ef362072390f219f`. Do not edit
 the vendored constant in
 [src/github/codex-review-rubric.ts](../src/github/codex-review-rubric.ts).
-Sentinel's read-only boundary and attached harness schema override the rubric's
-output-format section. A re-sync needs a new upstream pin/hash and
-current-candidate validation;
+The pin/hash and read-only boundary remain provenance. Native review mode owns its rubric and output protocol; the former ordinary-turn adapter's schema override is superseded. A model alias alone does not establish invocation mode. A re-sync still requires a new upstream pin/hash and current-candidate validation;
 [the alignment note](codex-review-rubric-alignment-2026-10-08.md) gives
 verification details.
 
 Never add Sentinel branch protection rules or rulesets, or recreate deleted
-rules. Applicable target protections still govern autonomous target merge.
+rules. Effective configured target checks and approvals remain honoured; branch rules and rulesets are not required to exist.
 
 ## GitHub identity and target scope
 
@@ -1505,6 +1560,8 @@ review, change its null execution receipt, select a route, admit a model start,
 restore a spent round or authorize a merge.
 
 ## Blocked-work recovery and decomposition (2026-10-15)
+
+Historical source/generation record. Its P0/P1 severity thresholds and then-current review ceilings do not govern current operation; apply the current P0-only severity decision. Positive task acceptance remains an independent gate, and original findings, blockers, counters and charges remain unchanged. The old 200-reservation and six-reservation descriptions below are dated behaviour, not current admission limits.
 
 Only unresolved P0/P1 findings reject a reviewed head, send it to correction,
 fail task-acceptance recovery or qualify a historical correction review for a
@@ -1851,6 +1908,8 @@ is reported `ingested` and never defers the launcher's producer walk.
 
 ## Spent-round delivery and review follow-ups (2026-10-16, launcher only)
 
+Historical source/generation record. Its P0/P1 severity thresholds and then-current review ceilings do not govern current operation; apply the current P0-only severity decision. Positive task acceptance remains an independent gate, and original findings, blockers, counters and charges remain unchanged.
+
 Owner decision 2026-10-16: review rounds are capped at three, CI comes before
 review, a PR merges once its latest completed current-head review has no
 unresolved P0/P1 (or its three rounds are spent with none), its remaining P2/P3
@@ -1999,6 +2058,8 @@ check and intake opt-out reader admit the follow-up issues; the follow-ups write
 no state and no matrix cell.
 
 ## Generation 80 installation (2026-10-17)
+
+Historical source/generation record. Its P0/P1 severity thresholds and then-current review ceilings do not govern current operation; apply the current P0-only severity decision. Positive task acceptance remains an independent gate, and original findings, blockers, counters and charges remain unchanged.
 
 Generation 80 is R80 e48e7e110, the live launcher 413f9eff6 plus the reviewed
 generation-80 lanes: the hard three-round review ceiling on every review path
@@ -2249,6 +2310,8 @@ jobs and logs of a foreign target answer 403 and the evidence holds identity and
 annotations with the reason `forbidden_actions_read`.
 
 ## Generation 81 task acceptance corrections (2026-10-17, JAM B6)
+
+Historical source/generation record. Its P0/P1 severity thresholds and then-current review ceilings do not govern current operation; apply the current P0-only severity decision. Positive task acceptance remains an independent gate, and original findings, blockers, counters and charges remain unchanged.
 
 Owner rules: an unaccepted candidate never merges and only P0/P1 block a merge,
 so a completed review whose only refusal is a `not_fulfilled` task acceptance,
@@ -2997,6 +3060,496 @@ standing approval above. Applied as follows.
   charged.
 - The current-head review, CI and P0 gates are unchanged.
 
+## 2026-10-25: observability lines, outage notice and wedge report (redesign C5)
+
+- Plan diagnostic: a zero-cell plan prints one `sentinel_matrix_plan_diagnostic`
+  line after its carrier, with per-repository `skippedByReason` and
+  `notReadyByReason` counts. The keys are a closed vocabulary: an intent is
+  named by its key family only (`intent=impl`, never its reservation id), and an
+  unknown reason counts as `other`. The launcher re-parses the line against the
+  verified wave and keeps only known keys with non-negative integer counts. A
+  foreign, duplicated or malformed line is dropped, a rejected carrier carries
+  none, and the sanitized line is re-emitted after the carrier. The carrier, its
+  exact keys and its readers are unchanged. The queue-custody empty plan prints
+  one with `cause: "queue_custody_idle"`; a plan with cells prints none, because
+  the planner keeps a diagnostic only for zero cells.
+- Step line: `runRepairCycle` prints one advisory `sentinel_step` line per
+  selected step: `recordId`, `step` (the record's `nextStep`), `outcome` (the
+  step result kind) and `elapsedMs` (monotonic wall time; the injected run clock
+  is never read). A cycle prints at most 1,000 lines and the launcher re-emits
+  at most 2,000 strictly re-parsed lines before the carrier and the terminal.
+  The line has no `status` key, so the child-status scan never reads it, and a
+  failed print is swallowed.
+- Target order is unchanged (the setting order). A rotation by run id was built
+  and withdrawn the same day: the real bootstrap child and the matrix
+  review-window tests pin the setting order, and stage 4 runs targets
+  concurrently, which makes the rotation unnecessary.
+- CI outage notice: the state-free `ops/hosted-autonomy-outage-observation.ts`
+  keeps one issue per foreign target on Sentinel's own tracker while that
+  target's tip has only never-started checks. That means at least one
+  never-started failure, nothing started and nothing undetermined; skipped and
+  cancelled checks count nowhere. The first body line is
+  `<!-- sentinel:ci-outage:<owner>/<repo> -->`. The body names the tip, the
+  never-started count, the records waiting and one owner action: "restore
+  Actions billing or raise the spending limit for <owner>".
+  - The same facts write nothing, and changed facts update the body.
+  - A started check closes the issue, then adds one comment once the close is
+    confirmed, so a close that keeps failing adds no comment per pass.
+  - The notice is filed with the `sentinel:skip` label, which every runtime's
+    intake honours, so a runtime installed before `isCiOutageNotice` (a rollback
+    or a pending install) never admits it as a repair task (stage-1 review,
+    2026-10-25).
+  - A pending or unreadable tip changes nothing.
+  - The marker on someone else's issue prevents a duplicate and is never edited.
+- The outage pass takes the never-started classification as an injected
+  predicate (C2: the target surface's `classifyTipStart`). It runs with the
+  self-observation pass, only on a maintenance pass that wrote nothing, so a
+  pass that delivered never touches the self scope, and a self surface without
+  the tracker files nothing and reports nothing. Intake never admits a notice
+  Sentinel filed (as the App, or with the maintenance job's native-token
+  fallback) as a repair task (`isCiOutageNotice`), because no code change fixes
+  billing; the same first line on anyone else's issue is ordinary work. On
+  recovery every notice Sentinel filed for the target closes.
+- Wedge report v0: finalize reads the repair state once (advisory, with a
+  60-second bound) and adds `wedges` to `hosted_runtime_run_summary`. It has
+  three classes:
+  - `holder_not_runnable`: a `holdsDeliveryLine` record that cannot move now (an
+    unexpired wait other than `ci_pending`, or an implementation in flight)
+    while another published record of its repository waits;
+  - `open_ended_wait`: `until: null` on a live row outside the allowlist
+    (`backoff` at any step; `unavailable` at `delivery`);
+  - `stalled`: `counters.stalled >= 24`, except a row whose release request is
+    recorded (the disabled release path is its named exit).
+- Healthy jobs with any wedge make the run `degraded`; `failed` and
+  `unavailable` keep precedence. An unreadable state gives `wedges: null` and
+  changes nothing. The report decides nothing.
+
+## 2026-10-25: protected paths named in the prompt, and the `sentinel:retry` exit
+
+- Finding (redesign 2026-10-25, C6): 96 records were parked "candidate touches a
+  protected path" (44 ai.ubq.fi, 43 Sentinel, 9 Passport; of these, 6, 2 and 9
+  had an open issue on 2026-10-25). The prompt said "do not modify protected
+  paths" without naming them, and no rule could ever re-admit such a park.
+- The implementer prompt's role paragraph now names the exact trusted configured
+  prefixes of the requested repository (deduplicated, sorted, JSON-quoted, at
+  most 60 within 4,000 characters, the rest counted) and says to fix the issue
+  without changing them where it can, since a candidate that changes one is
+  parked for the repository owner to land. (Corrected 2026-10-25 by the stage-1
+  review: the first wording, "make no change and say
+  `OWNER_LANDING_REQUIRED:
+  <paths>`", sent a compliant run into the no-change
+  base-review lane, which has no exit: Passport deferred forever and ai.ubq.fi
+  and Sentinel parked outside the `sentinel:retry` exit. Nothing read the
+  marker.) The list reaches the port through the host's trusted target configs,
+  never through the request, its digest or a receipt. A repository without
+  configured prefixes gets the earlier prompt byte for byte. The candidate's own
+  protected-path check stays the enforcement.
+- Owner exit: the launcher retry pass lists each target's open issues labelled
+  `sentinel:retry` once per pass. For a record blocked with exactly that
+  message, in the fresh park shape (no PR, no published head, no review), whose
+  issue is listed, it removes the label first and re-admits the record only if
+  GitHub confirms the removal. The re-admission is an ordinary uncharged work
+  plan in the pass's one batch write: the protected head, checkpoint and
+  candidate state are dropped (the runtime's own proven-absence target shape),
+  so the next start is charged normally and begins at the current base. A failed
+  removal, a closed or unlisted issue, or a lost state write re-admits nothing;
+  after a lost write the owner labels the issue again, so one label is at most
+  one re-admission. A park over a published pull request is not touched by this
+  exit and keeps its label.
+- No stored shape is added; nothing is pushed, refunded or re-counted.
+
+## 2026-10-24: backup CI in the ubiquity-sentinel org (owner decision)
+
+- Owner decision (2026-10-24): "primary path is to use the org's own ci but
+  backup path is to use ubiquity-sentinel org as the backup".
+- Finding: since 06:40 UTC GitHub has not started any Actions job in the private
+  `ubiquity/passport.ubq.fi`. Every check run completes in about one second with
+  conclusion `failure`, no runner, no steps and the annotation "The job was not
+  started because recent account payments have failed or your spending limit
+  needs to be increased". Under "current-head CI not red", 61 of the 71 open
+  Passport issues cannot be reviewed or merged.
+- Primary path, unchanged: the target's own CI on the exact head decides.
+- Backup path: when a required check on the exact head never started (an Actions
+  job with no runner and no steps), Sentinel runs that job of the target's own
+  workflow file, as committed at the head, in the ubiquity-sentinel org on the
+  exact pull request merge tree (the commit whose parents are exactly the
+  reviewed base and the head). It runs in an isolated job with no Sentinel
+  credential and only a read token for the target. The trusted host verifies the
+  result's binding (repository, pull request, head, base, merge tree, workflow
+  file blob, job, run identity) before it counts, and a verified success stands
+  in for exactly that never-started check. A check that ran and failed is never
+  overridden, and missing, stale or unverifiable backup evidence never passes.
+- Activation (2026-10-25, owner directive "Get them unstuck"): the act pin is
+  `v0.2.89` (released 2026-06-01, the newest release at least 14 days old). Its
+  `act_Linux_x86_64.tar.gz` sha256 `0191d6f1…24c0` comes from the release's
+  `checksums.txt` and matched the downloaded asset. The calibration list holds
+  eight Passport commits whose `deno` check ran natively before 06:40 UTC on
+  2026-10-24: six green, and two (`84557beb`, `8908b8e4`) that failed
+  `bun run check` on every push and pull request run. The planner now skips
+  calibration commits the runner already settled or has in flight, so later
+  commits are reached; before, it re-offered only the first two, and a runner
+  could never collect the five agreements the gate needs.
+- The mode defaults to `on`: unset `vars.SENTINEL_BACKUP_CI` reads as `on`,
+  `shadow` only observes, and any other value (`off`) disables dispatch,
+  planning and consumption, like `SENTINEL_AUTO_FOLLOW`. The session cannot
+  write repository variables (the Actions variables path is refused by its
+  proxy). The skipped shadow stage is covered by the calibration gate: no backup
+  result stands in until the runner has at least five agreements with native CI,
+  one of them a failure, no false green and at most one false red. A false green
+  suspends the runner automatically.
+- The pass's target read token now also has `statuses: read`. Without it the
+  combined status read failed, so every commit's observations read as null and
+  the first live passes (2026-10-25 03:57 UTC) planned nothing and logged
+  nothing. A null observation read and an unreadable repository are now logged
+  (`observations_unavailable`, `repository_unavailable`).
+- Planner fairness (finding 2026-10-25): every backup pass on launcher
+  `e5a888244c` reported `backup-ci:plan:p=2:free=2` and planned zero units
+  although runner `916ad9eaff49fe9d` was calibrated at 7 agreements. The live
+  state held 17 Passport delivery heads and 53 blocked pre-review parks. The old
+  planner concatenated candidates by priority and stopped after 12 reads, so the
+  delivery class consumed the bound and no blocked head was examined; its
+  per-head rotation was erased by the following priority/id sort. The planner
+  now applies the bound to a round-robin over present priority classes
+  (`backupCiScanOrder`), one candidate per class per round, with each class's
+  cursor advanced by `GITHUB_RUN_ID`. p0/p1 still lead each round; no store,
+  state or gate shape changes. This is a fair-scan fix, not permission to merge
+  without the current-head CI, review or P0 gates.
+- The first live legs failed in their install, and a hosted audit (six lenses
+  with three skeptics per finding, real act v0.2.89 and the real
+  download-artifact action) found the next failures before any further live
+  attempt. Fixed: the install no longer chmods the act path (Deno refuses writes
+  to a path granted in `--allow-run`), and `act --version` runs with a scratch
+  HOME (act exits fatally without HOME and creates `~/.config/act`). Prepare
+  reads the tree from `in/backup-tree-<unit>/`, where download-artifact by
+  artifact id puts it. Only an actual act configuration file refuses; the
+  image's `XDG_CONFIG_HOME` does not. The service drops `--gid=runner`; without
+  a Group= systemd uses the user's primary group. `BACKUP_CI_LEG_REVISION` is 2,
+  so the fixed leg is a new runner id: it calibrates afresh and inherits no
+  backoff from the failed legs. Open (minor): a `status_only` step skipped on a
+  green run leaves no act record (act logs skips at Debug), so such a green
+  reads `act_inconsistent`; Passport has no such step.
+
+## 2026-10-24: the runtime never merges a tree no CI ran on (base compare-and-swap)
+
+- Finding (live state and GitHub, 2026-10-24): the runtime merged two Passport
+  pull requests off their reviewed bases. PR 154 (record
+  `issue-ubiquity-passport.ubq.fi-49`) was reviewed on `7194280c` and its merge
+  commit `862a9162` has parents `95765554`,`8dbaa9fc`; PR 171 (record
+  `issue-ubiquity-passport.ubq.fi-77`) was reviewed on `95765554` and merged 26
+  seconds later onto PR 154's merge (`2cf5050f`, parents `862a9162`,`aa11683f`).
+  Both were booked as delivered. GitHub's merge API guards only the head, the
+  pull request's reported base is not updated when the base branch moves, and
+  since branch rules stopped gating merges (owner directive 2026-10-24) nothing
+  checked that the base still was the reviewed base at the merge call. The
+  post-drain continuation (`src/repair/loop-post-drain.ts`) also called
+  `executeMerge` without the moved-base refresh guard the ordinary delivery step
+  runs first. The launcher already refused this (`merged_off_tip`, #156).
+- Decision: the port's REST merge path (`src/github/port-merge.ts`) re-reads the
+  base branch tip, uncached, as the last read before the merge call and returns
+  the existing blocked `base_mismatch` outcome, with no merge call, unless it is
+  exactly the reviewed base; an unreadable tip is a typed error, never a merge.
+  The REST merge makes a merge commit (Passport allows it and merges that way),
+  so after a merge, and when a pull request is found already merged, the port
+  reads the merge commit's parents and returns `merged` only on exactly
+  [reviewed base, reviewed head]. Any other landing is the new `merged_off_tip`
+  outcome (merge SHA and parents), and an unreadable commit is `ambiguous`. A
+  merge this call did not make on the native queue target keeps the queue's own
+  proof only while the queue can merge (queue mode ceiling not `off`, or queue
+  delivery proof activated; `queueMayHaveMerged`). Corrected 2026-10-25 by the
+  stage-1 review: with both off, Sentinel merges ai.ubq.fi through the REST
+  path, so an off-tip merge whose response was lost was otherwise booked on
+  reconciliation.
+- The loop parks a `merged_off_tip` outcome with its intent cleared, blocked
+  `other` with the fixed `MERGED_OFF_TIP_PREFIX` message naming the merge SHA,
+  its parents and the expected [base, head] pair; nothing is booked, no release
+  request is written and Sentinel does not close the issue. Merge-intent
+  reconciliation applies the same proof to a pull request it observes merged
+  (`src/repair/merge-off-tip.ts`, through the optional `readCommitParents`; an
+  unreadable commit waits one poll with the intent kept). A `base_mismatch`
+  keeps its existing path: the merge intent backs off one poll and the next
+  run's reconciliation replaces it with the durable base refresh.
+- The post-drain continuation's fresh merge now passes the same moved-base guard
+  as the delivery step (`refreshMovedBaseBeforeMerge` in
+  `src/repair/loop-work.ts`): a moved base persists the refresh intent, which a
+  later run executes; the continuation still never executes a refresh.
+- Unchanged: current-head native review, the P0 merge block, current-head CI,
+  task acceptance, custody, durable accounting and the self path's source CAS.
+  No state shape changes (the outcome is a port result, never persisted; the
+  park is an existing blocked transition), and the pinned generation-80 parser,
+  generation 81's rollback target, parses the parked records in the tests. The
+  two merges already booked stay booked; this changes no historical record.
+
+## 2026-10-24: a GitHub Actions job that never started is not CI evidence
+
+- Finding (live, 2026-10-24): Passport is private and its Actions payments
+  failed, so GitHub has started no Passport job since 06:40 UTC. Every check run
+  still appears and completes about a second later with conclusion `failure`,
+  runner id 0, an empty runner name, no step and the annotation "The job was not
+  started because recent account payments have failed or your spending limit
+  needs to be increased". Sentinel read these as real red checks: head and base
+  were both red, so every Passport record waited in the CI-first gate's
+  `base_red` backoff with no end. Once billing returns and only the base re-runs
+  green, the head's stale failure would be attributed to the candidate and
+  charge a CI fix round. The new base-repair pass would also have filed a P0
+  code-fix issue for a billing stop.
+- Decision: a GitHub Actions check run that completed `failure` while its job
+  (`GET /actions/jobs/{id}`; an Actions check run's id is its job's id) reports
+  no step and a runner id of 0 or null, on the exact job id and commit, never
+  started
+  ([src/github/never-started-job.ts](../src/github/never-started-job.ts)). The
+  runtime check read (`readChecks`) marks such a run with an optional
+  `neverStarted` flag. Only failed Actions runs are read, the latest run of each
+  name first and at most 8 per check read; a client keeps each completed job's
+  verdict, and an unreadable or mismatched job keeps the run exactly as before.
+- A never-started run is no evidence on either side: it is pending on the head
+  (`checkPending`, never in `failedChecks`) and attributes nothing on the base
+  (`unattributed`, never `base_red` and never `candidate`). The CI-first gate
+  therefore waits on it in the existing bounded, uncharged `ci_pending` path and
+  parks it after six hours under the pending prefix (`deno(not_started)`), which
+  the launcher's re-run and green rules already re-admit. A CI fix marker on
+  such a head is dropped uncharged at admission.
+- The launcher's base-repair read (`failedChecks`) applies the same job rule,
+  and judges only the latest run of each name, so a billing stop files no
+  base-repair issue.
+- A new maintenance pass resumes the CI by itself
+  ([ops/hosted-autonomy-ci-resume.ts](../ops/hosted-autonomy-ci-resume.ts)). For
+  each foreign target with a head waiting on CI (a live `ci_pending` or
+  `backoff` wait, or a pre-review CI park, outside merge queue custody), it
+  looks at the base tip and those heads. It re-runs the failed jobs of every run
+  of a head (the flake pass's existing `rerun-failed-jobs` request) whose failed
+  jobs of its latest attempt all never started. A run is asked at most once per
+  30 minutes: its `updated_at` must be that old. Only a latest attempt that took
+  at most 60 seconds costs a job listing read. One pass reads at most 32 job
+  listings and sends at most 16 re-runs, inside 60 seconds, and never past
+  GitHub's 30-day re-run window. Corrected 2026-10-25 by the stage-1 review:
+  GitHub allows 50 re-runs per run, and a stop longer than about a day would
+  have spent them all, so CI could never resume. A run at attempt 40 or more is
+  now never asked again. While no run of the repository listed in the pass ran a
+  job within the last hour, the wait doubles per attempt (30 minutes up to 12
+  hours). The base tip is listed first and is the canary: once its re-run starts
+  again, every waiting head is asked at the plain 30 minutes. Every run of a
+  head is now re-run, not only the newest per workflow, because the launcher's
+  green read needs every check run green and a Passport head has a pull_request
+  run and two push runs of one workflow. It writes no state.
+- Unchanged: the merge gate's required-check verdict (`requiredChecksState`, a
+  protected path) still never treats a never-started run as green; the
+  launcher's green read (`hasAllChecksGreen`) is unchanged; every CI fix is
+  still charged only at its own admission after the failure is re-derived from
+  live checks. A run the resume pass re-runs is past attempt 1, which the
+  once-per-head flake re-run already reads as re-run, whoever re-ran it. Nothing
+  new is persisted, so the generation-80 and 81 rollback readers parse every
+  state this writes.
+
+## 2026-10-25: maintenance throughput caps and the `retried` status
+
+- Finding (maintenance runs 40133653940, 40136967547 and 40137557976 on
+  2026-10-24): the `hosted_autonomy` status read `skipped`, reason `retried`,
+  with no write. The only `retry:` line in each was the read-only denial
+  `retry:issue-ubiquity-ai.ubq.fi-1213:denied:repeat_failure_parked:…`, which is
+  named on every pass while the record stays parked, and any `retry:` line made
+  a pass `retried`. The real class of all three was `already_recorded`. Two
+  artificial per-pass bounds also survived the owner directive that lifted caps:
+  at most 12 CI correction re-admissions per maintenance pass
+  (`HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS`), and at most one launcher merge
+  per pass across all repositories, so one target's merge deferred every
+  reviewed green head in the other targets to a later pass.
+- Decision: `HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS` is
+  `Number.MAX_SAFE_INTEGER`, the way the conflict-resolution throttle was
+  retired. The constant stays for importers. Every correction candidate whose
+  pull request reads open is re-admitted in the same pass.
+- The delivery pass calls merge at most once per repository per pass (a set of
+  scope keys). A merge moves only its own repository's tip, so another
+  repository's reviewed head still merges in the same pass. Each merge keeps
+  every gate: the uncached tip re-read right before the call, green CI on the
+  exact head, the current-head receipt with no unresolved P0, the task re-read
+  and the merge-commit parent check. Within one repository the bound is
+  unchanged: once merge was called there, whatever it answered, every later open
+  pull request of that repository is `merge_deferred` for the pass, because a
+  second merge would land on a tree no CI ran on. Correction (stage-1 review,
+  2026-10-25): this holds for foreign targets only. A Gateway or self merge or
+  booking writes the delivery state and ends the delivery phase for the pass
+  (`ops/hosted-autonomy-delivery-pass.ts`), and records are visited in id order,
+  so an ai.ubq.fi booking still defers the Passport and Sentinel merges to the
+  next pass. This costs throughput only; every per-merge gate holds.
+- `retried` is decided only from the three lines the retry pass pushes after its
+  own verified write: `retry:<id>:grant=<n>:…`, `retry:<id>:readmit:…` and
+  `retry:<id>:parked:repeat_failure:…`
+  ([ops/hosted-autonomy-retry-actions.ts](../ops/hosted-autonomy-retry-actions.ts)).
+  A repeated `denied:` or `skipped:` line no longer makes a pass `retried`. A
+  pass that wrote nothing reports its own class, a delivery write after only
+  denials reports `applied`, and an unreadable self tip reports `base_moved`.
+- A non-carried review or delivery record outside the Gateway, whose reviewed
+  base is not the tip this pass already read for its repository, now has only
+  its pull request read, like a spent record behind the tip (#156). An unmerged
+  pull request reports `base_moved` without the source-issue read. Every gate it
+  could reach refuses it `base_moved` before any effect, because the moved-base
+  rule is Gateway-only. A merged pull request goes on to the ordinary booking
+  path, so the lost write of a merge that moved the tip itself is still booked.
+  No tip is read early for this rule, and a self delivery that is already
+  recorded keeps its read-free `already_recorded`. The only visible difference
+  is the label of a no-effect refusal: such a record now reports `base_moved`
+  where it could report a task or author refusal before.
+- Unchanged: review rounds, durable reservations and their settlement, the
+  proven-runtime rule for corrections, current-head CI and review, the P0 merge
+  block, custody and the historical readers. Nothing is refunded, re-counted or
+  charged by these changes.
+
+## 2026-10-25: a head held by its red base holds no delivery line; retired records cost no read
+
+- Finding (live state, 2026-10-24 23:13 UTC): Passport records 13 (PR 161) and
+  14 (PR 162) sat at `work` on the tip with their refreshed heads held by the
+  CI-first gate's `base_red` backoff and stood `re_review` in the delivery line,
+  so all 22 reviewed Passport records with a round left deferred behind them for
+  18 hours. The hold waits for a base move, only a merge moves the tip, and the
+  line held every record whose merge could move it; only the stall rule (12
+  re-arms of a 30-minute hold) ever released it.
+- Finding (same state): 115 of the 388 non-done records were already retired
+  (`HOSTED_AUTONOMY_RETIRED`). Every maintenance pass still read each one's
+  source issue, one sequential read each (the context phase that runs these
+  reads took 85 seconds), and the closure pass read the pull request of the 24
+  that had one, although the retirement plan never plans a retired record again
+  and no rule acts on a retired record's issue or pull.
+- Decision: a contender on the tip whose wait is a red base's hold still running
+  (`isRedBaseHold`: a `backoff` that rechecks `RED_BASE_RECHECK_MS` or more
+  after its start, which only the red-base holds of the CI-first gate, the
+  pre-review fix, the pre-merge correction and the carried gate write) and that
+  would otherwise stand `re_review` (a round left) stands `waiting` and holds
+  nobody. Once the hold is due it stands as before until its own step re-arms
+  the hold or moves on
+  ([src/repair/delivery-queue.ts](../src/repair/delivery-queue.ts)). Corrected
+  2026-10-25 by the stage-1 review: a spent carried head or a delivering head
+  keeps standing `landing` under the hold. Releasing the records behind it would
+  refresh each spent deliverable record onto the red tip, where the carried
+  gate's six-hour bound parks it for good.
+- A running CI wait (`ci_pending`) keeps holding: the wait records neither the
+  checks nor whether its jobs started, so one whose jobs never started cannot be
+  told from running CI, and the line on the tip must keep holding behind running
+  CI. Such a wait is bounded by the stall rule at the five-minute poll (about an
+  hour). The never-started billing failure itself completes as `failure` and
+  lands in the red-base hold.
+- Cost: while a base stays red, reviewed records refresh onto it one at a time
+  and wait there; once a merge repairs the base they refresh and are reviewed
+  again in parallel, which the line used to delay until the stall release. A
+  record whose own change passes on the red base, or a base-repair pull request
+  whose base moved, no longer waits behind a head that cannot move.
+- Decision: the launcher reads no source issue for a retired record and no pull
+  request in the closed-unmerged scan for one
+  ([ops/hosted-autonomy-closed-issues.ts](../ops/hosted-autonomy-closed-issues.ts)).
+  A retired record's issue is still read while a record that is not retired
+  shares its issue (a decomposition part). No verdict changes: on the pre-change
+  code a retired record's whole pass was identical whether its issue read
+  closed, open or unreadable. The remaining issue reads run at most four at a
+  time, started and applied in record order (the same facts, `seen` ids and
+  actions).
+- Unchanged: the line writes nothing (under generation 80, the rollback target,
+  the line holds behind such a head again, which is only slower), the CI fix
+  marker, the carried-merge marker and every standing on a moved base,
+  current-head CI, native review, the P0 merge block, custody and accounting.
+
+## 2026-10-24: a red target base gets its own repair (base-repair lane)
+
+- 2026-10-25 status: the review findings below are fixed; filing stays off
+  (`BASE_REPAIR_FILING_ENABLED = false`) until the reworked lane's own
+  adversarial re-review passes. The lane's adversarial review had upheld a P1
+  (it filed for any failing tip check, including Passport's dispatch-only
+  `Workers Standby Deploy` and `deploy-standby` jobs that no pull request runs,
+  so a charged task could loop), P2s (one unfiltered page of 100 open issues
+  with no author check; a closed issue refiled for the same tip; a stale open
+  issue suppressing every later one; a P0 label Passport does not have and
+  ai.ubq.fi does not use; the lane's files unprotected) and P3s (an unavailable
+  issue read read as "not a base-repair task", secondary cancelled checks and a
+  "passed on its base" claim in the fix finding, a conversion on a base that had
+  already moved, untrusted check names in the issue, a red set unlike the
+  runtime's, and a wrong note on the self scope). Filing was off from 027ecbbea0
+  until this change.
+
+- Finding (live state, 2026-10-24 23:00 UTC): all 39 Passport records at `work`
+  were held by the CI-first gate's `base_red` rule. Their failing check is red
+  on Passport `main` too, so they back off uncharged until "a later base move".
+  Two of them held the delivery line for the 22 reviewed Passport PRs behind
+  them. A red base can only move by a merge, and no merge passes a red base, so
+  nothing in Sentinel was assigned to fix it and the whole target stayed wedged.
+- Decision: the launcher's maintenance pass looks at every foreign target with a
+  record the CI-first gate holds on a red base (at `work` with a published head,
+  in a running red-base hold, `isRedBaseHold`), sharing the follow-up pass's one
+  state read
+  ([ops/hosted-autonomy-base-repair.ts](../ops/hosted-autonomy-base-repair.ts)).
+  It reads the base tip; only held records whose base is that tip count (a
+  record on an older base refreshes onto the tip first). It reads the tip's
+  failed checks with the runtime's red-base conclusions (`RED_BASE_CONCLUSIONS`:
+  `failure`, `timed_out`, `action_required`) and the failed checks of the first
+  three such held heads in record-id order with the head conclusions a red base
+  can hold (`CANDIDATE_CONCLUSIONS`: `failure`, `timed_out`). Both reads take
+  the latest run of each name and leave out a job that never started. Only a
+  check failing on the tip and on a held head holds anything, so the issue lists
+  only those, through the runtime's trusted check-name shape
+  (`trustedCheckName`), and nothing is filed when there is none
+  (`base-repair:<repo>:no_held_check`). Any unreadable tip, head or listing
+  files nothing.
+- The issue is titled `CI is failing on <branch>`, carries no label, and its
+  first body line is `<!-- sentinel:base-repair:<branch>@<tip> -->`. Before
+  filing, the pass reads every issue the App created in that repository
+  (`GET /issues?creator=ubiquity-sentinel[bot]&state=all`, oldest first, up to
+  20 pages of 100; another creator, a repeated or malformed item, or a full page
+  at the bound refuses the whole listing). It files nothing when any App issue,
+  open or closed, already carries the marker for this tip, so a tip gets at most
+  one issue. While an App issue marked for an older tip of the branch (or with
+  the first, tip-less marker) is open, a new issue is filed only once every
+  record of that issue is parked or done; an issue with no record yet still
+  counts as live. The pass writes no state and never edits, closes or comments
+  on an issue. The self scope has no base-repair lane: the pass never reads or
+  files for it.
+- The runtime admits the issue like any other, at the ordinary priority of an
+  unlabelled issue. For that task alone (the issue the App authored with the
+  marker on its first body line; no label, no severity and no other check;
+  `src/repair/base-repair.ts`), a `base_red` failure is the candidate's own
+  failure on the current tip: its head still fails the checks it was filed to
+  fix, so it takes the ordinary charged CI fix route instead of the uncharged
+  hold. The fix names exactly the checks red on both (never a secondary
+  cancelled one). The issue is read only for a `base_red` disposition and once
+  per run. An unavailable issue read or tip read defers through the callers'
+  existing unavailable path without a write. A record whose base is no longer
+  the tip keeps `base_red`, so a moved base refreshes it first, uncharged
+  (before a refresh the delivery gate corrects only a candidate failure). A
+  closed issue is still refused before any charge, as every task is
+  (`readIssueForModel`).
+- The fix finding has its own opening,
+  `Required CI checks failed on this
+  candidate and on its red base`, which
+  `isCiCorrectionFinding` recognises beside the ordinary one, so it never claims
+  that the checks passed on the base. A hosted fix runs as a matrix cell that a
+  later run may consume under the rollback target's code, and a consumer that
+  does not recognise the opening refuses the cell generically, which fails every
+  later repair run (the R79 precedent). Hosted runs therefore keep the ordinary
+  opening until the installed rollback target is a runtime at or after this
+  change (`HOSTED_BASE_REPAIR_FINDING`, off); in process the own opening is
+  always used. Under a rollback to the previous runtime nothing else changes: it
+  recognises the task only with a P0 severity (a `P0` label), which the issue is
+  not filed with, so it keeps the uncharged hold; an issue a person labels P0
+  gets that runtime's earlier conversion with the ordinary opening.
+- `src/repair/base-repair.ts` (with the CI-first gate) and
+  `ops/hosted-autonomy-base-repair.ts` (with the App-token issue filing) are
+  protected paths, so a model-authored candidate never changes the lane.
+- Unchanged: current-head CI, native review, the P0 merge block, custody and
+  accounting. The fix merges through the ordinary gates; its pull request closes
+  the issue, and every held record then refreshes onto the green base.
+
+## 2026-10-24: private state clones skip git's background maintenance
+
+- Finding (CI flake on `ca87acea8a`, reproduced): git 2.55 on the CI runners
+  (and on the hosted runtime's runners) detaches `git maintenance run --auto`
+  after a fetch, and since 2.54 its geometric repack may still be deleting loose
+  objects in Sentinel's private state scratch clone while the repair history
+  cache measures it (`diskBytes` NotFound). The read then reports
+  `historical repair cache unavailable`. Locally git 2.43 never runs it; under
+  git 2.56 with the repack condition forced, four history-cache tests fail.
+- Decision: the state transport's fetch passes `--no-auto-gc`, as
+  `src/host/actions-candidates-proof.ts` already does for its stores. The
+  scratch clones are read once and deleted, so skipping their maintenance
+  changes nothing else. Every live caller of `readRepairAt` (queue provenance,
+  existing-PR takeover, maintenance publication, matrix recovery, matrix
+  uncertainty) stops seeing the spurious unavailable read.
+
 ## 2026-10-24: recover the native review envelope's escaping slips
 
 - Finding: Codex 0.154.0 runs review mode without an output schema
@@ -3008,16 +3561,26 @@ standing approval above. Applied as follows.
 - Decision: when the strict parse of the envelope fails, the parser retries it
   on deterministic rewrites of those slips
   ([src/github/native-review-envelope-repair.ts](../src/github/native-review-envelope-repair.ts)):
-  one whole extra layer of string escaping, raw control characters inside a
-  string, a double quote inside a string that no JSON delimiter follows, an
-  invalid escape (kept as a literal backslash), and a trailing comma. Every
-  candidate goes through the same strict parser, so duplicate keys and trailing
-  content still refuse. The exact envelope keys, the snapshot binding, the
-  strict result shape and the native findings cross-check are unchanged, and an
-  unrecovered text keeps the fixed `json_syntax` category.
-- The review request also asks the reviewer to keep every RESULT string on one
-  line with no double quote characters. That request is Sentinel's own text in
-  `review/start`; the vendored rubric and native review mode are unchanged.
+  one whole extra layer of string escaping (decoded tolerantly, so a second slip
+  inside it is still rewritten), raw control characters inside a string, a
+  double quote inside an object member's string value that no JSON delimiter
+  follows, an invalid escape (`\u` without four hex digits included; kept as a
+  literal backslash), and a trailing comma. An unescaped quote inside an array
+  element is not rewritten: it could split or merge `taskAcceptance.evidence`
+  entries, which nothing cross-checks, so such a text stays refused.
+- Every candidate goes through the same strict parser, so duplicate keys and
+  trailing content still refuse. The exact envelope keys, the snapshot binding,
+  the strict result shape and the native findings cross-check are unchanged. A
+  text no rewrite recovers, and a recovered text that a later check refuses,
+  keep the fixed `json_syntax` category.
+- The review request also asks the reviewer to keep every RESULT string, and
+  each native finding's title and body, free of double quote characters. That
+  request is Sentinel's own text in `review/start`; the vendored rubric and
+  native review mode are unchanged.
+- Adversarial review: three lenses with three skeptics per finding upheld eight
+  P3 findings on the first version (array splits, `\u`, category drift, the
+  instruction's scope, a doubled layer with a second slip); all are fixed and
+  each has a regression test that fails without its fix.
 
 ## 2026-10-24: one fresh proof store per target per maintenance pass (#185)
 
@@ -3226,3 +3789,19 @@ standing approval above. Applied as follows.
   resolution, a retried implementation or a CI fix. The comment in
   `src/repair/ci-first-policy.ts` is corrected. Resetting such rows is an owner
   decision.
+
+## 2026-10-25: isolated CI workers
+
+The owner requested faster CI with lower runner use.
+
+- `modules` and the three host shards run four worker processes each.
+- `integration` keeps one worker.
+- Each worker gets a temporary `HOME` and `DENO_DIR`.
+- Every worker invokes `test-local.ts` for its assigned files.
+- The planner checks exactly-once file coverage and balances the file costs.
+- `SENTINEL_TEST_JOBS` selects the worker count.
+- The `test-local` aggregate keeps all existing quality and shard gates.
+- Superseded PR and non-development runs are cancelled.
+- A newer run does not cancel running `development` CI.
+
+PR #217 and its measured CI results are recorded in `build-status.md`.

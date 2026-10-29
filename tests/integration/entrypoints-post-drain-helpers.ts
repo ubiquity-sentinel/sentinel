@@ -54,11 +54,14 @@ export async function postDrainTaskScenario(
     | "matrix-deadline"
     | "matrix-step-limit"
     | "unbound-intent"
-    | "lost-merge" = "expired",
+    | "lost-merge"
+    | "moved-base" = "expired",
 ): Promise<void> {
   const head = SHA3;
   const branch = "sentinel/repair/issue-1";
-  const attempt = mode === "missing-acceptance" ? 2 : 4;
+  const attempt = mode === "missing-acceptance" || mode === "moved-base"
+    ? 2
+    : 4;
   const key = `review:7:${head}:attempt-${attempt}`;
   const rig = await makeRepairRig("post-drain-task", {
     summaries: false,
@@ -346,9 +349,23 @@ export async function postDrainTaskScenario(
       client,
     );
     const drain = rig.github.drainReviews;
+    const refreshPrepares: number[] = [];
     rig.github.drainReviews = async (request) => {
       rig.clock.advance(mode === "future" ? 1 : 15 * 60_000 + 1);
       releaseResult();
+      if (mode === "moved-base") {
+        // The base moves after the review was requested (live: Passport PRs
+        // 154 and 171): the continuation must refresh, never merge.
+        const readRef = rig.github.readRef.bind(rig.github);
+        rig.github.readRef = (ref) =>
+          ref === "refs/heads/development"
+            ? Promise.resolve(portOk({ ref, sha: SHA2 }))
+            : readRef(ref);
+        rig.github.prepareBaseRefresh = () => {
+          refreshPrepares.push(rig.clock.now());
+          return Promise.resolve(portError("unavailable", "not in post-drain"));
+        };
+      }
       const result = await drain(request);
       if (!result.ok) return result;
       if (mode === "wrong-key") {
@@ -472,11 +489,22 @@ export async function postDrainTaskScenario(
     assert.equal(
       state.reviews.length,
       (positive || mode === "missing-acceptance" ||
-          mode === "missing-acceptance-capped"
+          mode === "missing-acceptance-capped" || mode === "moved-base"
         ? 1
         : 0) + (collision ? 1 : 0),
       "a completed result may be retained without authorizing delivery",
     );
+    if (mode === "moved-base") {
+      // The drained clean review advanced the record to delivery, and the
+      // continuation's merge passed the moved-base guard: the durable refresh
+      // intent replaced the merge, and the refresh itself waits for a later
+      // run (the continuation never executes one).
+      assert.equal(state.work[0].nextStep, "delivery");
+      assert.equal(state.work[0].intent?.kind, "base_refresh");
+      assert.equal(state.work[0].intent?.observedBase, SHA2);
+      assert.equal(state.work[0].target.base, SHA1);
+      assert.deepEqual(refreshPrepares, []);
+    }
     if (mode === "missing-acceptance") {
       assert.equal(state.reviews[0].taskAcceptance, null);
       assert.equal(state.work[0].nextStep, "review");

@@ -527,7 +527,8 @@ export async function preMergeGate(input: {
   if (moved) {
     // The tip the merge lands on must itself be complete and green, so a red
     // development is attributable to the last merge and moved-base merges
-    // are serialised by the tip's own CI (the pass calls merge at most once).
+    // are serialised by the tip's own CI (the pass calls merge at most once
+    // per repository).
     let green = input.tipGreen.get(scope.key);
     if (green === undefined) {
       green = await headIsGreen(surface, false, baseTip);
@@ -550,10 +551,10 @@ export async function preMergeGate(input: {
 /**
  * Every eligible spent record may be read on each pass. A record changed by
  * an earlier phase still waits for the next pass. CI, current-head review,
- * source identity and the one-merge-per-pass gate remain unchanged. With
- * `onTip` (#156), a record with a review of its own head is left out unless
- * `onTip` holds for it (`spentOnTip`); a carried head on a moved base keeps
- * its own exemption.
+ * source identity and the one-merge-per-repository-per-pass gate remain
+ * unchanged. With `onTip` (#156), a record with a review of its own head is
+ * left out unless `onTip` holds for it (`spentOnTip`); a carried head on a
+ * moved base keeps its own exemption.
  */
 export function spentReadWindow(
   snapshot: RepairStateSnapshotV1,

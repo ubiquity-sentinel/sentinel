@@ -13,10 +13,7 @@ import {
 } from "../src/contracts/hosted-supervisor.ts";
 import { parseReleaseStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
-import {
-  queueProtectedIds,
-  queueRecordProtected,
-} from "./hosted-autonomy-queue-context.ts";
+import { queueProtectedIds } from "./hosted-autonomy-queue-context.ts";
 import { failed, readRepairSafely, skipped } from "./hosted-autonomy-state.ts";
 import type { HostedAutonomyPassContextV1 } from "./hosted-autonomy-scopes.ts";
 import {
@@ -86,6 +83,17 @@ import {
   acceptanceCorrectionRuntimeProven,
   planAcceptanceReadmissions,
 } from "./hosted-autonomy-acceptance.ts";
+import {
+  retryGrantAction,
+  retryParkAction,
+  retryReadmitAction,
+} from "./hosted-autonomy-retry-actions.ts";
+import {
+  dropProtectedCandidates,
+  planProtectedReadmissions,
+  protectedReadmissionPlan,
+  takeProtectedReadmissions,
+} from "./hosted-autonomy-protected-readmission.ts";
 
 /** Legacy class drift lines reported per pass (the rest are counted). */
 export const LEGACY_DRIFT_REPORTS_PER_PASS = 12;
@@ -181,43 +189,8 @@ export function legacyHeldHeadActions(
   return actions;
 }
 
-/**
- * Read-only source facts shared by bookkeeping and the later retry grant. A
- * pass that continues after a write passes the ids it already read (`seen`):
- * each record's issue is read once per pass, and the facts already held are
- * kept.
- */
-export async function readHostedClosedIssues(
-  context: HostedAutonomyPassContextV1,
-  seen?: Set<string>,
-): Promise<void> {
-  const { snapshot, scopeFor, actions } = context;
-  const closedIssues = new Set<string>(
-    seen === undefined ? [] : context.closedIssues,
-  );
-  for (const record of snapshot.work) {
-    if (record.nextStep === "done") continue;
-    if (queueRecordProtected(record, context.deps.queueCustody)) continue;
-    const issueNumber = record.related.issueNumber;
-    if (issueNumber === null || seen?.has(record.id)) continue;
-    seen?.add(record.id);
-    const scope = await scopeFor(record.repository);
-    if (scope.surface === null) {
-      actions.push(`record:${record.id}:surface_unreadable`);
-      continue;
-    }
-    let open: boolean | null = null;
-    try {
-      open = await scope.surface.readIssueOpen(issueNumber);
-    } catch {
-      open = null;
-    }
-    if (open === false) {
-      closedIssues.add(hostedIssueKey(record.repository, issueNumber));
-    }
-  }
-  context.closedIssues = closedIssues;
-}
+/** The pass's source-issue facts (`hosted-autonomy-closed-issues.ts`). */
+export { readHostedClosedIssues } from "./hosted-autonomy-closed-issues.ts";
 
 export async function runHostedRetryPass(
   context: HostedAutonomyPassContextV1,
@@ -627,6 +600,24 @@ export async function runHostedRetryPass(
       legacyCutoff,
     ),
   );
+  // C6: an open issue's `sentinel:retry` label is the owner's exit for a
+  // protected-path park. The label is removed first; only a confirmed removal
+  // returns the record to `work` in this same write, as an ordinary uncharged
+  // work plan over the dropped candidate (hosted-autonomy-protected-readmission.ts).
+  const owned = new Set(
+    [...plans, ...readmissions, ...parks].map((entry) => entry.id),
+  );
+  const protectedTaken = await takeProtectedReadmissions(
+    planProtectedReadmissions(
+      snapshot,
+      closedIssues,
+      (id) => settled(id) || owned.has(id),
+      deps.clock.now(),
+    ),
+    scopeFor,
+    actions,
+  );
+  plans.push(...protectedTaken.map(protectedReadmissionPlan));
   if (plans.length > 0 || readmissions.length > 0 || parks.length > 0) {
     const now = deps.clock.now();
     if (!Number.isSafeInteger(now) || now < snapshot.updatedAt) {
@@ -636,7 +627,12 @@ export async function runHostedRetryPass(
     try {
       next = applyBaseRefreshReadmissions(
         applyRepeatFailureParks(
-          applyHostedRetries(snapshot, observedHead as GitSha, plans, now),
+          applyHostedRetries(
+            dropProtectedCandidates(snapshot, protectedTaken),
+            observedHead as GitSha,
+            plans,
+            now,
+          ),
           parks,
           now,
         ),
@@ -672,18 +668,16 @@ export async function runHostedRetryPass(
     }
     snapshot = readback.value.snapshot;
     observedHead = readback.value.head;
+    // Only these three lines report the write (`retryWritten`); they are
+    // pushed after its verified readback.
     for (const plan of plans) {
-      actions.push(`retry:${plan.id}:grant=${plan.grant}:${plan.detail}`);
+      actions.push(retryGrantAction(plan.id, plan.grant, plan.detail));
     }
     for (const readmission of readmissions) {
-      actions.push(`retry:${readmission.id}:readmit:${readmission.detail}`);
+      actions.push(retryReadmitAction(readmission.id, readmission.detail));
     }
     for (const park of parks) {
-      actions.push(
-        `retry:${park.id}:parked:repeat_failure:${
-          repeatFailureLabel(park.park)
-        }`,
-      );
+      actions.push(retryParkAction(park.id, repeatFailureLabel(park.park)));
     }
     return {
       kind: "hosted_autonomy",

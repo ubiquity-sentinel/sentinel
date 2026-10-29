@@ -110,6 +110,17 @@ export interface MatrixPlanDiagnosticV1 {
    * resolutions holding it (`conflictResolutionsInFlightIds`).
    */
   conflictResolutionCap?: { cap: number; inFlight: string[] };
+  /**
+   * The same two breakdowns per repository (`owner/name`), for the hosted
+   * `sentinel_matrix_plan_diagnostic` line (`matrix-plan-diagnostic.ts`).
+   */
+  byRepository?: Record<string, MatrixPlanRepositoryCountsV1>;
+}
+
+/** One repository's share of a zero-cell plan diagnostic. */
+export interface MatrixPlanRepositoryCountsV1 {
+  skippedByReason: Record<string, number>;
+  notReadyByReason: Record<string, number>;
 }
 
 /** Not-ready reason of a pending conflict resolution held back by the cap. */
@@ -241,20 +252,34 @@ function buildPlanDiagnostic(
   explainNotReady: (record: WorkRecordV1) => string | null,
 ): MatrixPlanDiagnosticV1 {
   const skippedByReason: Record<string, number> = {};
-  for (const reason of Object.values(ranked.skipped)) {
-    skippedByReason[reason] = (skippedByReason[reason] ?? 0) + 1;
-  }
-  const notReadyByReason: Record<string, number> = {};
-  const notReadySamples: Record<string, string[]> = {};
   const workById = new Map<string, WorkRecordV1>(
     snapshot.work.map((w) => [w.id as string, w]),
   );
+  const byRepository: Record<string, MatrixPlanRepositoryCountsV1> = {};
+  const countsOf = (record: WorkRecordV1 | undefined) => {
+    if (record === undefined) return null;
+    const key = `${record.repository.owner}/${record.repository.name}`;
+    return byRepository[key] ??= { skippedByReason: {}, notReadyByReason: {} };
+  };
+  for (const [id, reason] of Object.entries(ranked.skipped)) {
+    skippedByReason[reason] = (skippedByReason[reason] ?? 0) + 1;
+    const counts = countsOf(workById.get(id));
+    if (counts !== null) {
+      counts.skippedByReason[reason] = (counts.skippedByReason[reason] ?? 0) +
+        1;
+    }
+  }
+  const notReadyByReason: Record<string, number> = {};
+  const notReadySamples: Record<string, string[]> = {};
   for (const id of ranked.ordered) {
     const record = workById.get(id);
     if (record === undefined) continue;
     const reason = explainNotReady(record);
     if (reason === null) continue;
     notReadyByReason[reason] = (notReadyByReason[reason] ?? 0) + 1;
+    const counts = countsOf(record)!;
+    counts.notReadyByReason[reason] = (counts.notReadyByReason[reason] ?? 0) +
+      1;
     const samples = notReadySamples[reason] ?? [];
     if (samples.length < 3) samples.push(id);
     notReadySamples[reason] = samples;
@@ -264,6 +289,7 @@ function buildPlanDiagnostic(
     skippedByReason,
     notReadyByReason,
     notReadySamples,
+    byRepository,
   };
 }
 

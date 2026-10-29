@@ -363,10 +363,10 @@ Deno.test(
     const rig = makeRig({
       incidents: false,
       githubAdvanceMs: 100 * MINUTE,
+      github: { branchRefSha: SHA2 },
     });
-    // An already-published issue candidate whose next action is the review
-    // request: the push (deterministic publication) runs, then the review
-    // start is rejected before any admission charge.
+    // The corrected SHA3 is not published on the existing SHA2 branch. Its
+    // real push advances time, then review is refused before any charge.
     const record = workRecord("issue-1", {
       source: { kind: "issue", id: "1", revision: SHA1 },
       related: { incidentId: null, issueNumber: 1 },
@@ -385,6 +385,11 @@ Deno.test(
     assert.equal(outcome.status, "margin", JSON.stringify(outcome));
     const state = await rig.snapshot();
     assert.equal(rig.github.pushes.length, 1, "deterministic push ran");
+    assert.equal(
+      rig.github.pushes[0].expected,
+      SHA2,
+      "the push replaces the old head",
+    );
     assert.ok(
       !rig.github.calls.includes("requestReview"),
       "no review request past the cutoff",
@@ -408,7 +413,10 @@ Deno.test(
 Deno.test(
   "run ceiling: deterministic publication of a lower-ranked task proceeds while a higher-ranked model action is deferred",
   async () => {
-    const rig = makeRig({ replayAdvanceMs: 110 * MINUTE });
+    const rig = makeRig({
+      replayAdvanceMs: 110 * MINUTE,
+      github: { branchRefSha: SHA2 },
+    });
     const modelStart = workRecord("incident-a", {
       source: { kind: "incident", id: EVIDENCE_ID, revision: SHA2 },
       related: { incidentId: EVIDENCE_ID, issueNumber: null },
@@ -452,6 +460,11 @@ Deno.test(
     assert.equal(rig.model.requests.length, 0, "no model start");
     assert.equal(state.reservations.length, 0, "nothing charged");
     assert.equal(rig.github.pushes.length, 1, "deterministic push ran");
+    assert.equal(
+      rig.github.pushes[0].expected,
+      SHA2,
+      "the lower-ranked correction is a real publication",
+    );
     const deferredModel = state.work.find((work) => work.id === modelStart.id)!;
     assert.equal(deferredModel.target.head, null);
     assert.equal(deferredModel.intent, null);
@@ -1238,9 +1251,10 @@ Deno.test(
       incidents: false,
       viaEntrypoint: true,
       modelStartsEnabled: false,
+      github: { branchRefSha: SHA2 },
     });
-    // Already-published issue candidate whose deterministic publication runs
-    // before the review request is refused by the disabled model start.
+    // The corrected SHA3 still needs a real publication over SHA2, even
+    // though disabled model starts must refuse its subsequent review.
     const record = workRecord("issue-1", {
       source: { kind: "issue", id: "1", revision: SHA1 },
       related: { incidentId: null, issueNumber: 1 },
@@ -1258,6 +1272,11 @@ Deno.test(
     const outcome = await rig.run(30 * MINUTE);
     assert.equal(outcome.status, "margin", JSON.stringify(outcome));
     assert.equal(rig.github.pushes.length, 1, "deterministic publication ran");
+    assert.equal(
+      rig.github.pushes[0].expected,
+      SHA2,
+      "publication replaces the old head",
+    );
     assert.ok(
       !rig.github.calls.includes("requestReview"),
       "the review request never started",

@@ -15,7 +15,9 @@
  *   #154): GitHub creates a `needs:` job's check run only once its
  *   dependencies finish, so green existing runs alone are not green CI;
  * - running, absent or not yet created checks (or a base whose runs cannot
- *   be read to tell), a failed check still running on the base, or a failure
+ *   be read to tell), an Actions run whose job never started (a billing or
+ *   spending-limit stop, on the head or the base: no evidence either way),
+ *   a failed check still running on the base, or a failure
  *   no base evidence attributes (the base check was cancelled, absent or
  *   inconclusive, or the head's own check never concluded): a bounded
  *   `ci_pending` wait (`since` kept across polls) and, for a never-reviewed
@@ -41,15 +43,17 @@
  * at its own admission (`counters.retries` through `countRetry`), after the
  * failure is re-derived from live check runs (`confirmPreReviewCiFix`).
  */
+import { ownBaseRed } from "./base-repair.ts";
 import type { GitHubCheckV1 } from "../contracts/ports.ts";
 import type { WorkRecordV1, WorkWaitV1 } from "../contracts/work-record.ts";
 import {
   attributeFailedChecks,
+  baseRepairFindingOpen,
+  checkPending,
   ciCorrectable,
   ciCorrectionFinding,
   ciCorrectionRouteOpen,
   ciFixExhaustedDetail,
-  decideCiDisposition,
   failedChecks,
   latestChecks,
   preReviewAbsentDetail,
@@ -121,12 +125,12 @@ function holdForCi(
 }
 
 /**
- * The bounded pre-review CI wait: re-polled every `CHECK_POLL_MS` with its
- * original `since`, and parked with `detail` once `PRE_REVIEW_CI_BOUND_MS`
- * has passed. A head reviewed clean on this base is never parked (see
- * `holdForCi`): its missing-acceptance recovery re-polls it like R79 does.
+ * The bounded pre-review CI wait keeps its original `since`. An unchanged
+ * pending observation defers without rewriting the wait; a later invocation
+ * reads the head again, and the original bound still parks it. A head reviewed
+ * clean on this base keeps its existing missing-acceptance recovery exception.
  */
-function awaitChecks(
+async function awaitChecks(
   deps: RepairCycleDepsV1,
   context: LoopContextV1,
   record: WorkRecordV1,
@@ -145,7 +149,17 @@ function awaitChecks(
       markBlocked(record, "other", detail(checks), now),
     );
   }
-  return persistWork(
+  const waitingStep = headAcceptedByReview(context.snapshot, record)
+    ? record.nextStep
+    : "work";
+  if (
+    record.wait?.reason === "ci_pending" &&
+    record.nextStep === waitingStep && record.blocker === null &&
+    record.intent === null
+  ) {
+    return { kind: "deferred", detail: "CI remains pending" };
+  }
+  const held = await persistWork(
     deps,
     context,
     holdForCi(context, record, {
@@ -154,6 +168,9 @@ function awaitChecks(
       until: deps.clock.now() + CHECK_POLL_MS,
     }, now),
   );
+  // A slow checkpoint can cross its own poll interval. Count the actual
+  // write, then yield this record instead of immediately observing it again.
+  return held.kind === "progress" ? { ...held, yield: true } : held;
 }
 
 /** A candidate-caused failure on the head a review was about to judge. */
@@ -257,7 +274,7 @@ export async function gateReviewOnCi(
       deps,
       context,
       record,
-      latestChecks(checks).filter((check) => check.status !== "completed"),
+      latestChecks(checks).filter(checkPending),
       now,
     );
   }
@@ -270,9 +287,13 @@ export async function gateReviewOnCi(
     new Set(failed.map((check) => check.name)),
   );
   if (!base.ok) return UNAVAILABLE;
-  const disposition = decideCiDisposition(
+  const disposition = await ownBaseRed(
+    deps,
+    record,
     attributeFailedChecks(failed, base.value.checks),
   );
+  // A base-repair recognition or tip read that is unavailable mutates nothing.
+  if (disposition === null) return UNAVAILABLE;
   switch (disposition.kind) {
     case "candidate":
       return routeCandidateFailure(
@@ -339,7 +360,11 @@ export async function confirmPreReviewCiFix(
     case "candidate":
       return {
         kind: "confirmed",
-        finding: ciCorrectionFinding(record.target.base, observed.checks),
+        finding: ciCorrectionFinding(
+          record.target.base,
+          observed.checks,
+          observed.redBase === true && baseRepairFindingOpen(deps),
+        ),
       };
     case "clean":
       return persistWork(deps, context, clearWait(record, now));

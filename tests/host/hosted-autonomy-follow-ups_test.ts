@@ -33,6 +33,8 @@ import type {
 } from "../../ops/hosted-autonomy-types.ts";
 import { HOSTED_AUTONOMY_PASS_DEADLINE_MS } from "../../ops/hosted-autonomy-continuation.ts";
 import { planFollowUpCandidates } from "../../ops/hosted-autonomy-follow-ups.ts";
+import { MERGED_OFF_TIP_PREFIX } from "../../src/repair/merge-off-tip.ts";
+import { REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX } from "../../src/repair/review-round-cap.ts";
 import {
   carriedCalls,
   carriedOptions,
@@ -691,6 +693,31 @@ Deno.test("follow-ups F10: a real off-tip carried park files its retained review
   assert.equal(candidate.request.source.base, MOVED_TIP);
   assert.equal(candidate.receipt.pullRequest.head, LIVE_618.target.head);
   assert.equal(candidate.request.source.reviewReceiptId, candidate.receipt.id);
+  // The runtime's merge CAS park records the same merge with its own prefix
+  // and files the same follow-up (stage-1 review, 2026-10-25).
+  const parked = after.work[0];
+  assert.ok(
+    parked.blocker!.message.startsWith(
+      REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX,
+    ),
+  );
+  const runtimePark = {
+    ...after,
+    work: [{
+      ...parked,
+      blocker: {
+        ...parked.blocker!,
+        message: MERGED_OFF_TIP_PREFIX +
+          parked.blocker!.message.slice(
+            REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX.length,
+          ),
+      },
+    }],
+  };
+  assert.deepEqual(
+    planFollowUpCandidates(runtimePark, NOW).map((c) => c.request.id),
+    [candidate.request.id],
+  );
 
   for (const trusted of [true, false]) {
     await t.step(

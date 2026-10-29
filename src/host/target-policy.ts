@@ -63,6 +63,12 @@ const GATEWAY_PROTECTED_PATHS = [
 
 const PASSPORT_PROTECTED_PATHS = [
   ".env",
+  // act configuration files the backup CI leg must never read from the
+  // target tree (docs/backup-ci-spec.md §13, A1).
+  ".actrc",
+  ".secrets",
+  ".vars",
+  ".input",
   ".npmrc",
   "AGENTS.md",
   "docs/DECISIONS.md",

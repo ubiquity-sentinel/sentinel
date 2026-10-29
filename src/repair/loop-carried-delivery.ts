@@ -71,6 +71,7 @@ import {
 import {
   absentCheckLabels,
   baseRedDetail,
+  checkPending,
   ciCheckLabels,
   failedChecks,
   latestChecks,
@@ -171,9 +172,7 @@ function boundedWait(
 
 /** Pending checks named for a park (or "no check runs"). */
 function pendingLabels(checks: readonly GitHubCheckV1[]): string {
-  const pending = latestChecks([...checks]).filter((check) =>
-    check.status !== "completed"
-  );
+  const pending = latestChecks([...checks]).filter(checkPending);
   return pending.length === 0 ? "no check runs" : ciCheckLabels(pending);
 }
 
