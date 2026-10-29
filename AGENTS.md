@@ -29,7 +29,8 @@ instructions and their routed procedures still apply.
   policy. Development/orchestration workers use `gpt-6.1-sol`; runtime routing
   remains separate.
 
-Documented implementation policy, resolver defaults, configured hosted overrides and actual execution routes are separate facts; their current discrepancy and evidence are recorded in DECISIONS.md. Local worker selection never changes production settings or proves a live route.
+- Documented implementation policy, resolver defaults, configured hosted overrides and actual execution routes are separate facts; their current discrepancy and evidence are recorded in DECISIONS.md. Local worker selection never changes production settings or proves a live route.
+
 - Ordinary hosted runtime updates use launcher self-install: launcher and
   runtime equal the exact CI-green development SHA, with a model-disabled
   bootstrap at generation+1 and exact recorded-prior rollback at a higher
