@@ -1,6 +1,8 @@
 # Codex review rubric alignment - 2026-10-08
 
-This note records the review-path change for agents actively working in this repository. Policy authority remains AGENTS.md and docs/DECISIONS.md; this note is the working summary.
+Historical alignment record for source `4e59d2f1b`, superseded for execution by the 2026-10-21 native-review decision and current development-review policy. The vendored pin/hash remains provenance; native Codex review owns reviewer selection, rubric and output protocol. The former ordinary-turn adapter's schema override and blanket ban on development `@codex review` below are historical instructions. A gateway model alias alone does not establish invocation mode or a runtime defect. Current policy is in [AGENTS.md](../AGENTS.md#development-and-runtime-review) and [DECISIONS.md](DECISIONS.md#native-review-mode-owns-reviewer-selection-2026-10-21).
+
+This note records the review-path change for agents actively working in this repository. Policy authority remains AGENTS.md and docs/DECISIONS.md; the body below records that historical implementation.
 
 ## What changed
 
