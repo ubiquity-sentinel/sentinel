@@ -78,6 +78,7 @@ export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
     "ops/hosted-autonomy-original-candidate-pass.ts",
     // Trusted blocked-candidate selection and exact evidence before recovery ingestion.
     "src/host/matrix-blocked-candidate.ts",
+    "src/host/matrix-conflict-candidate.ts",
     "ops/hosted-autonomy-current-recovery.ts",
     "ops/hosted-autonomy-current-scan.ts",
     "src/contracts/maintenance-index.ts",
