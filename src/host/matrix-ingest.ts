@@ -5,7 +5,13 @@ import {
   type MatrixCellResultV1,
   type MatrixPlanV1,
 } from "../contracts/matrix.ts";
-import { candidateBranch, candidatePreservationRef } from "../repair/keys.ts";
+import {
+  baseRefreshIntentKey,
+  candidateBranch,
+  candidatePreservationRef,
+  implementationIntentKey,
+} from "../repair/keys.ts";
+import { resolvedConflictResolution } from "../repair/conflict-resolution.ts";
 import {
   createRunBounds,
   handleModelReceipt,
@@ -203,6 +209,78 @@ export async function ingestMatrixResults(
     // conflict intent for the timeout reset below.
     let receiptHead: GitSha | null = null;
     const intent = record.intent;
+    const resolved = resolvedConflictResolution(intent);
+    if (intent?.kind === "base_refresh" && resolved !== null) {
+      // A consumed conflict result can outlive the mirror that imported it.
+      // Restore only that exact operation's objects, without consuming again,
+      // reopening a blocked record or granting any publication authority.
+      const candidate = result.receipt?.candidate;
+      const state = record.target.candidateState;
+      const preserved = state?.preserved;
+      const { head, pr, branch } = record.target;
+      if (
+        record.nextStep !== "work" || head === null || pr === null ||
+        branch === null || reservation.purpose !== "retry" ||
+        reservation.outcome !== "submitted" || reservation.settledAt === null ||
+        intent.expectedHead !== head || intent.pr !== pr ||
+        intent.branch !== branch || intent.requestId !== null ||
+        cell.request.checkoutBase !== head ||
+        cell.request.mergeBase !== intent.observedBase ||
+        intent.observedBase === null ||
+        intent.key !== baseRefreshIntentKey(pr, head, intent.observedBase) ||
+        cell.intentKey !== implementationIntentKey(cell.reservationId) ||
+        result.status !== "completed" || result.receipt === null ||
+        candidate?.head !== resolved || candidate.checkpointSha !== null ||
+        state?.publishedHead !== head || preserved === null ||
+        preserved === undefined || preserved.base !== record.target.base ||
+        preserved.head !== head ||
+        preserved.ref !== await candidatePreservationRef(
+            record.repository,
+            record.id,
+            preserved.operationKey,
+          ) ||
+        !verifyMatrixReceiptV1(
+          result.receipt,
+          cell.request,
+          options.expectedProvider,
+          options.failoverModel,
+        )
+      ) {
+        entries.push({
+          cellId: cell.cellId,
+          disposition: "binding_mismatch",
+          detail: "saved refresh does not bind authenticated conflict result",
+        });
+        continue;
+      }
+      if (
+        options.bundleImporter === undefined || result.bundle === null ||
+        result.bundle.head !== resolved ||
+        result.bundle.checkpointSha !== null ||
+        result.bundle.file !== matrixBundleFileNameV1(cell.cellId) ||
+        !await options.bundleImporter.import({
+          base: cell.expectedBase,
+          file: result.bundle.file,
+          digest: result.bundle.digest,
+          head: resolved,
+          checkpointSha: null,
+          ancestors: [head, intent.observedBase],
+        })
+      ) {
+        entries.push({
+          cellId: cell.cellId,
+          disposition: "candidate_unavailable",
+          detail: "saved conflict result objects are unavailable",
+        });
+        continue;
+      }
+      entries.push({
+        cellId: cell.cellId,
+        disposition: "duplicate",
+        detail: "receipt already consumed; exact conflict result rehydrated",
+      });
+      continue;
+    }
     if (
       intent?.kind === "candidate_preservation" &&
       intent.requestId === cell.reservationId &&
