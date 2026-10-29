@@ -30,11 +30,6 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 24.19.0
-      - name: Install locked App action dependencies for offline tests
-        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund --prefix .github/actions/sentinel-app-token
       - name: Check the local App action source
         run: |
           deno fmt --check .github/actions/sentinel-app-token
