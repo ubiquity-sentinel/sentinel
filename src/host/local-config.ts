@@ -33,11 +33,10 @@ export interface LocalRepairHostOptionsV1 {
    */
   modelId?: string;
   /**
-   * Dedicated structured-review model id for this run. It is never the
-   * implementation model: an absent value falls back to the owner's
-   * preferred default (`codex-auto-review`); a malformed value yields the
-   * invalid empty sentinel, which the reviewer refuses at prepare before
-   * any session opens.
+   * Retained structured-review configuration field. Native Codex review mode
+   * owns reviewer selection; a model alias alone does not establish invocation
+   * mode or authorize substituting a normal model turn. Existing field
+   * validation and historical consumers remain unchanged.
    */
   reviewModelId?: string;
 }

@@ -251,14 +251,14 @@ evidence (never from unverified transport lists or agent-set flags).
   `unresolvedSeverities` is validated to equal the distinct unresolved
   severities derived from findings. `resolved: true` requires authorizing
   `resolutionEvidence { authorizingIdentity, reference }` (trusted human dispute
-  or changed reviewed head); an agent-set flag alone never removes a P0/P1.
+  or changed reviewed head); an agent-set flag alone never resolves a finding of any severity.
   `findingsUncounted` records how many findings could not be retained (the
   256-finding cap) — a receipt with `findingsUncounted > 0` and an empty
   `unresolvedSeverities` is rejected, so truncation can never claim clean review
   evidence.
 - A completed receipt is the required evidence input to an exact-head merge
   request (see §5, merge authorization), and the merge parser additionally
-  requires zero uncounted findings and no unresolved P0/P1. The receipt is
+  requires zero uncounted findings and no unresolved P0. P1/P2/P3 remain retained without blocking by severity; their follow-up uses the existing authorized issue workflow. The receipt is
   identity/cleanliness evidence only — never current CI, protection or
   authenticity evidence, and never by itself authorization.
 
@@ -483,17 +483,13 @@ the callers rely on:
   `ReviewReceiptV1` (pending/unavailable/malformed are never authorization)
   binding the exact same PR number, head and base, with
   `findingsUncounted ===
-  0` and no unresolved P0/P1 (unresolved P2/P3 do not
-  block). Repository and reviewer identity are additionally checked against the
+  0` and no unresolved P0 (unresolved P1/P2/P3 remain retained and do not block by severity). Repository and reviewer identity are additionally checked against the
   caller-supplied trusted adapter `policy { repository, expectedReviewer }`,
   both strictly validated, so a request can never name another repository or
   select a trusted reviewer. Parsing never grants authority: the receipt is
   identity/cleanliness evidence only, not current CI, protection or authenticity
   evidence — m01 re-observes the authoritative review by exact identifiers,
-  verifies trusted resolution authorization, requires effective strict
-  server-enforced up-to-date protections with no applicable token bypass, and
-  requires candidate ancestry containing `expectedBase` before an expected-head
-  merge.
+  verifies trusted resolution authorization, reads configured required checks and approvals, honours effective configured requirements without requiring branch rules or rulesets to exist, revalidates current CI and positive task acceptance, and requires candidate ancestry containing `expectedBase` before an expected-head merge.
 - **Exact-head CAS vs. REST preconditions.**
   `GitHubPort.pushHead(ref, sha,
   expectedRef)` and
@@ -788,7 +784,7 @@ records are validated, sparse/cyclic/symbol/accessor canonicalization is
 rejected, error messages never echo values, metrics denominator rules hold, the
 merge-authorization parser is covered by positive and negative cases (pending/
 unavailable/malformed/mismatched reviews, repository and reviewer policy
-binding, uncounted findings, unresolved P0/P1), and the minimal fake-port test
+binding, uncounted findings, the current P0-only severity contract), and the minimal fake-port test
 pins result-kind discrimination, state capability separation,
 ambiguous-vs-conflict outcomes, one-based attempts and global budget conflict
 refusal, the fake-port loop smoke skeleton (two deterministic ticks, repair
