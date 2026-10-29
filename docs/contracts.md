@@ -251,16 +251,18 @@ evidence (never from unverified transport lists or agent-set flags).
   `unresolvedSeverities` is validated to equal the distinct unresolved
   severities derived from findings. `resolved: true` requires authorizing
   `resolutionEvidence { authorizingIdentity, reference }` (trusted human dispute
-  or changed reviewed head); an agent-set flag alone never resolves a finding of any severity.
-  `findingsUncounted` records how many findings could not be retained (the
-  256-finding cap) — a receipt with `findingsUncounted > 0` and an empty
-  `unresolvedSeverities` is rejected, so truncation can never claim clean review
-  evidence.
+  or changed reviewed head); an agent-set flag alone never resolves a finding of
+  any severity. `findingsUncounted` records how many findings could not be
+  retained (the 256-finding cap) — a receipt with `findingsUncounted > 0` and an
+  empty `unresolvedSeverities` is rejected, so truncation can never claim clean
+  review evidence.
 - A completed receipt is the required evidence input to an exact-head merge
   request (see §5, merge authorization), and the merge parser additionally
-  requires zero uncounted findings and no unresolved P0. P1/P2/P3 remain retained without blocking by severity; their follow-up uses the existing authorized issue workflow. The receipt is
-  identity/cleanliness evidence only — never current CI, protection or
-  authenticity evidence, and never by itself authorization.
+  requires zero uncounted findings and no unresolved P0. P1/P2/P3 remain
+  retained without blocking by severity; their follow-up uses the existing
+  authorized issue workflow. The receipt is identity/cleanliness evidence only —
+  never current CI, protection or authenticity evidence, and never by itself
+  authorization.
 
 ### BudgetReservationV1 (`kind: "budget_reservation"`)
 
@@ -483,13 +485,18 @@ the callers rely on:
   `ReviewReceiptV1` (pending/unavailable/malformed are never authorization)
   binding the exact same PR number, head and base, with
   `findingsUncounted ===
-  0` and no unresolved P0 (unresolved P1/P2/P3 remain retained and do not block by severity). Repository and reviewer identity are additionally checked against the
-  caller-supplied trusted adapter `policy { repository, expectedReviewer }`,
-  both strictly validated, so a request can never name another repository or
-  select a trusted reviewer. Parsing never grants authority: the receipt is
-  identity/cleanliness evidence only, not current CI, protection or authenticity
-  evidence — m01 re-observes the authoritative review by exact identifiers,
-  verifies trusted resolution authorization, reads configured required checks and approvals, honours effective configured requirements without requiring branch rules or rulesets to exist, revalidates current CI and positive task acceptance, and requires candidate ancestry containing `expectedBase` before an expected-head merge.
+  0` and no unresolved P0 (unresolved P1/P2/P3 remain
+  retained and do not block by severity). Repository and reviewer identity are
+  additionally checked against the caller-supplied trusted adapter
+  `policy { repository, expectedReviewer }`, both strictly validated, so a
+  request can never name another repository or select a trusted reviewer.
+  Parsing never grants authority: the receipt is identity/cleanliness evidence
+  only, not current CI, protection or authenticity evidence — m01 re-observes
+  the authoritative review by exact identifiers, verifies trusted resolution
+  authorization, reads configured required checks and approvals, honours
+  effective configured requirements without requiring branch rules or rulesets
+  to exist, revalidates current CI and positive task acceptance, and requires
+  candidate ancestry containing `expectedBase` before an expected-head merge.
 - **Exact-head CAS vs. REST preconditions.**
   `GitHubPort.pushHead(ref, sha,
   expectedRef)` and
@@ -784,14 +791,14 @@ records are validated, sparse/cyclic/symbol/accessor canonicalization is
 rejected, error messages never echo values, metrics denominator rules hold, the
 merge-authorization parser is covered by positive and negative cases (pending/
 unavailable/malformed/mismatched reviews, repository and reviewer policy
-binding, uncounted findings, the current P0-only severity contract), and the minimal fake-port test
-pins result-kind discrimination, state capability separation,
-ambiguous-vs-conflict outcomes, one-based attempts and global budget conflict
-refusal, the fake-port loop smoke skeleton (two deterministic ticks, repair
-read/source/replay/review-wait plus an independent release read, unchanged-wait
-exit with no model call or write, §10) and the gateway-index fixture mapping
-into frozen `IncidentSummaryV1` records (§11). Fakes record calls and return
-canned results — no product logic lives in test fakes.
+binding, uncounted findings, the current P0-only severity contract), and the
+minimal fake-port test pins result-kind discrimination, state capability
+separation, ambiguous-vs-conflict outcomes, one-based attempts and global budget
+conflict refusal, the fake-port loop smoke skeleton (two deterministic ticks,
+repair read/source/replay/review-wait plus an independent release read,
+unchanged-wait exit with no model call or write, §10) and the gateway-index
+fixture mapping into frozen `IncidentSummaryV1` records (§11). Fakes record
+calls and return canned results — no product logic lives in test fakes.
 
 `tests/budget/` covers the budget controller: pure rolling-window arithmetic
 (strict `(now - duration, now]` boundaries, overlapping numeric caps, an
