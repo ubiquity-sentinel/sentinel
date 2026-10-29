@@ -9,11 +9,15 @@ continuation.
 
 ## Merge policy clarification (2026-10-29)
 
-The owner reaffirmed that unresolved P0 findings block merges; P1 and lower findings do not block merges and must be retained and backlogged as issues through the existing authorized issue workflow. The earlier P0-and-P1 selection was accidental and withdrawn. This preserves the 2026-10-24 P0-only runtime policy and does not require a severity-code change.
+The owner reaffirmed that P0 is the only severity-based merge blocker; P1 and lower findings do not block merges and must be retained and backlogged as issues through the existing authorized issue workflow. The earlier P0-and-P1 selection was accidental and withdrawn. This preserves the 2026-10-24 P0-only runtime policy and does not require a severity-code change.
 
 This clarification supersedes every earlier P0/P1 merge, rejection or correction threshold in this document and contradictory task instructions. Dated earlier thresholds below remain historical evidence, not current authority. Current-head CI, completed native review, positive task acceptance, custody, durable accounting and all other existing gates remain unchanged. Lower-severity findings alone do not authorize another correction round, and existing review ceilings remain intact.
 
 Resume the original production-throughput goal and canonical module identities with serial `gpt-6.1-sol/max` implementation, preserving the separate AI Rust owner and keeping `sentinel-release` disabled. The acceptance ledger distinguishes reviewed source, hosted CI, publication, installation and live delivery; this clarification establishes no new runtime or delivery receipt.
+
+## Documentation interpretation (2026-10-29)
+
+Current documentation interpretation (2026-10-29): native Codex review mode owns reviewer selection, rubric and output protocol; a gateway model alias alone does not establish invocation mode or a runtime defect. Auto-follow defaults on in current source, and explicit off is a separate configured hold. Branch rules/rulesets are not required to exist; effective configured checks and approvals remain honoured. Backup CI substitutes only verified never-started target checks and never overrides a check that ran and failed. The current primary role owner is recorded in the build ledger, separately from actual model identity. Dated handoffs, redesign/spec snapshots and retained artifacts preserve their original source/times and grant no current ownership, permissions or acceptance. Queue proof remains dormant; the owner-run canary contract grants no production activation. Retained ceremony modules remain until their consumers are replaced and the integration owner supplies an approved dependency order; DESIGN.md is absent from this checkout.
 
 ## Runtime and dispatch
 
@@ -51,7 +55,7 @@ The live C3 backup completion event did not propagate for native-token-dispatche
 
 The review-owner channel observes its reply promise immediately, before awaiting atomic request publication. An owner may reply after rename but before publication resolves; synchronous observation prevents a transient unhandled rejection while preserving publication-error precedence and rethrowing the original custody refusal to the caller. No custody predicate, timeout or caller-visible outcome is weakened.
 
-Development delivery retains its scoped local and hosted gates after the three completed native review rounds; no fourth review is requested and no native verdict is claimed for the final transport correction. The owner-directed direct-development policy is distinct from autonomous target repair review, which still requires exact current-head native evidence under the session's P0/P1 rule. This records the scope of existing policy rather than waiving a runtime merge gate.
+Development delivery retains its scoped local and hosted gates after the three completed native review rounds; no fourth review is requested and no native verdict is claimed for the final transport correction. The owner-directed direct-development policy is distinct from autonomous target repair review, which still requires exact current-head native evidence under the current P0-only severity policy, with positive task acceptance, current CI and all other gates retained. This records the scope of existing policy rather than waiving a runtime merge gate.
 
 Independent target producers and native reviewers may overlap while one coordinator serializes authoritative lifecycle advances and every owned session is settled. Authenticated controller completion events request protected ingestion and reconciliation; active-run requests coalesce into the existing handoff. Foreign target events have no implicit controller ingress, so the existing bounded recovery remains until an actual authenticated event path exists. Keep original deadlines, exact integrated CI/native review/merge gates and exclusive promotion ownership; sentinel-release stays disabled.
 
@@ -280,6 +284,8 @@ https://learn.chatgpt.com/docs/app-server#review.
 
 ### Owner grant, scope and acceptance (2026-10-20 UTC)
 
+The dated grant remains in force for this effort. Its two-target acceptance scope was expanded by the 2026-10-23 three-target directive; current severity policy is the 2026-10-29 clarification, while all independent gates and historical receipts remain.
+
 For this Sentinel autonomy effort, the owner grants the orchestrator blanket
 authority to dispatch, rerun, cancel, enable and disable hosted Sentinel
 workflows; push directly to `development`; update launcher pins and runtime
@@ -294,7 +300,7 @@ authoritative state writes and promotion authority never reach model workers;
 (2) record exact revision SHAs and never select by time or list order; (3)
 durable admission/reservation precedes every model start and settlement follows
 it; (4) autonomous merge requires current CI and a completed internal structured
-review from native Codex review mode, with no unresolved P0/P1; (5) the
+review from native Codex review mode, with no unresolved P0 and receipt-bound issue follow-ups for P1 and lower; (5) the
 deterministic Deno controller exclusively owns promotion and `sentinel-release`
 stays disabled.
 
@@ -767,9 +773,7 @@ deadlines; do not rerun the unchanged failed candidate.
 ### Integration ownership after Muse retirement
 
 On 2026-10-13, the owner stated that Muse is retired and directed the current
-coordinator to take over Sentinel. The sole primary integration owner is now the
-current GPT-6.1 Sol coordinator; independent milestone audits use a fresh
-GPT-6.1 Sol/max agent. This replaces the Astra-specific development ownership
+coordinator to take over Sentinel. The then-current GPT-6.1 Sol coordinator received integration ownership; the current primary role owner is recorded in the authoritative build ledger. Independent milestone audits use a fresh GPT-6.1 Sol/max agent. This replaces the Astra-specific development ownership
 and auditor restriction, not runtime model/review policy, credential custody,
 CI, source/target identity or promotion ownership. Preserve existing dirty work
 and recorded lane identities; only the primary writes the authoritative
@@ -1052,12 +1056,11 @@ safeguards.
 
 ## Runtime model policy and trusted route configuration
 
+The declared 2026-10-18/20 implementation policy is `gpt-reserve` primary with the existing HTTP-429 `gpt-6-luna` failover, at max reasoning. The resolver default is `gpt-reserve`; the supervisor workflow supplies `vars.SENTINEL_IMPLEMENTATION_MODEL_ID || 'gpt-6.1-sol'`. The captured repository override at 2026-10-29 20:22:45 UTC is `gpt-6.1-sol`, so configured submission selection differs from the declared policy. These are separate policy, source-default and configuration facts; none proves an actual executed model/provider/effort without bound execution evidence. Documentation maintenance does not change that override, either default, credentials or production routing.
+
 Owner decision 2026-10-18 supersedes the earlier runtime model selections below:
 use `gpt-reserve` as the runtime implementation primary and `gpt-6-luna` for the
-existing HTTP 429 failover, both with max reasoning. Set the existing trusted
-`SENTINEL_IMPLEMENTATION_MODEL_ID` repository override to `gpt-reserve`; retain
-`SENTINEL_MODEL_FAILOVER_ID`'s existing `gpt-6-luna` default, the same endpoint
-and credentials, execution deadlines and durable admission/accounting. Preserve
+existing HTTP 429 failover, both with max reasoning. That decision directed the trusted `SENTINEL_IMPLEMENTATION_MODEL_ID` repository override to `gpt-reserve`; it is historical policy provenance, not an instruction to overwrite later configured values during documentation maintenance. Retain the existing `gpt-6-luna` failover default, endpoint, credentials, execution deadlines and durable admission/accounting. Preserve
 the supported route interfaces below. Local coding-agent routing or a
 task-scoped worker model does not change production routing, and this decision
 alone does not prove the live route.
@@ -1069,18 +1072,17 @@ configuration and the previously owner-authorized DeepSeek-direct route selected
 by `SENTINEL_MODEL_FALLBACK=deepseek` with the existing scoped key. Those
 interfaces are retained; this consolidation neither selects a route nor asserts
 which route is live. Reconcile the approved policy and actual installed
-configuration before a future route change. Invalid/incomplete configuration
-refuses, and receipts bind the submitted model/provider to actual
+configuration before a future route change. Trusted configuration retains its existing consumer validation and route-resolution refusal/fallback behaviour, and receipts bind the submitted model/provider to actual
 thread/turn/routing evidence. Max reasoning remains required.
 
-On 2026-10-17 the owner chose `gpt-6.1-sol` on the ai.ubq.fi gateway as the
+Historical configuration provenance: on 2026-10-17 the owner chose `gpt-6.1-sol` on the ai.ubq.fi gateway as the
 implementation model, once generation 80 had six consecutive clean supervisor
 runs. The supervisor workflow binds `SENTINEL_MODEL_ID` to
 `vars.SENTINEL_IMPLEMENTATION_MODEL_ID || 'gpt-6.1-sol'` in the plan, cell and
 repair jobs alike, so a nonempty `SENTINEL_IMPLEMENTATION_MODEL_ID` repository
 variable overrides it. The older `SENTINEL_MODEL_ID` repository variable, which
 held `gpt-reserve`, is no longer read and can be deleted. Reasoning stays `max`,
-the 429 failover stays `gpt-6-luna` and reviews stay on `codex-auto-review`.
+the 429 failover stays `gpt-6-luna`. Reviewer model naming does not establish invocation mode: the current actual path uses native Codex review, with selection owned by Codex.
 
 ## Review and development delivery
 
@@ -1116,9 +1118,12 @@ target PRs. Those PRs use native Codex review mode through the internal review
 service, with reviewer selection delegated to Codex as clarified above. A model
 alias and a normal review-prompted turn do not meet that contract. Silence, a
 reaction or absence of comments does not establish a completed review. No
-unresolved P0/P1 may pass the gate; changed candidate bytes need matching
-evidence. The separate development-review preference above does not satisfy this
+unresolved P0 may pass the severity gate; P1 and lower findings remain in their original receipts and use the existing authorized issue-backlog workflow. Positive task acceptance and every independent gate remain required; changed candidate bytes need matching evidence. The separate development-review preference above does not satisfy this
 runtime gate.
+
+Current runtime task ceilings are selected by `reviewRoundCeilingFor`: five for eligible CI-first-era records, three for legacy or unknown-era records; historical legacy exceptions remain as implemented. This production-throughput development loop has consumed its three rounds and has no fourth. The dated mechanics below preserve their original source; their severity thresholds, universal-three-round claims and branch-protection-existence requirements are superseded by the 2026-10-24/29 decisions.
+
+### Historical 2026-10-16–17 review and carried-delivery record
 
 Review rounds are capped at three per task, hard, everywhere (owner decision
 2026-10-16, after ai.ubq.fi issue 684 / PR 1059 reached 44 rounds). A task's
@@ -1461,19 +1466,19 @@ R79 and R80 alike (unchanged at fresh state 1937e2825, sequence 40384, last
 written 2026-10-14T00:12Z); idle for more than 2 hours, it holds no one's
 delivery line.
 
-The reviewer vendors `openai/codex` tag `rust-v0.162.0`,
+### Vendored rubric provenance and current native execution
+
+The historical reviewer vendors `openai/codex` tag `rust-v0.162.0`,
 `codex-rs/prompts/templates/review/rubric.md`, SHA-256
 `ec60e7f36a1d1c2679ce095c0205ecc56f7dd8fb57707a13ef362072390f219f`. Do not edit
 the vendored constant in
 [src/github/codex-review-rubric.ts](../src/github/codex-review-rubric.ts).
-Sentinel's read-only boundary and attached harness schema override the rubric's
-output-format section. A re-sync needs a new upstream pin/hash and
-current-candidate validation;
+The pin/hash and read-only boundary remain provenance. Native review mode owns its rubric and output protocol; the former ordinary-turn adapter's schema override is superseded. A model alias alone does not establish invocation mode. A re-sync still requires a new upstream pin/hash and current-candidate validation;
 [the alignment note](codex-review-rubric-alignment-2026-10-08.md) gives
 verification details.
 
 Never add Sentinel branch protection rules or rulesets, or recreate deleted
-rules. Applicable target protections still govern autonomous target merge.
+rules. Effective configured target checks and approvals remain honoured; branch rules and rulesets are not required to exist.
 
 ## GitHub identity and target scope
 
@@ -1555,6 +1560,8 @@ review, change its null execution receipt, select a route, admit a model start,
 restore a spent round or authorize a merge.
 
 ## Blocked-work recovery and decomposition (2026-10-15)
+
+Historical source/generation record. Its P0/P1 severity thresholds and then-current review ceilings do not govern current operation; apply the current P0-only severity decision. Positive task acceptance remains an independent gate, and original findings, blockers, counters and charges remain unchanged. The old 200-reservation and six-reservation descriptions below are dated behaviour, not current admission limits.
 
 Only unresolved P0/P1 findings reject a reviewed head, send it to correction,
 fail task-acceptance recovery or qualify a historical correction review for a
@@ -1901,6 +1908,8 @@ is reported `ingested` and never defers the launcher's producer walk.
 
 ## Spent-round delivery and review follow-ups (2026-10-16, launcher only)
 
+Historical source/generation record. Its P0/P1 severity thresholds and then-current review ceilings do not govern current operation; apply the current P0-only severity decision. Positive task acceptance remains an independent gate, and original findings, blockers, counters and charges remain unchanged.
+
 Owner decision 2026-10-16: review rounds are capped at three, CI comes before
 review, a PR merges once its latest completed current-head review has no
 unresolved P0/P1 (or its three rounds are spent with none), its remaining P2/P3
@@ -2049,6 +2058,8 @@ check and intake opt-out reader admit the follow-up issues; the follow-ups write
 no state and no matrix cell.
 
 ## Generation 80 installation (2026-10-17)
+
+Historical source/generation record. Its P0/P1 severity thresholds and then-current review ceilings do not govern current operation; apply the current P0-only severity decision. Positive task acceptance remains an independent gate, and original findings, blockers, counters and charges remain unchanged.
 
 Generation 80 is R80 e48e7e110, the live launcher 413f9eff6 plus the reviewed
 generation-80 lanes: the hard three-round review ceiling on every review path
@@ -2299,6 +2310,8 @@ jobs and logs of a foreign target answer 403 and the evidence holds identity and
 annotations with the reason `forbidden_actions_read`.
 
 ## Generation 81 task acceptance corrections (2026-10-17, JAM B6)
+
+Historical source/generation record. Its P0/P1 severity thresholds and then-current review ceilings do not govern current operation; apply the current P0-only severity decision. Positive task acceptance remains an independent gate, and original findings, blockers, counters and charges remain unchanged.
 
 Owner rules: an unaccepted candidate never merges and only P0/P1 block a merge,
 so a completed review whose only refusal is a `not_fulfilled` task acceptance,

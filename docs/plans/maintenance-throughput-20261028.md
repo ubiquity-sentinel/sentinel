@@ -1,5 +1,7 @@
 # Maintenance throughput handoff, 2026-10-28 UTC
 
+Completed bounded maintenance milestone at its recorded `037057bd`/generation124 acceptance; this is historical installation evidence. The current serial throughput continuation, runtime and ownership are in [the sole ledger](../build-status.md).
+
 ## Objective and present status
 
 Reduce Sentinel's recurring maintenance delay by avoiding unrelated historical producer recovery and unnecessary closure reads, while preserving complete recovery, current source/custody checks, durable accounting, exact-head review/CI, target ownership, expected-head CAS and rollback safety. The owner authorized implementation with "okay proceed with performance optimization", then requested this handoff and goal. Continue the already-authorized task; no new chat or goal is required to execute it.
@@ -119,7 +121,7 @@ All commands require the existing recorder, a 300-second deadline and bounded pr
 
 At original preparation, the authored membership regression injected native settlement as a strict external port while the real artifact transport authenticated attempts/jobs/markers/ZIP, and its separate named real candidate-recovery lifecycle still required execution. The fake responses, timing, static checks and state transitions were unproved then. Executed module and combined consumer evidence now establishes the local controlled request reductions and recovery boundaries recorded in the sole ledger; native review, hosted CI, installation and live performance remain separate gates. Baseline --no-check was used solely to avoid the additive metadata type blocking the intended semantic red case; candidate commands typechecked normally, and setup failures were not counted as regression evidence. Controlled local request counts are not live latency or billed savings.
 
-Review must use the real native mode if invoked; never substitute a general-model chat or relabel an unavailable verdict. Apply current project development-review/delivery policy and the applicable bounded review sequence. Earlier throughput reviews covered earlier revisions and do not review this patch or authorize a fourth round in that prior loop. Autonomous runtime target PRs still require exact current-head native review evidence under the session's P0/P1 requirement.
+Review must use the real native mode if invoked; never substitute a general-model chat or relabel an unavailable verdict. Apply current project development-review/delivery policy and the applicable bounded review sequence. Earlier throughput reviews covered earlier revisions and do not review this patch or authorize a fourth round in that prior loop. Autonomous runtime target PRs still require exact current-head native review evidence under the current P0-only severity policy, with positive task acceptance, current CI and all other gates retained.
 
 ## Publication, installation and live acceptance
 
