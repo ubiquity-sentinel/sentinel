@@ -1,8 +1,11 @@
 /** Complete deterministic test partition; historical native file times balance host thirds. */
 import timings from "./ci-test-timings.json" with { type: "json" };
 
-// Conservative maximum module intervals from native runs 39306919556 (a1ba60d67b)
-// and 39255082743 (ff8763f901). Unknown/new host tests receive a one-second weight.
+// 2026-10-29: maximum same-worker file intervals from successful Linux native CI
+// 40600520027 (f2f1d5da53) and 40643172874 (037057bd11), with Deno 2.9.8.
+// Only matching test-file blobs enter the table. Inter-file overhead is included;
+// pre-first-file startup/typecheck and nested-step sums are excluded. Unknown or
+// changed files keep the one-second default until matching native samples exist.
 
 export const CI_TEST_SHARDS = [
   "modules",
