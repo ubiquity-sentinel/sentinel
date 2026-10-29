@@ -2,7 +2,17 @@
 
 ## Serial production-throughput continuation (2026-10-29)
 
-### Current checkpoint (16:20 UTC)
+### Current checkpoint (20:19 UTC)
+
+The owner resolved the merge-policy conflict: unresolved P0 findings block merges; P1 and lower findings do not block and must be retained and backlogged as issues through the existing authorized workflow. The earlier P0-and-P1 selection was accidental and withdrawn. Current-head CI/native review/task acceptance, custody/accounting and all other existing gates remain unchanged. The prior policy hold and blocked goal status are superseded; the existing throughput goal resumes without a new scope, lane identity, review round or Rust ownership transfer. See [the current decision](DECISIONS.md#merge-policy-clarification-2026-10-29).
+
+Root owns this policy/ledger reconciliation in AGENTS.md, docs/DECISIONS.md, this ledger and docs/plans/production-throughput-20261027.md on canonical `codex/production-throughput-20261027-g4459c2249b`, starting at clean `5592b7b79dece18747de88ca2f0e3645b4cde697`. Runtime source remains exact CI-green `b3d942b85f770e3829377b51dc18e6aef26cabb3` (run 40883071354); documentation successors are not automatically new CI-green runtime revisions. All accepted worker ancestry and the v1 baseline remain preserved. Only documentation checks and unchanged-source binding are assigned for these edits; no whole-repository local suite or fourth native development review is authorized.
+
+Serial worker `rollout_preflight` owns read-only preparation of the exact current-ref CI qualification, model-disabled bootstrap, expected-old/non-force protected advance, original admission restoration and exact-prior rollback. Root alone owns publication, live admission/ref/state effects and installation. The latest accepted read-only snapshot at 19:52 UTC proves development `a8dc2d3c`, protected `sentinel-supervisor` and `sentinel-backup-legs` at `037057bd`, healthy settled generation 124 and three green terminal supervisors. `sentinel-backup-ci` is the ordinary result-state branch, not protected code. Revalidate live identities before effects. `sentinel-release` stays disabled.
+
+Passport has twelve open PRs in that snapshot; the official App merged PRs 181, 203 and 204. The two historical exact binary-contaminated originals remain refused and will not be stripped, republished or re-admitted by resetting accounting. AI development still lacked current CI at the 19:55 revalidation and remains dependent on its separate Rust owner's qualified publication. These facts do not prove installation of b3d942b8, sustained throughput gains or whole-goal completion. Earlier checkpoints below retain their original timing and evidence; their unanswered-policy hold is superseded by this checkpoint.
+
+### Earlier checkpoint (16:20 UTC; policy hold superseded)
 
 The scoped Sentinel changes are source-audited and exact-SHA hosted-CI-green, published on the isolated canonical branch at b3d942b8; they are not yet on development or installed. All implementation, investigation and private-rehearsal workers are settled. The required merge-rule clarification remains unanswered: attached task rules say P0/P1, while the current recorded owner policy and runtime say P0 only. Root has made no severity-policy, production ref/state/admission or installation change while that conflict is pending. The AI target also remains dependent on its active Rust owner's validated publication. The two exact Passport successor actions are conclusively refused by normal binary-content policy and will not be executed. No whole-goal completion is claimed.
 

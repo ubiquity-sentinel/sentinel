@@ -7,6 +7,14 @@ acceptance. Superseded choices, task-specific exceptions and consumed
 permissions remain in Git history; current task authorization governs
 continuation.
 
+## Merge policy clarification (2026-10-29)
+
+The owner reaffirmed that unresolved P0 findings block merges; P1 and lower findings do not block merges and must be retained and backlogged as issues through the existing authorized issue workflow. The earlier P0-and-P1 selection was accidental and withdrawn. This preserves the 2026-10-24 P0-only runtime policy and does not require a severity-code change.
+
+This clarification supersedes every earlier P0/P1 merge, rejection or correction threshold in this document and contradictory task instructions. Dated earlier thresholds below remain historical evidence, not current authority. Current-head CI, completed native review, positive task acceptance, custody, durable accounting and all other existing gates remain unchanged. Lower-severity findings alone do not authorize another correction round, and existing review ceilings remain intact.
+
+Resume the original production-throughput goal and canonical module identities with serial `gpt-6.1-sol/max` implementation, preserving the separate AI Rust owner and keeping `sentinel-release` disabled. The acceptance ledger distinguishes reviewed source, hosted CI, publication, installation and live delivery; this clarification establishes no new runtime or delivery receipt.
+
 ## Runtime and dispatch
 
 ### Maintenance throughput contract (2026-10-28)

@@ -95,6 +95,8 @@ never-started checks. Backup CI never overrides a check that ran and failed.
 Missing/stale/unavailable evidence cannot pass. Development reviews follow the
 separate owner preference above.
 
+Owner clarification, 2026-10-29: unresolved P0 findings block merges; P1 and lower findings do not block merges and must be retained and backlogged as issues through the existing authorized issue workflow. The earlier P0-and-P1 selection was accidental and withdrawn. This supersedes contradictory severity thresholds in earlier task instructions without changing current-head CI, native-review, task-acceptance, custody, accounting or other existing gates. Preserve historical decisions and charges; no new review round is authorized by this clarification.
+
 Do not edit the vendored upstream rubric constant in
 `src/github/codex-review-rubric.ts`. Its former harness output-schema override
 belongs to the superseded ordinary-turn adapter; native review mode owns its

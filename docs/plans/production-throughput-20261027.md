@@ -73,6 +73,8 @@ The owner requested a detailed goal covering every remaining suggestion and suba
 
 ### Completed foundation to preserve
 
+The owner resolved the merge-policy conflict on 2026-10-29: only unresolved P0 findings block; P1 and lower findings remain issue-backed follow-up work through the existing authorized workflow. The accidental earlier P0-and-P1 selection is withdrawn. Apply the [current clarification](../DECISIONS.md#merge-policy-clarification-2026-10-29) to supersede conflicting earlier thresholds while preserving all other gates, historical accounting and the consumed development-review ceiling. The policy hold on rollout is resolved; source, hosted, installed and live acceptance still require their own evidence.
+
 The v1 baseline, unchanged CI-wait/publication suppression, fair current-head backup CI, reconstructible history index, independent target/review progress, automatic CI trigger correction, official-App backup completion ingress and review-owner-channel race correction have shipped. The newer maintenance work adds authenticated complete producer membership, strict status-only retirement reads and impossible-closure prefiltering. Development was read back at `a8dc2d3c550945815cdc245dc7a5875f33754489`; supervisor and backup refs were read back at `037057bd1170b2a83c40c2b83e3af0e196755d95` on 2026-10-29. Exact installed generation, health and current backlog require the new live evidence below. The old generation-123 handoff is historical.
 
 ### Serial execution contract
