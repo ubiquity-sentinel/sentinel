@@ -1,5 +1,15 @@
 # Build status
 
+## Serial production-throughput continuation (2026-10-29)
+
+The owner requested a detailed goal covering the remaining suggestions and serial subagents. The active goal belongs to original production owner `01a17d5f-c856-74b0-9ab6-10080f4e3611`; current coordinator metadata reports `gpt-6-astra/ultra`. The ordered contracts are appended to [the existing plan](plans/production-throughput-20261027.md), preserving its goal and m01–m07 identities. New planned modules m08–m13 cover delivery holds, CI timing, fail-early gating, setup/cache checks, post-merge reconciliation and foreign completion events; read-only stages cover current baseline, AI-owner coordination and final acceptance. Only one execution subagent runs at a time. Root alone owns this ledger, plan, integration and live writes.
+
+Read-only ownership/ref reconciliation at 08:30–08:33 UTC confirmed the production lane clean at `e6ac2213`, with no local-only commits and ten accepted maintenance commits ahead on published `development`. No competing active writer was observed in the task lanes; the completed maintenance owner's retained idle process was preserved. Root fast-forwarded only `codex/production-throughput-20261027-g4459c2249b` at its recorded path to `a8dc2d3c550945815cdc245dc7a5875f33754489`, retaining all accepted ancestry and the dirty root/original canonical state. The baseline worker remains read-only in the unchanged maintenance lane.
+
+Fresh GET-only observations bind supervisor and backup refs to `037057bd1170b2a83c40c2b83e3af0e196755d95`, installed generation 124, accepted installation journal and exact prior `f2f1d5da`/generation 123; latest observed proof `40839879378` is healthy, settled and startup-ready, with ordinary run `40841523489` active. These are health observations, not new target-delivery acceptance. Detailed 24-hour backlog, dwell and throughput classification is in progress under `s01_current_baseline`; evidence is private under `/tmp/sentinel-throughput-followon-20261029/s01-baseline`. No hosted attempt, admission, pointer, state, review allowance or target policy changed in this checkpoint, and `sentinel-release` remains disabled.
+
+Next acceptance checkpoint: root accepts the worker's complete baseline and assigns the first proven delivery defect to the recorded m08 lane, or records genuine held-record boundaries before moving to m09 timing. Every write assignment records exact base/paths/checks before launch. Three consumed native development review rounds remain consumed; current runtime native review, CI, custody, accounting and target merge gates remain required. The full three-target goal remains active and incomplete.
+
 ## Maintenance throughput implementation (2026-10-28)
 
 ### Final bounded acceptance (09:35 UTC)
