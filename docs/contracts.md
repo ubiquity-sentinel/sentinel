@@ -509,19 +509,23 @@ the callers rely on:
   current validation. The final merge compares
   `MergeRequestV1.expectedHead`/`expectedBase` against the current exact
   identities (`head_mismatch`/`base_mismatch`), and GitHub REST offers no atomic
-  base CAS: effective strict protection rules (branch up-to-date enforcement)
-  are what make a moved base block the merge server-side, so a moved base makes
-  the candidate outdated and requires current integrated validation plus a fresh
-  reviewed head. A `StateWriteResultV1` of `ambiguous` is a distinct
-  network-outcome kind (may have been applied) used for post-push
+  base CAS. The trusted controller rereads the base branch tip immediately
+  before the merge, requires it to equal `expectedBase`, and verifies the landed
+  merge identity and parents. These are trusted checks, not an atomic
+  server-side base guard; a moved base still requires the existing current
+  integrated validation and review rules. A `StateWriteResultV1` of `ambiguous`
+  is a distinct network-outcome kind (may have been applied) used for post-push
   reconciliation.
 - **Merge blocked reasons.** `MergeOutcomeV1` blocked reasons are
   `conflict | checks_pending | checks_failed | protection_required |
   head_mismatch | base_mismatch | review_required`
   — `base_mismatch` covers a moved/mismatched base (candidate no longer descends
-  from the exact validated base) and `review_required` covers a
-  missing/non-completed/outdated review or ineffective strict protection; none
-  of them is an error and none is ever mergeable from the same request.
+  from the exact validated base) and `review_required` covers
+  missing/non-completed/outdated or mismatched/untrusted review evidence, unmet
+  configured approval requirements, or failed task-acceptance authorization.
+  Absent or ineffective branch protection alone does not cause a refusal. The
+  P0-only severity policy and independent merge gates remain unchanged. None of
+  these blocked outcomes is an error or mergeable from the same request.
 - **State capabilities.** `StateReadView`, `RepairStateWriter` and
   `ReleaseStateWriter` are separate interfaces; `StateStore` combines them for
   tests, and consumers accept the narrow `Pick`-style capability types — a
@@ -559,13 +563,15 @@ the callers rely on:
   clock-derived guess, and every returned `MetricsSampleV1` binds that identity,
   window and its coverage.
 - **Implementation.** `ImplementationPort.runModel` takes a bounded pinned
-  request (`model: "gpt-5.6-luna"`, `reasoning: "max"`, `maxDurationMs`,
-  `maxOutputChars`, bounded evidence refs, secret-free base) and returns an
-  actual-observation receipt
+  request (`model: ModelIdV1`, a trusted route-selected string,
+  `reasoning: "max"`, `maxDurationMs`, `maxOutputChars`, bounded evidence refs,
+  secret-free base) and returns an actual-observation receipt
   (`observedModel/observedReasoning/durationMs/
   outputChars`) — never a CLI
   label alone — plus a locally validated candidate `head` (publication is the
-  trusted GitHub writer's job), `checkpointSha` and bounded `changedPaths`.
+  trusted GitHub writer's job), `checkpointSha` and bounded `changedPaths`. The
+  selected model string is a request identity, not by itself proof of the actual
+  provider/model route.
 - **Clock.** `Clock.now()` returns the current millisecond epoch; `SystemClock`
   is the production implementation.
 
