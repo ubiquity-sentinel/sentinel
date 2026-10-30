@@ -92,7 +92,10 @@ function selfInstalledRelease(revision: GitSha, generation = 130) {
   });
 }
 
-async function acceptanceFixture(installed?: GitSha) {
+async function acceptanceFixture(
+  installed?: GitSha,
+  changeRuntime?: (runtime: HostedRuntimeRecordV1) => void,
+) {
   const previous = Deno.cwd();
   const root = await Deno.makeTempDir({
     dir: previous,
@@ -189,6 +192,7 @@ async function acceptanceFixture(installed?: GitSha) {
     installed ?? revision,
     installed === undefined ? 130 : 131,
   );
+  changeRuntime?.(accepted.hostedRuntimes[0]);
   const files = Object.fromEntries(
     (await recordFiles(accepted, "release")).map((row) => [row.path, row.text]),
   );
@@ -419,6 +423,63 @@ Deno.test("acceptance runtime: production composition admits exact self-installe
     assert.ok(fixture.http.some((path) => path.endsWith("/pulls/172")));
   } finally {
     await fixture.close();
+  }
+});
+
+Deno.test("acceptance runtime: default production composition refuses unproven self-install capabilities without writes", async (t) => {
+  const controls: Record<string, (runtime: HostedRuntimeRecordV1) => void> = {
+    "missing proof": (runtime) => {
+      runtime.lastHealthyProof = null;
+    },
+    "foreign revision proof": (runtime) => {
+      runtime.lastHealthyProof!.execution.revision = BASE;
+    },
+    "stale generation proof": (runtime) => {
+      runtime.lastHealthyProof!.execution.generation--;
+    },
+    "unhealthy execution without healthy proof": (runtime) => {
+      runtime.lastExecutionProof = {
+        ...runtime.lastHealthyProof!,
+        outcome: "failed",
+        startupReady: false,
+      };
+      runtime.lastHealthyProof = null;
+    },
+    "different launcher proof": (runtime) => {
+      runtime.lastHealthyProof!.execution.launcherSha = BASE;
+    },
+  };
+  for (const [control, changeRuntime] of Object.entries(controls)) {
+    await t.step(control, async () => {
+      const fixture = await acceptanceFixture(undefined, changeRuntime);
+      try {
+        const before = await fixture.rig.state.readRepair();
+        assert.ok(before.ok && before.value.status === "found");
+        const releaseBefore = await fixture.release.readRelease();
+        assert.ok(releaseBefore.ok && releaseBefore.value.status === "found");
+        const result = await fixture.run();
+        // Pointer health failures stop at compatibility preflight. A healthy
+        // proof from another launcher reaches the acceptance-specific gate.
+        if (control === "different launcher proof") {
+          assert.ok(
+            result.actions.includes(
+              `retry:${fixture.record.id}:denied:${ACCEPTANCE_CORRECTION_REQUIRES_RUNTIME}`,
+            ),
+            JSON.stringify(result),
+          );
+        } else {
+          assert.deepEqual(result.actions, [
+            "runtime-compatibility:migration_only",
+          ]);
+        }
+        assert.equal(result.appliedHead, null);
+        assert.deepEqual(await fixture.rig.state.readRepair(), before);
+        assert.deepEqual(await fixture.release.readRelease(), releaseBefore);
+        assert.deepEqual(fixture.effects, []);
+      } finally {
+        await fixture.close();
+      }
+    });
   }
 });
 
