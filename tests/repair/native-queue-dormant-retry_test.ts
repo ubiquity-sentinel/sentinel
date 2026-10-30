@@ -5,9 +5,13 @@ import { GitHubQueueDeliveryClient } from "../../src/github/client-queue-deliver
 import {
   createNativeQueueGuard,
   type NativeQueueGuardOptions,
+  type NativeQueueGuardV1,
+  type QueueGuardDecision,
+  type QueueGuardReason,
 } from "../../src/github/native-queue-guard.ts";
 import { CHECK_POLL_MS } from "../../src/repair/loop-bounds.ts";
 import {
+  guardQueueOperation,
   holdQueueRecord,
   queueRefusalIsTransient,
 } from "../../src/repair/loop-queue-guard.ts";
@@ -500,7 +504,7 @@ Deno.test("a transient final-effect refusal cannot replace queue intent or prove
     queueRefusalIsTransient({
       detail: "native queue custody hold: observation_unavailable",
     }),
-    false,
+    true,
   );
 });
 
@@ -571,4 +575,154 @@ Deno.test({
       assert.deepEqual(r80.parseRepairStateSnapshotV1(snapshot), snapshot);
     });
   },
+});
+
+function holdDecision(reason: QueueGuardReason): QueueGuardDecision {
+  return { status: "hold", reason, pull: null };
+}
+
+function fixedGuard(decision: QueueGuardDecision): NativeQueueGuardV1 {
+  return {
+    inspect: () => Promise.resolve(decision),
+    inspectEffect: () => Promise.resolve(decision),
+    proveDelivery: () =>
+      Promise.resolve({
+        status: "unavailable",
+        reason: "queue_evidence_unavailable",
+      }),
+  };
+}
+
+Deno.test("inspect observation failures take a bounded retry, not a permanent hold", async (t) => {
+  for (
+    const reason of [
+      "authorization_unavailable",
+      "observation_unavailable",
+    ] as const
+  ) {
+    await t.step(reason, async () => {
+      const r = rig();
+      r.github.nativeQueue = fixedGuard(holdDecision(reason));
+      const before = structuredClone(r.state.repair!);
+      const first = await guardQueueOperation(
+        r.deps,
+        r.context,
+        r.record,
+        "resume",
+      );
+      assert.equal(first?.kind, "progress");
+      const now = r.clock.now();
+      assert.deepEqual(r.state.repair!.work[0], {
+        ...before.work[0],
+        wait: {
+          reason: "unavailable",
+          since: now,
+          until: now + CHECK_POLL_MS,
+        },
+        updatedAt: now,
+      });
+      assert.deepEqual(r.state.repair!.reservations, before.reservations);
+      assert.deepEqual(r.state.repair!.reviews, before.reviews);
+      assert.deepEqual(
+        r.state.repair!.releaseRequests,
+        before.releaseRequests,
+      );
+
+      // The bounded wait defers the next look without another write.
+      r.context.snapshot = r.state.repair!;
+      const writes = r.state.repairWrites;
+      const second = await guardQueueOperation(
+        r.deps,
+        r.context,
+        r.state.repair!.work[0],
+        "resume",
+      );
+      assert.equal(second?.kind, "deferred");
+      assert.equal(r.state.repairWrites, writes);
+
+      // Once the wait elapses the guard re-observes instead of staying wedged.
+      r.clock.advance(CHECK_POLL_MS + 1);
+      const third = await guardQueueOperation(
+        r.deps,
+        r.context,
+        r.state.repair!.work[0],
+        "resume",
+      );
+      assert.equal(third?.kind, "progress");
+      assert.equal(
+        r.state.repair!.work[0].wait?.until,
+        r.clock.now() + CHECK_POLL_MS,
+      );
+    });
+  }
+});
+
+Deno.test("definitive queue denials keep the permanent custody hold", async (t) => {
+  for (const reason of ["member", "queue_required"] as const) {
+    await t.step(reason, async () => {
+      const r = rig();
+      r.github.nativeQueue = fixedGuard(holdDecision(reason));
+      const first = await guardQueueOperation(
+        r.deps,
+        r.context,
+        r.record,
+        "resume",
+      );
+      assert.equal(first?.kind, "progress");
+      assert.deepEqual(r.state.repair!.work[0].wait, {
+        reason: "backoff",
+        since: r.clock.now(),
+        until: null,
+      });
+
+      // A permanent custody hold is never re-observed or rewritten.
+      r.context.snapshot = r.state.repair!;
+      const writes = r.state.repairWrites;
+      const second = await guardQueueOperation(
+        r.deps,
+        r.context,
+        r.state.repair!.work[0],
+        "resume",
+      );
+      assert.equal(second?.kind, "deferred");
+      assert.equal(r.state.repairWrites, writes);
+    });
+  }
+});
+
+Deno.test("queue effect refusals use the same reason classification", () => {
+  for (
+    const reason of [
+      "capability_missing",
+      "rule_unavailable",
+      "observation_unavailable",
+      "inactive_observation_unavailable",
+      "authorization_unavailable",
+    ]
+  ) {
+    assert.equal(
+      queueRefusalIsTransient({
+        detail: `native queue custody hold: ${reason}`,
+      }),
+      true,
+      reason,
+    );
+  }
+  for (
+    const reason of [
+      "custody",
+      "member",
+      "identity_drift",
+      "merged_head",
+      "queue_required",
+    ]
+  ) {
+    assert.equal(
+      queueRefusalIsTransient({
+        detail: `native queue custody hold: ${reason}`,
+      }),
+      false,
+      reason,
+    );
+  }
 });
