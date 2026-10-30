@@ -49,10 +49,11 @@ Deno.test("targets: the shipped setting names all three targets", async () => {
   );
 });
 
-Deno.test("targets: the setting file is a protected path", () => {
-  assert.ok(
+Deno.test("targets: the setting file is ordinary work under the 2026-10-30 reduced set", () => {
+  assert.equal(
     TEMPLATE.protectedPaths.includes(TARGETS_FILE_NAME),
-    "a model worker must never be able to add itself a target repository",
+    false,
+    "only credential, dispatch, merge-gate and promotion files stay protected",
   );
 });
 

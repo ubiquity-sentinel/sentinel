@@ -30,11 +30,16 @@ Deno.test("local repository config parses with fixed local scope", () => {
   assert.equal(config.build.projectId, null);
   assert.equal(config.build.acceptance, null);
   assert.equal(config.secretRef, "secret://host/injected/sentinel-local-owner");
-  assert.ok(config.protectedPaths.includes("src/host/local.ts"));
-  assert.ok(config.protectedPaths.includes("src/contracts/local-release.ts"));
+  // Owner directive 2026-10-30: only credential, dispatch, merge-gate and
+  // promotion files stay protected. The local supervisor, contracts and
+  // budget modules are ordinary model work again.
+  assert.ok(config.protectedPaths.includes("src/host/local-config.ts"));
   assert.ok(config.protectedPaths.includes("src/host/local-release.ts"));
-  assert.ok(config.protectedPaths.includes("src/host/local-supervisor.ts"));
-  assert.ok(config.protectedPaths.includes("src/budget/"));
+  assert.ok(config.protectedPaths.includes(".github/workflows/"));
+  assert.ok(!config.protectedPaths.includes("src/host/local.ts"));
+  assert.ok(!config.protectedPaths.includes("src/host/local-supervisor.ts"));
+  assert.ok(!config.protectedPaths.includes("src/contracts/local-release.ts"));
+  assert.ok(!config.protectedPaths.includes("src/budget/"));
   assert.ok(!config.protectedPaths.includes("src/"));
   const specs = Object.values(config.commandRegistry.commands);
   assert.equal(specs.length, 2);
