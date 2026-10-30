@@ -37,6 +37,7 @@ import {
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import { ACTIONS_APP_SLUG } from "../src/github/never-started-job.ts";
 import { greenReadmissionCandidate } from "./hosted-autonomy-green-readmission.ts";
+import { preReviewCiEvidenceCandidate } from "./hosted-autonomy-ci-first.ts";
 import {
   compareCiReadiness,
   currentCiValidation,
@@ -85,7 +86,8 @@ export function backupCiRecords(
     if (record.target.head === null) return false;
     if (["work", "review", "delivery"].includes(record.nextStep)) return true;
     return record.nextStep === "blocked" &&
-      greenReadmissionCandidate(snapshot, record);
+      (preReviewCiEvidenceCandidate(snapshot, record) ||
+        greenReadmissionCandidate(snapshot, record));
   });
 }
 

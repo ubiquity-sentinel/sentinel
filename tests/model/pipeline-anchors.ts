@@ -143,7 +143,10 @@ export const A = {
   refreshFail: anchor(
     "p.refreshFail",
     "src/repair/loop-base-refresh-failure.ts",
-    "if (failures >= MAX_BASE_REFRESH_FAILURES) {",
+    `if (
+    failures >= MAX_BASE_REFRESH_FAILURES &&
+    !isPassportWorkTrial(record.repository)
+  ) {`,
   ),
   carried: anchor(
     "p.carried",
