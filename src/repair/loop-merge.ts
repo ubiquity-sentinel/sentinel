@@ -12,7 +12,6 @@ import { guardQueueOperation } from "./loop-queue-guard.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import { parseMergeRequestV1 } from "../contracts/merge-request.ts";
 import { selfMergeExecution } from "./loop-self-merge.ts";
-import { isSelfScopeZero } from "./loop-legacy-loss.ts";
 import type { MergeOutcomeV1, PortErrorV1 } from "../contracts/ports.ts";
 import {
   parseReleaseRequestV1,
@@ -117,30 +116,6 @@ function emitMergePortError(
     errorKind: error.kind,
     detailCode,
   }));
-}
-
-/**
- * Self-merge refusals of the trusted port's content checks: the base and the
- * tested commit disagree on the CI pipeline identity, the preserved CI binding
- * or the tested tree. Waiting never clears them (only a new base or a new
- * candidate can), so they park for the owner instead of re-arming a five-minute
- * wait on every cycle for the life of the base. A failed git read is
- * `unavailable`, never one of these (issue #196); a refusal after the remote
- * writes began keeps the proof (`parkSelfMergeRefusal`).
- */
-const SELF_MERGE_REFUSALS: ReadonlySet<string> = new Set([
-  "self merge trusted CI pipeline changed",
-  "self merge preserved CI binding mismatch",
-  "self merge tested tree or trusted source mismatch",
-]);
-function selfMergeRefusal(
-  record: WorkRecordV1,
-  error: PortErrorV1,
-): string | null {
-  return isSelfScopeZero(record.repository) && error.kind === "invalid" &&
-      SELF_MERGE_REFUSALS.has(error.detail)
-    ? `self merge refused by trusted validation; owner action required: ${error.detail}`
-    : null;
 }
 
 const SELF_MERGE_TARGET_MOVED = "self merge target moved without exact merge";
@@ -416,14 +391,6 @@ export async function executeMerge(
       mergeRequest.pullRequestNumber,
       merged.error,
     );
-    const refusal = selfMergeRefusal(self.record, merged.error);
-    if (refusal !== null) {
-      return persistWork(
-        deps,
-        context,
-        parkSelfMergeRefusal(self.record, refusal, now),
-      );
-    }
     // The saved merge intent must stay durable: the response may have been
     // lost after the write, and the next run reconciles the exact remote PR
     // state before repeating rather than blindly retrying an ambiguous write.
@@ -635,14 +602,6 @@ export async function reconcileMergeIntent(
       );
     }
     const at = deps.clock.now();
-    const refusal = selfMergeRefusal(self.record, result.error);
-    if (refusal !== null) {
-      return persistWork(
-        deps,
-        context,
-        parkSelfMergeRefusal(self.record, refusal, at),
-      );
-    }
     const conflict = selfMergeConflict(self.record, result.error);
     if (conflict === null) {
       return persistWork(

@@ -1,10 +1,12 @@
 /** Repair loop internals: review observation. */
 import type { GitSha } from "../contracts/brands.ts";
 import {
+  type GitHubPullRequestV1,
   portOk,
   type PortResultV1,
   type ReviewObservationV1,
 } from "../contracts/ports.ts";
+import type { EvidenceRefV1 } from "../contracts/shared.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { reviewOperationKey } from "./keys.ts";
 import { executeBaseRefreshIntent } from "./loop-base-refresh.ts";
@@ -30,11 +32,11 @@ import type {
   RepairCycleDepsV1,
   StepResultV1,
 } from "./loop-types.ts";
-import { RETIRED_MERGED_MESSAGE } from "./selection.ts";
 import {
   clearIntent,
   clearWait,
   countReviewRound,
+  markDone,
   markTerminalBlocked,
   setWait,
 } from "./transitions.ts";
@@ -42,6 +44,85 @@ import {
 // ---------------------------------------------------------------------------
 // Review phase.
 // ---------------------------------------------------------------------------
+
+/**
+ * Delivery provenance for a pull request merged outside Sentinel's own merge
+ * path. The evidence kind and namespace reuse the verified queue-delivery
+ * convention; `mergedBy` is the actor GitHub reported for the merge, raw when
+ * it already fits the frozen restricted-ref grammar and hex-encoded otherwise.
+ */
+function humanMergeActorSegment(mergedBy: string | null): string {
+  if (mergedBy === null || mergedBy.length === 0) return "unknown";
+  if (/^[A-Za-z0-9._-]{1,64}$/.test(mergedBy)) return mergedBy;
+  return `hex-${
+    [...new TextEncoder().encode(mergedBy)].map((byte) =>
+      byte.toString(16).padStart(2, "0")
+    ).join("")
+  }`;
+}
+
+export function humanMergeProvenanceRef(
+  pullRequest: number,
+  head: GitSha,
+  mergeSha: GitSha,
+  mergedBy: string | null,
+): EvidenceRefV1 {
+  return {
+    kind: "review_receipt",
+    ref:
+      `artifact:review-receipt/human-merge-v1/${pullRequest}/${head}/${mergeSha}/${
+        humanMergeActorSegment(mergedBy)
+      }`,
+  };
+}
+
+/**
+ * The merge actor when the port observed it (string or `{ login }`). The
+ * frozen pull contract currently omits `merged_by`, so a live read that does
+ * not carry it records `unknown` rather than guessing from the PR author.
+ */
+function observedMergedBy(pull: GitHubPullRequestV1): string | null {
+  const candidate = pull as GitHubPullRequestV1 & {
+    mergedBy?: unknown;
+    merged_by?: unknown;
+  };
+  const value = candidate.mergedBy ?? candidate.merged_by;
+  if (typeof value === "string" && value.length > 0) return value;
+  if (value === null || typeof value !== "object") return null;
+  const login = (value as { login?: unknown }).login;
+  return typeof login === "string" && login.length > 0 ? login : null;
+}
+
+/**
+ * A pull request merged by a human (or any non-Sentinel actor) is a completed
+ * delivery. The exact observed merge SHA and actor become durable evidence;
+ * reservations are untouched (the review/implementation charges already
+ * settled exactly as for a Sentinel merge), and no release request, merge,
+ * issue closure or comment is fabricated. Issue-backed PR bodies carry
+ * `Resolves #N`, so GitHub's own merge already applied the existing closure.
+ */
+function completeHumanMerge(
+  record: WorkRecordV1,
+  pull: GitHubPullRequestV1,
+  mergeSha: GitSha,
+  now: number,
+): WorkRecordV1 {
+  const provenance = humanMergeProvenanceRef(
+    record.target.pr!,
+    record.target.head!,
+    mergeSha,
+    observedMergedBy(pull),
+  );
+  const retained = record.evidence.some((item) =>
+    item.kind === provenance.kind && item.ref === provenance.ref
+  );
+  return markDone(
+    retained
+      ? record
+      : { ...record, evidence: [...record.evidence, provenance] },
+    now,
+  );
+}
 
 /** The transient review waits bound to one in-flight attempt. */
 function isReviewAttemptWait(record: WorkRecordV1): boolean {
@@ -144,10 +225,10 @@ export async function observeReview(
     return { kind: "deferred", detail: cooling.detail };
   }
   // The record's own pull request is observed BEFORE the review: a closed
-  // unmerged pull request can never produce another verdict, and a pull
-  // request merged outside the trusted review path is a human disposition the
-  // runtime must never treat as its own delivery. Foreign or unreadable
-  // observations change nothing and fall through to the standing review.
+  // unmerged pull request can never produce another verdict, and a merged pull
+  // request is a completed delivery by whoever GitHub reports merged it.
+  // Foreign or unreadable observations change nothing and fall through to the
+  // standing review.
   const pull = await deps.github.readPullRequest(pr);
   if (!pull.ok) {
     return { kind: "deferred", detail: "review PR observation unavailable" };
@@ -167,10 +248,28 @@ export async function observeReview(
       );
     }
     if (pull.value.state === "merged") {
+      if (pull.value.mergeSha === null) {
+        return {
+          kind: "deferred",
+          detail: "merged pull request observation has no merge SHA",
+        };
+      }
+      if (pull.value.head !== head) {
+        return persistWork(
+          deps,
+          context,
+          markTerminalBlocked(
+            record,
+            "other",
+            "observed merged head identity mismatch",
+            now,
+          ),
+        );
+      }
       return persistWork(
         deps,
         context,
-        markTerminalBlocked(record, "other", RETIRED_MERGED_MESSAGE, now),
+        completeHumanMerge(record, pull.value, pull.value.mergeSha, now),
       );
     }
   }
