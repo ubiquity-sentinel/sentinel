@@ -1,5 +1,13 @@
 # Sentinel decisions
 
+## Passport work trial (2026-10-30)
+
+The owner explicitly authorized the independent stability controller's Passport-only trial: remove ordinary product-path restrictions and attempt-count holds while retaining successful current CI and completed native review before merge. Positive task acceptance, exact head/base, authenticated original-candidate and intent custody, current ownership, durable reservations/accounting, credentials/workflow authority isolation and all other independent merge gates remain. Counters/history are preserved, not reset; protocol/provider backoff and finite operation/session/deadline safeguards are unchanged. This is a separate authorized trial, not a resumption of the paused manual PR 221/m16 work or the original goal's status.
+
+Use one exact-target predicate and the existing trusted maintenance/CAS readmission paths. Other repositories keep their original policy. A historical attempt allowance cannot substitute for an authentic original candidate/ref, a unique settled current charge, or absence of unfinished work; missing-custody records remain held. Published stale protected candidates are not dropped or silently replaced by their current PR head. The new controller-owned helper remains protected against self-modification, without inheriting that controller inventory as a renewed Passport product-path ban. Failed/unreviewed/task-unaccepted merges, generic blocker clearing, refunds and credential/provider changes are not authorized.
+
+The frozen source and all live trial gates belong in the sole build ledger. Captured local eligibility projections are not live admissions or delivery. Publication waits for native findings disposition and exact canonical CI; installation retains exact prior rollback and is followed by one ordinary-cycle observation with current task/head/ref/CI evidence and explicit remaining holds. Release remains disabled. The independent stability controller owns its isolated m19 writer and reserved native review, while the primary retains integration and live publication ownership.
+
 ## Local production telemetry archive (2026-10-30)
 
 The owner requested a quick local tool reporting exact deployed commit hashes, production timeframes, run counts, percentage of good runs and delivery velocity to inform rollback choices, then explicitly required saving and consolidating observations on every invocation because GitHub Actions logs expire. This telemetry-only work does not resume the paused manual throughput goal or PR 221/m16. Preserve that work and every existing gate; no rollback or runtime behavior change is authorized by this request.
