@@ -1,5 +1,13 @@
 # Sentinel decisions
 
+## Local production telemetry archive (2026-10-30)
+
+The owner requested a quick local tool reporting exact deployed commit hashes, production timeframes, run counts, percentage of good runs and delivery velocity to inform rollback choices, then explicitly required saving and consolidating observations on every invocation because GitHub Actions logs expire. This telemetry-only work does not resume the paused manual throughput goal or PR 221/m16. Preserve that work and every existing gate; no rollback or runtime behavior change is authorized by this request.
+
+The first delivery is an on-demand read-only GitHub collector and local offline report. Save fetched metadata, immutable run-attempt logs and relevant source-bound runtime/install/delivery receipts in a private ignored `.sentinel/telemetry/` archive. Retain observation time, endpoint/run/attempt/source identity and content hashes; never replace prior evidence with a later missing/expired response. Consolidate idempotently, retain prior attempts and distinguish unknown evidence from zero. No automatic deletion, expiry, upload, telemetry service, cron or credential storage is introduced. The user explicitly authorizes this local archival storage; raw provider/model artifacts outside the scorecard's evidence scope are not implicitly collected.
+
+Separate native ordinary health from workflow success and useful delivery. Full runtime SHA/generation and production intervals come from actual execution and journal proof, not default-branch or launcher substitution. Report health numerator/denominator and evidence coverage, separate bootstrap/cancellation/pending/unstarted attempts, preserve rerun history and repeated deployments, and show fresh autonomous merge velocity separately from owner/manual/existing/reconciled merges. If fresh merge provenance is unavailable, show the limitation instead of inferring autonomy from the App actor. Current exact journal prior is evidence for a potential rollback, not permission to roll back or proof that a short idle sample is safest. No new producer events or merge-path instrumentation are part of the first local archive tool.
+
 These are current owner decisions for Sentinel. [AGENTS.md](../AGENTS.md)
 governs execution, [MASTER-PLAN.md](../MASTER-PLAN.md) defines scope and
 invariants, and [build-status.md](build-status.md) records current ownership and
