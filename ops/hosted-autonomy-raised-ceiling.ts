@@ -11,6 +11,10 @@ import {
   reviewRoundsLeft,
 } from "../src/repair/review-round-cap.ts";
 import { intentClosable, type RetryPlanV1 } from "./hosted-autonomy-retries.ts";
+import {
+  isPassportWorkTrial,
+  passportTrialCanReconsider,
+} from "../src/repair/passport-work-trial.ts";
 
 /** Ceiling parks a raised review-round ceiling can reopen (exact text). */
 const RAISED_CEILING_PARKS: readonly string[] = [
@@ -39,6 +43,10 @@ export function planRaisedCeilingReadmission(
   cutoff: number | null,
 ): RetryPlanV1 | null {
   const blocker = record.blocker;
+  if (
+    isPassportWorkTrial(record.repository) &&
+    !passportTrialCanReconsider(record, snapshot.reservations)
+  ) return null;
   if (
     blocker === null || blocker.kind !== "other" ||
     !RAISED_CEILING_PARKS.includes(blocker.message) ||

@@ -13,6 +13,8 @@ import {
 } from "../src/contracts/hosted-supervisor.ts";
 import { parseReleaseStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
+import { candidatePreservationRef } from "../src/repair/keys.ts";
+import { passportTrialRefreshBinding } from "../src/repair/passport-work-trial.ts";
 import { queueProtectedIds } from "./hosted-autonomy-queue-context.ts";
 import { failed, readRepairSafely, skipped } from "./hosted-autonomy-state.ts";
 import type { HostedAutonomyPassContextV1 } from "./hosted-autonomy-scopes.ts";
@@ -25,6 +27,7 @@ import {
 } from "./hosted-autonomy-retries.ts";
 import {
   HOSTED_AUTONOMY_CI_UNATTRIBUTED_PREFIX,
+  HOSTED_AUTONOMY_TRUSTED_AUTHORS,
   hostedIssueKey,
   hostedRepositoryKey,
   isHostedSelf,
@@ -618,6 +621,39 @@ export async function runHostedRetryPass(
     actions,
   );
   plans.push(...protectedTaken.map(protectedReadmissionPlan));
+  // New trial reentries may carry a mechanical refresh beyond the charge's
+  // original base. Authenticate its exact operation ref and live publication.
+  for (let index = plans.length - 1; index >= 0; index--) {
+    const record = snapshot.work.find((row) =>
+      row.id === plans[index].id &&
+      sameRepository(row.repository, plans[index].repository)
+    );
+    if (record === undefined) continue;
+    const binding = passportTrialRefreshBinding(record, snapshot.reservations);
+    if (binding === null) continue;
+    const scope = await scopeFor(record.repository);
+    const pull = record.target.pr === null
+      ? null
+      : await readPull(scope, record.target.pr);
+    if (
+      binding.ref !==
+        await candidatePreservationRef(
+          record.repository,
+          record.id,
+          binding.operationKey,
+        ) ||
+      pull === null || pull.number !== record.target.pr ||
+      pull.state !== "open" || pull.merged !== false ||
+      pull.headSha !== record.target.head ||
+      pull.baseRef !== scope.baseBranch ||
+      !HOSTED_AUTONOMY_TRUSTED_AUTHORS.includes(pull.author ?? "")
+    ) {
+      actions.push(
+        `retry:${record.id}:denied:passport_trial_preservation_identity`,
+      );
+      plans.splice(index, 1);
+    }
+  }
   if (plans.length > 0 || readmissions.length > 0 || parks.length > 0) {
     const now = deps.clock.now();
     if (!Number.isSafeInteger(now) || now < snapshot.updatedAt) {

@@ -31,6 +31,11 @@ import { HOSTED_RUNTIME_ROLLOUT } from "../src/host/hosted-runtime-rollout.ts";
 import type { HostedRuntimeRecordV1 } from "../src/contracts/hosted-supervisor.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import { ciCorrectable } from "../src/repair/ci-rejection.ts";
+import { CI_FIX_EXHAUSTED_PREFIX } from "../src/repair/ci-first-policy.ts";
+import {
+  isPassportWorkTrial,
+  passportTrialCanReconsider,
+} from "../src/repair/passport-work-trial.ts";
 import {
   HOSTED_AUTONOMY_CI_FAILED_PREFIX,
   HOSTED_AUTONOMY_CI_UNATTRIBUTED_PREFIX,
@@ -176,9 +181,14 @@ function ciGateParked(
   prefixes: readonly string[],
 ): boolean {
   const blocker = record.blocker;
+  const trial = isPassportWorkTrial(record.repository);
+  if (trial && !passportTrialCanReconsider(record, snapshot.reservations)) {
+    return false;
+  }
+  const accepted = trial ? [...prefixes, CI_FIX_EXHAUSTED_PREFIX] : prefixes;
   if (
     blocker === null || blocker.kind !== "other" ||
-    !prefixes.some((prefix) => blocker.message.startsWith(prefix))
+    !accepted.some((prefix) => blocker.message.startsWith(prefix))
   ) return false;
   if (record.related.issueNumber === null) return false;
   const { head, pr, base } = record.target;

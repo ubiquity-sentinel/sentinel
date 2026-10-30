@@ -25,6 +25,7 @@ import type { ReviewReceiptV1 } from "../contracts/review-receipt.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { HOSTED_RUNTIME_ROLLOUT } from "../host/hosted-runtime-rollout.ts";
+import { isPassportWorkTrial } from "./passport-work-trial.ts";
 
 /**
  * Review rounds a CI-first-era task may spend. Owner decision 2026-10-16 set
@@ -430,6 +431,7 @@ export function reviewRoundCeilingFor(
   snapshot: Ledger,
   record: RoundRecord,
 ): number {
+  if (isPassportWorkTrial(record.repository)) return Number.MAX_SAFE_INTEGER;
   const era = LEGACY_REVIEW_CUTOFF.activatedNotBefore;
   const preEra = era === null || typeof record.createdAt !== "number" ||
     record.createdAt < era ||

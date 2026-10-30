@@ -26,6 +26,7 @@
  */
 import type { BudgetReservationV1 } from "../contracts/budget-reservation.ts";
 import type { WorkRecordV1, WorkWaitV1 } from "../contracts/work-record.ts";
+import { isPassportWorkTrial } from "./passport-work-trial.ts";
 import {
   type LegacyCutoff,
   legacyFinalRoundOpen,
@@ -122,8 +123,13 @@ export const CI_PRE_REVIEW_PARK_PREFIXES: readonly string[] = [
 ];
 
 /** A CI fix is still available to this record. */
-export function ciFixesLeft(record: Pick<WorkRecordV1, "counters">): boolean {
-  return record.counters.retries < CI_FIX_ATTEMPTS;
+export function ciFixesLeft(
+  record:
+    & Pick<WorkRecordV1, "counters">
+    & Partial<Pick<WorkRecordV1, "repository">>,
+): boolean {
+  return isPassportWorkTrial(record.repository) ||
+    record.counters.retries < CI_FIX_ATTEMPTS;
 }
 
 /**

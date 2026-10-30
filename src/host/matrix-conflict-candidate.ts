@@ -7,6 +7,7 @@ import type {
 } from "../contracts/work-record.ts";
 import { resolvedConflictResolution } from "../repair/conflict-resolution.ts";
 import { MAX_BASE_REFRESH_FAILURES } from "../repair/loop-base-refresh-failure.ts";
+import { isPassportWorkTrial } from "../repair/passport-work-trial.ts";
 import {
   baseRefreshIntentKey,
   candidateBranch,
@@ -44,7 +45,8 @@ export async function resolvedConflictCandidate(
     result === head || result === intent.observedBase ||
     !intent.failure || !Number.isSafeInteger(intent.failure.attempts) ||
     intent.failure.attempts < 1 ||
-    intent.failure.attempts - 1 >= MAX_BASE_REFRESH_FAILURES ||
+    (intent.failure.attempts - 1 >= MAX_BASE_REFRESH_FAILURES &&
+      !isPassportWorkTrial(record.repository)) ||
     intent.failure.atMs < intent.startedAt ||
     record.target.selfMerge !== undefined || intent.selfMerge !== undefined ||
     candidateState?.publishedHead !== head || !preserved ||
