@@ -9,6 +9,8 @@ continuation.
 
 ## Merge policy clarification (2026-10-29)
 
+Owner correction at 23:14–23:15 UTC: wanted work must not be discarded. Content equivalence alone does not authorize closing an unmerged wanted PR as redundant; preserve its branch and commits and use the authorized review/fix/backlog/merge path. The owner revoked the coordinator's closure of PR 211 and issue 207 and explicitly requested a native review loop for PR 211, attempting fixes for every substantiated problem, tracking unresolved findings as issues, and merging when no unresolved P0 remains and all independent gates pass. PR 211 and issue 207 were reopened with their original head preserved. This owner-requested PR loop is tracked separately from the consumed throughput development reviews; it does not reset or erase any prior review, runtime reservation, retry or charge.
+
 The owner reaffirmed that P0 is the only severity-based merge blocker; P1 and lower findings do not block merges and must be retained and backlogged as issues through the existing authorized issue workflow. The earlier P0-and-P1 selection was accidental and withdrawn. This preserves the 2026-10-24 P0-only runtime policy and does not require a severity-code change.
 
 This clarification supersedes every earlier P0/P1 merge, rejection or correction threshold in this document and contradictory task instructions. Dated earlier thresholds below remain historical evidence, not current authority. Current-head CI, completed native review, positive task acceptance, custody, durable accounting and all other existing gates remain unchanged. Lower-severity findings alone do not authorize another correction round, and existing review ceilings remain intact.
