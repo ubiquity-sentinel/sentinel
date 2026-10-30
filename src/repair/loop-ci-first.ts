@@ -24,11 +24,12 @@
  *   head, a precise park after `PRE_REVIEW_CI_BOUND_MS` that the launcher's
  *   re-run and green rules re-admit; meanwhile a moved base refreshes the
  *   head at its next poll;
- * - a candidate-caused failure: the exhausted park once `CI_FIX_ATTEMPTS` are
- *   spent; a head reviewed clean on this base returns to `work` for the
- *   existing CI correction; a never-reviewed head gets the CI fix marker where
- *   the pre-review route is open (`preReviewCiFixRouteOpen`), and otherwise
- *   parks awaiting a CI fix;
+ * - a candidate-caused failure: a head reviewed clean on this base returns
+ *   to `work` for the existing CI correction; a never-reviewed head gets the
+ *   CI fix marker where the pre-review route is open
+ *   (`preReviewCiFixRouteOpen`), and otherwise parks awaiting a CI fix. The
+ *   retry counter is accounting only: owner directive 2026-10-30 removed the
+ *   attempt cap, so a spent count never parks the head;
  * - a red base: a 30-minute `backoff`, nothing charged.
  *
  * A head already reviewed clean on this base (the re-request after a missing
@@ -53,7 +54,6 @@ import {
   ciCorrectable,
   ciCorrectionFinding,
   ciCorrectionRouteOpen,
-  ciFixExhaustedDetail,
   failedChecks,
   latestChecks,
   preReviewAbsentDetail,
@@ -62,7 +62,6 @@ import {
   preReviewUnattributedDetail,
 } from "./ci-rejection.ts";
 import {
-  ciFixesLeft,
   ciFixMarker,
   PRE_REVIEW_CI_BOUND_MS,
   preReviewCiFixRouteOpen,
@@ -181,13 +180,6 @@ function routeCandidateFailure(
   checks: readonly GitHubCheckV1[],
   now: number,
 ): Promise<StepResultV1> {
-  if (!ciFixesLeft(record)) {
-    return persistWork(
-      deps,
-      context,
-      markBlocked(record, "other", ciFixExhaustedDetail(checks), now),
-    );
-  }
   // A head already reviewed clean against this base (a re-request after a
   // missing task acceptance) takes the existing CI correction route; if its
   // failure is gone by the correction's admission, `confirmCiCorrection`

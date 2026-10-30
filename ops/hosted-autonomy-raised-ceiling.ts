@@ -1,6 +1,8 @@
 /**
- * Launcher re-admission of review-ceiling parks after the owner raised the
- * ceiling (decision 2026-10-24: "you can have up to five reviews").
+ * Launcher re-admission of historical review-ceiling parks. The review-round
+ * ceiling is retired (owner directive 2026-10-30); this pass remains the
+ * trusted way to return an already-parked record to its runtime step while
+ * preserving every counter, charge and reservation.
  */
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import {
@@ -29,14 +31,13 @@ const RAISED_CEILING_PARKS: readonly string[] = [
 export const RAISED_CEILING_DETAIL_SUFFIX = ":review_rounds_raised";
 
 /**
- * Owner decision 2026-10-24 raised `MAX_REVIEW_ROUNDS` from three to five. A
- * record parked by the runtime's ceiling gate under the old ceiling (no
- * completed review, an unresolved P0, no task acceptance, or a moved base)
- * whose durable ledger now leaves a round (`reviewRoundsLeft`) returns to
- * `work` uncharged; the runtime then gates, refreshes, corrects or reviews it
- * on its ordinary path, and its ceiling gate parks it again at five. No
- * counter, reservation or review moves here, and a published head and pull
- * request are required.
+ * A record parked by the retired runtime ceiling gate (no completed review,
+ * an unresolved P0, no task acceptance, or a moved base) returns to `work`
+ * uncharged now that every record has a round (`reviewRoundsLeft` is
+ * unbounded); the runtime then gates, refreshes, corrects or reviews it on
+ * its ordinary path and never parks it for a spent count. No counter,
+ * reservation or review moves here, and a published head and pull request are
+ * required.
  */
 export function planRaisedCeilingReadmission(
   snapshot: RepairStateSnapshotV1,

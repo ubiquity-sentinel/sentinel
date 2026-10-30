@@ -1,23 +1,24 @@
 /**
- * The hard review-round ceiling (owner decision 2026-10-16: "ai.ubq.fi issue
- * 684 / PR 1059 reached 44 rounds; 44 rounds is insane, 3 round max").
+ * Review-round accounting (owner directive 2026-10-30: the review-round
+ * ceiling is not a permanent park).
  *
  * Pure policy shared by the runtime repair loop and the protected launcher:
- * no I/O or clock, so the launcher can ship it before
- * the runtime does. A task has spent the larger of its unrefunded
- * `review_request` admissions and its review-round counter less its refunds;
- * once that reaches its ceiling no further review is requested anywhere, and
- * a record that could only continue through another review parks with one of
- * the fixed messages below (its PR, head, evidence and charges kept).
+ * no I/O or clock. A task's rounds are still counted from the durable
+ * `review_request` admissions and its review-round counter less refunds: that
+ * history is accounting and is never reset. It no longer bounds admission:
+ * `reviewRoundsLeft` always leaves another round, and no path parks a record
+ * because a round count is spent. A record keeps iterating (review -> fix ->
+ * review) until its current head has a completed review with no P0, or a
+ * different blocker applies.
+ *
+ * The fixed `REVIEW_ROUND_CEILING_*` messages and `ceilingParkMessage` remain
+ * only to recognize historical parks and the carried-delivery timeout/stall
+ * parks that share the prefix. No new ordinary review-round park is written.
  *
  * Rollback contract: nothing here is persisted except a blocker of the
- * existing `other` kind whose message starts with `REVIEW_ROUND_CEILING_PREFIX`,
- * which no generation-79 re-admission, re-arm or recovery rule matches.
- *
- * Delivery contract: a park is never handed back for review. Only the
- * REVIEWED and BASE_MOVED parks (`isDeliverableReviewRoundCeilingPark`) may be
- * merged, and only by the spent-round delivery rule, which re-verifies the
- * latest completed current-head review and the required CI itself.
+ * existing `other` kind whose message starts with `REVIEW_ROUND_CEILING_PREFIX`.
+ * The legacy cutoff helpers remain for the launcher's historical class
+ * reporting; they no longer grant or withhold a review round.
  */
 import { hasBlockingSeverity } from "../contracts/review-receipt.ts";
 import type { BudgetReservationV1 } from "../contracts/budget-reservation.ts";
@@ -28,10 +29,10 @@ import { HOSTED_RUNTIME_ROLLOUT } from "../host/hosted-runtime-rollout.ts";
 import { isPassportWorkTrial } from "./passport-work-trial.ts";
 
 /**
- * Review rounds a CI-first-era task may spend. Owner decision 2026-10-16 set
- * three; owner decision 2026-10-24 ("you can have up to five reviews") raised
- * it to five after native reviews returned unparseable results on about one
- * attempt in three, each spending a round. See `reviewRoundCeilingFor`.
+ * The last owner-set review-round ceiling (five, owner decision 2026-10-24).
+ * Retained as accounting history and for exported API compatibility; owner
+ * directive 2026-10-30 removed it as an admission limit. No path may park a
+ * record at this count.
  */
 export const MAX_REVIEW_ROUNDS = 5;
 
@@ -442,20 +443,6 @@ export function reviewRoundCeilingFor(
 }
 
 /**
- * The record's ceiling: its legacy pin + 1 once that final round is armed,
- * otherwise `reviewRoundCeilingFor`.
- */
-export function reviewRoundCeiling(
-  snapshot: ReviewedLedger,
-  record: RoundRecord,
-  cutoff?: LegacyCutoff,
-): number {
-  return legacyFinalRoundArmed(snapshot, record, cutoff)
-    ? legacyReviewRoundPin(snapshot, record, cutoff)! + 1
-    : reviewRoundCeilingFor(snapshot, record);
-}
-
-/**
  * The admission the next review request completes instead of charging anew:
  * still `reserved` at the record's next attempt on its current head while no
  * intent names it (the admission was written, its intent write was lost).
@@ -493,9 +480,10 @@ export function reviewRoundsSpent(
 }
 
 /**
- * True once the task has spent its ordinary ceiling (`reviewRoundCeilingFor`) by
- * the same count. The spent-round delivery rule qualifies a record on this: a
- * legacy record's one final round is extra, kept for a CI-fixed head.
+ * Historical accounting predicate: true once the task has passed its last
+ * owner-set ceiling (`reviewRoundCeilingFor`). Retained for the launcher's
+ * spent-delivery and diagnostic consumers; it never gates a review, a fix or
+ * a merge by itself, because `reviewRoundsLeft` no longer runs out.
  */
 export function ordinaryReviewRoundsSpent(
   snapshot: Ledger,
@@ -506,21 +494,17 @@ export function ordinaryReviewRoundsSpent(
 }
 
 /**
- * Reviews this task may still request: its ceiling (`reviewRoundCeilingFor`)
- * minus the rounds spent, never below zero, or exactly the one final round of
- * a legacy record once a CI fix armed it (`legacyFinalRoundArmed`).
+ * Reviews this task may still request. The review-round ceiling is retired
+ * (owner directive 2026-10-30), so this is always the unbounded value: the
+ * spent counter stays accounting, never an admission gate. Retained with its
+ * existing signature for every runtime and launcher caller.
  */
 export function reviewRoundsLeft(
-  snapshot: ReviewedLedger,
-  record: RoundRecord,
-  cutoff?: LegacyCutoff,
+  _snapshot: ReviewedLedger,
+  _record: RoundRecord,
+  _cutoff?: LegacyCutoff,
 ): number {
-  if (legacyFinalRoundArmed(snapshot, record, cutoff)) return 1;
-  return Math.max(
-    0,
-    reviewRoundCeilingFor(snapshot, record) -
-      reviewRoundsSpent(snapshot, record),
-  );
+  return Number.MAX_SAFE_INTEGER;
 }
 
 /**

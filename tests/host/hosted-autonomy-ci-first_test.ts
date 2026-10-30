@@ -12,8 +12,8 @@
  *   to `work` for the runtime's deterministic, uncharged refresh (its CI is
  *   then gated before any review); a red one returns with the CI fix marker
  *   only under an allowlisted fix runtime (generation 81+, none pinned yet);
- * - L4: the launcher never re-admits a fix for a record whose three CI fixes
- *   are spent, and never refreshes its red head on a moved base.
+ * - L4: the launcher never refreshes a red head on a moved base (the
+ *   CI-fix attempt cap itself is retired; counters remain accounting).
  */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -27,8 +27,6 @@ import {
   ciCorrectable,
 } from "../../src/repair/ci-rejection.ts";
 import {
-  CI_FIRST_REVIEW_ROUNDS,
-  CI_FIX_ATTEMPTS,
   HOSTED_PRE_REVIEW_CI_FIXES,
   preReviewCiFixRouteOpen,
 } from "../../src/repair/ci-first-policy.ts";
@@ -629,14 +627,10 @@ Deno.test("CI first: a healthy self-installed runtime is proven without a histor
 });
 
 Deno.test("CI first: generation 81 opens the hosted pre-review fix route; its fix allowlist waits for the pin", () => {
-  assert.equal(CI_FIX_ATTEMPTS, 3);
-  assert.equal(
-    CI_FIRST_REVIEW_ROUNDS,
-    5,
-    "owner decisions: 3 rounds (2026-10-16), raised to 5 (2026-10-24)",
-  );
-  assert.equal(CI_CORRECTION_REVIEW_ROUNDS, CI_FIRST_REVIEW_ROUNDS);
-  assert.equal(HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS, CI_FIRST_REVIEW_ROUNDS);
+  // Historical accounting values only: owner directive 2026-10-30 removed
+  // the CI-fix and review-round caps as admission limits.
+  assert.equal(CI_CORRECTION_REVIEW_ROUNDS, 5);
+  assert.equal(HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS, 5);
   assert.equal(HOSTED_PRE_REVIEW_CI_FIXES, true, "R80 isolates the cell");
   assert.equal(preReviewCiFixRouteOpen({}), true, "open in process");
   assert.equal(
