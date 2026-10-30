@@ -219,6 +219,27 @@ function publishedHead(
 }
 
 /**
+ * A published CI park that may need evidence. This grants no readmission or
+ * model-start authority; those predicates separately require settlement.
+ */
+export function preReviewCiEvidenceCandidate(
+  snapshot: Pick<RepairStateSnapshotV1, "releaseRequests">,
+  record: WorkRow,
+  prefixes: readonly string[] = CI_PRE_REVIEW_PARK_PREFIXES,
+): boolean {
+  const blocker = record.blocker;
+  const accepted = isPassportWorkTrial(record.repository) &&
+      prefixes === CI_PRE_REVIEW_PARK_PREFIXES
+    ? [...prefixes, CI_FIX_EXHAUSTED_PREFIX]
+    : prefixes;
+  return record.nextStep === "blocked" && record.intent === null &&
+    blocker !== null && blocker.kind === "other" &&
+    accepted.some((prefix) => blocker.message.startsWith(prefix)) &&
+    record.related.issueNumber !== null && ciPublicationShape(record) &&
+    publishedHead(snapshot, record);
+}
+
+/**
  * Parked by the runtime's pre-review CI gate on its published head, red or
  * pending past bound (`prefixes`): the parks every pre-review rule takes.
  */
@@ -229,19 +250,11 @@ export function preReviewCiParked(
   record: WorkRow,
   prefixes: readonly string[] = CI_PRE_REVIEW_PARK_PREFIXES,
 ): boolean {
-  const blocker = record.blocker;
-  const trial = isPassportWorkTrial(record.repository);
   if (
-    trial && !passportTrialCanReconsider(record, snapshot.reservations ?? [])
+    isPassportWorkTrial(record.repository) &&
+    !passportTrialCanReconsider(record, snapshot.reservations ?? [])
   ) return false;
-  const accepted = trial && prefixes === CI_PRE_REVIEW_PARK_PREFIXES
-    ? [...prefixes, CI_FIX_EXHAUSTED_PREFIX]
-    : prefixes;
-  return record.nextStep === "blocked" && record.intent === null &&
-    blocker !== null && blocker.kind === "other" &&
-    accepted.some((prefix) => blocker.message.startsWith(prefix)) &&
-    record.related.issueNumber !== null && ciPublicationShape(record) &&
-    publishedHead(snapshot, record);
+  return preReviewCiEvidenceCandidate(snapshot, record, prefixes);
 }
 
 /**
