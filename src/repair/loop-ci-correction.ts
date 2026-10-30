@@ -31,6 +31,7 @@ import {
   type CiDispositionV1,
   ciFixExhaustedDetail,
   failedChecks,
+  readChecksWithEvents,
   unattributedDetail,
 } from "./ci-rejection.ts";
 import { ciFixesLeft, RED_BASE_RECHECK_MS } from "./ci-first-policy.ts";
@@ -77,7 +78,8 @@ async function attributeAgainstBase(
   failed: readonly GitHubCheckV1[],
 ): Promise<CiDispositionV1 | null> {
   // Only the failed names are read on the base (see `gateReviewOnCi`).
-  const base = await deps.github.readChecks(
+  const base = await readChecksWithEvents(
+    deps.github,
     record.target.base,
     new Set(failed.map((check) => check.name)),
   );
@@ -99,7 +101,7 @@ export async function observeHeadFailure(
 ): Promise<CiDispositionV1 | { kind: "clean" } | null> {
   const head = record.target.head;
   if (head === null) return { kind: "clean" };
-  const observed = await deps.github.readChecks(head);
+  const observed = await readChecksWithEvents(deps.github, head);
   if (!observed.ok) return null;
   const failed = failedChecks(observed.value.checks);
   if (failed.length === 0) return { kind: "clean" };

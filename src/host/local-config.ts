@@ -305,6 +305,7 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
       // round), deferred on a red base or blocked; the launcher rule decides
       // its re-admission. A model-authored candidate must never weaken them.
       "src/repair/ci-rejection.ts",
+      "src/repair/ci-correction-policy.ts",
       "src/repair/loop-ci-correction.ts",
       "ops/hosted-autonomy-ci-retries.ts",
       // The CI-first gate (owner decision 2026-10-16): a head is reviewed

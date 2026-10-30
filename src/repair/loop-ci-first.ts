@@ -50,6 +50,8 @@ import {
   attributeFailedChecks,
   baseRepairFindingOpen,
   checkPending,
+  CI_CONFIGURATION_REASON,
+  ciConfigurationDetail,
   ciCorrectable,
   ciCorrectionFinding,
   ciCorrectionRouteOpen,
@@ -60,6 +62,7 @@ import {
   preReviewPendingDetail,
   preReviewRedDetail,
   preReviewUnattributedDetail,
+  readChecksWithEvents,
 } from "./ci-rejection.ts";
 import {
   ciFixesLeft,
@@ -250,7 +253,7 @@ export async function gateReviewOnCi(
     return { kind: "deferred", detail: cooling.detail };
   }
   const now = deps.clock.now();
-  const observed = await deps.github.readChecks(head);
+  const observed = await readChecksWithEvents(deps.github, head);
   if (!observed.ok) return UNAVAILABLE;
   const checks = observed.value.checks;
   const decision = decideCiGate(checks);
@@ -282,7 +285,8 @@ export async function gateReviewOnCi(
   // Only the failed names are attributed, so only they are read on the base:
   // an unrelated base run over the strict bounds (the self `development`
   // tip's `matrix_cell (<cellId>)` runs) cannot defer a red head forever.
-  const base = await deps.github.readChecks(
+  const base = await readChecksWithEvents(
+    deps.github,
     record.target.base,
     new Set(failed.map((check) => check.name)),
   );
@@ -294,6 +298,21 @@ export async function gateReviewOnCi(
   );
   // A base-repair recognition or tip read that is unavailable mutates nothing.
   if (disposition === null) return UNAVAILABLE;
+  if (
+    disposition.kind === "unattributed" &&
+    disposition.reason === CI_CONFIGURATION_REASON
+  ) {
+    return persistWork(
+      deps,
+      context,
+      markBlocked(
+        record,
+        "other",
+        ciConfigurationDetail(disposition.configuration ?? []),
+        now,
+      ),
+    );
+  }
   switch (disposition.kind) {
     case "candidate":
       return routeCandidateFailure(
@@ -356,6 +375,21 @@ export async function confirmPreReviewCiFix(
   const observed = await observeHeadFailure(deps, record);
   if (observed === null) return UNAVAILABLE;
   const now = deps.clock.now();
+  if (
+    observed.kind === "unattributed" &&
+    observed.reason === CI_CONFIGURATION_REASON
+  ) {
+    return persistWork(
+      deps,
+      context,
+      markBlocked(
+        record,
+        "other",
+        ciConfigurationDetail(observed.configuration ?? []),
+        now,
+      ),
+    );
+  }
   switch (observed.kind) {
     case "candidate":
       return {

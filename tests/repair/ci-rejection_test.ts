@@ -7,7 +7,7 @@
  */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
-import type { GitHubCheckV1 } from "../../src/contracts/ports.ts";
+import { type GitHubCheckV1, portOk } from "../../src/contracts/ports.ts";
 import { parseRepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import { createLocalRepositoryConfig } from "../../src/host/local-config.ts";
@@ -20,7 +20,9 @@ import {
   trustedCheckName,
   UNTRUSTED_CHECK_NAME,
 } from "../../src/repair/ci-rejection.ts";
+import { ciFixMarker } from "../../src/repair/ci-first-policy.ts";
 import { isMatrixImplementationReadyV1 } from "../../src/repair/loop-eligibility.ts";
+import { touchesProtected } from "../../src/repair/loop-records.ts";
 import {
   correctionFindings,
   headAwaitsCiCorrection,
@@ -36,6 +38,8 @@ import {
   workRecord,
 } from "../state/helpers.ts";
 import { repairConfigs } from "./helpers.ts";
+import { ciFirstRig, taskRecord } from "./ci-first-rig.ts";
+import { ciRig } from "./ci-correction-rig.ts";
 import { seededSnapshot } from "./loop-rig.ts";
 
 /** No review charge: the round count is the record's own counter. */
@@ -457,6 +461,7 @@ Deno.test("the CI correction decision files are protected from model-authored ca
   for (
     const path of [
       "src/repair/ci-rejection.ts",
+      "src/repair/ci-correction-policy.ts",
       "src/repair/loop-ci-correction.ts",
       "ops/hosted-autonomy-ci-retries.ts",
       // The launcher files that apply the CI re-admission gate, supply the
@@ -469,5 +474,207 @@ Deno.test("the CI correction decision files are protected from model-authored ca
       // for its once-per-head re-run, and re-runs it.
       "ops/hosted-autonomy-ci-rerun.ts",
     ]
-  ) assert.ok(protectedPaths.includes(path), path);
+  ) {
+    assert.ok(protectedPaths.includes(path), path);
+    assert.equal(touchesProtected(protectedPaths, path), true, path);
+  }
+});
+
+/** A check carrying the workflow event its transport observed (in memory only). */
+function evented(value: GitHubCheckV1, event: string): GitHubCheckV1 {
+  return { ...value, event };
+}
+
+/**
+ * Serve checks through the port's event option: a read without
+ * `{ events: true }` sees the legacy shape with no workflow event, exactly
+ * like a transport that cannot prove it.
+ */
+function eventAwareChecks(
+  observed: Record<string, GitHubCheckV1[]>,
+  reads: { head: GitSha; events: boolean }[],
+) {
+  return (
+    head: GitSha,
+    names?: ReadonlySet<string>,
+    options?: { events?: boolean },
+  ) => {
+    const events = options?.events === true;
+    reads.push({ head, events });
+    const rows = (observed[head] ?? []).filter((value) =>
+      names === undefined || names.has(value.name)
+    ).map((value) => {
+      if (events || value.event === undefined) return value;
+      const { event: _event, ...plain } = value;
+      return plain;
+    });
+    return Promise.resolve(portOk({ head, checks: rows }));
+  };
+}
+
+Deno.test("ci configuration: a head failure green on its base only under another event is not the candidate's", () => {
+  const attribution = attributeFailedChecks(
+    [evented(check("validate", "failure"), "pull_request")],
+    [evented(base("validate", "success"), "push")],
+  );
+  assert.deepEqual(names(attribution.candidate), []);
+  const disposition = decideCiDisposition(attribution);
+  assert.equal(
+    (disposition as { reason?: string }).reason,
+    "ci_configuration",
+  );
+  assert.deepEqual(
+    (disposition as { checks?: GitHubCheckV1[] }).checks?.map((value) =>
+      value.name
+    ),
+    ["validate"],
+  );
+});
+
+Deno.test("ci configuration: a head failure whose job produced no step or runner is configuration, not the candidate's", () => {
+  const neverStarted = {
+    ...check("validate", "failure"),
+    neverStarted: true,
+  } as GitHubCheckV1;
+  const attribution = attributeFailedChecks(
+    [neverStarted],
+    [base("validate", "success")],
+  );
+  assert.deepEqual(names(attribution.candidate), []);
+  const disposition = decideCiDisposition(attribution);
+  assert.equal(
+    (disposition as { reason?: string }).reason,
+    "ci_configuration",
+  );
+});
+
+Deno.test("ci configuration: a like-for-like head failure on the same event stays the candidate's", () => {
+  const attribution = attributeFailedChecks(
+    [evented(check("validate", "failure"), "pull_request")],
+    [evented(base("validate", "success"), "pull_request")],
+  );
+  assert.deepEqual(names(attribution.candidate), ["validate"]);
+  const disposition = decideCiDisposition(attribution);
+  assert.equal(disposition.kind, "candidate");
+  assert.equal((disposition as { reason?: string }).reason, undefined);
+});
+
+Deno.test("ci configuration: an event-scoped red head parks uncharged and starts no CI fix", async () => {
+  const { rig, charges } = await ciFirstRig("cf-config-event-scope", {
+    checks: {},
+  });
+  const observed: Record<string, GitHubCheckV1[]> = {
+    [SHA3]: [evented(check("validate", "failure"), "pull_request")],
+    [SHA1]: [evented(base("validate", "success"), "push")],
+  };
+  rig.github.readChecks = eventAwareChecks(observed, []);
+  try {
+    const outcome = await rig.run();
+    assert.equal(outcome.status, "idle", JSON.stringify(outcome));
+    assert.equal(rig.model.requests.length, 0, "no model start");
+    const state = await rig.snapshot();
+    const work = taskRecord(state);
+    assert.equal(work.nextStep, "blocked");
+    assert.match(
+      work.blocker?.message ?? "",
+      /^CI configuration defect, not the candidate's: validate\(failure on pull_request; base success only on push\)\./,
+    );
+    assert.equal(work.counters.retries, 0, "no CI fix retry charged");
+    assert.deepEqual(state.reservations, charges, "nothing reserved");
+  } finally {
+    await rig.ctx.cleanup();
+  }
+});
+
+Deno.test("ci configuration: revalidating an awaiting CI fix requests events and parks, never confirming", async () => {
+  const { rig, charges } = await ciFirstRig("cf-config-revalidate", {
+    checks: {},
+    wait: ciFixMarker(T0),
+  });
+  const observed: Record<string, GitHubCheckV1[]> = {
+    [SHA3]: [evented(check("validate", "failure"), "pull_request")],
+    [SHA1]: [evented(base("validate", "success"), "push")],
+  };
+  const reads: { head: GitSha; events: boolean }[] = [];
+  rig.github.readChecks = eventAwareChecks(observed, reads);
+  try {
+    const outcome = await rig.run();
+    assert.equal(outcome.status, "idle", JSON.stringify(outcome));
+    assert.equal(rig.model.requests.length, 0, "no CI fix is confirmed");
+    assert.ok(reads.length >= 2, "head and base were re-read");
+    assert.ok(reads.every((read) => read.events), JSON.stringify(reads));
+    const state = await rig.snapshot();
+    const work = taskRecord(state);
+    assert.equal(work.nextStep, "blocked");
+    assert.match(
+      work.blocker?.message ?? "",
+      /^CI configuration defect, not the candidate's: validate\(failure on pull_request; base success only on push\)\./,
+    );
+    assert.equal(work.counters.retries, 0, "no CI fix retry charged");
+    assert.deepEqual(state.reservations, charges, "nothing reserved");
+  } finally {
+    await rig.ctx.cleanup();
+  }
+});
+
+Deno.test("ci configuration: a reviewed head awaiting correction revalidates with events and parks, never confirming", async () => {
+  const { rig, charges } = await ciRig("cf-config-correction", {
+    checks: {},
+    nextStep: "work",
+  });
+  const observed: Record<string, GitHubCheckV1[]> = {
+    [SHA3]: [evented(check("validate", "failure"), "pull_request")],
+    [SHA1]: [evented(base("validate", "success"), "push")],
+  };
+  const reads: { head: GitSha; events: boolean }[] = [];
+  rig.github.readChecks = eventAwareChecks(observed, reads);
+  try {
+    const outcome = await rig.run();
+    assert.equal(outcome.status, "idle", JSON.stringify(outcome));
+    assert.equal(rig.model.requests.length, 0, "no correction is confirmed");
+    assert.ok(reads.length >= 2, "head and base were re-read");
+    assert.ok(reads.every((read) => read.events), JSON.stringify(reads));
+    const state = await rig.snapshot();
+    const work = state.work[0];
+    assert.equal(work.nextStep, "blocked");
+    assert.match(
+      work.blocker?.message ?? "",
+      /^CI configuration defect, not the candidate's: validate\(failure on pull_request; base success only on push\)\./,
+    );
+    assert.equal(work.counters.reviewRounds, 1, "no round spent");
+    assert.equal(work.counters.retries, 0, "no CI fix charged");
+    assert.deepEqual(state.reservations, charges, "nothing charged");
+  } finally {
+    await rig.ctx.cleanup();
+  }
+});
+
+Deno.test("ci configuration: a reviewed event-scoped red head is blocked at delivery, never corrected", async () => {
+  const { rig, charges } = await ciRig("cf-config-delivery", { checks: {} });
+  const observed: Record<string, GitHubCheckV1[]> = {
+    [SHA3]: [evented(check("validate", "failure"), "pull_request")],
+    [SHA1]: [evented(base("validate", "success"), "push")],
+  };
+  const reads: { head: GitSha; events: boolean }[] = [];
+  rig.github.readChecks = eventAwareChecks(observed, reads);
+  try {
+    const outcome = await rig.run();
+    assert.equal(outcome.status, "idle", JSON.stringify(outcome));
+    assert.equal(rig.model.requests.length, 0, "no correction is started");
+    assert.equal(rig.github.calls.includes("merge"), false);
+    assert.ok(reads.length >= 2, "head and base were read");
+    assert.ok(reads.every((read) => read.events), JSON.stringify(reads));
+    const state = await rig.snapshot();
+    const work = state.work[0];
+    assert.equal(work.nextStep, "blocked");
+    assert.match(
+      work.blocker?.message ?? "",
+      /^CI configuration defect, not the candidate's: validate\(failure on pull_request; base success only on push\)\./,
+    );
+    assert.equal(work.counters.reviewRounds, 1, "no round spent");
+    assert.equal(work.counters.retries, 0, "no CI fix charged");
+    assert.deepEqual(state.reservations, charges, "nothing charged");
+  } finally {
+    await rig.ctx.cleanup();
+  }
 });

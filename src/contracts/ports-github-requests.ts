@@ -107,6 +107,13 @@ export interface GitHubCheckV1 {
    * persisted.
    */
   backupPeer?: { conclusion: BackupCiConclusionV1; receipt: string };
+  /**
+   * The workflow event (`pull_request`, `push`, ...) that produced this
+   * GitHub Actions check run, present only when a read explicitly asked for
+   * events and the real client proved it from the run's exact Actions id,
+   * job id and head. Never persisted; absent keeps legacy attribution.
+   */
+  event?: string;
 }
 
 /** The backup CI receipt a stand-in check carries (never persisted). */

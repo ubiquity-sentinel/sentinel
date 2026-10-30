@@ -11,11 +11,16 @@
  * proves nothing. Skipped/cancelled/neutral head conclusions are secondary:
  * they never open a charged round and never block a deferral on their own.
  * A GitHub Actions run whose job never started (`neverStarted`, a billing or
- * spending-limit stop) is no evidence on either side: it is pending on the
- * head (`checkPending`, never in `failedChecks`) and attributes nothing on the
- * base (neither red nor green there). A backup CI stand-in (`backup`, a
- * verified receipt for a never-started check) is attributed only against
- * backup evidence of the other side (`backupAttribution`).
+ * spending-limit stop) is pending on the head while backup CI may supply
+ * evidence; when classification sees one directly it is a configuration
+ * defect, never the candidate's.
+ *
+ * The comparison is like-for-like by workflow event where the transport
+ * supplies one: a head failure is judged by the base run of the same name AND
+ * event when there is one, and a head failure whose only green base evidence
+ * ran under a different event (`push` on the base, `pull_request` on the head)
+ * is CI configuration, not the candidate's (sentinel issue #177). A check
+ * without an event on either side is attributed exactly as before.
  *
  * Nothing here is persisted. The generation-76 rollback contract forbids any
  * new state shape, so every consumer re-derives the attribution from live
@@ -23,20 +28,19 @@
  * digest-bound correction request).
  */
 import type { GitSha } from "../contracts/brands.ts";
-import type { GitHubCheckV1 } from "../contracts/ports.ts";
-import type { BudgetReservationV1 } from "../contracts/budget-reservation.ts";
-import type { WorkRecordV1 } from "../contracts/work-record.ts";
-import { type LegacyCutoff, MAX_REVIEW_ROUNDS } from "./review-round-cap.ts";
+import type { GitHubCheckV1, GitHubPort } from "../contracts/ports.ts";
+import { MAX_REVIEW_ROUNDS } from "./review-round-cap.ts";
 import {
-  CI_FIX_EXHAUSTED_PREFIX,
-  CI_PRE_REVIEW_PENDING_PREFIX,
-  CI_PRE_REVIEW_RED_PREFIX,
-  ciFixesLeft,
-  reviewRoundAvailable,
-} from "./ci-first-policy.ts";
+  CI_UNATTRIBUTED_DETAIL,
+  ciLabels,
+  MAX_CI_CORRECTION_CHECKS,
+  preReviewPendingDetail,
+  trustedCheckName,
+} from "./ci-correction-policy.ts";
+
+export * from "./ci-correction-policy.ts";
 
 /**
- * Review rounds after which a candidate CI failure keeps its terminal block:
  * the hard review-round ceiling itself (`MAX_REVIEW_ROUNDS`), since once every
  * round is spent a correction can never become a reviewed verdict (the
  * one-time legacy final review aside, see `reviewRoundAvailable`). The
@@ -98,44 +102,6 @@ export function baseRepairFindingOpen(
   return deps.externalImplementations !== true || HOSTED_BASE_REPAIR_FINDING;
 }
 
-/** Bound on the failing checks one correction finding names. */
-export const MAX_CI_CORRECTION_CHECKS = 8;
-
-/**
- * Trusted check-name shape: a short job/status identifier. Anything outside
- * this closed set (control characters, prose, markup) is never carried.
- */
-export const CI_CHECK_NAME_PATTERN =
-  /^[A-Za-z0-9][A-Za-z0-9 ._:/()[\],+#@-]{0,63}$/;
-
-/** Fixed stand-in for a failing check whose name is not a trusted identifier. */
-export const UNTRUSTED_CHECK_NAME = "check with an unsupported name";
-
-/** Static terminal prefix when no base observation attributes a failure. */
-export const CI_UNATTRIBUTED_DETAIL = "CI checks failed without base evidence";
-
-/**
- * Static terminal prefix of a legacy final-round head on a moved base that is
- * red only because its reviewed base is red too (issue #155). Base evidence
- * exists, so it is not the unattributed block, and it matches no launcher
- * correction, re-run or green rule.
- */
-export const CI_BASE_RED_DETAIL = "CI checks failed on the red reviewed base";
-
-/** Exact opening of the trusted CI correction finding (planner-produced). */
-export const CI_CORRECTION_FINDING_PREFIX =
-  "Required CI checks failed on this candidate while the same checks passed on its base ";
-
-/**
- * Exact opening of the trusted CI fix finding of a base-repair task
- * (`src/repair/base-repair.ts`): its head fails checks that are red on its
- * base too, the red it was filed to fix, so the finding never claims they
- * passed there. `isCiCorrectionFinding` recognises both openings; a hosted
- * run uses it only once `HOSTED_BASE_REPAIR_FINDING` is set.
- */
-export const CI_BASE_REPAIR_FINDING_PREFIX =
-  "Required CI checks failed on this candidate and on its red base ";
-
 /**
  * Head conclusions that can be the candidate's own failure (and the only
  * head failures a red base holds, `base_red`).
@@ -151,37 +117,100 @@ export const RED_BASE_CONCLUSIONS: readonly string[] = [
   "action_required",
 ];
 
-/** The carried identity of one observed check name. */
-export function trustedCheckName(name: string): string {
-  return CI_CHECK_NAME_PATTERN.test(name) ? name : UNTRUSTED_CHECK_NAME;
+/** A check carrying its in-memory workflow event, when a transport proves it. */
+export type CiObservedCheckV1 = GitHubCheckV1;
+
+/**
+ * Narrow, non-charging reason for a head failure that is the target
+ * workflow's configuration, not the candidate's (sentinel issue #177).
+ */
+export const CI_CONFIGURATION_REASON = "ci_configuration" as const;
+
+/** Trusted workflow-event shape; anything else is never carried or rendered. */
+export const CI_EVENT_PATTERN = /^[a-z][a-z_]{0,39}$/;
+
+/**
+ * Read checks with the optional workflow-event enrichment. Every CI decision
+ * that may classify a configuration defect asks for it; a transport without
+ * the capability returns no event and keeps the legacy attribution.
+ */
+export function readChecksWithEvents(
+  github: Pick<GitHubPort, "readChecks">,
+  head: GitSha,
+  names?: ReadonlySet<string>,
+): ReturnType<GitHubPort["readChecks"]> {
+  return github.readChecks(head, names, { events: true });
+}
+
+/** One failed head check that no candidate change can fix. */
+export interface CiConfigurationV1 {
+  /** The failure/timed_out head check. */
+  head: CiObservedCheckV1;
+  /**
+   * The green same-name base check that ran under another event; absent for
+   * a failed job that produced no step and no runner.
+   */
+  base?: CiObservedCheckV1;
 }
 
 /**
- * Latest observation per check name. GitHub returns historical observations;
- * recency is by start time, so a newer in-progress rerun overrides an older
- * completed run (exactly the merge gate's dedupe).
+ * In-memory marker from a classified head check to its configuration defect.
+ * It lets the existing detail functions surface the reason without adding a
+ * disposition kind every current consumer switch would have to learn.
  */
-export function latestChecks(
-  checks: readonly GitHubCheckV1[],
-): GitHubCheckV1[] {
-  const latest = new Map<string, GitHubCheckV1>();
-  const time = (check: GitHubCheckV1) =>
+const CONFIGURATION_BY_CHECK = new WeakMap<object, CiConfigurationV1>();
+
+function markConfiguration(defect: CiConfigurationV1): void {
+  CONFIGURATION_BY_CHECK.set(defect.head, defect);
+}
+
+function configurationDefects(
+  checks: readonly CiObservedCheckV1[],
+): CiConfigurationV1[] {
+  const defects: CiConfigurationV1[] = [];
+  for (const check of checks) {
+    const defect = CONFIGURATION_BY_CHECK.get(check);
+    if (defect !== undefined) defects.push(defect);
+  }
+  return defects;
+}
+
+/**
+ * Latest observation per key, recency by start time (else completion time):
+ * a newer in-progress rerun overrides an older completed run (exactly the
+ * merge gate's dedupe).
+ */
+function latestBy(
+  checks: readonly CiObservedCheckV1[],
+  key: (check: CiObservedCheckV1) => string,
+): Map<string, CiObservedCheckV1> {
+  const latest = new Map<string, CiObservedCheckV1>();
+  const time = (check: CiObservedCheckV1) =>
     check.startedAt ?? check.completedAt ?? -1;
   for (const check of checks) {
-    const prev = latest.get(check.name);
+    const prev = latest.get(key(check));
     if (prev === undefined || time(check) > time(prev)) {
-      latest.set(check.name, check);
+      latest.set(key(check), check);
     }
   }
-  return [...latest.values()];
+  return latest;
+}
+
+/** Latest observation per check name. */
+export function latestChecks(
+  checks: readonly CiObservedCheckV1[],
+): CiObservedCheckV1[] {
+  return [...latestBy(checks, (check) => check.name).values()];
+}
+
+/** Identity of one check name under one workflow event. */
+function eventKey(check: CiObservedCheckV1): string {
+  return `${check.event ?? ""}\u0000${check.name}`;
 }
 
 /**
  * Conclusions that are not failures: `success`, and the jobs a workflow
  * itself chose not to run (`skipped`) or marked informational (`neutral`).
- * Owner directive 2026-10-24: a job the target's own CI did not run is not a
- * red check; only a job that ran and did not succeed, timed out, was cancelled
- * or requires action is.
  */
 export const GREEN_CONCLUSIONS: readonly string[] = [
   "success",
@@ -196,8 +225,8 @@ export function isGreenConclusion(conclusion: string | null): boolean {
 /**
  * A check that has not produced evidence yet: still queued or running, or a
  * GitHub Actions run whose job never started (completed `failure` without a
- * step or a runner, a billing or spending-limit stop). Nothing of the
- * repository ran in either case, so it is awaited, never judged.
+ * step or a runner) while backup CI may still supply evidence. Nothing of
+ * the repository ran, so it is awaited, never judged.
  */
 export function checkPending(check: GitHubCheckV1): boolean {
   return check.status !== "completed" || check.neverStarted === true;
@@ -209,7 +238,7 @@ export function checkPending(check: GitHubCheckV1): boolean {
  */
 export function failedChecks(
   checks: readonly GitHubCheckV1[],
-): GitHubCheckV1[] {
+): CiObservedCheckV1[] {
   return latestChecks(checks).filter((check) =>
     !checkPending(check) && !isGreenConclusion(check.conclusion)
   );
@@ -218,19 +247,24 @@ export function failedChecks(
 /** Failed head checks partitioned by the base observation of the same name. */
 export interface CiAttributionV1 {
   /** Head failure/timed_out, passed on the base: broken by the candidate. */
-  candidate: GitHubCheckV1[];
+  candidate: CiObservedCheckV1[];
+  /**
+   * Head failure/timed_out whose same-name base check passed only under a
+   * different workflow event, or whose job never started: CI configuration.
+   */
+  configuration: CiConfigurationV1[];
   /** Head failure/timed_out, failure/timed_out/action_required on the base. */
-  baseRed: GitHubCheckV1[];
+  baseRed: CiObservedCheckV1[];
   /** Head failure/timed_out, still running on the base. */
-  basePending: GitHubCheckV1[];
+  basePending: CiObservedCheckV1[];
   /**
    * Head failure/timed_out with no usable base evidence (the base never ran
    * the check, ended it skipped/neutral/cancelled/stale, or its job never
    * started).
    */
-  unattributed: GitHubCheckV1[];
-  /** Head cancelled/action_required (or never started): never attributed. */
-  secondary: GitHubCheckV1[];
+  unattributed: CiObservedCheckV1[];
+  /** Head cancelled/action_required: never attributed. */
+  secondary: CiObservedCheckV1[];
 }
 
 /**
@@ -242,8 +276,8 @@ export interface CiAttributionV1 {
  * `baseRed`), and the backup planner schedules the missing unit.
  */
 function backupAttribution(
-  head: GitHubCheckV1,
-  base: GitHubCheckV1 | undefined,
+  head: CiObservedCheckV1,
+  base: CiObservedCheckV1 | undefined,
 ): "candidate" | "baseRed" | "unattributed" | null {
   const red = (conclusion: string | null | undefined) =>
     RED_BASE_CONCLUSIONS.includes(conclusion ?? "");
@@ -260,29 +294,47 @@ function backupAttribution(
   return red(base.conclusion) ? "baseRed" : "unattributed";
 }
 
+/**
+ * Attribute failed head checks against the same-named base observations.
+ * Where both sides carry a workflow event, the base run of the same event
+ * decides first. A green same-name base run under a different event, or a
+ * head job that never started, is CI configuration and charges nothing.
+ */
 export function attributeFailedChecks(
-  failed: readonly GitHubCheckV1[],
-  baseChecks: readonly GitHubCheckV1[],
+  failed: readonly CiObservedCheckV1[],
+  baseChecks: readonly CiObservedCheckV1[],
 ): CiAttributionV1 {
-  const base = new Map(
-    latestChecks(baseChecks).map((check) => [check.name, check]),
+  const base = latestBy(baseChecks, (check) => check.name);
+  const sameEvent = latestBy(
+    baseChecks.filter((check) => check.event !== undefined),
+    eventKey,
   );
   const attribution: CiAttributionV1 = {
     candidate: [],
+    configuration: [],
     baseRed: [],
     basePending: [],
     unattributed: [],
     secondary: [],
   };
   for (const check of failed) {
-    if (
-      check.neverStarted === true ||
-      !CANDIDATE_CONCLUSIONS.includes(check.conclusion ?? "")
-    ) {
+    // A live re-derivation replaces any earlier classification of this run.
+    CONFIGURATION_BY_CHECK.delete(check);
+    if (check.neverStarted === true && check.backup === undefined) {
+      const defect = { head: check };
+      markConfiguration(defect);
+      attribution.configuration.push(defect);
+      continue;
+    }
+    if (!CANDIDATE_CONCLUSIONS.includes(check.conclusion ?? "")) {
       attribution.secondary.push(check);
       continue;
     }
-    const observed = base.get(check.name);
+    // The base run of the same event decides when there is one; otherwise the
+    // latest base run of the name, exactly as before the event was carried.
+    const observed = (check.event === undefined
+      ? undefined
+      : sameEvent.get(eventKey(check))) ?? base.get(check.name);
     const backed = backupAttribution(check, observed);
     if (backed !== null) {
       attribution[backed].push(check);
@@ -291,7 +343,14 @@ export function attributeFailedChecks(
     } else if (observed.status !== "completed") {
       attribution.basePending.push(check);
     } else if (observed.conclusion === "success") {
-      attribution.candidate.push(check);
+      if (
+        check.event !== undefined && observed.event !== undefined &&
+        observed.event !== check.event
+      ) {
+        const defect = { head: check, base: observed };
+        markConfiguration(defect);
+        attribution.configuration.push(defect);
+      } else attribution.candidate.push(check);
     } else if (RED_BASE_CONCLUSIONS.includes(observed.conclusion ?? "")) {
       attribution.baseRed.push(check);
     } else attribution.unattributed.push(check);
@@ -300,27 +359,41 @@ export function attributeFailedChecks(
 }
 
 /**
- * What the failed head checks prove, in precedence order. `redBase` marks a
- * base-repair task's own `base_red` (`ownBaseRed`): its checks are red on the
- * base too, and its CI fix finding says so.
+ * What the failed head checks prove, in precedence order. A configuration
+ * defect is the existing non-charging `unattributed` kind with the narrow
+ * `ci_configuration` reason and its defects carried for the detail text.
  */
 export type CiDispositionV1 =
-  | { kind: "candidate"; checks: GitHubCheckV1[]; redBase?: true }
+  | { kind: "candidate"; checks: CiObservedCheckV1[]; redBase?: true }
   | { kind: "base_pending" }
   | { kind: "base_red" }
-  | { kind: "unattributed"; checks: GitHubCheckV1[] };
+  | {
+    kind: "unattributed";
+    checks: CiObservedCheckV1[];
+    reason?: typeof CI_CONFIGURATION_REASON;
+    configuration?: CiConfigurationV1[];
+  };
 
 /**
  * A candidate-caused failure decides first (the correction re-runs every
- * check); a running base check is awaited; a red base defers only when every
- * real head failure is red there too; anything else proves nothing. Secondary
- * conclusions alone are unattributed.
+ * check); then a configuration defect, which no candidate change can fix and
+ * which needs the owner's workflow change; a running base check is awaited; a
+ * red base defers only when every real head failure is red there too;
+ * anything else proves nothing. Secondary conclusions alone are unattributed.
  */
 export function decideCiDisposition(
   attribution: CiAttributionV1,
 ): CiDispositionV1 {
   if (attribution.candidate.length > 0) {
     return { kind: "candidate", checks: attribution.candidate };
+  }
+  if (attribution.configuration.length > 0) {
+    return {
+      kind: "unattributed",
+      checks: attribution.configuration.map((defect) => defect.head),
+      reason: CI_CONFIGURATION_REASON,
+      configuration: attribution.configuration,
+    };
   }
   if (attribution.basePending.length > 0) return { kind: "base_pending" };
   if (attribution.baseRed.length > 0 && attribution.unattributed.length === 0) {
@@ -334,194 +407,79 @@ export function decideCiDisposition(
   };
 }
 
-/** Deduped, bounded `name(conclusion)` labels over trusted names only. */
-function labels(
-  checks: readonly GitHubCheckV1[],
-  format: (name: string, conclusion: string) => string,
+/**
+ * Opening of the park of a head whose failures are CI configuration, not the
+ * candidate's (sentinel issue #177). It matches no launcher re-admission
+ * prefix: the record stays parked, uncharged, for the owner, since the fix
+ * belongs in the target's workflow (a protected path no model worker may
+ * publish).
+ */
+export const CI_CONFIGURATION_PREFIX =
+  "CI configuration defect, not the candidate's: ";
+
+function trustedEvent(event: string | undefined): string {
+  return event !== undefined && CI_EVENT_PATTERN.test(event)
+    ? event
+    : "an unsupported event";
+}
+
+/**
+ * Park detail naming each configuration defect (bounded, trusted names and
+ * events only) and the cause.
+ */
+export function ciConfigurationDetail(
+  defects: readonly CiConfigurationV1[],
 ): string {
   const seen = new Set<string>();
-  for (const check of checks) {
-    seen.add(
-      format(trustedCheckName(check.name), check.conclusion ?? "unknown"),
-    );
+  let eventScoped = false;
+  let noStep = false;
+  for (const { head, base } of defects) {
+    if (base === undefined) {
+      noStep = true;
+      seen.add(
+        `${trustedCheckName(head.name)}(${
+          head.conclusion ?? "unknown"
+        } with no step or runner)`,
+      );
+    } else {
+      eventScoped = true;
+      seen.add(
+        `${trustedCheckName(head.name)}(${head.conclusion ?? "unknown"} on ${
+          trustedEvent(head.event)
+        }; base success only on ${trustedEvent(base.event)})`,
+      );
+    }
     if (seen.size >= MAX_CI_CORRECTION_CHECKS) break;
   }
-  return [...seen].join(", ");
-}
-
-/**
- * Bounded `name(conclusion)` labels of completed checks, `name(status)`
- * labels of running ones and `name(not_started)` labels of runs whose job
- * never started, over trusted names only; a head with no check runs at all
- * reads `no checks reported`.
- */
-export function ciCheckLabels(checks: readonly GitHubCheckV1[]): string {
-  if (checks.length === 0) return "no checks reported";
-  const seen = new Set<string>();
-  for (const check of checks) {
-    const state = check.neverStarted === true
-      ? "not_started"
-      : check.status === "completed"
-      ? check.conclusion ?? "unknown"
-      : check.status;
-    seen.add(`${trustedCheckName(check.name)}(${state})`);
-    if (seen.size >= MAX_CI_CORRECTION_CHECKS) break;
-  }
-  return [...seen].join(", ");
-}
-
-/** Label of a base whose check runs could not be read for coverage. */
-export const BASE_CHECKS_UNREADABLE = "base checks unreadable";
-
-/**
- * Bounded `name(absent)` labels of expected checks the head does not report
- * yet (`missingExpectedChecks`), over trusted names only; null (the base's
- * runs could not be read) is `BASE_CHECKS_UNREADABLE`.
- */
-export function absentCheckLabels(names: readonly string[] | null): string {
-  if (names === null) return BASE_CHECKS_UNREADABLE;
-  if (names.length === 0) return "no checks reported";
-  const seen = new Set<string>();
-  for (const name of names) {
-    seen.add(`${trustedCheckName(name)}(absent)`);
-    if (seen.size >= MAX_CI_CORRECTION_CHECKS) break;
-  }
-  return [...seen].join(", ");
+  const suffix = noStep
+    ? ". A failing job produced no step or runner, so no CI fix is charged; " +
+      "owner action required on the target's CI workflow."
+    : eventScoped
+    ? ". The head and base runs came from different workflow events, so no " +
+      "CI fix is charged; owner action required on the target's CI workflow."
+    : ".";
+  return `${CI_CONFIGURATION_PREFIX}${[...seen].join(", ")}${suffix}`;
 }
 
 /** Terminal blocker detail of a failure no base observation attributes. */
-export function unattributedDetail(checks: readonly GitHubCheckV1[]): string {
+export function unattributedDetail(
+  checks: readonly CiObservedCheckV1[],
+): string {
+  const defects = configurationDefects(checks);
+  if (defects.length > 0) return ciConfigurationDetail(defects);
   return `${CI_UNATTRIBUTED_DETAIL}: ${
-    labels(checks, (name, conclusion) => `${name}(${conclusion})`)
+    ciLabels(checks, (name, conclusion) => `${name}(${conclusion})`)
   }`;
-}
-
-/** Terminal blocker detail of a failure its red reviewed base shares. */
-export function baseRedDetail(checks: readonly GitHubCheckV1[]): string {
-  return `${CI_BASE_RED_DETAIL}: ${
-    labels(checks, (name, conclusion) => `${name}(${conclusion})`)
-  }`;
-}
-
-/**
- * The unresolved P1-equivalent finding a correction must resolve. It names
- * only trusted failing check names and the base: green, or red under a
- * base-repair task's own opening (`redBase`). The failing jobs' log
- * evidence is never part of it (state and the digest-bound request keep this
- * short R80-parseable text): the trusted matrix cell attaches that evidence
- * at start time beside the request (`src/host/matrix-cell-ci-evidence.ts`).
- */
-export function ciCorrectionFinding(
-  base: GitSha,
-  checks: readonly GitHubCheckV1[],
-  /** A base-repair task's own red base (`CI_BASE_REPAIR_FINDING_PREFIX`). */
-  redBase = false,
-): { severity: string; path: string | null; message: string } {
-  const prefix = redBase
-    ? CI_BASE_REPAIR_FINDING_PREFIX
-    : CI_CORRECTION_FINDING_PREFIX;
-  return {
-    severity: "P1",
-    path: null,
-    message:
-      `${prefix}${base.slice(0, 12)}: ${
-        labels(checks, (name, conclusion) => `${name} (${conclusion})`)
-      }. Reproduce them with the repository's own test and check commands and ` +
-      `fix the candidate so they pass.`,
-  };
-}
-
-/** True for the trusted planner's CI correction finding (either opening). */
-export function isCiCorrectionFinding(
-  finding: { severity: string; path: string | null; message: string },
-): boolean {
-  return finding.severity === "P1" && finding.path === null &&
-    (finding.message.startsWith(CI_CORRECTION_FINDING_PREFIX) ||
-      finding.message.startsWith(CI_BASE_REPAIR_FINDING_PREFIX));
-}
-
-/**
- * The record shape a candidate-caused CI failure may correct: an issue task
- * holding its exact publication, on a durably described candidate (a
- * candidate state without its preserved descriptor can never resume a
- * correction, exactly as the launcher excludes it), with a CI fix left
- * (`counters.retries` below `CI_FIX_ATTEMPTS`) and a review round left for
- * the fixed head (`reviewRoundAvailable`: the hard ceiling's own count over
- * the durable ledger, `reviewRoundsLeft`, so a lowered or lagging counter
- * never buys a correction no review could accept, and a legacy record whose
- * final round is still open gets its CI fixes for that one final review).
- * CI fixes never count as review rounds.
- */
-export function ciCorrectionShape(
-  record: WorkRecordV1,
-  ledger: { readonly reservations: readonly BudgetReservationV1[] },
-  /** The legacy cutoff this run evaluates under (`review-round-cap.ts`). */
-  cutoff?: LegacyCutoff,
-): boolean {
-  return ciPublicationShape(record) && ciFixesLeft(record) &&
-    reviewRoundAvailable(ledger, record, cutoff);
-}
-
-/**
- * The publication half of `ciCorrectionShape`: an issue task holding its
- * exact publication on a durably described candidate, whatever its CI fix
- * and review-round counters say.
- */
-export function ciPublicationShape(record: WorkRecordV1): boolean {
-  const candidateState = record.target.candidateState;
-  return record.source.kind === "issue" &&
-    record.target.head !== null && record.target.pr !== null &&
-    record.target.branch !== null &&
-    record.target.head !== record.target.base &&
-    (candidateState === undefined || candidateState.preserved !== null);
-}
-
-/** Terminal detail of a red head whose three CI fixes are spent. */
-export function ciFixExhaustedDetail(
-  checks: readonly GitHubCheckV1[],
-): string {
-  return `${CI_FIX_EXHAUSTED_PREFIX}${ciCheckLabels(checks)}`;
-}
-
-/** Park detail of a red, never-reviewed head no fix may start for yet. */
-export function preReviewRedDetail(checks: readonly GitHubCheckV1[]): string {
-  return `${CI_PRE_REVIEW_RED_PREFIX}${ciCheckLabels(checks)}`;
-}
-
-/** Park detail of a head whose CI did not finish within the bound. */
-export function preReviewPendingDetail(
-  checks: readonly GitHubCheckV1[],
-): string {
-  return `${CI_PRE_REVIEW_PENDING_PREFIX}${ciCheckLabels(checks)}`;
-}
-
-/**
- * Park detail of a head that still lacks an expected check after the bound:
- * the same pending park (same prefix, same launcher re-admission), naming
- * the checks GitHub has not created on the head, or a base whose runs could
- * not be read.
- */
-export function preReviewAbsentDetail(
-  names: readonly string[] | null,
-): string {
-  return `${CI_PRE_REVIEW_PENDING_PREFIX}${absentCheckLabels(names)}`;
 }
 
 /**
  * Park detail of a head whose failure no base evidence attributed within the
- * bound (the same pending park, so the same launcher rules re-admit it).
+ * bound. A classified configuration defect keeps its own precise reason.
  */
 export function preReviewUnattributedDetail(
-  checks: readonly GitHubCheckV1[],
+  checks: readonly CiObservedCheckV1[],
 ): string {
+  const defects = configurationDefects(checks);
+  if (defects.length > 0) return ciConfigurationDetail(defects);
   return `${preReviewPendingDetail(checks)} without base evidence`;
-}
-
-/** The delivery gate may open a correction: the shape and no live operation. */
-export function ciCorrectable(
-  record: WorkRecordV1,
-  ledger: { readonly reservations: readonly BudgetReservationV1[] },
-  cutoff?: LegacyCutoff,
-): boolean {
-  return record.intent === null && ciCorrectionShape(record, ledger, cutoff);
 }

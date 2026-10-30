@@ -2,7 +2,12 @@
 import type { GitHubCheckV1 } from "../contracts/ports.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { missingExpectedChecks } from "./ci-coverage.ts";
-import { checkPending, failedChecks, latestChecks } from "./ci-rejection.ts";
+import {
+  checkPending,
+  failedChecks,
+  latestChecks,
+  readChecksWithEvents,
+} from "./ci-rejection.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
 import { routeFailedDeliveryChecks } from "./loop-ci-correction.ts";
 import { isSelfScopeZero } from "./loop-legacy-loss.ts";
@@ -136,7 +141,7 @@ export async function gateDeliveryOnChecks(
   if (cooling.kind === "deferred") {
     return { kind: "deferred", detail: cooling.detail };
   }
-  const observed = await deps.github.readChecks(head);
+  const observed = await readChecksWithEvents(deps.github, head);
   if (!observed.ok) {
     // Transient read failure: defer without a wait so the next turn retries.
     return { kind: "deferred", detail: "CI check observation unavailable" };
