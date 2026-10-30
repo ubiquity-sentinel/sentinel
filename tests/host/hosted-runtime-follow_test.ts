@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   ciRun,
   D,
+  executionIntent,
   FollowFake,
   installation,
   L,
@@ -359,4 +360,112 @@ Deno.test("follow defers without a ref write when every candidate changes workfl
   assert.equal(api.launcher, L);
   assert.equal(result.exitCode, 0, "a deferral never fails the dispatcher");
   assert.equal(result.safeToDispatch, true, "the current launcher still runs");
+});
+
+Deno.test("follow proceeds past a completed but unsettled recorded execution (#m22)", async () => {
+  // Dispatch finalize cannot settle its own run while GitHub's jobs API lags.
+  // A completed run at the exact recorded identity must not block the follow.
+  for (const conclusion of ["success", "failure", "cancelled"]) {
+    const api = new FollowFake();
+    api.execution = executionIntent(88);
+    api.supervisorRuns = [
+      supervisorRun(L, 88, { status: "completed", conclusion }),
+    ];
+    const result = await api.follow();
+    assert.equal(result.journal.decision, "advanced", conclusion);
+    assert.equal(result.journal.reason, "ci_green_descendant", conclusion);
+    assert.equal(result.journal.candidateSha, OLDER, conclusion);
+    assert.equal(result.launcherSha, OLDER, conclusion);
+    assert.equal(api.launcher, OLDER, conclusion);
+    assert.equal(api.mutations, 1, conclusion);
+    assert.deepEqual(result.journal.staleExecution, {
+      runId: 88,
+      runAttempt: 1,
+    }, conclusion);
+  }
+  const dry = new FollowFake();
+  dry.execution = executionIntent(88);
+  dry.supervisorRuns = [
+    supervisorRun(L, 88, { status: "completed", conclusion: "failure" }),
+  ];
+  const dryRun = await dry.follow("off");
+  assert.equal(dryRun.journal.decision, "dry_run");
+  assert.equal(dryRun.journal.candidateSha, OLDER);
+  assert.equal(dry.mutations, 0);
+});
+
+Deno.test("follow still refuses an execution whose run is active, mismatched or unavailable (#m22)", async () => {
+  const variants: Array<[string, (api: FollowFake) => void]> = [
+    ["in_progress", (api) => {
+      api.supervisorRuns = [
+        supervisorRun(L, 88, { status: "in_progress", conclusion: null }),
+      ];
+    }],
+    ["queued", (api) => {
+      api.supervisorRuns = [supervisorRun(L, 88)];
+    }],
+    ["completed-other-head", (api) => {
+      api.supervisorRuns = [
+        supervisorRun(D, 88, { status: "completed", conclusion: "failure" }),
+      ];
+    }],
+    ["completed-other-attempt", (api) => {
+      api.supervisorRuns = [
+        supervisorRun(L, 88, {
+          status: "completed",
+          conclusion: "failure",
+          run_attempt: 2,
+        }),
+      ];
+    }],
+    ["completed-other-path", (api) => {
+      api.supervisorRuns = [
+        supervisorRun(L, 88, {
+          status: "completed",
+          conclusion: "failure",
+          path: ".github/workflows/backend-ci.yml",
+        }),
+      ];
+    }],
+    ["not-found", (api) => {
+      api.intercept = (_request, url) =>
+        url.pathname.endsWith("/actions/runs/88")
+          ? response({ message: "Not Found" }, 404)
+          : undefined;
+    }],
+  ];
+  for (const [name, arrange] of variants) {
+    const api = new FollowFake();
+    api.execution = executionIntent(88);
+    arrange(api);
+    const result = await api.follow();
+    assert.equal(result.journal.decision, "deferred", name);
+    assert.equal(result.journal.reason, "execution_in_flight", name);
+    assert.equal(result.safeToDispatch, true, name);
+    assert.equal(api.mutations, 0, name);
+  }
+});
+
+Deno.test("follow applies installation and supervisor gates after a stale execution (#m22)", async () => {
+  const unresolved = new FollowFake();
+  unresolved.execution = executionIntent(88);
+  unresolved.supervisorRuns = [
+    supervisorRun(L, 88, { status: "completed", conclusion: "failure" }),
+  ];
+  unresolved.installations = [installation(OLDER, "bootstrapping")];
+  const deferred = await unresolved.follow();
+  assert.equal(deferred.journal.reason, "installation_unresolved");
+  assert.deepEqual(deferred.journal.staleExecution, {
+    runId: 88,
+    runAttempt: 1,
+  });
+
+  const active = new FollowFake();
+  active.execution = executionIntent(88);
+  active.supervisorRuns = [
+    supervisorRun(L, 88, { status: "completed", conclusion: "failure" }),
+    supervisorRun(L, 89),
+  ];
+  assert.equal((await active.follow()).journal.reason, "supervisor_in_flight");
+  assert.equal(active.mutations, 0);
 });

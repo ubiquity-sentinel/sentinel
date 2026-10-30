@@ -78,6 +78,25 @@ export function supervisorRun(
   };
 }
 
+/** The active execution intent a dispatched supervisor run leaves behind. */
+export function executionIntent(
+  runId: number,
+  changes: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    id: `${runId}:1:repair`,
+    runId,
+    runAttempt: 1,
+    launcherSha: L,
+    purpose: "ordinary",
+    revision: P,
+    generation: 81,
+    releaseId: null,
+    createdAt: NOW - 1000,
+    ...changes,
+  };
+}
+
 export function installation(
   candidate: string,
   phase = "rolled_back",
