@@ -1,7 +1,10 @@
 import { isVerifiedDeliveryProof } from "../../ops/hosted-autonomy-queue-proof.ts";
 import { CHECK_POLL_MS } from "./loop-bounds.ts";
 import { hasQueueDeliveryProvenance } from "../github/queue-delivery-provenance.ts";
-import { hasQueueIntentNamespace } from "../../ops/hosted-autonomy-queue-policy.ts";
+import {
+  hasQueueIntentNamespace,
+  isQueueHeld,
+} from "../../ops/hosted-autonomy-queue-policy.ts";
 /** Final queue guards preserve original intent, candidate identity and charged accounting. */
 import { canonicalStringify } from "../contracts/canonical.ts";
 import type {
@@ -15,7 +18,10 @@ import {
   isNativeQueueTarget,
   type NativeQueueOperation,
 } from "../github/native-queue-guard.ts";
-import { releaseRequestMatchesDelivery } from "./loop-records.ts";
+import {
+  releaseRequestMatchesDelivery,
+  sameRepositoryIdentity,
+} from "./loop-records.ts";
 import { persistTransition } from "./loop-state.ts";
 import { releaseRequestReceipt } from "./loop-task-context.ts";
 import type {
@@ -49,6 +55,82 @@ function queueGuardHoldIsTransient(reason: QueueGuardReason): boolean {
 
 function isQueueGuardReason(value: string): value is QueueGuardReason {
   return Object.hasOwn(QUEUE_GUARD_HOLD_TRANSIENT, value);
+}
+
+/**
+ * A pre-m25 hold has no inspect reason. Only the bare scheduling hold is
+ * eligible for recovery; queue intent and delivery provenance remain strict
+ * custody evidence. The pre-ranking pass inspects the live queue before it
+ * changes that wait.
+ */
+function isLegacyQueueHoldForInspection(record: WorkRecordV1): boolean {
+  return (record.nextStep === "work" || record.nextStep === "review" ||
+    record.nextStep === "delivery") &&
+    isQueueHeld(record) &&
+    !hasQueueIntentNamespace(record) &&
+    !hasQueueDeliveryProvenance(record);
+}
+
+/**
+ * Inspect each configured bare legacy hold before touching it. The queue
+ * inspection is the real effect observation: `inspect` treats the durable
+ * legacy wait itself as custody, so this pass asks the effect surface for the
+ * record's exact branch and pull without presenting a held expected record.
+ * A null pull request is the existing optional-field sentinel that makes the
+ * guard resolve the PR from the branch; it is never a queue identity claim.
+ */
+export async function releaseLegacyQueueHoldsForInspection(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  attempted: Set<string>,
+  githubFor?: (record: WorkRecordV1) => RepairCycleDepsV1["github"],
+): Promise<StepResultV1 | null> {
+  const records = context.snapshot.work.filter((record) =>
+    !attempted.has(record.id) && isLegacyQueueHoldForInspection(record) &&
+    deps.configs.some((config) =>
+      sameRepositoryIdentity(config.repository, record.repository)
+    )
+  );
+  if (records.length === 0) return null;
+  const now = deps.clock.now();
+  const waits = new Map<string, WorkRecordV1["wait"]>();
+  for (const record of records) {
+    attempted.add(record.id);
+    const guard = (githubFor === undefined ? deps.github : githubFor(record))
+      .nativeQueue;
+    if (guard === undefined) continue;
+    let decision;
+    try {
+      decision = await guard.inspectEffect({
+        operation: "resume",
+        branch: record.target.branch ?? undefined,
+        pullRequest: null as unknown as number,
+        expectedHead: record.target.head,
+        deadline: context.bounds.runDeadline,
+      });
+    } catch {
+      // An unobserved queue leaves the durable hold exactly as it was.
+      continue;
+    }
+    if (decision.status === "allow") {
+      waits.set(record.id, null);
+    } else if (queueGuardHoldIsTransient(decision.reason)) {
+      waits.set(record.id, {
+        reason: "unavailable",
+        since: record.wait?.reason === "unavailable" ? record.wait.since : now,
+        until: now + CHECK_POLL_MS,
+      });
+    }
+  }
+  if (waits.size === 0) return null;
+  return await persistTransition(deps, context, (draft) => {
+    draft.work = draft.work.map((record) => {
+      if (!waits.has(record.id) || !isLegacyQueueHoldForInspection(record)) {
+        return record;
+      }
+      return { ...record, wait: waits.get(record.id)!, updatedAt: now };
+    });
+  });
 }
 
 export async function holdQueueRecord(

@@ -18,7 +18,10 @@ import {
   takeoverAnchorRef,
 } from "../github/existing-pr-takeover-provenance.ts";
 import { checkGithubCooldown } from "./loop-bounds.ts";
-import { holdQueueRecord } from "./loop-queue-guard.ts";
+import {
+  holdQueueRecord,
+  releaseLegacyQueueHoldsForInspection,
+} from "./loop-queue-guard.ts";
 import { isNativeQueueTarget } from "../github/native-queue-guard.ts";
 import { persistTransition, persistWork } from "./loop-state.ts";
 import type {
@@ -323,6 +326,17 @@ export async function reconcileExistingPrs(
   refused: Set<string>,
   githubFor?: (record: WorkRecordV1) => RepairCycleDepsV1["github"],
 ): Promise<StepResultV1 | null> {
+  // Pre-m25 bare queue holds have no inspect reason and ranking would skip them
+  // forever. This pre-ranking pass inspects each configured one once and
+  // records only the transition derived from that fresh decision; queue
+  // intent/provenance remains strict custody.
+  const queueInspection = await releaseLegacyQueueHoldsForInspection(
+    deps,
+    context,
+    attempted,
+    githubFor,
+  );
+  if (queueInspection !== null) return queueInspection;
   const released = await releaseExistingPrHolds(deps, context, githubFor);
   if (released !== null) return released;
   for (const record of context.snapshot.work) {
