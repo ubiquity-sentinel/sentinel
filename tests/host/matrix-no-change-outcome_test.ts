@@ -234,13 +234,19 @@ Deno.test(
       const before = await rig.store.readRepair();
       assert.ok(before.ok && before.value.status === "found");
       assert.equal(before.value.snapshot.attemptMemory[0].entries[0].count, 1);
+      const serializedBefore = canonicalStringify(before.value);
       const write = rig.store.writeRepair.bind(rig.store);
       let writes = 0;
+      let settlements = 0;
+      rig.deps.budget.settleModelStart = () => {
+        settlements++;
+        throw new Error("an accounted replay must not re-enter settlement");
+      };
       rig.store.writeRepair = (...args) => {
         writes++;
         return write(...args);
       };
-      rig.clock.advance(60 * 60_000);
+      rig.clock.advance(24 * 60 * 60_000);
       for (
         const selected of [result, {
           ...result,
@@ -255,19 +261,13 @@ Deno.test(
         );
         const after = await rig.store.readRepair();
         assert.ok(after.ok && after.value.status === "found");
-        console.log(JSON.stringify({
-          replay: replay.entries,
-          ingested: replay.ingested,
-          writes,
-          sequenceBefore: before.value.snapshot.sequence,
-          sequenceAfter: after.value.snapshot.sequence,
-          countBefore: before.value.snapshot.attemptMemory[0].entries[0].count,
-          countAfter: after.value.snapshot.attemptMemory[0].entries[0].count,
-        }));
         assert.equal(replay.entries[0].disposition, "duplicate");
         assert.equal(replay.ingested, 0);
         assert.equal(writes, 0);
+        assert.equal(settlements, 0);
         assert.deepEqual(after.value, before.value);
+        assert.equal(canonicalStringify(after.value), serializedBefore);
+        rig.clock.advance(24 * 60 * 60_000);
       }
       assert.equal(model.calls(), 1);
     } finally {
