@@ -281,16 +281,17 @@ function transientRuleGuard(rig: Rig, proofActivated = false) {
   return calls;
 }
 
-function assertHeld(
+function assertQueueWait(
   rig: Rig,
   before: RepairStateSnapshotV1,
+  wait: NonNullable<WorkRecordV1["wait"]>,
   allowReads = false,
 ) {
   const after = rig.state.repair!;
   const row = after.work[0];
   assert.deepEqual(row, {
     ...before.work[0],
-    wait: { reason: "backoff", since: rig.clock.now(), until: null },
+    wait,
     updatedAt: rig.clock.now(),
   });
   for (
@@ -313,10 +314,36 @@ function assertHeld(
   assert.equal(rig.replay.requests.length, 0);
 }
 
+function assertHeld(
+  rig: Rig,
+  before: RepairStateSnapshotV1,
+  allowReads = false,
+) {
+  assertQueueWait(rig, before, {
+    reason: "backoff",
+    since: rig.clock.now(),
+    until: null,
+  }, allowReads);
+}
+
+function assertRetrying(
+  rig: Rig,
+  before: RepairStateSnapshotV1,
+  allowReads = false,
+) {
+  assertQueueWait(rig, before, {
+    reason: "unavailable",
+    since: rig.clock.now(),
+    until: rig.clock.now() + CHECK_POLL_MS,
+  }, allowReads);
+}
+
 const boundaries: {
   name: string;
   record: () => WorkRecordV1;
   release?: boolean;
+  /** Delivery proof stays permanent while inspect observation failures retry. */
+  observation?: "retry" | "hold";
   run: (r: Rig) => Promise<unknown>;
 }[] = [
   {
@@ -389,6 +416,7 @@ const boundaries: {
   },
   {
     name: "book merged response",
+    observation: "hold",
     record: () =>
       baseRecord({
         nextStep: "delivery",
@@ -403,6 +431,7 @@ const boundaries: {
   },
   {
     name: "accept release",
+    observation: "hold",
     record: () => baseRecord({ nextStep: "delivery" }),
     release: true,
     run: (r) =>
@@ -410,6 +439,7 @@ const boundaries: {
   },
   {
     name: "retry closure",
+    observation: "hold",
     record: () =>
       baseRecord({
         nextStep: "delivery",
@@ -425,6 +455,7 @@ const boundaries: {
   },
   {
     name: "resume delivery",
+    observation: "hold",
     record: () => baseRecord({ nextStep: "delivery" }),
     release: true,
     run: (r) => executeDeliveryStep(r.deps, r.context, r.record),
@@ -449,6 +480,7 @@ const boundaries: {
   },
   {
     name: "deferred release resume",
+    observation: "hold",
     record: () =>
       baseRecord({
         nextStep: "delivery",
@@ -463,7 +495,7 @@ const boundaries: {
   },
 ];
 
-Deno.test("native queue membership and unavailable observation preserve custody at runtime boundaries", async (t) => {
+Deno.test("native queue membership holds and observation failures retry at runtime boundaries", async (t) => {
   for (const reason of ["member", "observation_unavailable"] as const) {
     for (const boundary of boundaries) {
       await t.step(`${reason}: ${boundary.name}`, async () => {
@@ -474,7 +506,12 @@ Deno.test("native queue membership and unavailable observation preserve custody 
         const before = structuredClone(rig.context.snapshot);
         const result = await boundary.run(rig);
         assert.deepEqual(result, { kind: "progress" });
-        assertHeld(rig, before);
+        if (
+          reason === "observation_unavailable" &&
+          boundary.observation !== "hold"
+        ) {
+          assertRetrying(rig, before);
+        } else assertHeld(rig, before);
         assert.equal(rig.inspections.length, 1);
       });
     }
@@ -635,12 +672,12 @@ Deno.test("preactivation rule observation failure polls and resumes an existing 
   assert.equal(calls.http, 0);
 });
 
-Deno.test("activated proof policy keeps unknown rules in nonexpiring custody", async () => {
+Deno.test("activated proof policy retries unknown rules without expiring the record", async () => {
   const rig = harness(baseRecord());
   const calls = transientRuleGuard(rig, true);
   const before = structuredClone(rig.state.repair!);
   await executeWorkStep(rig.deps, rig.context, rig.record);
-  assertHeld(rig, before);
+  assertRetrying(rig, before);
   assert.deepEqual(calls, { rules: 1, queuePulls: 0, http: 0 });
 });
 
