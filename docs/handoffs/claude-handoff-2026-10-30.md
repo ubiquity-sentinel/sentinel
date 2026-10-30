@@ -63,15 +63,17 @@ the current record until the VPS session chooses its ledger location.
 
 | Lane | Branch tip | State |
 | --- | --- | --- |
-| claude-unblock-20261030-b1-protected-paths | base 9cdc6ad3 | worker running on the Mac at handoff; brief `briefs/b1.md` in bundle. If no commit appears on the branch, re-run the brief on the VPS. |
-| claude-unblock-20261030-b2-review-ceiling | base 9cdc6ad3 | same |
-| claude-unblock-20261030-b3-human-merge | base 9cdc6ad3 | same |
+| claude-unblock-20261030-b1-protected-paths | `86b6eb28` wip(partial) | worker killed by the Mac reboot mid-task: PARTIAL, untested, unreviewed. Re-run `briefs/b1.md` on this tree (or reset to 9cdc6ad3). Log: `b1-exec-partial.log` in bundle. |
+| claude-unblock-20261030-b2-review-ceiling | `654f8424` wip(partial) | same: PARTIAL, re-run `briefs/b2.md`. Log: `b2-exec-partial.log`. |
+| claude-unblock-20261030-b3-human-merge | `0782e40c` complete candidate | worker finished (report `b3-report.md` in bundle: RED/GREEN recorded); native review NOT run yet. Review under the confined home, fix findings, then integrate. |
 | claude-stability-20261030-m23-finalize-retry | wip commit | parked: round-3 P1 (vanished job → false `not_started`), P2 (null-timestamp step rejected before re-read) |
 | claude-stability-20261030-m24-matrix-crash | wip commit | parked: containment needs a typed historical-vs-current refusal |
 | claude-stability-20261030-m25-queue-guard | wip commit (`0c7ca343` integrated; the extra commit is the rejected hold-recovery) | the hold recovery is superseded by the direct state edit; drop it |
 | claude-stability-20261030-m26-ci-event-scope | wip commit | parked: event mismatch is not configuration evidence; keep never-started classification + event enrichment |
 
 Review receipts for every round are in the bundle under `reviews/`.
+
+Mac session ended 2026-10-30 22:15 UTC (owner reboot). The first supervisor cycle after state phase 1 (run 41134130894) planned 7 matrix cells instead of 1.
 
 ## Next actions for the VPS session, in order
 
