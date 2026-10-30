@@ -1,111 +1,12 @@
+import { mergeObservations } from "./telemetry-merges.ts";
 import type { Archive } from "./telemetry-store.ts";
 import {
   bindHealth,
-  endpoint,
   inventory,
-  json,
   states,
   transitions,
 } from "./telemetry-proof.ts";
-import {
-  type Evidence,
-  type Interval,
-  iso,
-  list,
-  object,
-  positive,
-  sha,
-  TARGETS,
-  time,
-} from "./telemetry-types.ts";
-
-type Merge = {
-  repository: string;
-  pullRequest: number;
-  mergeSha: string;
-  mergedAt: number;
-  origin: "owner_manual" | "unknown";
-  evidence: string[];
-};
-function merges(rows: Evidence[], since: number, cutoff: number) {
-  const found = new Map<string, Merge>();
-  const detail = new Map<
-    string,
-    { value: Record<string, unknown>; id: string }
-  >();
-  for (const row of rows) {
-    const match = endpoint(row).match(/^repos\/(.+\/[^/]+)\/pulls\/(\d+)$/);
-    if (match && json(row)) {
-      detail.set(`${match[1]}/${match[2]}`, {
-        value: object(json(row)),
-        id: row.id,
-      });
-    }
-  }
-  const coverage: Record<
-    string,
-    { complete: boolean; through: string | null; evidence: string[] }
-  > = {};
-  for (const repository of TARGETS) {
-    const pages = new Map<number, Evidence>();
-    for (const row of rows) {
-      if (
-        endpoint(row) !== `repos/${repository}/pulls` ||
-        !Array.isArray(json(row))
-      ) continue;
-      const query = new URLSearchParams(row.observation.endpoint.split("?")[1]);
-      if (
-        query.get("state") !== "closed" || query.get("sort") !== "updated" ||
-        query.get("direction") !== "desc" || query.get("per_page") !== "100"
-      ) continue;
-      const page = Number(query.get("page") ?? 1);
-      if (positive(page)) pages.set(page, row);
-    }
-    const sources: string[] = [];
-    let complete = false;
-    let throughTime = Infinity;
-    for (let page = 1; pages.has(page); page++) {
-      const row = pages.get(page)!;
-      const pulls = list(json(row));
-      sources.push(row.id);
-      const observed = row.observation.observedAt;
-      throughTime = Math.min(throughTime, Number(time(observed)));
-      for (const p of pulls) {
-        const mergedAt = time(p.merged_at);
-        if (
-          !positive(p.number) || !sha(p.merge_commit_sha) ||
-          mergedAt === null || mergedAt < since || mergedAt >= cutoff
-        ) continue;
-        const key = `${repository}/${p.number}/${p.merge_commit_sha}`;
-        const more = detail.get(`${repository}/${p.number}`);
-        // A bot/App actor alone proves no autonomous origin. A human merger is a manual observation.
-        const actor = object((more?.value ?? p).merged_by);
-        const manual = actor.type === "User";
-        found.set(key, {
-          repository,
-          pullRequest: p.number,
-          mergeSha: p.merge_commit_sha,
-          mergedAt,
-          origin: manual ? "owner_manual" : "unknown",
-          evidence: [row.id, ...(more ? [more.id] : [])],
-        });
-      }
-      const oldest = Math.min(
-        ...pulls.map((p) => time(p.updated_at) ?? Infinity),
-      );
-      if (pulls.length < 100 || oldest < since) {
-        complete = throughTime >= cutoff;
-        break;
-      }
-    }
-    coverage[repository] = {
-      complete,
-      through: Number.isFinite(throughTime) ? iso(throughTime) : null,
-      evidence: sources,
-    };
-  }
-  return { values: [...found.values()], coverage };
-}
+import { type Interval, iso, object, TARGETS } from "./telemetry-types.ts";
 
 export async function makeReport(
   archive: Archive,
@@ -113,6 +14,7 @@ export async function makeReport(
   cutoff: number,
 ) {
   const evidence = await archive.evidence();
+  const sessions = await archive.sessions();
   const state = await states(evidence);
   const attempts = inventory(evidence, since, cutoff);
   const refusals = await bindHealth(evidence, state, attempts, since, cutoff);
@@ -145,7 +47,7 @@ export async function makeReport(
       endEvidence: bound ? next.evidence : open ? pointer!.evidence : null,
     };
   }).filter((i) => i.clippedEnd === null || i.clippedEnd > since);
-  const merge = merges(evidence, since, cutoff);
+  const merge = mergeObservations(evidence, sessions, since, cutoff);
   const allMergesComplete = TARGETS.every((t) => merge.coverage[t].complete);
   const allAttempts = [...attempts.values()];
   const installations = state.filter((s) =>
@@ -227,6 +129,10 @@ export async function makeReport(
       ])),
       velocity: {
         observedMerges: observedMerges.length,
+        observedMergesPerHour: hours ? observedMerges.length / hours : null,
+        observedVelocityCoverage: allMergesComplete
+          ? "complete observed merge lists"
+          : "partial observed merge lists; rate is a lower bound",
         ownerManualMerges: manual,
         unclassifiedMerges: unknown,
         newAcceptedAutonomousMerges: autonomous,
@@ -253,7 +159,6 @@ export async function makeReport(
   ).at(-1);
   const unassigned = allAttempts.filter((a) => !a.execution);
   const completedActions = allAttempts.filter((a) => a.status === "completed");
-  const sessions = await archive.sessions();
   const report = {
     schema: "sentinel_local_telemetry_v1",
     generatedAt: new Date().toISOString(),
@@ -327,7 +232,7 @@ export function renderReport(
       r.current?.generation ?? "unknown"
     }`,
     "",
-    "Runtime SHA | generation | production h | bound runs | good ordinary SAMPLE | native logs | merges/manual/unclassified | autonomous/h | interval UTC",
+    "Runtime SHA | generation | production h | bound runs | good ordinary SAMPLE | native logs | merges/manual/unclassified | observed/h | autonomous/h | interval UTC",
   ];
   const shown = r.versions.filter((v) => v.intervals.length > 0);
   for (const v of shown) {
@@ -342,6 +247,8 @@ export function renderReport(
       } | ${v.runCount} | ${v.ordinary.healthy}/${v.ordinary.completed} (${
         v.ordinary.goodPercent?.toFixed(1) ?? "unknown"
       }%) | ${v.ordinary.nativeLogCovered}/${v.ordinary.completed} | ${v.velocity.observedMerges}/${v.velocity.ownerManualMerges}/${v.velocity.unclassifiedMerges} | ${
+        v.velocity.observedMergesPerHour?.toFixed(3) ?? "unknown"
+      } | ${
         v.velocity.autonomousMergesPerHour?.toFixed(3) ?? "unknown"
       } | ${intervals}`,
     );
@@ -364,7 +271,7 @@ export function renderReport(
     );
   }
   lines.push(
-    "Percentages cover bound ordinary samples only. Bootstrap/rollback/verification, idle counts and source/clock provenance remain separate in JSON.",
+    "Percentages cover bound ordinary samples only. Observed/h is a lower bound when merge coverage is incomplete; it is separate from accepted autonomous velocity. Other purposes and source/clock provenance remain in JSON.",
   );
   return lines.join("\n");
 }

@@ -241,8 +241,8 @@ async function withArchive(
   fn: (archive: Archive, directory: string) => Promise<void>,
 ) {
   const directory = await Deno.makeTempDir({
-    dir: "/tmp",
-    prefix: "sentinel-telemetry-",
+    dir: Deno.cwd(),
+    prefix: ".telemetry-test-",
   });
   const archive = new Archive(join(directory, "archive"));
   await archive.open();

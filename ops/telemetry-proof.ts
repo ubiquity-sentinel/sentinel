@@ -1,3 +1,4 @@
+import { parseHostedNotStartedProofV1 } from "../src/contracts/hosted-supervisor-execution.ts";
 import {
   type Attempt,
   CONTROLLER,
@@ -167,12 +168,20 @@ function validProof(
 ): { e: Execution; proof: Record<string, unknown> } | null {
   const p = object(value);
   const e = execution(p.execution);
+  if (p.outcome === "not_started") {
+    try {
+      const accepted = parseHostedNotStartedProofV1(value);
+      return e ? { e, proof: object(accepted) } : null;
+    } catch {
+      return null;
+    }
+  }
   return e && p.repository === CONTROLLER &&
       p.workflowPath === ".github/workflows/supervisor.yml" &&
       p.ref === "refs/heads/sentinel-supervisor" && p.settled === true &&
       positive(p.jobId) &&
       typeof p.logDigest === "string" && /^[a-f0-9]{64}$/.test(p.logDigest) &&
-      ["healthy", "failed", "not_started", "cancelled"].includes(
+      ["healthy", "failed", "cancelled"].includes(
         String(p.outcome),
       ) && time(p.finishedAt)
     ? { e, proof: p }
@@ -187,6 +196,7 @@ export function transitions(values: StateEvidence[]): Transition[] {
       !positive(v.previousGeneration)
     ) continue;
     const bootstrap = validProof(v.bootstrapProof);
+    const retried = validProof(v.retriedBootstrapProof);
     if (
       bootstrap && bootstrap.e.revision === v.candidateRevision &&
       bootstrap.e.generation === v.previousGeneration + 1 &&
@@ -196,7 +206,13 @@ export function transitions(values: StateEvidence[]): Transition[] {
       const t: Transition = {
         revision: bootstrap.e.revision,
         generation: bootstrap.e.generation,
-        start: bootstrap.e.createdAt,
+        start: retried && retried.e.revision === bootstrap.e.revision &&
+            retried.e.generation === bootstrap.e.generation &&
+            retried.e.purpose === "bootstrap" &&
+            retried.proof.outcome !== "healthy" &&
+            retried.e.createdAt < bootstrap.e.createdAt
+          ? retried.e.createdAt
+          : bootstrap.e.createdAt,
         priorRevision: v.previousRevision,
         priorGeneration: v.previousGeneration,
         kind: "installation",
@@ -293,6 +309,7 @@ export async function bindHealth(
         "lastHealthyProof",
         "lastExecutionProof",
         "bootstrapProof",
+        "retriedBootstrapProof",
         "previousHealthyProof",
         "rollbackProof",
       ]
@@ -300,9 +317,11 @@ export async function bindHealth(
       const result = validProof(s.value[slot]);
       if (!result || Number(result.proof.finishedAt) > cutoff) continue;
       const { e, proof: p } = result;
-      const proofs = durable.get(Number(p.jobId)) ?? [];
-      proofs.push({ p, source: s.evidence });
-      durable.set(Number(p.jobId), proofs);
+      if (positive(p.jobId) && typeof p.logDigest === "string") {
+        const proofs = durable.get(p.jobId) ?? [];
+        proofs.push({ p, source: s.evidence });
+        durable.set(p.jobId, proofs);
+      }
       bind(
         e,
         p.outcome === "healthy" && p.startupReady === true

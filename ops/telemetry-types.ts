@@ -44,6 +44,7 @@ export async function digest(
 }
 export type Observation = {
   schema: 1;
+  collection?: string;
   endpoint: string;
   observedAt: string;
   status: number;
@@ -73,6 +74,7 @@ export type SyncOptions = {
 };
 export type Coverage = {
   schema: 1;
+  collection?: string;
   observedAt: string;
   since: string;
   cutoff: string;
