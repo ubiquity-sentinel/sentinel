@@ -1,180 +1,53 @@
-/** Host-owned authority source; model candidates may not rewrite these boundaries. */
+/**
+ * Host-owned authority source; model candidates may not rewrite these boundaries.
+ *
+ * Owner directive 2026-10-30: keep only the files that mint or select
+ * credentials, dispatch with write tokens, evaluate the merge gate, or promote.
+ * Review parsing, queue plumbing, retention, notification and base-review files
+ * are ordinary candidate work.
+ */
 export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
   .freeze([
     "src/host/hosted-authority-protected-paths.ts",
-    "src/repair/passport-work-trial.ts",
+    // Trusted controller placement: a candidate must never retarget the
+    // controller repository, branches or workflows.
     "src/contracts/hosted-controller-deployment.ts",
-    "src/github/native-review-result.ts",
     // Token-bearing scheduled entrypoint (`supervisor-dispatch.yml` runs the
     // default branch every five minutes with `actions: write` and
     // `contents: write`) and the pre-merge CI dispatch on the target token.
     "src/host/supervisor-dispatch.ts",
     "src/host/actions-premerge-ci.ts",
-    // Expected-head merge gate: effective protections, their evaluation and
-    // the exact-head check verdict.
-    "src/github/port-evidence.ts",
-    "src/github/port-merge-policy.ts",
-    // Queue policy decision, reconciliation, intent and writer, and the live
-    // pull/queue facts the authority trusts.
-    "ops/hosted-autonomy-queue-policy.ts",
-    "ops/hosted-autonomy-queue-reconcile.ts",
-    "ops/hosted-autonomy-queue-pass.ts",
-    "ops/hosted-autonomy-queue-writer.ts",
-    "ops/hosted-autonomy-queue-intent.ts",
-    "src/github/client-queue-delivery.ts",
-    "src/github/native-queue-guard.ts",
-    // Protected-tree publication proof, the deterministic base integration
-    // the validator regenerates against, and every authority identity key.
-    "src/github/review-snapshot.ts",
-    "src/github/git-executor.ts",
-    "src/repair/keys.ts",
-    // Per-run credential selection and per-target token binding.
-    "src/host/hosted-app-credentials.ts",
-    "src/host/actions-target-bindings.ts",
-    // Merge guarantees the launcher and runtime share (issue #158): the
-    // uncached tip read, the shared review-authorization predicate, every park
-    // transition and the gateway delivery binding.
-    "ops/hosted-autonomy-scopes.ts",
-    "src/repair/review-gate.ts",
-    "src/repair/transitions.ts",
-    "src/repair/vps-delivery.ts",
-    // Its carried variant (Sentinel #152): the carried receipt and proof the
-    // gateway binding delegates to, and the launcher's carried authorization.
-    "src/repair/carried-release.ts",
-    "ops/hosted-autonomy-carried-release.ts",
-    // Vendored upstream review rubric (read-only boundary).
-    "src/github/codex-review-rubric.ts",
-    // Native review invocation, lifecycle evidence and completion authority.
-    "src/github/codex-reviewer.ts",
-    "src/github/reviewer-prepared.ts",
-    "src/github/reviewer-events.ts",
-    "src/github/reviewer-outcome.ts",
-    "src/github/reviewer-session-state.ts",
-    "src/github/journal-metadata.ts",
-    "src/github/review-transport-journal.ts",
-    "src/github/codex-review-transport.ts",
-    "src/github/review-normalize.ts",
-    "src/host/published-refresh-validator.ts",
-    "src/host/passport-dependencies.ts",
-    // Extracted installation, settlement, verification and ordinary admission authority.
-    "src/contracts/hosted-supervisor-installation.ts",
-    "src/contracts/hosted-supervisor-verification.ts",
-    "src/host/actions-supervisor-install-api.ts",
-    "src/host/actions-supervisor-installation-state.ts",
-    "src/host/actions-supervisor-installation.ts",
-    "src/host/actions-supervisor-ordinary.ts",
-    // Native-token launcher advancement and exact followed-SHA dispatch.
-    ".github/actions/hosted-runtime-control/",
-    "src/host/hosted-runtime-follow-api.ts",
+    // Native-token auto-follow: the launcher SHA choice, the exact-head CI and
+    // ancestry proof, the `actions: write` dispatch that advances
+    // `sentinel-supervisor`, the API bearer token and `updateRefs` mutation,
+    // the installed/failed revision state and the adapter that reads
+    // `GITHUB_TOKEN` and writes the dispatch outputs.
+    "src/host/hosted-runtime-follow.ts",
     "src/host/hosted-runtime-follow-ci.ts",
     "src/host/hosted-runtime-follow-dispatch.ts",
-    "src/host/hosted-runtime-follow-main.ts",
+    "src/host/hosted-runtime-follow-api.ts",
     "src/host/hosted-runtime-follow-state.ts",
-    "src/host/hosted-runtime-follow.ts",
-    // Exact rollback custody and the prior runtime's restricted state view.
-    "src/host/hosted-runtime-rollback-state.ts",
-    "src/host/hosted-runtime-rollback.ts",
-    // Trusted history and CAS restoration of the original protected candidate.
-    "ops/hosted-autonomy-original-candidate.ts",
-    "ops/hosted-autonomy-original-candidate-pass.ts",
-    // Trusted blocked-candidate selection and exact evidence before recovery ingestion.
-    "src/host/matrix-blocked-candidate.ts",
-    "src/host/matrix-conflict-candidate.ts",
-    "ops/hosted-autonomy-current-recovery.ts",
-    "ops/hosted-autonomy-current-scan.ts",
-    "src/contracts/maintenance-index.ts",
-    "src/state/maintenance-index.ts",
-    "src/host/backup-ci-completion.ts",
-    "ops/backup-ci-completion-main.ts",
-    "ops/backup-ci-main.ts",
-    "src/repair/ci-readiness.ts",
-    "src/host/actions-target-flow.ts",
-    "ops/hosted-autonomy-producer-requests.ts",
-    "ops/hosted-autonomy-producer-recovery.ts",
-    // Exact mint artifact, takeover custody, principal/source proofs and dependency preparation.
+    "src/host/hosted-runtime-follow-main.ts",
+    ".github/actions/hosted-runtime-control/",
+    // Expected-head merge gate: effective protections, their evaluation, the
+    // merge itself and the CI dependencies that decide a green conclusion.
+    "src/github/port-evidence.ts",
+    "src/github/port-merge-policy.ts",
+    "src/github/port-merge.ts",
+    "src/repair/loop-checks.ts",
+    "src/repair/ci-rejection.ts",
+    // Per-run credential selection and per-target token binding: the mint
+    // action, self-versus-target token selection, grant parsing, target cycle
+    // selection, the host composition that chooses the write tokens and
+    // admits model starts, the App-principal capture and the hosted admission
+    // predicate they trust.
+    "src/host/hosted-app-credentials.ts",
     ".github/actions/sentinel-app-token/",
-    "ops/hosted-autonomy-runtime-compatibility.ts",
-    "ops/hosted-autonomy-self-dependencies.ts",
-    "src/contracts/existing-pr-takeover.ts",
-    "src/github/client-pr-associations.ts",
-    "src/github/existing-pr-takeover-effect.ts",
-    "src/github/existing-pr-takeover-policy.ts",
-    "src/github/existing-pr-takeover-proof.ts",
-    "src/github/existing-pr-takeover-provenance.ts",
-    "src/github/pr-association-wire.ts",
-    "src/host/existing-pr-discovery.ts",
-    "src/host/existing-pr-native-git.ts",
-    "src/host/existing-pr-runtime-capability.ts",
-    "src/host/existing-pr-takeover.ts",
+    "src/host/actions-target-bindings.ts",
     "src/host/hosted-app-grant.ts",
-    "src/host/hosted-app-principal-native.ts",
-    "src/host/hosted-app-principal-source.ts",
+    "src/host/actions-target-cycles.ts",
+    "src/host/actions-repair-host.ts",
+    "src/host/actions-supervisor-host.ts",
     "src/host/hosted-app-principal.ts",
-    "src/host/hosted-app-source-profiles.json",
-    "src/host/hosted-app-takeover-routing.ts",
-    "src/host/hosted-custody-capability.json",
-    "src/host/hosted-custody-capability.ts",
-    "src/host/hosted-runtime-compatibility-authority.ts",
-    "src/host/hosted-runtime-compatibility.ts",
-    "src/host/hosted-runtime-rollout.json",
-    "src/host/hosted-runtime-rollout.ts",
-    "src/host/hosted-self-dependencies.ts",
-    "src/host/hosted-writer-quiescence.ts",
-    "src/host/owner-install-plan-rollout.ts",
-    "src/host/self-dependency-files.ts",
-    "src/host/self-dependency-preparation.ts",
-    "src/host/self-dependency-seed.ts",
-    "src/repair/loop-existing-pr-state.ts",
-    "src/repair/loop-existing-pr.ts",
-    // Existing queue/installer boundaries that enforce the independent custody floor.
-    "src/github/queue-runtime-policy.ts",
-    // The new bootstrap gate delegates predecessor health/failed settlement here.
-    "src/host/owner-install-plan-proof.ts",
-    "src/host/owner-install-plan.ts",
-    "src/host/owner-install-run.ts",
-    "src/host/owner-install-snapshot.ts",
-    "src/host/owner-install-future-recovery.ts",
-    "src/host/owner-install-supersession.ts",
-    "src/host/owner-install-supersession-source.ts",
-    "src/host/owner-install-supersession-normal.ts",
-    "src/host/owner-install-supersession-original.ts",
-    "src/host/owner-successor-acceptance.ts",
-    "src/host/owner-successor-acceptance-proof.ts",
-    "src/host/owner-successor-acceptance-binding.ts",
-    "src/host/owner-successor-acceptance-custody.ts",
-    "src/host/review-owner-channel.ts",
-    "src/host/review-owner-custody.ts",
-    "src/host/owner-successor-acceptance-run.ts",
-    "src/contracts/owner-successor-review.ts",
-    "src/host/queue-runtime-capability.ts",
-    // Final target effects, producer ancestry and delivery/enqueue authority.
-    "ops/hosted-autonomy-delivery-proof.ts",
-    "ops/hosted-autonomy-delivery.ts",
-    "ops/hosted-autonomy-queue-authority.ts",
-    "ops/hosted-autonomy-queue-booking.ts",
-    "ops/hosted-autonomy-queue-context.ts",
-    "ops/hosted-autonomy-queue-contracts.ts",
-    "ops/hosted-autonomy-queue-host.ts",
-    "ops/hosted-autonomy-queue-proof.ts",
-    "ops/hosted-autonomy-queue-submit.ts",
-    "src/github/existing-pr-publication-proof.ts",
-    "src/github/port-base.ts",
-    "src/github/port-publication.ts",
-    "src/github/port-review.ts",
-    "src/github/queue-delivery-reader.ts",
-    "src/github/queue-legacy-direct.ts",
-    "src/host/existing-pr-produced-custody.ts",
-    "src/host/repair-queue-custody.ts",
-    "src/host/actions-queue-custody.ts",
-    "src/host/maintenance-existing-pr-publication.ts",
-    // Pre-writer maintenance gate and exact model-disabled future bootstrap.
-    "ops/hosted-autonomy-compatibility-queue.ts",
-    "ops/hosted-autonomy-compatibility.ts",
-    "ops/hosted-autonomy-main.ts",
-    "ops/hosted-autonomy-runner.ts",
-    "ops/hosted-autonomy-maintenance.ts",
-    "ops/hosted-autonomy-state.ts",
-    "src/host/hosted-runtime-bootstrap.ts",
-    // Parent verification before optional mint-metadata handoff to the trusted child.
-    "src/host/hosted-runtime-principal-handoff.ts",
+    "src/contracts/hosted-supervisor-verification.ts",
   ]);

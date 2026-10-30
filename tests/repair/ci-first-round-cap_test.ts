@@ -418,8 +418,18 @@ Deno.test({
   },
 });
 
-Deno.test("CI first x round cap: the CI-first and spent-delivery authority files are protected from model-authored candidates", () => {
+Deno.test("CI first x round cap: CI-first and spent-delivery files are ordinary work; the merge and credential authority stays protected", () => {
   const protectedPaths = createLocalRepositoryConfig().protectedPaths;
+  for (
+    const path of [
+      "src/host/supervisor-dispatch.ts",
+      "src/host/actions-premerge-ci.ts",
+      "src/github/port-evidence.ts",
+      "src/github/port-merge-policy.ts",
+      "src/host/hosted-app-credentials.ts",
+      "src/host/local-release.ts",
+    ]
+  ) assert.ok(protectedPaths.includes(path), path);
   for (
     const path of [
       "src/repair/ci-first-policy.ts",
@@ -431,9 +441,6 @@ Deno.test("CI first x round cap: the CI-first and spent-delivery authority files
       "ops/hosted-autonomy-github-issues.ts",
       "ops/hosted-autonomy-follow-ups.ts",
       "ops/hosted-autonomy-follow-up-pass.ts",
-      // The carried merge (option (b)): the launcher pass that makes it, its
-      // exact Git tree proof and raw compare read, the runtime half and both
-      // patch proofs' sources.
       "ops/hosted-autonomy-delivery-pass.ts",
       "ops/hosted-autonomy-github-trees.ts",
       "ops/hosted-autonomy-github-listing.ts",
@@ -443,5 +450,5 @@ Deno.test("CI first x round cap: the CI-first and spent-delivery authority files
       "src/github/git-carried-patch.ts",
       "src/host/legacy-review-cutoff-env.ts",
     ]
-  ) assert.ok(protectedPaths.includes(path), path);
+  ) assert.ok(!protectedPaths.includes(path), path);
 });
