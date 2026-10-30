@@ -7,8 +7,6 @@ import {
 } from "../contracts/matrix.ts";
 import { candidateBranch, candidatePreservationRef } from "../repair/keys.ts";
 import { resolvedConflictResolution } from "../repair/conflict-resolution.ts";
-import { HOSTED_ACTIONS_CLOCK_TOLERANCE_MS } from "../contracts/hosted-supervisor.ts";
-import { resolvedConflictCandidate } from "./matrix-conflict-candidate.ts";
 import {
   createRunBounds,
   handleModelReceipt,
@@ -33,6 +31,10 @@ import {
   resultMatchesCell,
   settlementClassification,
 } from "./matrix-ingest-state.ts";
+import {
+  replayAccountedNoChange,
+  replayConsumedConflict,
+} from "./matrix-ingest-replay.ts";
 
 export type MatrixIngestDispositionV1 =
   | "ingested"
@@ -207,69 +209,18 @@ export async function ingestMatrixResults(
     let receiptHead: GitSha | null = null;
     const intent = record.intent;
     const resolved = resolvedConflictResolution(intent);
-    if (intent?.kind === "base_refresh" && resolved !== null) {
-      // A consumed conflict result can outlive the mirror that imported it.
-      // Restore only that exact operation's objects, without consuming again,
-      // reopening a blocked record or granting any publication authority.
-      const candidate = result.receipt?.candidate;
-      const binding = await resolvedConflictCandidate(
-        record,
-        context.snapshot.reservations,
-      );
-      if (
-        binding === null || binding.reservationId !== cell.reservationId ||
-        binding.intentKey !== cell.intentKey ||
-        cell.request.checkoutBase !== binding.publishedHead ||
-        cell.request.mergeBase !== intent.observedBase ||
-        cell.request.reviewFindings !== undefined ||
-        intent.observedBase === null ||
-        result.status !== "completed" || result.receipt === null ||
-        candidate?.head !== resolved || candidate.checkpointSha !== null ||
-        result.completedAt >
-          intent.startedAt + HOSTED_ACTIONS_CLOCK_TOLERANCE_MS ||
-        reservation.settledAt === null ||
-        result.completedAt >
-          reservation.settledAt + HOSTED_ACTIONS_CLOCK_TOLERANCE_MS ||
-        !verifyMatrixReceiptV1(
-          result.receipt,
-          cell.request,
-          options.expectedProvider,
-          options.failoverModel,
-        )
-      ) {
-        entries.push({
-          cellId: cell.cellId,
-          disposition: "binding_mismatch",
-          detail: "saved refresh does not bind authenticated conflict result",
-        });
-        continue;
-      }
-      if (
-        options.bundleImporter === undefined || result.bundle === null ||
-        result.bundle.head !== resolved ||
-        result.bundle.checkpointSha !== null ||
-        result.bundle.file !== matrixBundleFileNameV1(cell.cellId) ||
-        !await options.bundleImporter.import({
-          base: cell.expectedBase,
-          file: result.bundle.file,
-          digest: result.bundle.digest,
-          head: resolved,
-          checkpointSha: null,
-          ancestors: [binding.publishedHead, intent.observedBase],
-        })
-      ) {
-        entries.push({
-          cellId: cell.cellId,
-          disposition: "candidate_unavailable",
-          detail: "saved conflict result objects are unavailable",
-        });
-        continue;
-      }
-      entries.push({
-        cellId: cell.cellId,
-        disposition: "duplicate",
-        detail: "receipt already consumed; exact conflict result rehydrated",
-      });
+    const consumedConflict = await replayConsumedConflict(
+      cell,
+      result,
+      record,
+      reservation,
+      context,
+      intent,
+      resolved,
+      options,
+    );
+    if (consumedConflict !== null) {
+      entries.push({ cellId: cell.cellId, ...consumedConflict });
       continue;
     }
     if (
@@ -352,6 +303,22 @@ export async function ingestMatrixResults(
         disposition: "duplicate",
         detail: "implementation intent already consumed",
       });
+      continue;
+    }
+    const accountedNoChange = await replayAccountedNoChange(
+      deps,
+      bounds,
+      context,
+      plan,
+      cell,
+      result,
+      record,
+      reservation,
+      intent,
+      receiptHead,
+    );
+    if (accountedNoChange !== null) {
+      entries.push({ cellId: cell.cellId, ...accountedNoChange });
       continue;
     }
     let step: StepResultV1;
