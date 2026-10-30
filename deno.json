@@ -7,6 +7,8 @@
     "@zip.js/zip.js": "npm:@zip.js/zip.js@2.8.34"
   },
   "tasks": {
+    "telemetry": "deno run --frozen --allow-read=.sentinel --allow-write=.sentinel --allow-run=gh ops/telemetry.ts sync",
+    "telemetry:report": "deno run --frozen --allow-read=.sentinel --allow-write=.sentinel ops/telemetry.ts report",
     "fmt": "deno fmt",
     "lint": "deno lint",
     "size:report": "deno run --frozen --allow-read=. --allow-run=git ops/code-size.ts report",
