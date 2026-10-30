@@ -24,6 +24,7 @@ import {
   expectIsoMs,
   type HostedAttemptV1,
   type HostedJobsV1,
+  type HostedRepairJobV1,
   type HostedRuntimeStepV1,
 } from "./client-hosted-revision-wire.ts";
 import {
@@ -346,4 +347,30 @@ export function parseHostedJobs(
     repair: { id, status, conclusion, startedAt, completedAt, runtimeStep },
     allCompleted,
   };
+}
+
+/**
+ * A completed repair job whose runtime step is not yet fully materialized.
+ * Legitimate skip/cancellation/timeout settlement is never re-read, and a
+ * present but unexpected non-null value is contradictory, not incomplete.
+ */
+export function hostedRuntimeMetadataIncomplete(
+  repair: HostedRepairJobV1,
+): boolean {
+  if (repair.status !== "completed" || repair.completedAt === null) {
+    return false;
+  }
+  if (
+    repair.conclusion === "skipped" || repair.conclusion === "cancelled" ||
+    repair.conclusion === "timed_out"
+  ) return false;
+  const step = repair.runtimeStep;
+  if (
+    step !== null && step.status === "completed" &&
+    step.conclusion === "skipped"
+  ) return false;
+  if (repair.conclusion === null || repair.startedAt === null) return true;
+  if (step === null) return true;
+  if (step.status !== "completed" || step.conclusion === null) return true;
+  return step.startedAt === null || step.completedAt === null;
 }

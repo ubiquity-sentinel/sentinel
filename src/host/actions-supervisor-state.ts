@@ -20,6 +20,7 @@ import { HOSTED_CONTROLLER_SELF } from "../contracts/hosted-controller-deploymen
 import { parseReleaseStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { ReleaseStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import { tryParse } from "../contracts/validation.ts";
+import { hostedExecutionMetadataWindowExhausted } from "../github/client-hosted-policy.ts";
 import { emptyHostedVerification } from "../contracts/hosted-supervisor-verification.ts";
 import { settleHostedInstallations } from "./actions-supervisor-installation-state.ts";
 import type { QueueRuntimeCapability } from "./queue-runtime-capability.ts";
@@ -236,10 +237,16 @@ export async function commitHosted(
   return "pending";
 }
 
+/** Deterministic seam for the bounded evidence-retry wait; tests inject one. */
+export interface SettlementReadOptionsV1 {
+  retryPause?: (milliseconds: number) => Promise<void>;
+}
+
 /** Full parser + exact execution binding, even if the evidence port lies. */
 export async function readSettlement(
   input: HostedSupervisorInputV1,
   savedIntent: HostedExecutionIntentV1,
+  options: SettlementReadOptionsV1 = {},
 ): Promise<SettlementReadV1> {
   // The evidence read is idempotent and read-only, so a transport-shaped
   // failure is retried a bounded number of times inside this job: one flaky
@@ -256,7 +263,7 @@ export async function readSettlement(
     } catch {
       failure = `${STATIC_EVIDENCE} (thrown)`;
       if (attempt < EVIDENCE_READ_ATTEMPTS) {
-        await pause(EVIDENCE_RETRY_PAUSE_MS);
+        await (options.retryPause ?? pause)(EVIDENCE_RETRY_PAUSE_MS);
         continue;
       }
       break;
@@ -265,9 +272,14 @@ export async function readSettlement(
       failure = evidenceFailureDetail(STATIC_EVIDENCE, result.error);
       if (
         attempt < EVIDENCE_READ_ATTEMPTS &&
-        result.error.kind === "unavailable"
+        result.error.kind === "unavailable" &&
+        // Only a refusal that already spent the native reader's own bounded
+        // metadata re-read window suppresses these attempts; a metadata fault
+        // raised before that window (for example a transiently short jobs
+        // listing) can still change on the next read.
+        !hostedExecutionMetadataWindowExhausted(result.error)
       ) {
-        await pause(EVIDENCE_RETRY_PAUSE_MS);
+        await (options.retryPause ?? pause)(EVIDENCE_RETRY_PAUSE_MS);
         continue;
       }
       break;
