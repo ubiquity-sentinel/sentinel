@@ -1,4 +1,5 @@
 import type { ClosedCWaveRecoveryDepsV1 } from "../src/host/modern-matrix-recovery.ts";
+import type { GitSha } from "../src/contracts/brands.ts";
 import type { runMatrixUncertaintyMaintenance } from "../src/host/matrix-uncertainty-maintenance.ts";
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import type { ReviewTaskStatementV1 } from "../src/contracts/review-receipt.ts";
@@ -532,6 +533,8 @@ export interface HostedAutonomyDepsV1 {
    * HOSTED_AUTONOMY_ACCEPTANCE_CORRECTION_RUNTIMES.
    */
   acceptanceCorrectionRuntimes?: ReadonlySet<string>;
+  /** Clean native-verified executing source; stamped only by protected main. */
+  acceptanceCorrectionSourceRevision?: GitSha;
   /**
    * `repeatFailureRouteIdentity` of the non-secret model-route selector this
    * maintenance job was handed; a change re-arms a repeat-failure park.

@@ -87,6 +87,7 @@ import {
 } from "./hosted-autonomy-conflict-retries.ts";
 import {
   acceptanceCorrectionRuntimeProven,
+  acceptanceCorrectionSelfInstalledRuntimeProven,
   planAcceptanceReadmissions,
 } from "./hosted-autonomy-acceptance.ts";
 import {
@@ -505,6 +506,10 @@ export async function runHostedRetryPass(
     (denial) => {
       actions.push(`retry:${denial.id}:denied:${denial.reason}`);
     },
+    acceptanceCorrectionSelfInstalledRuntimeProven(
+      installedRuntime,
+      deps.acceptanceCorrectionSourceRevision,
+    ),
   ));
   actions.push(...legacyClassDriftActions(snapshot, legacyCutoff, ciFirst));
   actions.push(...legacyHeldHeadActions(snapshot, legacyCutoff, retryTips));

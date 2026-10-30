@@ -147,6 +147,11 @@ export async function runHostedAutonomyMain(input?: {
     checkoutClean: facts.clean,
   });
   if (!validated) return report(failed("identity_rejected", null));
+  const runFromVerifiedSource = (deps: HostedAutonomyDepsV1) =>
+    runHostedAutonomy({
+      ...deps,
+      acceptanceCorrectionSourceRevision: facts.head as GitSha,
+    });
   // Split by purpose, mirroring the hosted runtime: the scoped sentinel App
   // token authenticates every repository-visible code-change op (merge, issue
   // closure, CI approval) so it is attributed to ubiquity-sentinel[bot], while
@@ -192,7 +197,7 @@ export async function runHostedAutonomyMain(input?: {
     if (input) {
       try {
         result = await compatibility(input.deps.state, input.deps.clock) ??
-          await runHostedAutonomy({
+          await runFromVerifiedSource({
             ...input.deps,
             onQueueCustodyReady,
           });
@@ -265,7 +270,7 @@ export async function runHostedAutonomyMain(input?: {
         prefix: "sentinel-maintenance-matrix-",
       });
       try {
-        result = await runHostedAutonomy({
+        result = await runFromVerifiedSource({
           state,
           currentMatrixIndex: new GitMaintenanceIndex({
             scratchDir: `${scratch}/maintenance-index`,

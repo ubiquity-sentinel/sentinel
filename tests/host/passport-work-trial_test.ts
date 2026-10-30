@@ -147,7 +147,8 @@ Deno.test("Passport trial: exact spent review CI and acceptance parks reenter th
     const record = parked(TASK_ACCEPTANCE_OWNER_GATE_DETAIL);
     const snapshot = trialSnapshot(record);
     assert.equal(
-      planAcceptanceReadmissions(snapshot, new Set(), true)[0]?.nextStep,
+      planAcceptanceReadmissions(snapshot, new Set(), false, undefined, true)[0]
+        ?.nextStep,
       "review",
     );
     assert.deepEqual(
@@ -789,7 +790,13 @@ async function exerciseTerminalReviewCorrection(
       null,
     );
     const plans = uncertain
-      ? planAcceptanceReadmissions(read.value.snapshot, new Set(), true)
+      ? planAcceptanceReadmissions(
+        read.value.snapshot,
+        new Set(),
+        false,
+        undefined,
+        true,
+      )
       : deliveryPlan === null
       ? []
       : [deliveryPlan];
