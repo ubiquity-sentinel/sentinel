@@ -15,6 +15,11 @@ import { gitRun, type workRecord } from "../state/helpers.ts";
 import { rig } from "./matrix-actions-fixtures.ts";
 import { runFreshMatrixCells } from "./matrix-actions-cell-fixtures.ts";
 import { createFreshMatrixArchives } from "./matrix-actions-archive-fixtures.ts";
+import {
+  assertInitialAdvisory,
+  captureAggregateRun,
+  readFoundRepair,
+} from "./matrix-actions-advisory-fixtures.ts";
 
 export async function freshMatrixArtifacts(
   noStart17 = false,
@@ -111,51 +116,51 @@ export async function freshMatrixArtifacts(
         };
       }
       const oldCwd = Deno.cwd();
-      let result: { status: string } | null = null;
       Deno.chdir(deps.workDir);
       try {
-        result = await runActionsRepairHost({
-          ...deps,
-          ...(noStart17 ? { state: r.store } : {}),
-          artifactHttp: artifactHttp(
-            typeof available === "function" ? available : () => available,
-            allow,
-          ),
-          model: {
-            modelId: "gpt-reserve",
-            runModel: () => {
-              throw Error("aggregate must not implement");
-            },
-          },
-          runTargetCycles: (input) =>
-            runActionsMatrixAggregateCycles(
-              {
-                ...input,
-                modelStartsEnabled: false,
-                ...(isolationWriteFailure === null ? {} : {
-                  state: {
-                    ...input.state,
-                    readRepair: () => input.state.readRepair(),
-                    readRelease: () => input.state.readRelease(),
-                    writeRepair: () =>
-                      Promise.resolve(
-                        portOk({
-                          status: isolationWriteFailure!,
-                          currentHead: beforeHead,
-                        }),
-                      ),
-                  },
-                }),
-              },
-              undefined,
-              carrier,
-              options,
+        return await captureAggregateRun(() =>
+          runActionsRepairHost({
+            ...deps,
+            ...(noStart17 ? { state: r.store } : {}),
+            artifactHttp: artifactHttp(
+              typeof available === "function" ? available : () => available,
+              allow,
             ),
-        });
+            model: {
+              modelId: "gpt-reserve",
+              runModel: () => {
+                throw Error("aggregate must not implement");
+              },
+            },
+            runTargetCycles: (input) =>
+              runActionsMatrixAggregateCycles(
+                {
+                  ...input,
+                  modelStartsEnabled: false,
+                  ...(isolationWriteFailure === null ? {} : {
+                    state: {
+                      ...input.state,
+                      readRepair: () => input.state.readRepair(),
+                      readRelease: () => input.state.readRelease(),
+                      writeRepair: () =>
+                        Promise.resolve(
+                          portOk({
+                            status: isolationWriteFailure!,
+                            currentHead: beforeHead,
+                          }),
+                        ),
+                    },
+                  }),
+                },
+                undefined,
+                carrier,
+                options,
+              ),
+          })
+        );
       } finally {
         Deno.chdir(oldCwd);
       }
-      return result;
     };
     if (historicalRuntimeIsolation) {
       const custody = structuredClone(before.value.snapshot);
@@ -188,11 +193,20 @@ export async function freshMatrixArtifacts(
       const oldArtifact = artifactRows.find((row) => row.id === 504)!;
       const provenance = oldArtifact.workflow_run;
       oldArtifact.workflow_run = { id: 999 };
-      await assert.rejects(
-        aggregate("isolation-forged-native", true),
-        /provenance unavailable or conflicting/,
+      const forgedBefore = await readFoundRepair(r.store);
+      const forged = await aggregate("isolation-forged-native", true);
+      assertInitialAdvisory(forged);
+      const forgedAfter = await readFoundRepair(r.store);
+      assert.deepEqual(
+        forgedAfter.reservations,
+        forgedBefore.reservations,
+        "the forged historical scan settles or refunds no charged reservation",
       );
-      assert.deepEqual(await r.store.readRepair(), before);
+      assert.deepEqual(
+        forgedAfter.work,
+        forgedBefore.work,
+        "the forged historical scan ingests or mutates no work record",
+      );
       oldArtifact.workflow_run = provenance;
       // The parser permits a blocked historical row to retain a stale request
       // ID. It is not the admitted work and its blocker must stay untouched.
@@ -582,14 +596,18 @@ export async function freshMatrixArtifacts(
         ] as const
       ) {
         await setPlan({ ...planner.plan, plannedAt });
-        await assert.rejects(
-          aggregate(name, true),
-          /matrix artifact provenance/,
+        const chronologyBefore = await readFoundRepair(r.store);
+        assertInitialAdvisory(await aggregate(name, true));
+        const chronologyAfter = await readFoundRepair(r.store);
+        assert.deepEqual(
+          chronologyAfter.reservations,
+          chronologyBefore.reservations,
+          "chronology advisory preserves every charged reservation",
         );
         assert.deepEqual(
-          await r.store.readRepair(),
-          digestControl,
-          "chronology refusal preserves every charge and intent",
+          chronologyAfter.work,
+          chronologyBefore.work,
+          "chronology advisory preserves every work record and intent",
         );
       }
       await setPlan(planner.plan);

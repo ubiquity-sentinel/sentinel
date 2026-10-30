@@ -14,6 +14,7 @@ import {
   type MatrixArtifactRequestV1,
   type MatrixArtifactTransportV1,
   MatrixArtifactUnavailableError,
+  MatrixMissingCellArtifactError,
 } from "./matrix-artifact-port.ts";
 import {
   closedCWaveHandledReservations,
@@ -33,6 +34,18 @@ async function transportFor(
 ): Promise<MatrixArtifactTransportV1> {
   if (injected !== undefined) return injected;
   return await hostOf(input).createArtifactTransport();
+}
+/**
+ * The transport's untyped fail-closed refusal. Typed refusals keep their own
+ * dispositions; only this generic provenance refusal can be advisory, and only
+ * for an initial historical recovery with no current-run carrier.
+ */
+const MATRIX_PROVENANCE_REFUSAL =
+  "matrix artifact provenance unavailable or conflicting";
+function isGenericMatrixProvenanceRefusal(error: unknown): boolean {
+  return error instanceof Error &&
+    !(error instanceof MatrixMissingCellArtifactError) &&
+    error.message === MATRIX_PROVENANCE_REFUSAL;
 }
 /** One bounded interval between authenticated completed-artifact scans. */
 const MATRIX_CONSUMER_POLL_MS = 60_000;
@@ -326,6 +339,26 @@ export async function runActionsMatrixAggregateCycles(
           ...(carrier === undefined ? {} : { currentRun: host.run }),
         });
       } catch (error) {
+        // A charged historical wave that cannot be authenticated is an
+        // uncertainty, not a verdict on this run: nothing from the refused
+        // scan is ingested or settled, the affected reservations stay charged
+        // for a later recovery, and the ordinary lifecycle below still runs.
+        // This is advisory ONLY when the call site passed no current-run
+        // carrier: then the initial scan authenticates historical waves and no
+        // scan can authenticate this execution's own cells. With a carrier the
+        // initial scan carries currentRun, so the same refusal is a fatal proof
+        // failure for this run. Typed refusals keep their existing dispositions.
+        if (
+          initialScan && carrier === undefined &&
+          isGenericMatrixProvenanceRefusal(error)
+        ) {
+          console.log(JSON.stringify({
+            kind: "sentinel_matrix_artifact_refused",
+            scan: "initial",
+            requests: requests.length,
+          }));
+          break;
+        }
         // GitHub kept answering a server error: nothing was authenticated or
         // ingested, so every charge stays unresolved exactly as for late
         // artifacts, and the ordinary lifecycle below still runs.
