@@ -39,6 +39,7 @@ import {
 } from "./backup-ci-ingest.ts";
 import type { BackupCiLegReadsV1 } from "./backup-ci-ingest-reads.ts";
 import {
+  type BackupCiArchiveV1,
   type BackupCiBareRepo,
   packBackupCiBare,
 } from "./backup-ci-materialize.ts";
@@ -118,6 +119,8 @@ export interface BackupCiPassDepsV1 {
   /** `$RUNNER_TEMP/backup-ci`. */
   workDir: string;
   tokenNeedles: readonly string[];
+  /** Archive-tool adapter only; pack size/credential checks cannot be replaced. */
+  archive?: BackupCiArchiveV1;
   log(line: string): void;
   sleep(ms: number): Promise<void>;
 }
@@ -440,6 +443,7 @@ export async function runBackupCiPass(
           planned.bare,
           `${deps.workDir}/trees/${slot}.tar`,
           deps.tokenNeedles,
+          deps.archive,
         );
         if (!packed.ok) {
           deps.log(`backup-ci:pack:${planned.unit.unitId}:${packed.reason}`);

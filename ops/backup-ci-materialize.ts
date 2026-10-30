@@ -482,25 +482,17 @@ export type BackupCiPackResultV1 =
   | { ok: true; tar: string; sha256: string }
   | { ok: false; reason: "tree_too_large" | "credential" | "tar_failed" };
 
-/**
- * Bounds, scans and tars a materialized bare repository (named `bare` in
- * the tar, so the leg extracts `<dir>/bare`). Deterministic: sorted names,
- * mtime 0, owner and group 0, symlinks stored, never followed.
- */
-export async function packBackupCiBare(
-  repo: BackupCiBareRepo,
+/** Archive only: size and credential checks always remain in the packer. */
+export type BackupCiArchiveV1 = (
+  parent: string,
   out: string,
-  needles: readonly string[],
-): Promise<BackupCiPackResultV1> {
-  if (await repo.sizeBytes() > BACKUP_CI_MAX_TREE_BYTES) {
-    return { ok: false, reason: "tree_too_large" };
-  }
-  if (await repo.leaksCredential(needles)) {
-    return { ok: false, reason: "credential" };
-  }
-  const parent = repo.dir.slice(0, repo.dir.lastIndexOf("/"));
-  const name = repo.dir.slice(repo.dir.lastIndexOf("/") + 1);
-  if (name !== "bare") return { ok: false, reason: "tar_failed" };
+) => Promise<boolean>;
+
+/** The hosted Linux archive format; fixtures may supply a portable tar adapter. */
+async function archiveBackupCiBare(
+  parent: string,
+  out: string,
+): Promise<boolean> {
   const result = await new Deno.Command("tar", {
     args: [
       "--sort=name",
@@ -513,14 +505,38 @@ export async function packBackupCiBare(
       out,
       "-C",
       parent,
-      name,
+      "bare",
     ],
     clearEnv: true,
     env: { PATH: "/usr/local/bin:/usr/bin:/bin", LC_ALL: "C" },
     stdout: "null",
     stderr: "null",
   }).output().catch(() => null);
-  if (result === null || !result.success) {
+  return result !== null && result.success;
+}
+
+/**
+ * Bounds, scans and tars a materialized bare repository (named `bare` in
+ * the tar, so the leg extracts `<dir>/bare`). The default Linux archiver is
+ * deterministic: sorted names, mtime 0, owner/group 0, symlinks never followed.
+ * Adapters replace only archive creation, never the bounds or custody scans.
+ */
+export async function packBackupCiBare(
+  repo: BackupCiBareRepo,
+  out: string,
+  needles: readonly string[],
+  archive: BackupCiArchiveV1 = archiveBackupCiBare,
+): Promise<BackupCiPackResultV1> {
+  if (await repo.sizeBytes() > BACKUP_CI_MAX_TREE_BYTES) {
+    return { ok: false, reason: "tree_too_large" };
+  }
+  if (await repo.leaksCredential(needles)) {
+    return { ok: false, reason: "credential" };
+  }
+  const parent = repo.dir.slice(0, repo.dir.lastIndexOf("/"));
+  const name = repo.dir.slice(repo.dir.lastIndexOf("/") + 1);
+  if (name !== "bare") return { ok: false, reason: "tar_failed" };
+  if (!await archive(parent, out).catch(() => false)) {
     return { ok: false, reason: "tar_failed" };
   }
   if (await fileContainsAny(out, [...needles, "extraheader"])) {
