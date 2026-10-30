@@ -54,21 +54,19 @@ export function passportTrialCanReconsider(
     /^refs\/heads\/sentinel-candidates\/[0-9a-f]{64}$/.test(preserved.ref);
 }
 
-/** A mechanical refresh kept the settled admission at its original base. */
-export function passportTrialRefreshBinding(
+/** Every published trial reentry needs the current exact preserved candidate. */
+export function passportTrialCandidateBinding(
   record: WorkRecordV1,
   reservations: readonly BudgetReservationV1[],
 ): CandidatePreservationV1 | null {
   if (!passportTrialCanReconsider(record, reservations)) return null;
-  const charge = reservations.find((row) =>
-    row.taskId === record.id &&
-    row.purpose !== "review_request" &&
-    row.attempt === record.counters.attempts &&
-    row.repository.owner === record.repository.owner &&
-    row.repository.name === record.repository.name &&
-    row.repository.installationId === record.repository.installationId
-  );
-  return charge?.head !== record.target.base
-    ? record.target.candidateState?.preserved ?? null
+  const candidate = record.target.candidateState;
+  const preserved = candidate?.preserved;
+  return record.target.pr !== null && record.target.head !== null &&
+      preserved !== null && preserved !== undefined &&
+      preserved.base === record.target.base &&
+      preserved.head === record.target.head &&
+      candidate?.publishedHead === record.target.head
+    ? preserved
     : null;
 }

@@ -552,6 +552,15 @@ Deno.test("Passport trial: settled base-refresh count park requires exact origin
     repair: repairSnapshot([record], [], [], [charge]),
     issueOpen: true,
     branchTip: (branch) => branch === record.target.branch ? HEAD : SHA2,
+    pull: pullFacts({
+      number: 172,
+      state: "open",
+      merged: false,
+      headSha: HEAD,
+      baseRef: "main",
+      baseSha: SHA2,
+      author: "ubiquity-sentinel[bot]",
+    }),
   });
   github.listPullsByHeadRef = () =>
     Promise.resolve([{
@@ -578,5 +587,550 @@ Deno.test("Passport trial: settled base-refresh count park requires exact origin
     assert.equal(rig.merges, 0);
   } finally {
     await Deno.remove(rig.tmp, { recursive: true });
+  }
+});
+
+Deno.test("Passport correction: same-base reentry authenticates ref and current publication before Git CAS", async (t) => {
+  for (
+    const control of [
+      "exact",
+      "forged_ref",
+      "stale_head",
+      "unknown_issue",
+    ] as const
+  ) {
+    await t.step(control, async () => {
+      const record = parked(REVIEW_ROUND_CEILING_UNREVIEWED);
+      Object.assign(record, {
+        counters: { attempts: 1, retries: 0, reviewRounds: 10 },
+        createdAt: T0,
+        updatedAt: T0,
+      });
+      record.blocker!.since = T0;
+      const operationKey = implementationIntentKey("d".repeat(64));
+      const ref = await candidatePreservationRef(
+        PASSPORT,
+        record.id,
+        operationKey,
+      );
+      record.target.base = BASE;
+      record.target.candidateState = {
+        preserved: {
+          operationKey,
+          base: BASE,
+          head: HEAD,
+          ref: control === "forged_ref"
+            ? "refs/heads/sentinel-candidates/" + "f".repeat(64)
+            : ref,
+        },
+        publishedHead: HEAD,
+      };
+      const charge = reservation("passport-refresh-original", {
+        repository: PASSPORT,
+        taskId: record.id,
+        attempt: 1,
+        purpose: "implementation",
+        head: BASE,
+        outcome: "submitted",
+        createdAt: T0,
+        settledAt: T0,
+      });
+      const { rig, github } = await maintenanceRig("passport-ref-proof", {
+        repair: repairSnapshot([record], [], [], [charge]),
+        issueOpen: control === "unknown_issue" ? null : true,
+        baseTip: BASE,
+        pull: pullFacts({
+          number: 172,
+          state: "open",
+          merged: false,
+          headSha: control === "stale_head" ? SHA1 : HEAD,
+          baseRef: "main",
+          baseSha: BASE,
+          author: "ubiquity-sentinel[bot]",
+        }),
+      });
+      try {
+        const before = await rig.state.readRepair();
+        assert.ok(before.ok && before.value.status === "found");
+        const result = await runMaintenance(rig, github);
+        const after = await rig.state.readRepair();
+        assert.ok(after.ok && after.value.status === "found");
+        if (control === "exact") {
+          assert.equal(
+            after.value.snapshot.work[0].nextStep,
+            "work",
+            JSON.stringify(result),
+          );
+          assert.deepEqual(
+            after.value.snapshot.work[0].counters,
+            record.counters,
+          );
+          assert.deepEqual(after.value.snapshot.reservations, [charge]);
+        } else {
+          assert.equal(rig.writes, 0, JSON.stringify(result));
+          assert.deepEqual(after.value.snapshot, before.value.snapshot);
+          assert.equal(rig.merges, 0);
+        }
+      } finally {
+        await Deno.remove(rig.tmp, { recursive: true });
+      }
+    });
+  }
+});
+
+import { REVIEW_ROUND_CEILING_REVIEWED } from "../../src/repair/review-round-cap.ts";
+Deno.test("Passport correction: reviewed ceiling has an exact delivery continuation", () => {
+  const record = parked(REVIEW_ROUND_CEILING_REVIEWED);
+  const snapshot = trialSnapshot(record);
+  const before = structuredClone(snapshot);
+  assert.equal(
+    planRaisedCeilingReadmission(snapshot, record, null)?.nextStep,
+    "delivery",
+  );
+  assert.deepEqual(snapshot, before);
+});
+
+import { TASK_ACCEPTANCE_UNCERTAIN_DETAIL } from "../../src/repair/review-gate.ts";
+import {
+  acceptedObservation,
+  completedReceipt,
+} from "../repair/loop-review-fixtures.ts";
+import { reviewOperationKey, reviewReceiptId } from "../../src/repair/keys.ts";
+import { reviewTaskStatementDigest } from "../../src/contracts/review-task-acceptance.ts";
+import { exactOpenPr } from "../repair/loop-candidate-fixtures.ts";
+import { applyHostedRetries } from "../../ops/hosted-autonomy-retries.ts";
+
+async function exerciseTerminalReviewCorrection(
+  mode: "uncertain" | "reviewed",
+  stored = true,
+) {
+  const uncertain = mode === "uncertain";
+  const rounds = uncertain ? 1 : 5;
+  const record = parked(
+    uncertain
+      ? TASK_ACCEPTANCE_UNCERTAIN_DETAIL
+      : REVIEW_ROUND_CEILING_REVIEWED,
+  );
+  Object.assign(record, {
+    counters: { attempts: 1, retries: 0, reviewRounds: rounds },
+    createdAt: T0,
+    updatedAt: T0,
+  });
+  record.blocker!.since = T0;
+  const originalId = "e".repeat(64);
+  const originalKey = implementationIntentKey(originalId);
+  record.target.candidateState = {
+    preserved: {
+      operationKey: originalKey,
+      base: BASE,
+      head: HEAD,
+      ref: await candidatePreservationRef(PASSPORT, record.id, originalKey),
+    },
+    publishedHead: HEAD,
+  };
+  const acceptance = {
+    issueNumber: 120,
+    taskDigest: await reviewTaskStatementDigest({
+      issueNumber: 120,
+      title: "issue 120",
+      body: "",
+    }),
+    verdict: uncertain ? "uncertain" as const : "fulfilled" as const,
+    evidence: [
+      "The original reviewer did not establish the requested evidence.",
+    ],
+  };
+  const oldKey = reviewOperationKey(172, HEAD, rounds);
+  const old = completedReceipt(172, HEAD, BASE, {
+    repository: PASSPORT,
+    id: await reviewReceiptId(oldKey, HEAD),
+    expectedReviewer: "ubiquity-sentinel[bot]",
+    observedReviewer: "ubiquity-sentinel[bot]",
+    taskAcceptance: acceptance,
+  });
+  const original = reservation(originalId, {
+    repository: PASSPORT,
+    taskId: record.id,
+    attempt: 1,
+    purpose: "implementation",
+    head: BASE,
+    outcome: "submitted",
+    createdAt: T0,
+    settledAt: T0,
+  });
+  const priorReviews = Array.from(
+    { length: rounds },
+    (_, index) =>
+      reservation(index === 0 ? "f".repeat(64) : String(index).repeat(64), {
+        repository: PASSPORT,
+        taskId: record.id,
+        attempt: index + 1,
+        purpose: "review_request",
+        head: HEAD,
+        outcome: "submitted",
+        createdAt: T0 + index,
+        settledAt: T0 + index + 1,
+      }),
+  );
+  const priorReview = priorReviews[0];
+  const seed = repairSnapshot([record], stored ? [old] : [], [], [
+    original,
+    ...priorReviews,
+  ]);
+  const { rig } = await maintenanceRig("passport-uncertain-counted-review", {
+    repair: seed,
+  });
+  try {
+    const read = await rig.state.readRepair();
+    assert.ok(read.ok && read.value.status === "found");
+    const deliveryPlan = planRaisedCeilingReadmission(
+      read.value.snapshot,
+      record,
+      null,
+    );
+    const plans = uncertain
+      ? planAcceptanceReadmissions(read.value.snapshot, new Set(), true)
+      : deliveryPlan === null
+      ? []
+      : [deliveryPlan];
+    assert.equal(plans.length, 1);
+    const next = applyHostedRetries(
+      read.value.snapshot,
+      read.value.head,
+      plans,
+      T0 + 5000,
+    );
+    const write = await rig.state.writeRepair(next, read.value.head);
+    assert.ok(write.ok && write.value.status === "applied");
+    class OfficialGithub extends FakeGithub {
+      override readonly reviewerIdentity = "ubiquity-sentinel[bot]";
+    }
+    const github = new OfficialGithub({
+      baseSha: BASE,
+      candidateLifecycle: {
+        refs: {
+          ["refs/heads/" + record.target.branch]: HEAD,
+          "refs/heads/main": BASE,
+        },
+        pullRequests: [{
+          ...exactOpenPr(172, HEAD, record.target.branch!, BASE),
+          baseRef: "main",
+        }],
+        prepareBaseRefresh: () => Promise.resolve(portOk(HEAD)),
+        preserveCandidate: () => Promise.resolve(portOk(undefined)),
+      },
+    });
+    github.releasedHead = HEAD;
+    if (uncertain) {
+      github.unboundReviewKeys.add(reviewOperationKey(172, HEAD, rounds + 1));
+      const submitReview = github.requestReview.bind(github);
+      github.requestReview = async (request) => {
+        const result = await submitReview(request);
+        const acceptedKey = github.reviewRequestIdentities.at(-1)?.operationKey;
+        if (result.ok && acceptedKey !== undefined) {
+          github.unboundReviewKeys.delete(acceptedKey);
+        }
+        return result;
+      };
+    }
+    github.reviewObservationsByKey.set(oldKey, {
+      ...acceptedObservation(HEAD, acceptance, T0 + 1000),
+      observedBase: BASE,
+      reviewer: github.reviewerIdentity,
+    });
+    const readIssue = github.readIssue.bind(github);
+    github.readIssue = async (number) => {
+      const result = await readIssue(number);
+      return result.ok && result.value
+        ? portOk({
+          ...result.value,
+          relations: { subIssueCount: 0, openBlockers: [] },
+        })
+        : result;
+    };
+    const clock = new FakeClock(T0 + 10000);
+    const configs = repairConfigs({
+      repository: PASSPORT,
+      baseBranch: "main",
+      adapter: { kind: "github" },
+      sessionBound: { maxDurationMs: 240000, maxOutputChars: 200000 },
+    });
+    const model = new FakeModel();
+    const terminalDeps = {
+      state: rig.state,
+      clock,
+      github,
+      configs,
+      model,
+      controllerSha: SHA1,
+      budget: new RollingStartBudget({ state: rig.state, clock, configs }),
+      githubCooldown: new DurableGitHubCooldownGate({
+        state: rig.state,
+        clock,
+      }),
+      incidents: new FakeIncidents({ summaries: [] }),
+      replay: new FakeReplay(),
+    };
+    const terminalOutcome = await runRepairCycle(terminalDeps, {
+      deadline: clock.now() + 3600000,
+      stepLimit: 16,
+    });
+    const after = await rig.state.readRepair();
+    assert.ok(after.ok && after.value.status === "found");
+    if (uncertain) {
+      assert.equal(
+        github.reviewRequestIdentities.length,
+        1,
+        "uncertainty must initiate a real next request: " +
+          JSON.stringify({
+            outcome: terminalOutcome,
+            work: after.value.snapshot.work[0],
+            calls: github.calls,
+          }),
+      );
+      assert.equal(
+        github.reviewRequestIdentities[0].operationKey,
+        reviewOperationKey(172, HEAD, 2),
+      );
+      assert.equal(after.value.snapshot.work[0].counters.reviewRounds, 2);
+      assert.equal(
+        after.value.snapshot.reservations.filter((row) =>
+          row.purpose === "review_request" && row.attempt === 2
+        ).length,
+        1,
+      );
+      assert.equal(github.calls.includes("merge"), false);
+      await runRepairCycle(terminalDeps, {
+        deadline: clock.now() + 3600000,
+        stepLimit: 16,
+      });
+      const resumed = await rig.state.readRepair();
+      assert.ok(resumed.ok && resumed.value.status === "found");
+      assert.equal(
+        github.reviewRequestIdentities.length,
+        1,
+        "pending resume cannot request the new round twice",
+      );
+      assert.equal(resumed.value.snapshot.work[0].counters.reviewRounds, 2);
+    } else {
+      assert.equal(
+        github.reviewRequestIdentities.length,
+        0,
+        "already reviewed delivery needs no new review",
+      );
+      assert.equal(after.value.snapshot.work[0].counters.reviewRounds, rounds);
+      assert.equal(
+        after.value.snapshot.reservations.length,
+        seed.reservations.length,
+      );
+      assert.equal(
+        github.calls.filter((call) => call === "merge").length,
+        1,
+        "current reviewed green work must progress: " +
+          JSON.stringify({
+            outcome: terminalOutcome,
+            work: after.value.snapshot.work[0],
+            calls: github.calls,
+          }),
+      );
+    }
+    const retained = after.value.snapshot.reviews.find((row) =>
+      row.id === old.id
+    );
+    assert.ok(retained);
+    if (stored) assert.deepEqual(retained, old);
+    else {
+      assert.deepEqual(retained.taskAcceptance, old.taskAcceptance);
+      assert.equal(retained.requestId, old.requestId);
+      assert.equal(retained.resultId, old.resultId);
+      assert.equal(retained.completedAt, old.completedAt);
+    }
+    assert.deepEqual(
+      after.value.snapshot.reservations.find((row) => row.id === original.id),
+      original,
+    );
+    assert.deepEqual(
+      after.value.snapshot.reservations.find((row) =>
+        row.id === priorReview.id
+      ),
+      priorReview,
+    );
+    assert.equal(model.requests.length, 0);
+    for (const prior of priorReviews) {
+      assert.deepEqual(
+        after.value.snapshot.reservations.find((row) => row.id === prior.id),
+        prior,
+      );
+    }
+  } finally {
+    await Deno.remove(rig.tmp, { recursive: true });
+  }
+}
+
+Deno.test("Passport correction: uncertainty starts a fresh counted native review and preserves its old receipt", () =>
+  exerciseTerminalReviewCorrection("uncertain"));
+Deno.test("Passport correction: reviewed ceiling progresses through current merge gates without new counts", () =>
+  exerciseTerminalReviewCorrection("reviewed"));
+
+Deno.test("Passport correction: observed uncertainty without a stored receipt reserves exactly one fresh review", () =>
+  exerciseTerminalReviewCorrection("uncertain", false));
+
+import { MemoryState } from "../repair/helpers.ts";
+import { recoverMissingTaskReview } from "../../src/repair/loop-review-result.ts";
+
+Deno.test("Passport correction: uncertain recovery refuses conflicting untrusted blocking or outstanding evidence", async (t) => {
+  for (
+    const control of [
+      "stored_content",
+      "P0",
+      "uncounted",
+      "outstanding",
+      "bound_next",
+      "wrong_head",
+      "untrusted",
+    ] as const
+  ) {
+    await t.step(control, async () => {
+      const record = parked(TASK_ACCEPTANCE_UNCERTAIN_DETAIL);
+      record.nextStep = "review";
+      record.blocker = null;
+      record.counters = { attempts: 1, retries: 0, reviewRounds: 1 };
+      const taskAcceptance = {
+        issueNumber: 120,
+        taskDigest: await reviewTaskStatementDigest({
+          issueNumber: 120,
+          title: "issue 120",
+          body: "",
+        }),
+        verdict: "uncertain" as const,
+        evidence: ["Original uncertain review"],
+      };
+      const key = reviewOperationKey(172, HEAD, 1);
+      const receipt = completedReceipt(172, HEAD, BASE, {
+        repository: PASSPORT,
+        id: await reviewReceiptId(key, HEAD),
+        taskAcceptance,
+      });
+      const stored = structuredClone(receipt);
+      if (control === "stored_content") {
+        stored.summary = "Contradictory stored content";
+      }
+      if (control === "P0") {
+        Object.assign(
+          receipt,
+          completedReceipt(172, HEAD, BASE, {
+            ...receipt,
+            findings: [{
+              id: "p0",
+              fingerprint: "a".repeat(64),
+              severity: "P0",
+              path: "src/fix.ts",
+              message: "Blocking finding",
+              resolved: false,
+              resolutionEvidence: null,
+            }],
+            unresolvedSeverities: ["P0"],
+          }),
+        );
+      }
+      if (control === "uncounted") receipt.findingsUncounted = 1;
+      if (control === "wrong_head") receipt.pullRequest.head = SHA3;
+      if (control === "untrusted") receipt.observedReviewer = "untrusted[bot]";
+      const current = reservation("c".repeat(64), {
+        repository: PASSPORT,
+        taskId: record.id,
+        head: BASE,
+        attempt: 1,
+        purpose: "implementation",
+        outcome: "submitted",
+        createdAt: T0,
+        settledAt: T0,
+      });
+      const prior = reservation("d".repeat(64), {
+        repository: PASSPORT,
+        taskId: record.id,
+        head: HEAD,
+        attempt: 1,
+        purpose: "review_request",
+        outcome: "submitted",
+        createdAt: T0,
+        settledAt: T0 + 1,
+      });
+      const snapshot = repairSnapshot([record], [stored], [], [current, prior]);
+      if (control === "outstanding") {
+        snapshot.reservations.push(
+          reservation("b".repeat(64), {
+            repository: PASSPORT,
+            taskId: record.id,
+            head: HEAD,
+            attempt: 2,
+            purpose: "review_request",
+            outcome: "reserved",
+            createdAt: T0 + 2,
+            settledAt: null,
+          }),
+        );
+      }
+      const state = new MemoryState();
+      state.repair = snapshot;
+      state.repairHead = SHA1;
+      const clock = new FakeClock(T0 + 10000);
+      const github = new FakeGithub({ baseSha: BASE });
+      github.releasedHead = HEAD;
+      const readIssue = github.readIssue.bind(github);
+      github.readIssue = async (number) => {
+        const result = await readIssue(number);
+        return result.ok && result.value
+          ? portOk({
+            ...result.value,
+            relations: { subIssueCount: 0, openBlockers: [] },
+          })
+          : result;
+      };
+      if (control !== "bound_next") {
+        github.unboundReviewKeys.add(reviewOperationKey(172, HEAD, 2));
+      }
+      const configs = repairConfigs({
+        repository: PASSPORT,
+        adapter: { kind: "github" },
+        sessionBound: { maxDurationMs: 240000, maxOutputChars: 200000 },
+      });
+      const model = new FakeModel();
+      const deps = {
+        state,
+        clock,
+        github,
+        configs,
+        model,
+        controllerSha: SHA1,
+        budget: new RollingStartBudget({ state, clock, configs }),
+        githubCooldown: new DurableGitHubCooldownGate({ state, clock }),
+        incidents: new FakeIncidents({ summaries: [] }),
+        replay: new FakeReplay(),
+      };
+      const context = {
+        snapshot,
+        head: SHA1,
+        executionBaseline: null,
+        legacyReviewCutoff: null,
+        bounds: {
+          runDeadline: clock.now() + 3600000,
+          modelCutoff: clock.now() + 3600000,
+        },
+      };
+      const before = structuredClone(snapshot);
+      const result = await recoverMissingTaskReview(
+        deps,
+        context,
+        record,
+        receipt,
+        key,
+      );
+      assert.ok(result === null || result.kind === "deferred", control);
+      assert.equal(state.repairWrites, 0, control);
+      assert.deepEqual(state.repair, before, control);
+      assert.equal(github.reviewRequestIdentities.length, 0, control);
+      assert.equal(model.requests.length, 0, control);
+    });
   }
 });
