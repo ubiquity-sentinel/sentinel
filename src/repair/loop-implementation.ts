@@ -1,5 +1,7 @@
 import { checkExistingPrCustody, routeExistingPr } from "./loop-existing-pr.ts";
 import { hasTakeoverCustody } from "../github/existing-pr-takeover-provenance.ts";
+import { deriveReservationId } from "../budget/mod.ts";
+import { canonicalStringify } from "../contracts/canonical.ts";
 import { guardQueueOperation } from "./loop-queue-guard.ts";
 /** Repair loop internals: implementation. */
 import type { GitSha } from "../contracts/brands.ts";
@@ -358,12 +360,39 @@ export async function prepareImplementationStart(
     "correct",
   );
   if (custodyBeforeAdmission !== null) return custodyBeforeAdmission;
-  const reservation = await deps.budget.reserveModelStart({
+  if (context.head === null) {
+    return {
+      kind: "state_error",
+      detail: "implementation admission state is unavailable",
+    };
+  }
+  const admission = {
     repository: record.repository,
     taskId: record.id,
     head: record.target.base,
     attempt: record.counters.attempts + 1,
-    purpose: record.counters.attempts === 0 ? "implementation" : "retry",
+    purpose: record.counters.attempts === 0
+      ? "implementation" as const
+      : "retry" as const,
+  };
+  const reservationId = await deriveReservationId(admission);
+  const admissionAt = deps.clock.now();
+  const attempted = ciFinding === null
+    ? startAttempt(record, admissionAt)
+    : countRetry(clearWait(record, admissionAt), admissionAt);
+  const started = implementationIntent(reservationId, attempted, admissionAt);
+  const intent = conflict === null ? started : {
+    ...started,
+    failure: conflictMarker(conflict.mergeBase, admissionAt),
+  };
+  const nextWork = setIntent(attempted, intent, admissionAt);
+  const reservation = await deps.budget.reserveModelStart({
+    ...admission,
+    implementationTransition: {
+      expectedStateHead: context.head,
+      expectedWork: record,
+      nextWork,
+    },
   });
   if (reservation.status === "deferred") {
     return persistWork(
@@ -411,7 +440,8 @@ export async function prepareImplementationStart(
   }
   const durable = reservation;
 
-  // The reservation write moved the state head; reload before persisting intent.
+  // The atomic admission moved the state head; verify its counted intent
+  // before dispatch and the post-admission authority checks.
   const fresh = await loadSnapshot(deps, context.bounds);
   if (fresh === null) {
     return { kind: "state_error", detail: "repair state unavailable" };
@@ -421,6 +451,24 @@ export async function prepareImplementationStart(
     return {
       kind: "state_error",
       detail: "work record vanished after admission",
+    };
+  }
+  const admittedAt = durable.reservation.createdAt;
+  const admittedWork = {
+    ...nextWork,
+    updatedAt: admittedAt,
+    intent: {
+      ...intent,
+      startedAt: admittedAt,
+      ...(conflict === null
+        ? {}
+        : { failure: conflictMarker(conflict.mergeBase, admittedAt) }),
+    },
+  };
+  if (canonicalStringify(current) !== canonicalStringify(admittedWork)) {
+    return {
+      kind: "state_error",
+      detail: "implementation admission intent is unavailable",
     };
   }
 
@@ -439,37 +487,14 @@ export async function prepareImplementationStart(
   );
   if (admittedCustody !== null) return admittedCustody;
 
-  // A CI fix (of a reviewed head or a never-reviewed one) is charged in
-  // `counters.retries` as well as `attempts` and never counts a review round;
-  // its fix marker is consumed by the admission.
-  const attempted = ciFinding === null
-    ? startAttempt(current, deps.clock.now())
-    : countRetry(clearWait(current, deps.clock.now()), deps.clock.now());
-  const started = implementationIntent(
-    durable.reservation.id,
-    attempted,
-    deps.clock.now(),
-  );
-  // A conflict resolution's implementation intent carries the conflict
-  // marker (the only addition), so its receipt and every non-success outcome
-  // stay bound to the one base tip this charge was spent on.
-  const intent = conflict === null ? started : {
-    ...started,
-    failure: conflictMarker(conflict.mergeBase, deps.clock.now()),
-  };
-  const withIntent = setIntent(attempted, intent, deps.clock.now());
+  // The reservation CAS already counted and bound this exact implementation.
+  const withIntent = current;
   // A refunded (provably never submitted) start returns a conflict
   // resolution to its pending intent; any other start clears its intent.
   const unsent = (at: number): WorkRecordV1 =>
     conflict === null || record.intent === null
       ? clearIntent(withIntent, at)
       : setIntent(withIntent, record.intent, at);
-  const persisted = await persistTransition(
-    deps,
-    fresh,
-    replaceWorkMutation(withIntent),
-  );
-  if (persisted.kind !== "progress") return persisted;
   const intendedGuard = await guardQueueOperation(
     deps,
     fresh,

@@ -7,17 +7,33 @@
 // no network and no model calls exist in this suite.
 import assert from "node:assert/strict";
 
-import { HOUR_WINDOW_MS, RollingStartBudget } from "../../src/budget/mod.ts";
+import {
+  deriveReservationId,
+  HOUR_WINDOW_MS,
+  type ReserveModelStartRequestV1,
+  RollingStartBudget,
+} from "../../src/budget/mod.ts";
+import { portOk } from "../../src/contracts/ports.ts";
+import { implementationIntent } from "../../src/repair/loop-implementation.ts";
+import { startAttempt } from "../../src/repair/transitions.ts";
+import {
+  baseRefreshIntentKey,
+  candidateBranch,
+} from "../../src/repair/keys.ts";
+import { conflictMarker } from "../../src/repair/conflict-resolution.ts";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
 import { createRepairStateStore, DenoGitRunner } from "../../src/state/mod.ts";
 import type { GitRunnerV1 } from "../../src/state/mod.ts";
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import {
   BarrierRunner,
+  FailedPushRunner,
   incidentSummary,
   LostPushResponseRunner,
   makeRemoteCtx,
   REPO,
+  SHA2,
+  SHA3,
   T0,
   testGitEnv,
   ThrowingRunner,
@@ -136,6 +152,277 @@ Deno.test("budget: one global cap across repositories survives a restart", async
           "ubiquity-sentinel/sentinel",
         ].sort(),
       );
+    }
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+/** Real state fixture; only the external admission acknowledgement is injected. */
+async function atomicFixture(ctx: Ctx, clock: FakeClock, conflict = false) {
+  const store = storeAt(ctx, "atomic-seed");
+  const work = workRecord("task:atomic", { updatedAt: T0 });
+  if (conflict) {
+    work.counters.attempts = 6;
+    work.counters.retries = 3;
+    work.target.branch = candidateBranch(work.id);
+    work.target.head = SHA2;
+    work.target.pr = 7;
+    work.intent = {
+      kind: "base_refresh",
+      key: baseRefreshIntentKey(7, SHA2, SHA3),
+      startedAt: T0,
+      branch: work.target.branch,
+      expectedHead: SHA2,
+      observedBase: SHA3,
+      pr: 7,
+      requestId: null,
+      resultId: null,
+      failure: conflictMarker(SHA3, T0),
+    };
+  }
+  const snapshot: RepairStateSnapshotV1 = {
+    version: "v1",
+    kind: "repair_state_snapshot",
+    stateHead: null,
+    sequence: 1,
+    updatedAt: T0,
+    incidents: [incidentSummary("inc:untouched")],
+    evidence: [],
+    work: [work, workRecord("w:untouched", { updatedAt: T0 })],
+    reservations: [],
+    reviews: [],
+    replays: [],
+    releaseRequests: [],
+    githubCooldowns: [],
+    attemptMemory: [],
+    lessons: [],
+  };
+  const seed = await store.writeRepair(snapshot, null);
+  assert.ok(seed.ok && seed.value.status === "applied");
+  const loaded = await store.readRepair();
+  assert.ok(loaded.ok && loaded.value.status === "found");
+  const before = loaded.value.snapshot.work.find((row) => row.id === work.id)!;
+  const request: ReserveModelStartRequestV1 = reserveRequest(work.id, {
+    attempt: before.counters.attempts + 1,
+    purpose: before.counters.attempts === 0 ? "implementation" : "retry",
+  });
+  const id = await deriveReservationId(request);
+  const nextWork = startAttempt(before, clock.now());
+  nextWork.intent = {
+    ...implementationIntent(id, nextWork, clock.now()),
+    ...(conflict ? { failure: conflictMarker(SHA3, clock.now()) } : {}),
+  };
+  request.implementationTransition = {
+    expectedStateHead: loaded.value.head,
+    expectedWork: before,
+    nextWork,
+  };
+  return { request, before: loaded.value, id };
+}
+
+Deno.test("budget atomic implementation: real Git stores charge and counted conflict intent in one commit", async () => {
+  const ctx = await makeCtx("atomic-conflict");
+  try {
+    const clock = new FakeClock(T0 + 1000);
+    const fixture = await atomicFixture(ctx, clock, true);
+    clock.advance(17);
+    const result = await budgetAt(clock, storeAt(ctx, "admit"))
+      .reserveModelStart(fixture.request);
+    assert.equal(result.status, "admitted", JSON.stringify(result));
+    const fresh = await storeAt(ctx, "empty-reader").readRepair();
+    assert.ok(fresh.ok && fresh.value.status === "found");
+    const state = fresh.value.snapshot;
+    const work = state.work.find((row) => row.id === fixture.request.taskId)!;
+    assert.equal(state.sequence, fixture.before.snapshot.sequence + 1);
+    assert.equal(state.reservations.length, 1);
+    assert.equal(work.counters.attempts, 7);
+    assert.equal(work.counters.retries, 3);
+    assert.equal(work.intent?.requestId, fixture.id);
+    assert.equal(work.intent?.startedAt, state.reservations[0].createdAt);
+    assert.equal(work.intent?.failure?.atMs, state.reservations[0].createdAt);
+    assert.equal(work.updatedAt, T0 + 1017);
+    assert.deepEqual(
+      work.target,
+      fixture.request.implementationTransition!.expectedWork.target,
+    );
+    assert.deepEqual(state.incidents, fixture.before.snapshot.incidents);
+    assert.deepEqual(
+      state.work.find((row) => row.id === "w:untouched"),
+      fixture.before.snapshot.work.find((row) => row.id === "w:untouched"),
+    );
+    assert.deepEqual(
+      work.evidence,
+      fixture.request.implementationTransition!.expectedWork.evidence,
+    );
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+Deno.test("budget atomic implementation: refusal, lost acknowledgements and concurrent CAS preserve both records", async (t) => {
+  for (
+    const mode of [
+      "before_write",
+      "lost_push_response",
+      "unresolved_ack",
+      "concurrent",
+    ] as const
+  ) {
+    await t.step(mode, async () => {
+      const ctx = await makeCtx(`atomic-${mode}`);
+      try {
+        const clock = new FakeClock(T0 + 1000);
+        const fixture = await atomicFixture(ctx, clock);
+        let result;
+        if (mode === "concurrent") {
+          const runner = new BarrierRunner(
+            new DenoGitRunner(`${ctx.tmp}/git-home`),
+          );
+          const outcomes = await Promise.all([
+            budgetAt(clock, storeAt(ctx, "a", runner)).reserveModelStart(
+              fixture.request,
+            ),
+            budgetAt(clock, storeAt(ctx, "b", runner)).reserveModelStart(
+              fixture.request,
+            ),
+          ]);
+          assert.deepEqual(outcomes.map((row) => row.status).sort(), [
+            "admitted",
+            "conflict",
+          ]);
+          result = outcomes.find((row) => row.status === "admitted")!;
+        } else {
+          const runner = new DenoGitRunner(`${ctx.tmp}/git-home`);
+          const store = storeAt(
+            ctx,
+            "admit",
+            mode === "before_write"
+              ? new FailedPushRunner(runner)
+              : mode === "lost_push_response"
+              ? new LostPushResponseRunner(runner)
+              : runner,
+          );
+          if (mode === "unresolved_ack") {
+            const write = store.writeRepair.bind(store);
+            store.writeRepair = async (next, expected) => {
+              const applied = await write(next, expected);
+              assert.ok(applied.ok && applied.value.status === "applied");
+              return portOk({ status: "ambiguous", currentHead: null });
+            };
+          }
+          result = await budgetAt(clock, store).reserveModelStart(
+            fixture.request,
+          );
+        }
+        const fresh = await storeAt(ctx, "readback").readRepair();
+        assert.ok(fresh.ok && fresh.value.status === "found");
+        if (mode === "before_write") {
+          assert.notEqual(result.status, "admitted");
+          assert.equal(fresh.value.head, fixture.before.head);
+          assert.deepEqual(fresh.value.snapshot, fixture.before.snapshot);
+        } else {
+          assert.equal(
+            result.status,
+            mode === "unresolved_ack" ? "ambiguous" : "admitted",
+          );
+          const work = fresh.value.snapshot.work.find((row) =>
+            row.id === fixture.request.taskId
+          )!;
+          assert.equal(fresh.value.snapshot.reservations.length, 1);
+          assert.equal(work.counters.attempts, 1);
+          assert.equal(work.intent?.requestId, fixture.id);
+          assert.equal(
+            fresh.value.snapshot.sequence,
+            fixture.before.snapshot.sequence + 1,
+          );
+          const duplicate = await budgetAt(clock, storeAt(ctx, "restart"))
+            .reserveModelStart(fixture.request);
+          assert.equal(
+            duplicate.status,
+            "duplicate",
+            "lost acknowledgement never grants a second start",
+          );
+        }
+      } finally {
+        await ctx.cleanup();
+      }
+    });
+  }
+});
+
+Deno.test("budget atomic implementation: stale or malformed companions never alter real Git state", async (t) => {
+  const ctx = await makeCtx("atomic-refusals");
+  try {
+    const clock = new FakeClock(T0 + 1000);
+    const fixture = await atomicFixture(ctx, clock);
+    const mutations: [string, (request: ReserveModelStartRequestV1) => void][] =
+      [
+        ["stale head", (q) => {
+          q.implementationTransition!.expectedStateHead = SHA2;
+        }],
+        ["changed prior", (q) => {
+          q.implementationTransition!.expectedWork.classification.priority = 9;
+        }],
+        ["changed target", (q) => {
+          q.implementationTransition!.nextWork.target.base = SHA2;
+        }],
+        ["wrong task", (q) => {
+          q.taskId = fixture.before.snapshot.work.find((row) =>
+            row.id === "w:untouched"
+          )!.id;
+        }],
+        ["wrong installation", (q) => {
+          q.implementationTransition!.nextWork.repository.installationId++;
+        }],
+        ["wrong charge", (q) => {
+          q.implementationTransition!.nextWork.intent!.requestId = "f".repeat(
+            64,
+          );
+        }],
+        ["wrong key", (q) => {
+          q.implementationTransition!.nextWork.intent!.key = "impl:" +
+            "f".repeat(64);
+        }],
+        ["wrong branch", (q) => {
+          q.implementationTransition!.nextWork.intent!.branch =
+            "sentinel/repair/other";
+        }],
+        ["counter jump", (q) => {
+          q.implementationTransition!.nextWork.counters.attempts++;
+        }],
+        ["invented CI retry", (q) => {
+          q.implementationTransition!.nextWork.counters.retries++;
+        }],
+        ["changed evidence", (q) => {
+          q.implementationTransition!.nextWork.evidence = [{
+            kind: "review_receipt",
+            ref: "artifact:extra",
+          }];
+        }],
+        ["changed intent base", (q) => {
+          q.implementationTransition!.nextWork.intent!.observedBase = SHA2;
+        }],
+      ];
+    for (const [name, mutate] of mutations) {
+      await t.step(name, async () => {
+        const request = structuredClone(fixture.request);
+        mutate(request);
+        const result = await budgetAt(
+          clock,
+          storeAt(ctx, `refuse-${name.replaceAll(" ", "-")}`),
+        ).reserveModelStart(request);
+        assert.equal(
+          result.status,
+          name === "stale head" ? "conflict" : "invalid",
+          JSON.stringify(result),
+        );
+        const fresh = await storeAt(ctx, `verify-${name.replaceAll(" ", "-")}`)
+          .readRepair();
+        assert.ok(fresh.ok && fresh.value.status === "found");
+        assert.equal(fresh.value.head, fixture.before.head);
+        assert.deepEqual(fresh.value.snapshot, fixture.before.snapshot);
+      });
     }
   } finally {
     await ctx.cleanup();

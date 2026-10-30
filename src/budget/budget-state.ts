@@ -21,6 +21,23 @@ import { parseRepositoryIdentity } from "../contracts/shared.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import {
+  parseWorkRecordV1,
+  type WorkRecordV1,
+} from "../contracts/work-record.ts";
+import { hasTakeoverCustody } from "../github/existing-pr-takeover-provenance.ts";
+import { isCiFixMarker } from "../repair/ci-first-policy.ts";
+import { ciPublicationShape } from "../repair/ci-rejection.ts";
+import {
+  conflictMarker,
+  pendingConflictResolution,
+} from "../repair/conflict-resolution.ts";
+import {
+  baseRefreshIntentKey,
+  candidateBranch,
+  implementationIntentKey,
+} from "../repair/keys.ts";
+import { headAcceptedByReview } from "../repair/loop-review-records.ts";
+import {
   disabledPolicy,
   nextSequence,
   sameRepository,
@@ -146,6 +163,7 @@ export class BudgetStateContext {
     now: number,
     reservation: BudgetReservationV1,
     sequence: number,
+    implementation: WorkRecordV1 | null = null,
   ): RepairStateSnapshotV1 {
     const base = prior ?? {
       version: "v1",
@@ -170,7 +188,107 @@ export class BudgetStateContext {
       sequence,
       updatedAt: now,
       reservations: [...base.reservations, reservation],
+      work: implementation === null
+        ? base.work
+        : base.work.map((work) =>
+          work.id === implementation.id ? implementation : work
+        ),
     };
+  }
+
+  /** Only accounting, its exact intent and the consumed CI wait may change. */
+  protected implementationWork(
+    request: ReserveModelStartRequestV1,
+    id: string,
+    prior: RepairStateSnapshotV1 | null,
+    now: number,
+  ): WorkRecordV1 | null {
+    try {
+      const transition = request.implementationTransition;
+      if (!transition || !prior || request.purpose === "review_request") {
+        return null;
+      }
+      const before = parseWorkRecordV1(transition.expectedWork);
+      const next = parseWorkRecordV1(transition.nextWork);
+      const rows = prior.work.filter((row) => row.id === request.taskId);
+      if (
+        rows.length !== 1 ||
+        canonicalStringify(rows[0]) !== canonicalStringify(before) ||
+        before.id !== request.taskId ||
+        !sameRepository(before.repository, request.repository) ||
+        before.target.base !== request.head || before.nextStep !== "work" ||
+        before.blocker !== null ||
+        request.attempt !== before.counters.attempts + 1 ||
+        request.purpose !==
+          (before.counters.attempts === 0 ? "implementation" : "retry") ||
+        next.updatedAt > now
+      ) return null;
+      const mergeBase = pendingConflictResolution(before.intent);
+      if (
+        before.intent !== null && (mergeBase === null ||
+          before.intent.requestId !== null ||
+          before.intent.expectedHead !== before.target.head ||
+          before.intent.pr !== before.target.pr ||
+          before.intent.branch !== before.target.branch ||
+          before.target.pr === null || before.target.head === null ||
+          before.intent.key !==
+            baseRefreshIntentKey(
+              before.target.pr,
+              before.target.head,
+              mergeBase,
+            ))
+      ) return null;
+      const retry = next.counters.retries - before.counters.retries;
+      if (
+        retry !== 0 && (retry !== 1 || mergeBase !== null ||
+          !ciPublicationShape(before) ||
+          (!isCiFixMarker(before.wait) && !headAcceptedByReview(prior, before)))
+      ) return null;
+      const intent = {
+        kind: "implementation" as const,
+        key: implementationIntentKey(id),
+        startedAt: next.updatedAt,
+        branch: hasTakeoverCustody(before)
+          ? before.target.branch
+          : candidateBranch(before.id),
+        expectedHead: null,
+        observedBase: request.head,
+        pr: null,
+        requestId: id,
+        resultId: null,
+        ...(mergeBase === null
+          ? {}
+          : { failure: conflictMarker(mergeBase, next.updatedAt) }),
+      };
+      const expected = {
+        ...before,
+        counters: {
+          ...before.counters,
+          attempts: request.attempt,
+          retries: before.counters.retries + retry,
+        },
+        wait: retry === 1 ? null : before.wait,
+        intent,
+        updatedAt: next.updatedAt,
+      };
+      if (canonicalStringify(next) !== canonicalStringify(expected)) {
+        return null;
+      }
+      // Budget owns admission time; construction may precede its clock read.
+      return parseWorkRecordV1({
+        ...next,
+        updatedAt: now,
+        intent: {
+          ...intent,
+          startedAt: now,
+          ...(mergeBase === null
+            ? {}
+            : { failure: conflictMarker(mergeBase, now) }),
+        },
+      });
+    } catch {
+      return null;
+    }
   }
 
   protected updatedReservation(
