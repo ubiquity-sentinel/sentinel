@@ -6,11 +6,16 @@ import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts"
 import {
   REVIEW_ROUND_CEILING_BASE_MOVED,
   REVIEW_ROUND_CEILING_REJECTED,
+  REVIEW_ROUND_CEILING_REVIEWED,
   REVIEW_ROUND_CEILING_UNACCEPTED,
   REVIEW_ROUND_CEILING_UNREVIEWED,
   reviewRoundsLeft,
 } from "../src/repair/review-round-cap.ts";
 import { intentClosable, type RetryPlanV1 } from "./hosted-autonomy-retries.ts";
+import {
+  isPassportWorkTrial,
+  passportTrialCanReconsider,
+} from "../src/repair/passport-work-trial.ts";
 
 /** Ceiling parks a raised review-round ceiling can reopen (exact text). */
 const RAISED_CEILING_PARKS: readonly string[] = [
@@ -39,9 +44,15 @@ export function planRaisedCeilingReadmission(
   cutoff: number | null,
 ): RetryPlanV1 | null {
   const blocker = record.blocker;
+  const trial = isPassportWorkTrial(record.repository);
+  if (
+    trial &&
+    !passportTrialCanReconsider(record, snapshot.reservations)
+  ) return null;
   if (
     blocker === null || blocker.kind !== "other" ||
-    !RAISED_CEILING_PARKS.includes(blocker.message) ||
+    (!RAISED_CEILING_PARKS.includes(blocker.message) &&
+      !(trial && blocker.message === REVIEW_ROUND_CEILING_REVIEWED)) ||
     record.target.head === null || record.target.pr === null ||
     !intentClosable(record, snapshot.reservations) ||
     reviewRoundsLeft(snapshot, record, cutoff) === 0
@@ -50,7 +61,9 @@ export function planRaisedCeilingReadmission(
     id: record.id,
     repository: record.repository,
     grant: 0,
-    nextStep: "work",
+    nextStep: trial && blocker.message === REVIEW_ROUND_CEILING_REVIEWED
+      ? "delivery"
+      : "work",
     reviewRounds: null,
     advanceBase: false,
     observedBase: null,

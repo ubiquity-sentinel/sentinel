@@ -46,6 +46,7 @@ import type {
   RepositoryRegressionFactV1,
 } from "../contracts/ports.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
+import { isPassportWorkTrial } from "./passport-work-trial.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { CANDIDATE_COMMIT_REFUSAL_DETAILS } from "./model-port-checkout.ts";
 
@@ -303,6 +304,9 @@ export function attemptEquivalenceRefusalForRecordV1(input: {
   entry: AttemptMemoryRecordV1["entries"][number] | null;
 } {
   const runtimeSha = requireAttemptRuntime(input.runtimeSha);
+  if (isPassportWorkTrial(input.record.repository)) {
+    return { refuse: false, entry: null };
+  }
   const purpose = input.purpose ?? "implementation";
   const memory = input.snapshot.attemptMemory.find((candidate) =>
     sameRepository(candidate.repository, input.record.repository) &&

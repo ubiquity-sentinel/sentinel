@@ -1198,3 +1198,45 @@ Deno.test("hosted autonomy: the green-head rule is the CI re-admission shape wit
     `${hostedRepositoryKey(SELF_REPO)}@${HEAD}`,
   );
 });
+
+Deno.test("Passport trial: reviewed exhausted CI head reenters correction with settled charge only", () => {
+  const repository = {
+    owner: "ubiquity",
+    name: "passport.ubq.fi",
+    installationId: 155687488,
+  };
+  const record = blockedRecord({
+    repository,
+    counters: { attempts: 8, retries: 6, reviewRounds: 7 },
+    blocker: {
+      kind: "other",
+      message: "CI fix attempts exhausted (3 of 3): ci(failure)",
+      since: T0,
+    },
+  });
+  const receipt = authorizingReceipt({ repository });
+  const charge = reservation("passport-ci-current", {
+    repository,
+    taskId: record.id,
+    attempt: 8,
+    purpose: "retry",
+    head: BASE,
+    outcome: "submitted",
+    settledAt: T0,
+  });
+  const snapshot = repairSnapshot([record], [receipt], [], [charge]);
+  const before = structuredClone(snapshot);
+  assert.equal(ciRedeliveryEligible(snapshot, record), true);
+  assert.deepEqual(
+    snapshot,
+    before,
+    "eligibility changes no historical accounting",
+  );
+  snapshot.reservations[0].outcome = "reserved";
+  snapshot.reservations[0].settledAt = null;
+  assert.equal(
+    ciRedeliveryEligible(snapshot, record),
+    false,
+    "unfinished current charge cannot be replaced",
+  );
+});

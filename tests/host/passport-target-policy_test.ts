@@ -82,9 +82,9 @@ Deno.test("Passport policy: actual target loading resolves main and replaces Sen
       "wrangler.jsonc",
     ]
   ) {
-    assert(config.protectedPaths.includes(path), path);
+    assert(!config.protectedPaths.includes(path), path);
   }
-  for (const path of template.protectedPaths) {
+  for (const path of [".env", ".actrc", ".git/", ".github/workflows/"]) {
     assert(config.protectedPaths.includes(path), path);
   }
 });

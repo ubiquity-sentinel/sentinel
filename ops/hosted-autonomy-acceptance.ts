@@ -35,7 +35,14 @@ import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts"
 import { HOSTED_RUNTIME_ROLLOUT } from "../src/host/hosted-runtime-rollout.ts";
 import { TASK_ACCEPTANCE_OWNER_GATE_DETAIL } from "../src/repair/acceptance-correction.ts";
 import { releaseRequestMatchesDelivery } from "../src/repair/loop-records.ts";
-import { TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL } from "../src/repair/review-gate.ts";
+import {
+  TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL,
+  TASK_ACCEPTANCE_UNCERTAIN_DETAIL,
+} from "../src/repair/review-gate.ts";
+import {
+  isPassportWorkTrial,
+  passportTrialCanReconsider,
+} from "../src/repair/passport-work-trial.ts";
 import { ordinaryReviewRoundsSpent } from "../src/repair/review-round-cap.ts";
 import { ciCorrectionRuntimeProven } from "./hosted-autonomy-ci-retries.ts";
 import { hostedIssueKey } from "./hosted-autonomy-policy.ts";
@@ -147,8 +154,13 @@ export function planAcceptanceReadmissions(
 ): RetryPlanV1[] {
   const plans: RetryPlanV1[] = [];
   for (const record of snapshot.work) {
+    const trial = isPassportWorkTrial(record.repository);
     if (
-      !blockedOn(record, TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL) ||
+      !(blockedOn(record, TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL) ||
+        (trial &&
+          [TASK_ACCEPTANCE_OWNER_GATE_DETAIL, TASK_ACCEPTANCE_UNCERTAIN_DETAIL]
+            .some((message) => blockedOn(record, message)))) ||
+      (trial && !passportTrialCanReconsider(record, snapshot.reservations)) ||
       record.counters.reviewRounds < 1 ||
       closedIssues.has(
         hostedIssueKey(record.repository, record.related.issueNumber!),

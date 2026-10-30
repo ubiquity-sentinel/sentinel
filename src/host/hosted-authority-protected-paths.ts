@@ -2,6 +2,7 @@
 export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
   .freeze([
     "src/host/hosted-authority-protected-paths.ts",
+    "src/repair/passport-work-trial.ts",
     "src/contracts/hosted-controller-deployment.ts",
     "src/github/native-review-result.ts",
     // Token-bearing scheduled entrypoint (`supervisor-dispatch.yml` runs the
