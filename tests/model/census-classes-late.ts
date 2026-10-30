@@ -472,8 +472,8 @@ export const LATE_CLASSES: ParkClassV1[] = [
     message: RETIRED_MERGED_MESSAGE,
     kind: "other",
     writer: W(
-      "src/repair/loop-review-observation.ts",
-      'markTerminalBlocked(record, "other", RETIRED_MERGED_MESSAGE, now)',
+      "src/repair/loop-base-refresh.ts",
+      'clearIntent(markBlocked(record, "other", RETIRED_MERGED_MESSAGE, at), at),',
       "w.term.merged_outside",
     ),
     trigger: "human",

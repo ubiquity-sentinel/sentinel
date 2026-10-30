@@ -29,9 +29,11 @@ export const RETIRED_TARGET_MESSAGE =
   "source issue is closed; the repair no longer exists";
 
 /**
- * Exact blocker for a repair whose own pull request was merged outside the
- * trusted review path (a human merge): the PR is not unfinished work, so the
- * record is terminal for capacity purposes and must never be republished.
+ * Historical blocker for a row parked by the retired review-phase rule (a pull
+ * request merged outside the trusted review path). Current review observation
+ * completes such a delivery instead; the exact legacy shape stays recognizable
+ * for already-parked rows and the base-refresh reader that still owns its own
+ * disposition.
  */
 export const RETIRED_MERGED_MESSAGE =
   "pull request was merged outside the trusted review path";
