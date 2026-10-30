@@ -22,19 +22,27 @@ import {
   planMatrixWave,
   runMatrixCell,
 } from "../../src/host/matrix.ts";
-import type { GitSha } from "../../src/contracts/brands.ts";
+import { asWorkItemId, type GitSha } from "../../src/contracts/brands.ts";
+import { canonicalStringify } from "../../src/contracts/canonical.ts";
+import type { MatrixCellResultV1 } from "../../src/contracts/matrix.ts";
 import {
   type ModelRunReceiptV1,
   portError,
   type PortResultV1,
 } from "../../src/contracts/ports.ts";
-import { parseRepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
+import {
+  parseRepairStateSnapshotV1,
+  type RepairStateSnapshotV1,
+} from "../../src/contracts/state-snapshots.ts";
 import {
   CANDIDATE_COMMIT_REFUSAL_DETAILS,
   candidateCommitRefusalDetail,
   LocalCandidateCommitter,
 } from "../../src/repair/model-port-checkout.ts";
 import { settlementClassification } from "../../src/host/matrix-ingest-state.ts";
+import { candidateBranch } from "../../src/repair/keys.ts";
+import { decompositionChildId } from "../../src/repair/transitions.ts";
+import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import {
   applyHostedRetries,
   planHostedRetries,
@@ -57,6 +65,17 @@ const ignoreR80 = !await r80Available();
 /** The closed detail a completed, change-free model run settles with. */
 const NO_CHANGE = "model run completed without any change to its checkout";
 const UNAVAILABLE = "model run failed (unavailable)";
+
+/** Part 1 of 2 of a decomposed issue carrying one consecutive timeout. */
+function timedOutPart(issue: WorkRecordV1): WorkRecordV1 {
+  const id = asWorkItemId(decompositionChildId(issue.id, 1, 2));
+  return {
+    ...issue,
+    id,
+    target: { ...issue.target, branch: candidateBranch(id) },
+    counters: { ...issue.counters, timeouts: 1 },
+  };
+}
 
 function modelReturning(result: PortResultV1<ModelRunReceiptV1>) {
   let calls = 0;
@@ -95,7 +114,7 @@ async function wave(
     [result],
     rig.ingestOptions(),
   );
-  return { cell, ctx, result, report };
+  return { cell, ctx, result, report, plan: planned.plan };
 }
 
 async function readmit(rig: RigV1, runtimeSha: GitSha): Promise<number> {
@@ -192,6 +211,369 @@ Deno.test(
       );
     } finally {
       await rig.cleanup();
+    }
+  },
+);
+
+Deno.test(
+  "no-change outcome: exact accounted replay preserves the entire base-review hold",
+  async () => {
+    const rig = await makeRig([990303], 1);
+    try {
+      const seeded = await rig.store.writeRepair(
+        seedSnapshot([freshIssue(990303, rig.base)]),
+        null,
+      );
+      assert.ok(seeded.ok && seeded.value.status === "applied");
+      const model = modelReturning(portError(
+        "unavailable",
+        CANDIDATE_COMMIT_REFUSAL_DETAILS.unchanged_base,
+      ));
+      const { plan, result, report } = await wave(rig, model.port);
+      assert.equal(report.ingested, 1);
+      const before = await rig.store.readRepair();
+      assert.ok(before.ok && before.value.status === "found");
+      assert.equal(before.value.snapshot.attemptMemory[0].entries[0].count, 1);
+      const write = rig.store.writeRepair.bind(rig.store);
+      let writes = 0;
+      rig.store.writeRepair = (...args) => {
+        writes++;
+        return write(...args);
+      };
+      rig.clock.advance(60 * 60_000);
+      for (
+        const selected of [result, {
+          ...result,
+          completedAt: result.completedAt + 1,
+        }]
+      ) {
+        const replay = await ingestMatrixResults(
+          rig.deps,
+          plan,
+          [selected],
+          rig.ingestOptions(),
+        );
+        const after = await rig.store.readRepair();
+        assert.ok(after.ok && after.value.status === "found");
+        console.log(JSON.stringify({
+          replay: replay.entries,
+          ingested: replay.ingested,
+          writes,
+          sequenceBefore: before.value.snapshot.sequence,
+          sequenceAfter: after.value.snapshot.sequence,
+          countBefore: before.value.snapshot.attemptMemory[0].entries[0].count,
+          countAfter: after.value.snapshot.attemptMemory[0].entries[0].count,
+        }));
+        assert.equal(replay.entries[0].disposition, "duplicate");
+        assert.equal(replay.ingested, 0);
+        assert.equal(writes, 0);
+        assert.deepEqual(after.value, before.value);
+      }
+      assert.equal(model.calls(), 1);
+    } finally {
+      await rig.cleanup();
+    }
+  },
+);
+
+Deno.test(
+  "no-change outcome: replay completes an interrupted timeout reset without replaying the held effect",
+  async () => {
+    const rig = await makeRig([990315], 1);
+    try {
+      const seeded = await rig.store.writeRepair(
+        seedSnapshot([timedOutPart(freshIssue(990315, rig.base))]),
+        null,
+      );
+      assert.ok(seeded.ok && seeded.value.status === "applied");
+      const planned = await planMatrixWave(rig.deps, rig.planOptions());
+      assert.equal(planned.prepared, 1, JSON.stringify(planned));
+      const cell = planned.plan.cells[0];
+      const ctx = await rig.claimCell(cell);
+      const model = modelReturning(portError(
+        "unavailable",
+        CANDIDATE_COMMIT_REFUSAL_DETAILS.unchanged_base,
+      ));
+      // deno-lint-ignore no-explicit-any
+      (ctx.deps as any).model = model.port;
+      const result = await runMatrixCell(
+        ctx.deps,
+        { waveId: WAVE, run: RUN, cell },
+        ACTUAL,
+        rig.clock.now(),
+      );
+      await rig.transfer([result], [ctx]);
+      let interruptedResets = 0;
+      const interruptedDeps = {
+        ...rig.deps,
+        state: {
+          readRepair: () => rig.store.readRepair(),
+          readRelease: () => rig.store.readRelease(),
+          writeRepair: (
+            next: RepairStateSnapshotV1,
+            expectedHead: GitSha | null,
+          ) => {
+            const pending = next.work.find((work) => work.id === cell.taskId);
+            if (pending?.counters.timeouts === undefined) {
+              interruptedResets++;
+              return Promise.resolve(portError(
+                "unavailable",
+                "injected timeout reset storage failure",
+              ));
+            }
+            return rig.store.writeRepair(next, expectedHead);
+          },
+        },
+      };
+      const interrupted = await ingestMatrixResults(
+        interruptedDeps,
+        planned.plan,
+        [result],
+        rig.ingestOptions(),
+      );
+      assert.equal(interruptedResets, 1, JSON.stringify(interrupted.entries));
+      assert.equal(interrupted.entries[0].disposition, "state_error");
+      assert.equal(
+        interrupted.entries[0].detail,
+        "receipt settled; timeout reset unavailable or conflicted",
+      );
+      const before = await rig.store.readRepair();
+      assert.ok(before.ok && before.value.status === "found");
+      assert.equal(before.value.snapshot.work[0].counters.timeouts, 1);
+      assert.equal(
+        before.value.snapshot.attemptMemory[0].entries[0].detail,
+        NO_CHANGE,
+      );
+      assert.equal(before.value.snapshot.attemptMemory[0].entries[0].count, 1);
+      const failureAtMs = before.value.snapshot.work[0].intent!.failure!.atMs;
+
+      // The interrupted reset resumes much later. Clearing the timeout also
+      // stamps `record.updatedAt`, so duplicate recognition must bind the
+      // failure identity rather than that bookkeeping timestamp.
+      rig.clock.advance(4 * 60 * 60_000);
+      const resumedAt = rig.clock.now();
+      const replay = await ingestMatrixResults(
+        rig.deps,
+        planned.plan,
+        [result],
+        rig.ingestOptions(),
+      );
+      const after = await rig.store.readRepair();
+      assert.ok(after.ok && after.value.status === "found");
+      assert.equal(replay.entries[0].disposition, "duplicate");
+      assert.equal(replay.ingested, 0);
+      assert.equal(after.value.snapshot.work[0].counters.timeouts, undefined);
+      assert.equal(after.value.snapshot.work[0].updatedAt, resumedAt);
+      assert.equal(
+        after.value.snapshot.work[0].intent!.failure!.atMs,
+        failureAtMs,
+      );
+      const { timeouts: _interrupted, ...counters } =
+        before.value.snapshot.work[0].counters;
+      const expectedWork = {
+        ...before.value.snapshot.work[0],
+        counters,
+        updatedAt: resumedAt,
+      };
+      assert.equal(
+        canonicalStringify(after.value.snapshot.work[0]),
+        canonicalStringify(expectedWork),
+        "only the timeout counter is cleared; the reset stamps its own time",
+      );
+      assert.deepEqual(
+        after.value.snapshot.attemptMemory,
+        before.value.snapshot.attemptMemory,
+        "the semantic no-change effect is not applied again",
+      );
+      assert.deepEqual(
+        after.value.snapshot.reservations,
+        before.value.snapshot.reservations,
+        "the charge is not settled again",
+      );
+      assert.equal(
+        after.value.snapshot.sequence,
+        before.value.snapshot.sequence + 1,
+      );
+      assert.equal(after.value.snapshot.updatedAt, resumedAt);
+      assert.equal(model.calls(), 1);
+
+      // A third identical replay after the reset must still be a duplicate:
+      // no second settlement, no semantic failure-count increment, no hold
+      // refresh and no write at all.
+      const write = rig.store.writeRepair.bind(rig.store);
+      let writes = 0;
+      rig.store.writeRepair = (...args) => {
+        writes++;
+        return write(...args);
+      };
+      const third = await ingestMatrixResults(
+        rig.deps,
+        planned.plan,
+        [result],
+        rig.ingestOptions(),
+      );
+      const final = await rig.store.readRepair();
+      assert.ok(final.ok && final.value.status === "found");
+      assert.equal(
+        third.entries[0].disposition,
+        "duplicate",
+        JSON.stringify({
+          entries: third.entries,
+          count: final.value.snapshot.attemptMemory[0].entries[0].count,
+        }),
+      );
+      assert.equal(third.ingested, 0);
+      assert.equal(writes, 0, "duplicate replay performs no state write");
+      assert.deepEqual(
+        final.value,
+        after.value,
+        "the held state is byte-identical after the duplicate replay",
+      );
+      assert.equal(final.value.snapshot.attemptMemory[0].entries[0].count, 1);
+      assert.equal(final.value.snapshot.work[0].wait?.since, failureAtMs);
+      assert.equal(final.value.snapshot.work[0].counters.timeouts, undefined);
+    } finally {
+      await rig.cleanup();
+    }
+  },
+);
+
+Deno.test(
+  "no-change outcome: changed results and incomplete holds are not accounted duplicates",
+  async (t) => {
+    const scenarios: {
+      name: string;
+      result?: (result: MatrixCellResultV1) => MatrixCellResultV1;
+      state?: (state: RepairStateSnapshotV1) => void;
+      conflict?: boolean;
+    }[] = [
+      {
+        name: "completion outside the original settlement window",
+        result: (result) => ({
+          ...result,
+          completedAt: result.completedAt + 24 * 60 * 60_000,
+        }),
+      },
+      {
+        name: "different failure",
+        result: (result) => ({ ...result, detail: UNAVAILABLE }),
+      },
+      {
+        name: "never-started outcome",
+        result: (result) => ({ ...result, status: "not_started" }),
+      },
+      {
+        name: "different producer",
+        result: (result) => ({
+          ...result,
+          run: { ...result.run, runId: result.run.runId + 1 },
+        }),
+      },
+      {
+        name: "changed request identity",
+        result: (result) => ({ ...result, requestDigest: "f".repeat(64) }),
+      },
+      {
+        name: "changed admission",
+        result: (result) => ({ ...result, reservationId: "e".repeat(64) }),
+      },
+      {
+        name: "unknown hold kind",
+        state: (state) => {
+          state.work[0].intent!.failure!.kind = "unavailable";
+        },
+      },
+      {
+        name: "unsettled charge",
+        state: (state) => {
+          state.reservations[0].outcome = "reserved";
+          state.reservations[0].settledAt = null;
+        },
+      },
+      {
+        name: "missing semantic outcome",
+        state: (state) => {
+          state.attemptMemory = [];
+        },
+      },
+      {
+        name: "foreign producing runtime",
+        state: (state) => {
+          state.attemptMemory[0].entries[0].controllerSha = "7".repeat(
+            40,
+          ) as GitSha;
+        },
+      },
+      {
+        name: "finite wait is not the base-review hold",
+        state: (state) => {
+          state.work[0].wait!.until = state.updatedAt + 300_000;
+        },
+      },
+      { name: "contradictory results", conflict: true },
+    ];
+    for (const [index, scenario] of scenarios.entries()) {
+      await t.step(scenario.name, async () => {
+        const number = 990304 + index;
+        const rig = await makeRig([number], 1);
+        try {
+          const seeded = await rig.store.writeRepair(
+            seedSnapshot([
+              freshIssue(number, rig.base),
+            ]),
+            null,
+          );
+          assert.ok(seeded.ok && seeded.value.status === "applied");
+          const model = modelReturning(portError(
+            "unavailable",
+            CANDIDATE_COMMIT_REFUSAL_DETAILS.unchanged_base,
+          ));
+          const { plan, result } = await wave(rig, model.port);
+          let deps = rig.deps;
+          if (scenario.state) {
+            const read = await rig.store.readRepair();
+            assert.ok(read.ok && read.value.status === "found");
+            const next = structuredClone(read.value.snapshot);
+            scenario.state(next);
+            // Inject a contradictory read view; immutable Git history must not
+            // be rewritten to manufacture these negative observations.
+            const value = read.value;
+            deps = {
+              ...rig.deps,
+              state: {
+                readRepair: () =>
+                  Promise.resolve({
+                    ...read,
+                    value: { ...value, snapshot: next },
+                  }),
+                readRelease: () => rig.store.readRelease(),
+                writeRepair: (...args) => rig.store.writeRepair(...args),
+              },
+            };
+          }
+          rig.clock.advance(60 * 60_000);
+          const selected = scenario.result?.(result) ?? result;
+          const replay = await ingestMatrixResults(
+            deps,
+            plan,
+            scenario.conflict
+              ? [result, { ...result, detail: UNAVAILABLE }]
+              : [selected],
+            rig.ingestOptions(),
+          );
+          assert.notEqual(
+            replay.entries[0].disposition,
+            "duplicate",
+            scenario.name,
+          );
+          if (scenario.conflict) {
+            assert.equal(replay.entries[0].disposition, "conflict");
+          }
+          assert.equal(model.calls(), 1);
+        } finally {
+          await rig.cleanup();
+        }
+      });
     }
   },
 );
