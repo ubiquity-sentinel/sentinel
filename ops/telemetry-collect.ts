@@ -89,10 +89,12 @@ export async function syncArchive(
     stopped: "complete",
     runsComplete: false,
     mergesComplete: {},
+    attemptLogArchives: { captured: 0, reused: 0, missing: 0, deferred: 0 },
     notes: [],
   };
   const rows = await archive.evidence();
   const requested = new Map<string, Evidence | null>();
+  const archivedAttempts = new Set<string>();
   const base = `repos/${CONTROLLER}`;
   async function get(
     path: string,
@@ -223,6 +225,24 @@ export async function syncArchive(
         if (positive(job.id)) {
           await get(base + "/actions/jobs/" + job.id + "/logs", true);
         }
+      }
+      const key = attempt.runId + "/" + attempt.attempt;
+      if (completed.has(key) && !archivedAttempts.has(key)) {
+        archivedAttempts.add(key);
+        const path = base + "/actions/runs/" + attempt.runId + "/attempts/" +
+          attempt.attempt + "/logs";
+        const reused = rows.some((r) =>
+          r.observation.endpoint === path && r.observation.status === 200 &&
+          r.observation.blob !== null
+        );
+        const archiveLog = await get(path, true);
+        const counts = coverage.attemptLogArchives!;
+        if (!archiveLog) counts.deferred++;
+        else if (
+          archiveLog.observation.status !== 200 || !archiveLog.observation.blob
+        ) counts.missing++;
+        else if (reused) counts.reused++;
+        else counts.captured++;
       }
     }
   }

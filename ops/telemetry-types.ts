@@ -83,6 +83,12 @@ export type Coverage = {
   stopped: "complete" | "read_budget" | "deadline";
   runsComplete: boolean;
   mergesComplete: Record<string, boolean>;
+  attemptLogArchives?: {
+    captured: number;
+    reused: number;
+    missing: number;
+    deferred: number;
+  };
   notes: string[];
 };
 export type Execution = {

@@ -34,10 +34,38 @@ export function mergeObservations(
   const history = sessions.map(object).filter((s) =>
     time(s.observedAt) !== null && typeof s.since === "string"
   ).sort((a, b) => Number(time(a.observedAt)) - Number(time(b.observedAt)));
+  const imported = new Map<string, Evidence[]>();
+  const cohorts = new Map<string, string>();
+  for (const row of rows) {
+    const source = row.observation.source;
+    const receipt = source?.receipt.match(/^([a-f0-9]{64}):(\d+)$/);
+    if (!source || !receipt || !/\/pulls$/.test(endpoint(row))) continue;
+    const key = source.manifest + ":" + receipt[1] + ":" + endpoint(row);
+    const group = imported.get(key) ?? [];
+    group.push(row);
+    imported.set(key, group);
+  }
+  for (const [key, group] of imported) {
+    group.sort((a, b) =>
+      Number(a.observation.source!.receipt.split(":")[1]) -
+      Number(b.observation.source!.receipt.split(":")[1])
+    );
+    let pass: string | null = null;
+    for (const row of group) {
+      const page = Number(
+        new URLSearchParams(row.observation.endpoint.split("?")[1]).get(
+          "page",
+        ) ?? 1,
+      );
+      // A ledger proves request provenance, not one pass: every page-one request restarts it.
+      if (page === 1) pass = key + ":" + row.observation.source!.receipt;
+      if (pass) cohorts.set(row.id, pass);
+    }
+  }
   function collection(row: Evidence): string {
     if (row.observation.collection) return row.observation.collection;
     const source = row.observation.source;
-    if (source) return `${source.manifest}:${source.receipt.split(":")[0]}`;
+    if (source) return cohorts.get(row.id) ?? `unbound:${row.id}`;
     // Old archives have session end clocks, allowing conservative reconstruction of their passes.
     const session = history.find((s) =>
       Number(time(s.observedAt)) >= Number(time(row.observation.observedAt))

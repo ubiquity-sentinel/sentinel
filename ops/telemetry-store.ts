@@ -147,7 +147,24 @@ export class Archive {
     bytes: Uint8Array | null,
   ): Promise<Evidence> {
     if (!this.lock) throw new Error("Archive must be locked before writes");
-    if (bytes && sensitive(bytes)) {
+    const attemptLogs = /\/actions\/runs\/\d+\/attempts\/\d+\/logs$/.test(
+      observation.endpoint,
+    );
+    const zip = attemptLogs && bytes && bytes[0] === 80 && bytes[1] === 75 &&
+      (bytes[2] === 3 && bytes[3] === 4 || bytes[2] === 5 && bytes[3] === 6);
+    if (bytes && attemptLogs && !zip) {
+      bytes = null;
+      observation = {
+        ...observation,
+        status: 0,
+        error: "complete attempt log response is not a ZIP archive",
+      };
+    }
+    // Preserve opaque native ZIP bytes. No extraction, decompression or execution occurs.
+    if (
+      bytes &&
+      (zip ? hasSecret(new TextDecoder().decode(bytes)) : sensitive(bytes))
+    ) {
       bytes = null;
       observation = {
         ...observation,

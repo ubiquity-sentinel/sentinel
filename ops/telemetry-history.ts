@@ -65,39 +65,46 @@ export async function collectJournals(
     cached.set(revision, value);
     return value;
   }
-  function restores(value: Record<string, unknown>) {
+  function restores(
+    value: Record<string, unknown>,
+    revision: unknown,
+    generation: unknown,
+  ) {
     const e = object(object(value.rollbackProof).execution);
     return value.phase === "rolled_back" &&
-      value.previousRevision === pointer.activeRevision &&
-      e.revision === pointer.activeRevision &&
-      e.generation === pointer.generation;
+      value.previousRevision === revision &&
+      e.revision === revision && e.generation === generation;
   }
-  let journal = await read(pointer.activeRevision);
-  if (
-    journal &&
-    object(object(journal.bootstrapProof).execution).generation !==
-      pointer.generation
+  async function resolve(
+    revision: unknown,
+    generation: unknown,
+    hints: Record<string, unknown>[],
   ) {
-    let restored = [...cached.values()].find(restores);
-    for (
-      const slot of ["execution", "lastExecutionProof", "lastHealthyProof"]
-    ) {
-      const value = object(pointer[slot]);
-      const e = slot === "execution" ? value : object(value.execution);
-      if (!restored && sha(e.launcherSha)) {
-        const candidate = await read(e.launcherSha);
-        if (candidate && restores(candidate)) restored = candidate;
+    const journal = await read(revision);
+    const bootstrap = object(object(journal?.bootstrapProof).execution);
+    if (
+      journal && bootstrap.revision === revision &&
+      bootstrap.generation === generation
+    ) return journal;
+    let restored = [...cached.values()].find((v) =>
+      restores(v, revision, generation)
+    );
+    for (const hint of hints) {
+      if (!restored && sha(hint.launcherSha)) {
+        const candidate = await read(hint.launcherSha);
+        if (candidate && restores(candidate, revision, generation)) {
+          restored = candidate;
+        }
       }
     }
-    // A plain pointer has no inverse journal index. Bound this exceptional snapshot search,
-    // retain fetched blobs, and resume missing entries on a later explicit invocation.
+    // Resolve the exact generation at every edge, under one shared missing-blob budget.
     for (const entry of entries) {
       if (restored || missing >= 8) break;
       if (
         typeof entry.path !== "string" ||
         !entry.path.startsWith("hostedInstallations/") || !sha(entry.sha)
       ) continue;
-      const uri = `${base}/git/blobs/${entry.sha}`;
+      const uri = base + "/git/blobs/" + entry.sha;
       if (
         rows.some((r) =>
           r.observation.endpoint === uri && r.observation.status === 200
@@ -109,24 +116,45 @@ export async function collectJournals(
         candidate.kind === "hosted_installation" &&
         sha(candidate.candidateRevision)
       ) cached.set(candidate.candidateRevision, candidate);
-      if (restores(candidate)) restored = candidate;
+      if (restores(candidate, revision, generation)) restored = candidate;
     }
-    if (restored) journal = restored;
-    else {notes.push(
-        "current generation has no discovered rollback journal; interval remains unknown",
-      );}
+    if (!restored) {
+      notes.push(
+        "no journal proves " + revision + "/g" + generation +
+          "; predecessor interval remains unknown",
+      );
+    }
+    return restored ?? null;
   }
+  let revision = pointer.activeRevision, generation = pointer.generation;
+  let hints = ["execution", "lastExecutionProof", "lastHealthyProof"].map(
+    (slot) =>
+      slot === "execution"
+        ? object(pointer[slot])
+        : object(object(pointer[slot]).execution),
+  );
   const seen = new Set<string>();
   while (
-    journal && sha(journal.candidateRevision) &&
-    !seen.has(journal.candidateRevision) && seen.size < 128
+    sha(revision) && Number.isSafeInteger(generation) &&
+    Number(generation) > 0 && seen.size < 128
   ) {
-    seen.add(journal.candidateRevision);
-    const first = object(
-      object(journal.retriedBootstrapProof ?? journal.bootstrapProof).execution,
-    );
+    const key = revision + "/" + generation;
+    if (seen.has(key)) break;
+    seen.add(key);
+    const journal = await resolve(revision, generation, hints);
+    if (!journal) break;
+    const rollback = object(object(journal.rollbackProof).execution);
+    const first =
+      rollback.revision === revision && rollback.generation === generation
+        ? rollback
+        : object(
+          object(journal.retriedBootstrapProof ?? journal.bootstrapProof)
+            .execution,
+        );
     const began = time(first.createdAt);
     if (began !== null && began < options.since) break;
-    journal = await read(journal.previousRevision);
+    revision = journal.previousRevision;
+    generation = journal.previousGeneration;
+    hints = [object(object(journal.previousHealthyProof).execution)];
   }
 }

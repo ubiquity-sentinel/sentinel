@@ -283,7 +283,10 @@ Deno.test("telemetry sync archives real consumers and offline report keeps runti
     );
     f.calls.length = 0;
     await syncArchive(archive, opts, f.api);
-    assert.equal(f.calls.some((p) => p.endsWith("/logs")), false);
+    assert.equal(
+      f.calls.some((p) => /\/actions\/jobs\/\d+\/logs$/.test(p)),
+      false,
+    );
     assert.equal(
       (await makeReport(archive, opts.since, opts.cutoff)).report.versions.find(
         (v) => v.runtimeSha === runtime,
@@ -356,7 +359,11 @@ Deno.test("telemetry expired log response cannot erase archived native health; i
         .nativeLogCovered,
       1,
     );
-    assert.equal(result.report.coverage.errors[0].status, 410);
+    assert.ok(
+      result.report.coverage.errors.some((e) =>
+        e.endpoint === `${base}/actions/jobs/101/logs` && e.status === 410
+      ),
+    );
     assert.ok(
       JSON.parse(await Deno.readTextFile(join(archive.root, "index.json")))
         .observations.length,

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { Archive } from "../../ops/telemetry-store.ts";
 import { apiPath, syncArchive } from "../../ops/telemetry-collect.ts";
 import { makeReport } from "../../ops/telemetry-report.ts";
+import { importCapture } from "../../ops/telemetry-import.ts";
 import {
   bindHealth,
   type StateEvidence,
@@ -46,6 +47,58 @@ function test(name: string, fn: (archive: Archive) => Promise<void> | void) {
   });
 }
 const bytes = (v: unknown) => encoder.encode(JSON.stringify(v));
+async function capturePages(
+  archive: Archive,
+  tag: string,
+  requests: { page: number; value: unknown; at: number; status?: number }[],
+) {
+  const root = archive.root + "/" + tag;
+  await Deno.mkdir(root);
+  const entries = [];
+  const receipts = [];
+  for (let i = 0; i < requests.length; i++) {
+    const r = requests[i],
+      output = "/original/" + tag + "/" + i + ".json",
+      saved = root + "/" + i + ".json",
+      body = bytes(r.value);
+    await Deno.writeFile(saved, body);
+    entries.push({
+      source: output,
+      saved,
+      bytes: body.length,
+      sha256: await digest(body),
+    });
+    const command = [
+      "gh",
+      "api",
+      "--method",
+      "GET",
+      `repos/${CONTROLLER}/pulls`,
+    ];
+    for (
+      const [k, v] of new URLSearchParams(
+        pullsPath(CONTROLLER, r.page).split("?")[1],
+      )
+    ) command.push("-f", k + "=" + v);
+    receipts.push({
+      command,
+      output,
+      startedAt: iso(r.at),
+      status: r.status ?? 0,
+    });
+  }
+  const ledger = bytes(receipts);
+  await Deno.writeFile(root + "/github-commands.json", ledger);
+  entries.push({
+    source: "/original/" + tag + "/github-commands.json",
+    saved: root + "/github-commands.json",
+    bytes: ledger.length,
+    sha256: await digest(ledger),
+  });
+  const manifest = root + "/IMPORT-MANIFEST.json";
+  await Deno.writeFile(manifest, bytes({ entries }));
+  await importCapture(archive, manifest);
+}
 const ex = (
   runId = 10,
   revision = A,
@@ -493,4 +546,131 @@ test("bounded sync obtains current native health before old merge detail enrichm
     1,
   );
   assert.equal(r.coverage.mergeLists[CONTROLLER].complete, false);
+});
+
+test("historical rollback predecessor resolves its exact prior generation", async (archive) => {
+  const a = journal(A, "0".repeat(40), 9, T - 5000, 8);
+  const b = {
+    ...journal(B, A, 10, T + 2000, 9),
+    phase: "rolled_back",
+    rollbackExecutionId: "12:1:repair",
+    rollbackProof: proof(ex(12, A, 12, "rollback", T + 4000)),
+  };
+  const c = {
+    ...journal(C, A, 12, T + 7000, 13),
+    previousHealthyProof: proof(ex(11, A, 12, "ordinary", T + 5000)),
+  };
+  const map = await stateArtifacts(pointer(C, 13), [a, b, c]);
+  map.set(runPath(), bytes({ total_count: 0, workflow_runs: [] }));
+  for (const r of TARGETS) map.set(pullsPath(r), bytes([]));
+  await syncArchive(archive, options, apiFor(map, []));
+  const report =
+    (await makeReport(archive, options.since, options.cutoff)).report;
+  const intervals = report.versions.flatMap((v) => v.intervals);
+  assert.deepEqual(intervals.map((i) => i.generation).sort(), [10, 11, 12, 13]);
+  const restored = intervals.find((i) => i.generation === 12)!;
+  assert.equal(restored.revision, A);
+  assert.equal(restored.start, iso(T + 4000));
+  assert.equal(restored.end, iso(T + 7000));
+  assert.ok(report.installations.some((j) => j.candidateRevision === B));
+});
+
+test("legacy imported ledger retries cannot combine terminal pages or erase known merges", async (archive) => {
+  for (
+    const [path, body] of await stateArtifacts(pointer(), [
+      journal(A, "0".repeat(40), 9, T, 8),
+    ])
+  ) await add(archive, path, body);
+  const filler = Array.from(
+    { length: 100 },
+    (_, i) => ({ number: i + 100, updated_at: iso(T + 9000), merged_at: null }),
+  );
+  await capturePages(archive, "retry-ledger", [
+    { page: 1, value: { message: "unavailable" }, status: 1, at: T + 11000 },
+    { page: 2, value: [], at: T + 12000 },
+    { page: 1, value: filler, at: T + 14000 },
+  ]);
+  for (const r of TARGETS.slice(1)) await add(archive, pullsPath(r), []);
+  const first =
+    (await makeReport(archive, options.since, options.cutoff)).report;
+  assert.equal(first.coverage.mergeLists[CONTROLLER].complete, false);
+  assert.equal(first.versions[0].velocity.newAcceptedAutonomousMerges, null);
+  const known = {
+    number: 1,
+    updated_at: iso(T + 5000),
+    merged_at: iso(T + 5000),
+    merge_commit_sha: "e".repeat(40),
+    merged_by: { type: "Bot" },
+  };
+  await capturePages(archive, "older-known", [{
+    page: 1,
+    value: [known],
+    at: T + 10000,
+  }]);
+  const after =
+    (await makeReport(archive, options.since, options.cutoff)).report;
+  assert.equal(after.versions[0].velocity.observedMerges, 1);
+  assert.equal(after.coverage.mergeLists[CONTROLLER].complete, false);
+  assert.ok((await archive.evidence()).every((r) => !r.observation.collection));
+});
+
+test("complete attempt ZIP bytes are cached and survive later expiry evidence", async (archive) => {
+  const map = new Map<string, Uint8Array>(), calls: string[] = [];
+  map.set(
+    runPath(),
+    bytes({
+      total_count: 1,
+      workflow_runs: [{
+        id: 10,
+        run_attempt: 1,
+        head_sha: A,
+        status: "completed",
+        conclusion: "success",
+        created_at: iso(T + 1000),
+        updated_at: iso(T + 4000),
+      }],
+    }),
+  );
+  map.set(
+    apiPath(`${base}/actions/runs/10/attempts/1/jobs`, { per_page: 100 }),
+    bytes({ total_count: 0, jobs: [] }),
+  );
+  for (const r of TARGETS) map.set(pullsPath(r), bytes([]));
+  // A valid empty ZIP with a two-byte binary comment exercises the opaque byte path.
+  const zip = new Uint8Array(24);
+  zip.set([80, 75, 5, 6]);
+  zip[20] = 2;
+  zip[22] = 255;
+  zip[23] = 128;
+  const path = `${base}/actions/runs/10/attempts/1/logs`;
+  map.set(path, zip);
+  const first = await syncArchive(archive, options, apiFor(map, calls));
+  assert.equal(first.attemptLogArchives?.captured, 1);
+  const saved = (await archive.evidence()).find((r) =>
+    r.observation.endpoint === path && r.observation.status === 200
+  )!;
+  assert.deepEqual(saved.body, zip);
+  assert.equal(saved.observation.blob, await digest(zip));
+  await archive.record({
+    endpoint: path,
+    observedAt: iso(T + 20000),
+    status: 410,
+    error: "expired",
+    transport: "gh",
+  }, null);
+  calls.length = 0;
+  map.delete(path);
+  const second = await syncArchive(archive, options, apiFor(map, calls));
+  assert.equal(second.attemptLogArchives?.reused, 1);
+  assert.equal(calls.includes(path), false);
+  assert.deepEqual(
+    (await archive.evidence()).find((r) => r.id === saved.id)?.body,
+    zip,
+  );
+  const report = await makeReport(archive, options.since, options.cutoff);
+  assert.ok(
+    report.report.coverage.errors.some((r) =>
+      r.endpoint === path && r.status === 410
+    ),
+  );
 });

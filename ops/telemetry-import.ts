@@ -18,7 +18,9 @@ export function allowedEndpoint(input: string): boolean {
         .test(resource) ||
         /^git\/(?:trees|blobs)\/[a-f0-9]{40}$/.test(resource) ||
         /^actions\/workflows\/supervisor\.yml\/runs$/.test(resource) ||
-        /^actions\/runs\/\d+\/attempts\/\d+(?:\/jobs)?$/.test(resource) ||
+        /^actions\/runs\/\d+\/attempts\/\d+(?:\/(?:jobs|logs))?$/.test(
+          resource,
+        ) ||
         /^actions\/jobs\/\d+(?:\/logs)?$/.test(resource));
   return !!known &&
     [...new URLSearchParams(query).keys()].every((key) =>
