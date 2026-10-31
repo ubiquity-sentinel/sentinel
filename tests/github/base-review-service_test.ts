@@ -641,7 +641,11 @@ async function passportRig(native = false) {
   h.options.client.readBaseReviewChecks = ci.client.readBaseReviewChecks.bind(
     ci.client,
   );
-  const root = await Deno.makeTempDir({ prefix: "passport-base-review-" });
+  // Keep persisted state inside the harness's workspace-scoped read grant.
+  const root = await Deno.makeTempDir({
+    dir: Deno.cwd(),
+    prefix: "passport-base-review-",
+  });
   const path = `${root}/repair.json`;
   const persist = () =>
     Deno.writeTextFile(path, JSON.stringify(h.state.repair));
