@@ -265,17 +265,14 @@ export async function runHostedDeliveryPass(
   const behindTip = new Set(
     [...spentCandidates].filter((id) => !spentReadable.has(id)),
   );
-  // The tip's own CI, read at most once per repository per pass (a2).
+  // The tip's own CI: read once per repository per pass, and dropped (with
+  // the cached tip) at every merge call there so a later merge re-reads it.
   const tipGreen = new Map<string, boolean>();
-  // The scope key of every repository whose `surface.merge` this pass called,
-  // added as soon as it is called, whatever it answers (merged, refused,
-  // lost, thrown): that merge may have landed, so THAT repository's base tip
-  // and tip CI read above are stale and every later gate there would admit a
-  // merge onto a commit whose CI was never checked. No further merge is
-  // attempted in that repository in this pass; an already-merged pull is
-  // still settled read-only. A merge moves only its own repository's tip, so
-  // another repository's merge is gated as before.
-  const mergedRepositories = new Set<string>();
+  // There is no per-pass merge count: every record whose gates hold may merge
+  // in one pass. A merge moves only its own repository's tip, so the cached
+  // tip and tip CI of the repository that was just written to are dropped and
+  // the next candidate there re-reads its own base before its merge call (see
+  // the invalidation next to `surface.merge` below).
   // A production release request already records this exact delivery.
   const productionRecorded = (record: HostedAutonomyRecordV1) =>
     snapshot.releaseRequests.some((request) =>
@@ -300,7 +297,15 @@ export async function runHostedDeliveryPass(
       !productionRecorded(record);
   };
 
-  for (const record of snapshot.work) {
+  // Deterministic delivery order: the oldest record first, never list
+  // position, with the id as the tie-break so two passes over the same
+  // snapshot attempt the same candidates in the same sequence. The only
+  // per-pass bound is the run window checked at the top of every iteration.
+  const deliveryOrder = [...snapshot.work].sort((left, right) =>
+    left.createdAt - right.createdAt ||
+    (left.id < right.id ? -1 : left.id > right.id ? 1 : 0)
+  );
+  for (const record of deliveryOrder) {
     if (hostedPassDeadlineReached(context)) return defer();
     if (!eligible(record)) continue;
     const pullRequest = record.target.pr;
@@ -463,10 +468,6 @@ export async function runHostedDeliveryPass(
         actions.push(`delivery:${record.id}:queue_context_unavailable`);
         continue;
       }
-      if (mergedRepositories.has(scope.key)) {
-        actions.push(`delivery:${record.id}:merge_deferred`);
-        continue;
-      }
       if (carried && !carriedMergeAwaited(record)) {
         actions.push(`delivery:${record.id}:carried_awaiting_runtime`);
         continue;
@@ -574,7 +575,14 @@ export async function runHostedDeliveryPass(
       }
       if (proofLine !== null) actions.push(proofLine);
       let merged: { merged: boolean; sha: string | null } | null;
-      mergedRepositories.add(scope.key);
+      // A merge call, whatever it answers (merged, refused, lost, thrown), is
+      // an external write: the base tip and tip CI read for this repository
+      // are stale from now on. The next candidate re-reads and re-verifies its
+      // own base through `deliveryTip` and the uncached re-read above, so one
+      // that is off the moved tip is refused by the existing gate instead of
+      // merging onto a commit no CI ran on.
+      deliveryTips.delete(scope.key);
+      tipGreen.delete(scope.key);
       // Once admitted, preserve the existing merge verification/bookkeeping
       // settlement even if the cutoff is crossed inside the effect.
       mergedThisRecord = true;
@@ -678,8 +686,9 @@ export async function runHostedDeliveryPass(
       }
       receipt = foreignProof.receipt;
     }
-    // A merge performed earlier in THIS pass is an external write and keeps
-    // its repository's one-merge bound; an already-merged pull is read-only.
+    // A merge performed earlier in THIS pass is an external write; its
+    // repository's cached tip was dropped at the call, and an already-merged
+    // pull is read-only.
     if (revision === null) revision = pull.mergeCommitSha;
     if (revision !== pull.mergeCommitSha) continue;
     // A carried merge is booked only when it landed exactly on the refreshed
@@ -752,9 +761,9 @@ export async function runHostedDeliveryPass(
       );
       actions.push(`delivery:${record.id}:foreign_merged`);
       revisions.push(revision);
-      // The direct effect cap only stops another merge in this repository.
-      // Other repositories' merges and already-merged queue deliveries can
-      // still follow this external merge.
+      // Nothing count-based stops the next candidate here: the delivery loop
+      // re-reads the moved tip for it and merges it only if its own base is
+      // that tip (or defers it `base_moved`).
       continue;
     }
 

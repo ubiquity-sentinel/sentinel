@@ -1,9 +1,9 @@
 /**
- * The delivery pass's merge bound and the disabled moved-base merge (review
- * of the spent-round delivery lane): the base tip and the tip's CI are read
- * once per repository per pass, so once the pass has called merge in a
- * repository, whatever it answered, no further merge is attempted in that
- * repository in that pass (another repository's: see
+ * The delivery pass's merge gating and the disabled moved-base merge (review
+ * of the spent-round delivery lane): there is no per-pass merge count, and a
+ * merge call, whatever it answers, drops that repository's cached tip and tip
+ * CI, so the next candidate is gated on a FRESH tip read and only the
+ * existing off-tip rule defers it (other repositories: see
  * hosted-autonomy-merge-per-repository_test.ts); and the moved-base merge
  * (D3), whose merged result no CI ever tests, ships disabled.
  */
@@ -228,18 +228,20 @@ async function onePass(
   }
 }
 
-Deno.test("spent delivery S11: once a merge is called no further merge is attempted in the same pass", async (t) => {
-  // Review probes P-A and P-A2: the base tip and the tip's CI are read once
-  // per pass, so a second merge after anything going wrong past the first
-  // merge call would land on the first merge's never-checked commit.
-  const assertOneMerge = (
-    merges: number[],
+Deno.test("spent delivery S11: each merge call re-verifies its repository's tip; only the off-tip rule defers the next candidate", async (t) => {
+  // Review probes P-A and P-A2: a merge call is an external write, so the
+  // repository's cached tip and tip CI are dropped and the next candidate is
+  // gated on a fresh read. There is no per-pass merge count: a candidate the
+  // fresh tip no longer matches is refused by the existing gate, one that
+  // still matches merges on its own gates, and one whose merge landed on a
+  // commit the pass never read is refused its booking.
+  const deferred = (
     actions: string[],
-    deferred: WorkRecordV1,
+    record: WorkRecordV1,
+    reason: string,
   ) => {
-    assert.equal(merges.length, 1, `merges=${merges} ${actions.join(" ")}`);
     assert.ok(
-      actions.includes(`delivery:${deferred.id}:merge_deferred`),
+      actions.includes(`delivery:${record.id}:${reason}`),
       actions.join(" "),
     );
   };
@@ -269,11 +271,13 @@ Deno.test("spent delivery S11: once a merge is called no further merge is attemp
         surface,
         MOVED_BASE,
       );
-      assertOneMerge(calls.merges, out.actions, second);
-      assert.deepEqual(calls.merges, [1071]);
+      assert.deepEqual(calls.merges, [1071], out.actions.join(" "));
+      // The sibling is gated on the commit the merge moved the tip to, whose
+      // CI never completed: it is refused, never merged onto that commit.
+      deferred(out.actions, second, "base_ci_pending");
       assert.ok(
-        !calls.greenReads.includes(second.target.head!),
-        "the deferred record reads no gate",
+        calls.greenReads.includes(mergeSha(1071)),
+        "the moved tip's own CI is read before any second merge",
       );
       assert.equal(out.result, null);
       assert.equal(out.writes, 0);
@@ -311,7 +315,8 @@ Deno.test("spent delivery S11: once a merge is called no further merge is attemp
         surface,
         MOVED_BASE,
       );
-      assertOneMerge(base.calls.merges, out.actions, second);
+      assert.deepEqual(base.calls.merges, [1071], out.actions.join(" "));
+      deferred(out.actions, second, "base_ci_pending");
       assert.equal(
         base.calls.greenReads.filter((sha) => sha === TIP).length,
         1,
@@ -333,8 +338,8 @@ Deno.test("spent delivery S11: once a merge is called no further merge is attemp
         receipts,
         surface,
       );
-      assertOneMerge(calls.merges, out.actions, second);
-      assert.deepEqual(calls.merges, [1071]);
+      assert.deepEqual(calls.merges, [1071], out.actions.join(" "));
+      deferred(out.actions, second, "base_moved");
       assert.equal(out.writes, 0);
     },
   );
@@ -365,8 +370,22 @@ Deno.test("spent delivery S11: once a merge is called no further merge is attemp
         receipts,
         merging,
       );
-      assertOneMerge(attempted, out.actions, second);
-      assert.deepEqual(attempted, [1071]);
+      assert.ok(
+        out.actions.includes(
+          `delivery:${first.id}:${
+            name === "the merge is not observed"
+              ? "merge_not_observed"
+              : "merge_refused"
+          }`,
+        ),
+        out.actions.join(" "),
+      );
+      // The failed call did not move the tip (the fresh read still matches),
+      // so the sibling gets its own attempt; the fake reports that merge's
+      // first parent as the earlier merge commit, so the pass refuses to book
+      // a tree its CI never tested.
+      assert.deepEqual(attempted, [1071, 9100], out.actions.join(" "));
+      deferred(out.actions, second, `merged_off_tip:sha=${mergeSha(9100)}`);
       assert.equal(out.writes, 0);
     });
   }
@@ -397,7 +416,8 @@ Deno.test("spent delivery S11: once a merge is called no further merge is attemp
         out.actions.includes(`delivery:${first.id}:task_acceptance_refused`),
         out.actions.join(" "),
       );
-      assertOneMerge(calls.merges, out.actions, second);
+      assert.deepEqual(calls.merges, [1071], out.actions.join(" "));
+      deferred(out.actions, second, "base_moved");
       assert.equal(out.writes, 0);
     },
   );

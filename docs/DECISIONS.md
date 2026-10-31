@@ -3823,3 +3823,49 @@ The owner requested faster CI with lower runner use.
 - A newer run does not cancel running `development` CI.
 
 PR #217 and its measured CI results are recorded in `build-status.md`.
+
+## 2026-10-31: no per-pass, per-repository merge count in the delivery pass
+
+Owner directive (2026-10-31, throughput): deliveries per hour must rise. The
+launcher delivery pass used to merge at most once per repository per pass while
+a maintenance pass takes 25-55 minutes.
+
+- Supersedes the delivery-pass bullets of "2026-10-25: maintenance throughput
+  caps and the `retried` status" (`docs/DECISIONS.md:3378-3385`: "The delivery
+  pass calls merge at most once per repository per pass (a set of scope keys)
+  … every later open pull request of that repository is `merge_deferred` for
+  the pass") and of "Spent-round delivery and review follow-ups (2026-10-16,
+  launcher only)" (`docs/DECISIONS.md:1973-1982`: "calls merge at most once …
+  every later open pull request in that pass is `merge_deferred` before any
+  gate is read"). The `mergedRepositories` set, the `merge_deferred` action and
+  the count they enforced are gone.
+- Records are visited oldest first (`createdAt`, then the record id as the
+  tie-break), never list position, so two passes over the same snapshot attempt
+  the same candidates in the same sequence.
+- Every merge keeps every gate unchanged: current-head CI on the exact head not
+  red, the completed current-head native review with no unresolved P0, task
+  acceptance, queue custody, the exact reviewed head and the merge-commit
+  parent check. Durable admission and settlement (reservations, charges,
+  accounting rows) stay per merge.
+- The replaced count is base re-verification. A merge call, whatever it answers
+  (merged, refused, lost or thrown), may have moved that repository's tip, so
+  the pass drops its cached `deliveryTips` and `tipGreen` entries for the scope
+  at the call, and the next candidate re-reads its own repository's tip and re-
+  reads it uncached immediately before its merge call. A candidate whose
+  reviewed base is not that tip is refused by the existing `base_moved` (or
+  `carried_base_moved`) gate and waits for a later pass; it never merges onto a
+  commit whose CI nobody checked. Candidates in different repositories are
+  independent, and a refused merge no longer defers its own repository's other
+  candidates.
+- The only per-pass bound left in this phase is the run window: the deadline
+  check at the top of every iteration, which defers the rest instead of an
+  artificial count.
+- Unchanged: a Gateway or self merge/booking still writes delivery state and
+  ends the delivery phase for that pass, so it is still one delivery write per
+  pass on those targets (the correction in the 2026-10-25 entry); that write
+  owns the release request and is not another count.
+- Model check: `mergeSlotFairness` in `tests/model/fleet.ts` no longer anchors a
+  merge slot. It pins the cache invalidation that replaces it and shows the
+  refused record's sibling merging in the same pass, and
+  `J3:delivery:no-merge-slot` is no longer a known jam. The moved-tip refusal is
+  proved by `tests/host/hosted-autonomy-merge-per-repository_test.ts`.

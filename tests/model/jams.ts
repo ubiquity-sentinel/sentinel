@@ -487,8 +487,8 @@ export const KNOWN_JAMS: readonly string[] = [
   "J2:human:delivery.head_changed:merge_refused_head_mismatch",
   "J2:human:review.ctx_wait:task_context_still_unavailable",
   "J2:human:work.noted+work.published:pr_closed_by_owner+preserved_published",
-  // The merge queue removes the serial merge slot in its later generation.
-  "J3:delivery:one-merge-per-pass",
+  // The per-pass per-repository merge count is retired: a refused or merged
+  // record no longer keeps its repository's next candidate out of the pass.
   "J3:runtime:state-error-abort",
 ];
 
