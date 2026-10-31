@@ -25,6 +25,8 @@ import type {
 import { joinPath } from "./local.ts";
 import type { LocalModelDiagnosticV1 } from "./local.ts";
 import type { ModelBoundaryErrorCodeV1 } from "../repair/model-port-diagnostics.ts";
+import type { StepLineV1 } from "../repair/step-line.ts";
+import type { HostedMatrixPlanDiagnosticV1 } from "./matrix-plan-diagnostic.ts";
 
 /** Exact fixed workflow ref the protected supervisor runs from. */
 export const HOSTED_RUNTIME_WORKFLOW_REF =
@@ -78,6 +80,8 @@ export const HOSTED_RUNTIME_CHILD_ENV_KEYS = [
   // crosses only when the launcher was given a non-empty value.
   "SENTINEL_COOLDOWN_MODE",
   "SENTINEL_MERGE_QUEUE",
+  // Backup CI's lower-only mode (docs/backup-ci-spec.md §11.8).
+  "SENTINEL_BACKUP_CI",
   // The legacy review class's cutoff (`legacy-review-cutoff-env.ts`): set by
   // the launcher itself, only for the exact revision it pinned it for.
   "SENTINEL_LEGACY_REVIEW_CUTOFF",
@@ -463,6 +467,16 @@ export interface HostedRuntimeLauncherResultV1 {
   reviewTerminals?: ReviewTerminalAdvisoriesV1;
   /** Authenticated native matrix log carrier; never aggregate terminal proof. */
   matrixCarrier?: Record<string, unknown>;
+  /**
+   * Advisory-only re-parsed plan diagnostic of an accepted planner carrier
+   * (closed keys, integer counts); never acceptance, health or admission.
+   */
+  matrixPlanDiagnostic?: HostedMatrixPlanDiagnosticV1;
+  /**
+   * Advisory-only re-parsed `sentinel_step` lines of a settled repair child,
+   * bounded; they never attest health, terminal, settlement or delivery.
+   */
+  stepLines?: StepLineV1[];
   /**
    * Diagnostic-only receipt for a rejected matrix launcher result. Present
    * only when status is "unavailable" from resolveMatrixLauncherResult; it

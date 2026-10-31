@@ -1,16 +1,27 @@
 /** Exact native membership + durable operation reconciliation, before enqueue decisions. */
 import { canonicalStringify } from "../src/contracts/canonical.ts";
 import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
-import type { QueueSnapshot } from "../src/github/merge-queue-types.ts";
+import type {
+  QueueBinding,
+  QueueMembership,
+  QueuePullIdentity,
+  QueueRead,
+  QueueSnapshot,
+} from "../src/github/merge-queue-types.ts";
 import type { HostedQueueCoordinatorDeps } from "./hosted-autonomy-queue-contracts.ts";
 import type { HostedAutonomyDepsV1 } from "./hosted-autonomy-types.ts";
 import {
   decideQueuePolicy,
+  hasCompleteQueueAuthorizationFacts,
+  hasConsistentQueueAbsence,
+  hasQueueDeliveryProvenance,
   hasQueueIntentNamespace,
   isProvenQueueDequeueRemoval,
   isQueueHeld,
+  type QueueAuthorizationFacts,
 } from "./hosted-autonomy-queue-policy.ts";
 import {
+  isDefinitelyNotSubmitted,
   parseQueueIntent,
   queueDequeueComplete,
   queueFailure,
@@ -24,6 +35,7 @@ import { submitQueueAdmission } from "./hosted-autonomy-queue-submit.ts";
 import { queueRecordProtected } from "./hosted-autonomy-queue-context.ts";
 import { acknowledgeBaseRefresh } from "../src/repair/loop-base-refresh.ts";
 import { candidatePreservationRef } from "../src/repair/keys.ts";
+import { releaseRequestMatchesDelivery } from "../src/repair/loop-records.ts";
 
 export interface QueueRecordPass {
   deps: HostedAutonomyDepsV1;
@@ -265,6 +277,20 @@ export async function reconcileQueueRecord(
     failedQueueAdmissions: state?.queueFailures ?? 0,
   };
   const decision = decideQueuePolicy(facts);
+  if (
+    decision.action === "hold" && state !== null &&
+    isDefinitelyNotSubmitted(state)
+  ) {
+    const reconciled = await reconcileNotSubmitted(
+      input,
+      record,
+      binding,
+      pull,
+      member,
+      auth.value.facts,
+    );
+    if (reconciled !== null) return reconciled;
+  }
   if (decision.action === "dequeue_owned") {
     if (
       state === null || state.intent.resultId !== decision.entryId ||
@@ -307,4 +333,61 @@ export async function reconcileQueueRecord(
     return ready();
   }
   return await submitQueueAdmission({ ...input, record }, binding, pull, state);
+}
+
+/**
+ * #169: a definitely-unsent first admission that the fresh authorization now
+ * refuses returns to the runtime instead of holding until the six-hour owner
+ * park, but only under an authenticated negative effective merge_queue rule
+ * (the direct path the runtime then takes is allowed only there).  Besides the pass's initial snapshot, the membership read and the
+ * authorization membership, it needs one more fresh queue scan; any entry,
+ * incomplete fact, durable provenance or deadline keeps strict custody (null).
+ * Charges, counters and review rounds are untouched, and elapsed time is
+ * never the reason.
+ */
+async function reconcileNotSubmitted(
+  input: QueueRecordPass,
+  record: WorkRecordV1,
+  binding: QueueBinding,
+  pull: QueuePullIdentity,
+  member: QueueRead<QueueMembership>,
+  authorization: QueueAuthorizationFacts,
+): Promise<QueueRecordOutcome | null> {
+  const { deps, queue, writer } = input;
+  if (
+    hasQueueDeliveryProvenance(record) ||
+    writer.observed.snapshot.releaseRequests.some((request) =>
+      releaseRequestMatchesDelivery(request, record)
+    ) ||
+    !hasCompleteQueueAuthorizationFacts(authorization) ||
+    deps.clock.now() >= input.deadline
+  ) return null;
+  // Release only when the runtime's direct path can take the record: an
+  // authenticated negative effective rule. Under an active (or unknown) rule a
+  // released record is refused `queue_required` and held with no intent for
+  // good, so it keeps its retryable unsent custody instead (review finding,
+  // upheld 3 of 3).
+  const rules = await queue.readEffectiveQueueRule();
+  if (rules.status !== "complete" || rules.value !== false) return null;
+  const scan = await queue.surface.readQueue("development");
+  const now = deps.clock.now();
+  if (
+    now >= input.deadline ||
+    !hasConsistentQueueAbsence({
+      repository: queue.repository,
+      binding,
+      pull,
+      snapshots: [{ status: "complete", value: input.native }, scan],
+      memberships: [member, authorization.membership],
+    })
+  ) return null;
+  const released: WorkRecordV1 = {
+    ...record,
+    intent: null,
+    wait: { reason: "unavailable", since: now, until: now },
+    updatedAt: now,
+  };
+  if (!await writer.update([released])) return stop();
+  writer.actions.push(`queue:${record.id}:not_submitted_reconciled`);
+  return ready();
 }

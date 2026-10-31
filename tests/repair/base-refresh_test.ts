@@ -59,7 +59,7 @@ const BRANCH = "sentinel/repair/issue-1";
 const OLD_HEAD = SHA3;
 const PREPARED = "7f0b28dc5c6f8a1a2b3c4d5e6f7a8b9c0d1e2f3a" as GitSha;
 const UNRELATED = "abcdefabcdefabcdefabcdefabcdefabcdefabcd" as GitSha;
-const CHECK_POLL_MS = 5 * 60_000;
+const CHECK_POLL_MS = 2 * 60_000;
 
 async function gitRun(
   cwd: string,
@@ -581,11 +581,10 @@ Deno.test(
     );
     assert.equal(work.nextStep, "review");
     assert.equal(fake.remoteWrites, 1, "no duplicate remote effect");
-    assert.equal(fake.pushCalls.length, 2);
     assert.equal(
-      fake.pushCalls[1].expected,
-      PREPARED,
-      "publish reuses the ref",
+      fake.pushCalls.length,
+      1,
+      "the already-published prepared head needs no second push",
     );
     assert.equal(fake.reviewRequests, 1, "a fresh review was requested");
     assert.deepEqual(work.counters, {
@@ -944,13 +943,10 @@ Deno.test(
     assert.equal(fake.prepareCalls[0].previousBase, SHA2);
     assert.equal(fake.prepareCalls[0].expectedBase, newer);
     assert.equal(fake.prepareCalls[0].preparedHead, undefined);
-    // New publication order: a no-op publication of the already prepared
-    // candidate before the review gate, the changing base refresh, then a
-    // no-op publication of the new head before the one fresh review.
+    // Only the changing base refresh is pushed. Both exact already-published
+    // heads are observed without a no-op push before the one fresh review.
     assert.deepEqual(fake.pushCalls, [
-      { ref: `refs/heads/${BRANCH}`, sha: PREPARED, expected: PREPARED },
       { ref: `refs/heads/${BRANCH}`, sha: next, expected: PREPARED },
-      { ref: `refs/heads/${BRANCH}`, sha: next, expected: next },
     ]);
     assert.equal(reviewsAtFirstPush, 0, "no review budget before integration");
     assert.equal(fake.reviewRequests, 1, "one fresh review for the new head");

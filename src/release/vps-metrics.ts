@@ -140,7 +140,12 @@ export interface VpsJoinedMetricsModule {
     options: VpsMetricsOptions,
   ) => Sampler & VpsMetricsWork;
 }
-/** The #1027 join storage adapter (`ops/vps-metrics-storage.ts`). */
+/**
+ * The #1027 join storage adapter (`ops/vps-metrics-storage.ts`). Since
+ * ubiquity/ai.ubq.fi#1155 it takes an optional `stateReadMs` (default 10 s,
+ * a positive safe integer) and prunes `.data/sentinel-vps-metrics` by
+ * `policy.evidenceMaxAgeMs` on each save.
+ */
 export interface VpsJoinStorageModule {
   createVpsJoinFileStorage(
     root: string,
@@ -148,6 +153,7 @@ export interface VpsJoinStorageModule {
     cipher: VpsJoinCipher,
     current: (scope: VpsMetricsScope) => Promise<VpsMetricsScope>,
     now?: () => number,
+    stateReadMs?: number,
   ): VpsJoinStorage;
 }
 

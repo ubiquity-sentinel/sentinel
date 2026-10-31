@@ -1,8 +1,18 @@
 /** Repair loop internals: checks. */
 import type { GitHubCheckV1 } from "../contracts/ports.ts";
+import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { missingExpectedChecks } from "./ci-coverage.ts";
-import { failedChecks, latestChecks } from "./ci-rejection.ts";
+import {
+  checkPending,
+  failedChecks,
+  latestChecks,
+  readCiChecks,
+} from "./ci-rejection.ts";
+import {
+  isPassportDeployCheck,
+  selectMergeGateChecksV1,
+} from "./merge-gate-checks.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
 import { routeFailedDeliveryChecks } from "./loop-ci-correction.ts";
 import { isSelfScopeZero } from "./loop-legacy-loss.ts";
@@ -24,10 +34,17 @@ const SELF_AGGREGATE_CHECK = "test-local";
 /**
  * Pure CI gate decision. Returns "proceed" only when every (deduped by name)
  * check is completed with `success` conclusion. Returns "wait" when any check
- * is still running or when no checks are recorded (no evidence CI ran).
+ * is still running, when a GitHub Actions run's job never started (a billing
+ * or spending-limit stop, `checkPending`), or when no checks are recorded (no
+ * evidence CI ran).
  * Returns a block detail when any check completed non-green (failure,
  * timed_out, cancelled, action_required, stale; skipped and neutral are green,
  * matching requiredChecksState semantics). Exported for focused testing.
+ *
+ * A Passport deployment check is retained in the observation as evidence but
+ * never judged here (owner directive 2026-10-30): only its own CI jobs gate.
+ * A target with no CI check left after that selection is "wait" (a deployment
+ * observation alone is no evidence CI ran), never "proceed".
  *
  * It judges only the checks that exist: GitHub creates a `needs:` job's
  * check run only once its dependencies finish. The CI-first review gate and
@@ -36,13 +53,15 @@ const SELF_AGGREGATE_CHECK = "test-local";
  */
 export function decideCiGate(
   checks: GitHubCheckV1[],
+  repository?: Pick<RepositoryIdentityV1, "owner" | "name">,
 ): "proceed" | "wait" | { blocked: string } {
-  if (checks.length === 0) return "wait";
+  const gating = selectMergeGateChecksV1(repository, checks).checks;
+  if (gating.length === 0) return "wait";
   // Dedupe: GitHub returns historical observations; only the latest per name
   // counts. Recency is by startedAt (when the run began): a newer in-progress
   // rerun must override an older completed run, otherwise we'd merge while
   // CI is still running.
-  const deduped = latestChecks(checks);
+  const deduped = latestChecks(gating);
   // Failed checks are terminal: classify them before pending so a queued
   // check cannot mask a failure (CodeRabbit #131 review).
   const failed = failedChecks(deduped);
@@ -52,7 +71,7 @@ export function decideCiGate(
     ).join(", ");
     return { blocked: `CI checks failed: ${names}` };
   }
-  const pending = deduped.some((check) => check.status !== "completed");
+  const pending = deduped.some(checkPending);
   if (pending) return "wait";
   return "proceed";
 }
@@ -96,7 +115,13 @@ export async function absentExpectedChecks(
   }
   const observed = await deps.github.readCheckSuites(record.target.base);
   if (!observed.ok) return null;
-  return missingExpectedChecks(head, observed.value.checks);
+  // A Passport deploy check is evidence, not an expected CI job: neither the
+  // head's deploy observations nor a base deploy suite may park the review.
+  const gatingHead = selectMergeGateChecksV1(record.repository, head).checks;
+  const expected = observed.value.checks.filter((check) =>
+    !isPassportDeployCheck(record.repository, check.name)
+  );
+  return missingExpectedChecks(gatingHead, expected);
 }
 
 /**
@@ -134,15 +159,15 @@ export async function gateDeliveryOnChecks(
   if (cooling.kind === "deferred") {
     return { kind: "deferred", detail: cooling.detail };
   }
-  const observed = await deps.github.readChecks(head);
+  const observed = await readCiChecks(deps.github, head);
   if (!observed.ok) {
     // Transient read failure: defer without a wait so the next turn retries.
     return { kind: "deferred", detail: "CI check observation unavailable" };
   }
-  const decision = decideCiGate(observed.value.checks);
+  const decision = decideCiGate(observed.value.checks, record.repository);
   if (decision === "proceed") {
-    // Every (deduped) check completed with `success`: the CI gate passes and
-    // the merge authorization proceeds.
+    // Every selected (deduped) CI check completed green: the CI gate passes
+    // and the merge authorization proceeds. Deploy observations stay evidence.
     return null;
   }
   if (decision === "wait") {
@@ -169,7 +194,12 @@ export async function gateDeliveryOnChecks(
       deps,
       context,
       record,
-      failedChecks(observed.value.checks),
+      failedChecks(
+        selectMergeGateChecksV1(
+          record.repository,
+          observed.value.checks,
+        ).checks,
+      ),
       decision.blocked,
       now,
     );

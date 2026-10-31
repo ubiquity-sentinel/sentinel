@@ -36,7 +36,12 @@ import {
   HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE,
   pendingConflictResolution,
 } from "../repair/conflict-resolution.ts";
-import { roundLeftForStart } from "../repair/loop-eligibility.ts";
+import {
+  existingHeadContinuationShape,
+  ownsPublishedArtifact,
+  roundLeftForStart,
+  unpublishedLocalCandidateShape,
+} from "../repair/loop-eligibility.ts";
 import type { LegacyCutoff } from "../repair/review-round-cap.ts";
 import { rankEligibleWork } from "../repair/selection.ts";
 import {
@@ -110,6 +115,17 @@ export interface MatrixPlanDiagnosticV1 {
    * resolutions holding it (`conflictResolutionsInFlightIds`).
    */
   conflictResolutionCap?: { cap: number; inFlight: string[] };
+  /**
+   * The same two breakdowns per repository (`owner/name`), for the hosted
+   * `sentinel_matrix_plan_diagnostic` line (`matrix-plan-diagnostic.ts`).
+   */
+  byRepository?: Record<string, MatrixPlanRepositoryCountsV1>;
+}
+
+/** One repository's share of a zero-cell plan diagnostic. */
+export interface MatrixPlanRepositoryCountsV1 {
+  skippedByReason: Record<string, number>;
+  notReadyByReason: Record<string, number>;
 }
 
 /** Not-ready reason of a pending conflict resolution held back by the cap. */
@@ -215,7 +231,14 @@ export function explainMatrixNotReady(
     return `intent=${record.intent.key}`;
   }
   const candidateState = record.target.candidateState;
-  if (candidateState !== undefined && candidateState.preserved === null) {
+  // A published head with no descriptor is admitted through the
+  // existing-published-head continuation, and a preserved-null record that owns
+  // no publishable artifact at all (no PR, no published head) is released to a
+  // fresh base start, so neither is a refusal reason.
+  if (
+    candidateState !== undefined && candidateState.preserved === null &&
+    ownsPublishedArtifact(record) && !existingHeadContinuationShape(record)
+  ) {
     return "candidateState.preserved=null";
   }
   if (record.target.branch === null) {
@@ -224,8 +247,15 @@ export function explainMatrixNotReady(
   if (config.sessionBound === null) {
     return "config.sessionBound=null";
   }
-  if (record.target.head !== null) {
-    return "target.head-not-null";
+  if (
+    record.target.head !== null && !unpublishedLocalCandidateShape(record)
+  ) {
+    // A continuation record is eligible on its snapshot shape; its exact head
+    // is re-proved against the live pull request and its CI at admission, so a
+    // refused one is named by this start kind, never by a missing head.
+    return existingHeadContinuationShape(record)
+      ? "existing_head_continuation_live"
+      : "target.head-not-null";
   }
   return null;
 }
@@ -241,20 +271,34 @@ function buildPlanDiagnostic(
   explainNotReady: (record: WorkRecordV1) => string | null,
 ): MatrixPlanDiagnosticV1 {
   const skippedByReason: Record<string, number> = {};
-  for (const reason of Object.values(ranked.skipped)) {
-    skippedByReason[reason] = (skippedByReason[reason] ?? 0) + 1;
-  }
-  const notReadyByReason: Record<string, number> = {};
-  const notReadySamples: Record<string, string[]> = {};
   const workById = new Map<string, WorkRecordV1>(
     snapshot.work.map((w) => [w.id as string, w]),
   );
+  const byRepository: Record<string, MatrixPlanRepositoryCountsV1> = {};
+  const countsOf = (record: WorkRecordV1 | undefined) => {
+    if (record === undefined) return null;
+    const key = `${record.repository.owner}/${record.repository.name}`;
+    return byRepository[key] ??= { skippedByReason: {}, notReadyByReason: {} };
+  };
+  for (const [id, reason] of Object.entries(ranked.skipped)) {
+    skippedByReason[reason] = (skippedByReason[reason] ?? 0) + 1;
+    const counts = countsOf(workById.get(id));
+    if (counts !== null) {
+      counts.skippedByReason[reason] = (counts.skippedByReason[reason] ?? 0) +
+        1;
+    }
+  }
+  const notReadyByReason: Record<string, number> = {};
+  const notReadySamples: Record<string, string[]> = {};
   for (const id of ranked.ordered) {
     const record = workById.get(id);
     if (record === undefined) continue;
     const reason = explainNotReady(record);
     if (reason === null) continue;
     notReadyByReason[reason] = (notReadyByReason[reason] ?? 0) + 1;
+    const counts = countsOf(record)!;
+    counts.notReadyByReason[reason] = (counts.notReadyByReason[reason] ?? 0) +
+      1;
     const samples = notReadySamples[reason] ?? [];
     if (samples.length < 3) samples.push(id);
     notReadySamples[reason] = samples;
@@ -264,6 +308,7 @@ function buildPlanDiagnostic(
     skippedByReason,
     notReadyByReason,
     notReadySamples,
+    byRepository,
   };
 }
 
@@ -506,6 +551,12 @@ export async function planMatrixWave(
           JSON.stringify(manifest([...cells, candidate]), null, 2) + "\n",
         ).length <= MAX_MATRIX_ARTIFACT_BYTES;
       },
+      // The planner authorizes the existing-published-head continuation: a
+      // custody_ready record with no preserved candidate is corrected on its
+      // exact published head (the admission re-proves that head and its live
+      // CI failure before anything is charged) instead of a fresh start from
+      // the base, which would overwrite the unverified head.
+      { existingHeadContinuation: true },
     );
     if (outcome.kind !== "prepared") {
       deferred++;

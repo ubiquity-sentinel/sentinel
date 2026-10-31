@@ -8,10 +8,14 @@ import type { GitSha } from "../src/contracts/brands.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
 import { failed, readRepairSafely, skipped } from "./hosted-autonomy-state.ts";
 import {
-  authorizingReceipt,
+  boundReviewReceipts,
   historicalMergedPublication,
   readTrustedTask,
 } from "./hosted-autonomy-delivery.ts";
+import {
+  releaseAuthorizingReceipt,
+  treeCarriedReleaseProver,
+} from "./hosted-autonomy-carried-release.ts";
 import {
   hostedDeliveryProofMatches,
   resolveHostedDelivery,
@@ -24,10 +28,14 @@ import {
   acceptedReleases,
   applyHostedClosures,
   applyHostedRetirements,
+  isHostedRetired,
   planHostedClosures,
   planHostedRetirements,
 } from "./hosted-autonomy-closures.ts";
-import type { HostedAutonomyPassContextV1 } from "./hosted-autonomy-scopes.ts";
+import {
+  type HostedAutonomyPassContextV1,
+  readHostedPullStatus,
+} from "./hosted-autonomy-scopes.ts";
 import {
   HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR,
   hostedDeliveryKey,
@@ -40,6 +48,7 @@ import type {
   HostedAutonomyResultV1,
 } from "./hosted-autonomy-types.ts";
 import {
+  carriedGatewayRequestBindsDelivery,
   gatewayClosureIntentBindsRequest,
   gatewayReleaseDeferred,
   gatewayRequestBindsDelivery,
@@ -78,11 +87,21 @@ async function gatewayClosureGate(
   const request = requests[0];
   const referenced = releaseRequestReceipt(context.snapshot.reviews, request);
   if (
-    referenced?.id !== proof.reviewReceiptId ||
+    referenced === null || referenced.id !== proof.reviewReceiptId ||
     request.source.reviewRequestId !== proof.reviewRequestId
   ) return "wait";
+  // A carried request (Sentinel #152) binds only while the exact tree proof,
+  // re-derived once in this pass, holds.
+  const carried = treeCarriedReleaseProver(context, scope.surface, referenced);
   if (
-    !await gatewayRequestBindsDelivery(request, record, referenced, revision)
+    !await gatewayRequestBindsDelivery(request, record, referenced, revision) &&
+    !await carriedGatewayRequestBindsDelivery(
+      request,
+      record,
+      referenced,
+      carried,
+      revision,
+    )
   ) return "wait";
   let optedOut: boolean | null = null;
   try {
@@ -91,8 +110,8 @@ async function gatewayClosureGate(
         null;
   } catch { /* missing current source evidence refuses */ }
   if (record.related.issueNumber === null || optedOut !== false) return "wait";
-  const authorized = authorizingReceipt(
-    { ...context.snapshot, reviews: referenced === null ? [] : [referenced] },
+  const authorized = releaseAuthorizingReceipt(
+    { ...context.snapshot, reviews: [referenced] },
     record,
     await readTrustedTask(scope.surface, record),
   );
@@ -102,6 +121,7 @@ async function gatewayClosureGate(
     record,
     request,
     authorized,
+    carried,
   );
   return accepted.kind === "blocked"
     ? { blocked: accepted.reason }
@@ -236,7 +256,7 @@ export async function runHostedClosurePass(
       }
       const scope = await scopeFor(record.repository);
       if (
-        authorizingReceipt(
+        releaseAuthorizingReceipt(
           snapshot,
           record,
           await readTrustedTask(scope.surface, record),
@@ -296,11 +316,12 @@ export async function runHostedClosurePass(
   // definitively closed without a merge can never deliver, whatever step it is
   // parked at. That verdict requires the read to succeed and the pull to be
   // neither merged nor open; a failed or empty read is not evidence and leaves
-  // the record alone.
+  // the record alone. An already retired record is never planned again
+  // (`planHostedRetirements`), so its pull request is not read.
   const closedUnmerged = new Set<string>();
   for (const record of snapshot.work) {
     if (
-      record.nextStep === "done" ||
+      record.nextStep === "done" || isHostedRetired(record) ||
       queueRecordProtected(record, deps.queueCustody)
     ) continue;
     const issueNumber = record.related.issueNumber;
@@ -316,9 +337,9 @@ export async function runHostedClosurePass(
     // a deferred release is never closed unmerged: nothing to read.
     if (gatewayReleaseDeferredIn(context, record)) continue;
     const scope = await scopeFor(record.repository);
-    const pull = await readPull(scope, pullRequest);
+    const pull = await readHostedPullStatus(scope, pullRequest);
     if (pull === null) continue;
-    if (pull.merged !== true && pull.state !== "open") {
+    if (pull.merged === false && pull.state === "closed") {
       closedUnmerged.add(record.id);
     }
   }
@@ -417,13 +438,20 @@ export async function runHostedClosurePass(
     }
     // Counted once by the delivery-only pass; nothing is read for it here.
     if (gatewayReleaseDeferredIn(context, record)) continue;
+    // A fresh task cannot authorize a record with no exact receipt. Historical
+    // publication reconstruction above must run first; carried Gateway
+    // authorization keeps its separate request-bound path.
+    if (
+      !isGatewayVpsRepository(record.repository) &&
+      boundReviewReceipts(snapshot, record).length === 0
+    ) continue;
     const key = hostedDeliveryKey(record.repository, pullRequest, head, base);
     // A prior capability is revalidated below against the fresh task and exact row.
     const scope = await scopeFor(record.repository);
     // The same trusted, immediately-preceding source-issue read authorizes the
     // merge evidence this closure will consume, exactly as it did the merge.
     if (
-      authorizingReceipt(
+      releaseAuthorizingReceipt(
         snapshot,
         record,
         await readTrustedTask(scope.surface, record),
@@ -522,7 +550,7 @@ export async function runHostedClosurePass(
         closureTasks.get(record.id) ?? "unavailable",
       ) ||
       !gatewayIntentClosable(context, record) ||
-      authorizingReceipt(
+      releaseAuthorizingReceipt(
           snapshot,
           record,
           closureTasks.get(record.id) ?? "unavailable",
@@ -574,7 +602,7 @@ export async function runHostedClosurePass(
       // the full receipt/record authorization is re-applied to it: an earlier
       // action in this same pass that changed this issue's text (or an
       // unreadable context) refuses here, so a stale bulk read never closes.
-      const authorized = authorizingReceipt(
+      const authorized = releaseAuthorizingReceipt(
         snapshot,
         record,
         await readTrustedTask(scope.surface, record),
@@ -668,7 +696,7 @@ export async function runHostedClosurePass(
         if (issueOpen === null) continue;
         if (issueOpen === false) {
           if (
-            authorizingReceipt(
+            releaseAuthorizingReceipt(
               snapshot,
               record,
               await readTrustedTask(scope.surface, record),

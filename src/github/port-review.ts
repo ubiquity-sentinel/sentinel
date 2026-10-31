@@ -161,6 +161,10 @@ export abstract class GitHubPortReview extends GitHubPortPublication {
    * transport instance this port submits through. Never starts a model,
    * never reserves budget and never writes repair state.
    */
+  onReviewCompletion(listener: (operationKey: string) => void): () => void {
+    return this.reviewService.onReviewCompletion?.(listener) ?? (() => {});
+  }
+
   async drainReviews(
     request: ReviewDrainRequestV1,
   ): Promise<PortResultV1<ReviewDrainReportV1>> {

@@ -13,10 +13,12 @@ import {
 } from "../src/contracts/hosted-supervisor.ts";
 import { parseReleaseStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
+import { candidatePreservationRef } from "../src/repair/keys.ts";
 import {
-  queueProtectedIds,
-  queueRecordProtected,
-} from "./hosted-autonomy-queue-context.ts";
+  isPassportWorkTrial,
+  passportTrialCandidateBinding,
+} from "../src/repair/passport-work-trial.ts";
+import { queueProtectedIds } from "./hosted-autonomy-queue-context.ts";
 import { failed, readRepairSafely, skipped } from "./hosted-autonomy-state.ts";
 import type { HostedAutonomyPassContextV1 } from "./hosted-autonomy-scopes.ts";
 import {
@@ -27,7 +29,10 @@ import {
   type RetryPlanV1,
 } from "./hosted-autonomy-retries.ts";
 import {
+  HOSTED_AUTONOMY_CI_UNATTRIBUTED_PREFIX,
+  HOSTED_AUTONOMY_TRUSTED_AUTHORS,
   hostedIssueKey,
+  hostedRepositoryKey,
   isHostedSelf,
   sameRepository,
 } from "./hosted-autonomy-policy.ts";
@@ -39,10 +44,12 @@ import {
 } from "./hosted-autonomy-ci-retries.ts";
 import { readCiRerunSettled } from "./hosted-autonomy-ci-rerun.ts";
 import {
+  legacyFinalRoundOpen,
   legacyReviewRoundClassDrift,
   legacyReviewRoundClassPin,
   ordinaryReviewRoundsSpent,
 } from "../src/repair/review-round-cap.ts";
+import { CI_BASE_RED_DETAIL } from "../src/repair/ci-rejection.ts";
 import {
   ciFirstFixRuntimeProven,
   ciFirstFixSelfInstalledRuntimeProven,
@@ -67,6 +74,11 @@ import {
   verifyBaseRefreshReadmissions,
 } from "./hosted-autonomy-base-refresh-retries.ts";
 import {
+  applyHumanMergeReadmissions,
+  planHumanMergeHeadReadmissions,
+  verifyHumanMergeHeadReadmissions,
+} from "./hosted-autonomy-human-merge-readmission.ts";
+import {
   applyRepeatFailureParks,
   REPEAT_FAILURE_DEFAULT_ROUTE,
   repeatFailureLabel,
@@ -80,8 +92,20 @@ import {
 } from "./hosted-autonomy-conflict-retries.ts";
 import {
   acceptanceCorrectionRuntimeProven,
+  acceptanceCorrectionSelfInstalledRuntimeProven,
   planAcceptanceReadmissions,
 } from "./hosted-autonomy-acceptance.ts";
+import {
+  retryGrantAction,
+  retryParkAction,
+  retryReadmitAction,
+} from "./hosted-autonomy-retry-actions.ts";
+import {
+  dropProtectedCandidates,
+  planProtectedReadmissions,
+  protectedReadmissionPlan,
+  takeProtectedReadmissions,
+} from "./hosted-autonomy-protected-readmission.ts";
 
 /** Legacy class drift lines reported per pass (the rest are counted). */
 export const LEGACY_DRIFT_REPORTS_PER_PASS = 12;
@@ -132,42 +156,53 @@ export function legacyClassDriftActions(
 }
 
 /**
- * Read-only source facts shared by bookkeeping and the later retry grant. A
- * pass that continues after a write passes the ids it already read (`seen`):
- * each record's issue is read once per pass, and the facts already held are
- * kept.
+ * The pass's report of legacy heads held on a moved base (issue #155),
+ * state-free. Each record whose final round is still open under the cutoff
+ * and that the runtime parked because its red reviewed head is not its own
+ * change's failure is listed. The two parks are the red reviewed base
+ * (`legacy_base_red`) and no base evidence with its base no longer the tip
+ * (`legacy_unattributed`), where the flake re-run and the green rule cannot
+ * act. No rule re-admits either park and it waits for the owner, so it is
+ * named on every pass (at most `LEGACY_DRIFT_REPORTS_PER_PASS`, then a
+ * count). Nothing is reported without a cutoff.
  */
-export async function readHostedClosedIssues(
-  context: HostedAutonomyPassContextV1,
-  seen?: Set<string>,
-): Promise<void> {
-  const { snapshot, scopeFor, actions } = context;
-  const closedIssues = new Set<string>(
-    seen === undefined ? [] : context.closedIssues,
-  );
+export function legacyHeldHeadActions(
+  snapshot: RepairStateSnapshotV1,
+  cutoff: number | null,
+  tips: ReadonlyMap<string, string | null>,
+): string[] {
+  if (cutoff === null) return [];
+  const held: string[] = [];
   for (const record of snapshot.work) {
-    if (record.nextStep === "done") continue;
-    if (queueRecordProtected(record, context.deps.queueCustody)) continue;
-    const issueNumber = record.related.issueNumber;
-    if (issueNumber === null || seen?.has(record.id)) continue;
-    seen?.add(record.id);
-    const scope = await scopeFor(record.repository);
-    if (scope.surface === null) {
-      actions.push(`record:${record.id}:surface_unreadable`);
+    const blocker = record.blocker;
+    if (
+      record.nextStep !== "blocked" || blocker === null ||
+      blocker.kind !== "other" ||
+      !legacyFinalRoundOpen(snapshot, record, cutoff)
+    ) continue;
+    if (blocker.message.startsWith(`${CI_BASE_RED_DETAIL}: `)) {
+      held.push(`retry:${record.id}:denied:legacy_base_red`);
       continue;
     }
-    let open: boolean | null = null;
-    try {
-      open = await scope.surface.readIssueOpen(issueNumber);
-    } catch {
-      open = null;
-    }
-    if (open === false) {
-      closedIssues.add(hostedIssueKey(record.repository, issueNumber));
-    }
+    const tip = tips.get(hostedRepositoryKey(record.repository)) ?? null;
+    if (
+      blocker.message.startsWith(HOSTED_AUTONOMY_CI_UNATTRIBUTED_PREFIX) &&
+      tip !== null && tip !== record.target.base
+    ) held.push(`retry:${record.id}:denied:legacy_unattributed`);
   }
-  context.closedIssues = closedIssues;
+  const actions = held.slice(0, LEGACY_DRIFT_REPORTS_PER_PASS);
+  if (held.length > LEGACY_DRIFT_REPORTS_PER_PASS) {
+    actions.push(
+      `retry:legacy_held:denied:held_more=${
+        held.length - LEGACY_DRIFT_REPORTS_PER_PASS
+      }`,
+    );
+  }
+  return actions;
 }
+
+/** The pass's source-issue facts (`hosted-autonomy-closed-issues.ts`). */
+export { readHostedClosedIssues } from "./hosted-autonomy-closed-issues.ts";
 
 export async function runHostedRetryPass(
   context: HostedAutonomyPassContextV1,
@@ -476,8 +511,13 @@ export async function runHostedRetryPass(
     (denial) => {
       actions.push(`retry:${denial.id}:denied:${denial.reason}`);
     },
+    acceptanceCorrectionSelfInstalledRuntimeProven(
+      installedRuntime,
+      deps.acceptanceCorrectionSourceRevision,
+    ),
   ));
   actions.push(...legacyClassDriftActions(snapshot, legacyCutoff, ciFirst));
+  actions.push(...legacyHeldHeadActions(snapshot, legacyCutoff, retryTips));
   const plans: RetryPlanV1[] = [];
   // The per-pass CI correction cap counts only corrections this pass admits
   // after the pull request checks below. A plan dropped there (closed,
@@ -546,8 +586,6 @@ export async function runHostedRetryPass(
       (denial) => {
         actions.push(`retry:${denial.id}:denied:${denial.reason}`);
       },
-      ciFirst,
-      legacyCutoff,
     ).filter((plan) => !settled(plan.id)),
     scopeFor,
     actions,
@@ -576,20 +614,114 @@ export async function runHostedRetryPass(
       legacyCutoff,
     ),
   );
-  if (plans.length > 0 || readmissions.length > 0 || parks.length > 0) {
+  // The retired human-merge head park has its own exact rule (see
+  // hosted-autonomy-human-merge-readmission.ts): the record keeps its reviewed
+  // head and returns to `review`, where the runtime re-reads its merged pull
+  // and completes the delivery. Its blocker matches none of the sets above.
+  // A record an earlier write of this pass settled (queue custody included)
+  // waits for the next pass.
+  const humanMerges = await verifyHumanMergeHeadReadmissions(
+    planHumanMergeHeadReadmissions(snapshot).filter((plan) =>
+      !settled(plan.id)
+    ),
+    scopeFor,
+    actions,
+  );
+  // C6: an open issue's `sentinel:retry` label is the owner's exit for a
+  // protected-path park. The label is removed first; only a confirmed removal
+  // returns the record to `work` in this same write, as an ordinary uncharged
+  // work plan over the dropped candidate (hosted-autonomy-protected-readmission.ts).
+  const owned = new Set(
+    [...plans, ...readmissions, ...parks].map((entry) => entry.id),
+  );
+  const protectedTaken = await takeProtectedReadmissions(
+    planProtectedReadmissions(
+      snapshot,
+      closedIssues,
+      (id) => settled(id) || owned.has(id),
+      deps.clock.now(),
+    ),
+    scopeFor,
+    actions,
+  );
+  plans.push(...protectedTaken.map(protectedReadmissionPlan));
+  // Every new published trial reentry requires current custody, even when
+  // its settled admission and target still share the same base.
+  for (const candidates of [plans, readmissions]) {
+    for (let index = candidates.length - 1; index >= 0; index--) {
+      if (
+        candidates === readmissions &&
+        candidates[index].detail !== "passport_trial_base_refresh"
+      ) continue;
+      const record = snapshot.work.find((row) =>
+        row.id === candidates[index].id &&
+        sameRepository(row.repository, candidates[index].repository)
+      );
+      if (
+        record === undefined || !isPassportWorkTrial(record.repository) ||
+        record.target.pr === null
+      ) continue;
+      const binding = passportTrialCandidateBinding(
+        record,
+        snapshot.reservations,
+      );
+      const scope = await scopeFor(record.repository);
+      let issueOpen: boolean | null = null;
+      try {
+        issueOpen = record.related.issueNumber === null
+          ? null
+          : await scope.surface?.readIssueOpen(record.related.issueNumber) ??
+            null;
+      } catch { /* unavailable source cannot authorize reentry */ }
+      const pull = record.target.pr === null
+        ? null
+        : await readPull(scope, record.target.pr);
+      if (
+        binding === null || issueOpen !== true || binding.ref !==
+          await candidatePreservationRef(
+            record.repository,
+            record.id,
+            binding.operationKey,
+          ) ||
+        pull === null || pull.number !== record.target.pr ||
+        pull.state !== "open" || pull.merged !== false ||
+        pull.headSha !== record.target.head ||
+        pull.baseRef !== scope.baseBranch ||
+        !HOSTED_AUTONOMY_TRUSTED_AUTHORS.includes(pull.author ?? "")
+      ) {
+        actions.push(
+          `retry:${record.id}:denied:passport_trial_preservation_identity`,
+        );
+        candidates.splice(index, 1);
+      }
+    }
+  }
+  if (
+    plans.length > 0 || readmissions.length > 0 || parks.length > 0 ||
+    humanMerges.length > 0
+  ) {
     const now = deps.clock.now();
     if (!Number.isSafeInteger(now) || now < snapshot.updatedAt) {
       return skipped("clock_invalid", observedHead, actions);
     }
     let next: RepairStateSnapshotV1;
     try {
-      next = applyBaseRefreshReadmissions(
-        applyRepeatFailureParks(
-          applyHostedRetries(snapshot, observedHead as GitSha, plans, now),
-          parks,
+      next = applyHumanMergeReadmissions(
+        applyBaseRefreshReadmissions(
+          applyRepeatFailureParks(
+            applyHostedRetries(
+              dropProtectedCandidates(snapshot, protectedTaken),
+              observedHead as GitSha,
+              plans,
+              now,
+            ),
+            parks,
+            now,
+          ),
+          readmissions,
           now,
         ),
-        readmissions,
+        humanMerges,
         now,
       );
     } catch {
@@ -621,18 +753,16 @@ export async function runHostedRetryPass(
     }
     snapshot = readback.value.snapshot;
     observedHead = readback.value.head;
+    // Only these three lines report the write (`retryWritten`); they are
+    // pushed after its verified readback.
     for (const plan of plans) {
-      actions.push(`retry:${plan.id}:grant=${plan.grant}:${plan.detail}`);
+      actions.push(retryGrantAction(plan.id, plan.grant, plan.detail));
     }
-    for (const readmission of readmissions) {
-      actions.push(`retry:${readmission.id}:readmit:${readmission.detail}`);
+    for (const readmission of [...readmissions, ...humanMerges]) {
+      actions.push(retryReadmitAction(readmission.id, readmission.detail));
     }
     for (const park of parks) {
-      actions.push(
-        `retry:${park.id}:parked:repeat_failure:${
-          repeatFailureLabel(park.park)
-        }`,
-      );
+      actions.push(retryParkAction(park.id, repeatFailureLabel(park.park)));
     }
     return {
       kind: "hosted_autonomy",

@@ -3,8 +3,12 @@ import { canonicalStringify } from "../src/contracts/canonical.ts";
 import { hasTakeoverCustody } from "../src/github/existing-pr-takeover-provenance.ts";
 import type {
   QueueBinding,
+  QueueMembership,
   QueuePullIdentity,
+  QueueRead,
+  QueueSnapshot,
 } from "../src/github/merge-queue-types.ts";
+import type { HostedQueueAuthorizationPort } from "./hosted-autonomy-queue-contracts.ts";
 import type {
   QueueRecordOutcome,
   QueueRecordPass,
@@ -16,7 +20,16 @@ import {
   queueReentryIntent,
 } from "./hosted-autonomy-queue-intent.ts";
 import { queueHold } from "./hosted-autonomy-queue-writer.ts";
-import { decideQueuePolicy } from "./hosted-autonomy-queue-policy.ts";
+import {
+  decideQueuePolicy,
+  hasCompleteQueueAuthorizationFacts,
+  hasConsistentQueueAbsence,
+  hasQueueDeliveryProvenance,
+} from "./hosted-autonomy-queue-policy.ts";
+
+type QueueAuthorizationRead = Awaited<
+  ReturnType<HostedQueueAuthorizationPort["readAuthorization"]>
+>;
 
 export async function submitQueueAdmission(
   input: QueueRecordPass,
@@ -64,6 +77,53 @@ export async function submitQueueAdmission(
     writer.actions.push(`${tag}:intent_unverified`);
     return stop();
   }
+  // #169: only this call knows that no effect followed its committed intent.
+  // A definite preflight refusal records `not_submitted` for a first admission
+  // or for a retry of a not-submitted result, and only when the pass's initial
+  // snapshot, the fresh scan, the membership read and the authorization
+  // membership all show the pull absent; otherwise the conservative mark stays.
+  // Null means unproven, false means the recording write was not verified.
+  const recordNotSubmitted = async (
+    scanned: QueueRead<QueueSnapshot>,
+    observed: QueueRead<QueueMembership>,
+    authorization: QueueAuthorizationRead,
+    reason: "queue_disabled" | "authorization_refused",
+  ): Promise<boolean | null> => {
+    if (
+      (previous !== null && previous.stage !== "not_submitted") ||
+      hasQueueDeliveryProvenance(record) ||
+      deps.clock.now() >= input.deadline ||
+      authorization.status !== "complete" ||
+      canonicalStringify(authorization.value.binding) !==
+        canonicalStringify(binding) ||
+      canonicalStringify(authorization.value.pull) !==
+        canonicalStringify(pull) ||
+      !hasCompleteQueueAuthorizationFacts(authorization.value.facts) ||
+      !hasConsistentQueueAbsence({
+        repository: queue.repository,
+        binding,
+        pull,
+        snapshots: [{ status: "complete", value: input.native }, scanned],
+        memberships: [observed, authorization.value.facts.membership],
+      })
+    ) return null;
+    record = {
+      ...record,
+      intent: queueFailure(
+        intent,
+        "not_submitted",
+        previous?.refusals ?? 0,
+        previous?.queueFailures ?? 0,
+        deps.clock.now(),
+        // A retry restores its earlier result; a first admission records one.
+        previous === null,
+      ),
+      updatedAt: deps.clock.now(),
+    };
+    if (!await writer.update([record])) return false;
+    writer.actions.push(`${tag}:pre_effect_not_submitted:${reason}`);
+    return true;
+  };
   // This call alone knows no effect preceded the freshly committed intent. A restart does not.
   const rules = await queue.readEffectiveQueueRule();
   const scan = await queue.surface.readQueue("development");
@@ -77,6 +137,26 @@ export async function submitQueueAdmission(
     deps.clock.now() >= input.deadline
   ) {
     writer.actions.push(`${tag}:pre_effect_observation_changed`);
+    // Only an authenticated negative rule is a definite refusal. Unknown rules,
+    // an incomplete read, an entry, a merge, another pull or the deadline are not.
+    if (
+      rules.status === "complete" && rules.value === false &&
+      scan.status === "complete" && member.status === "complete" &&
+      deps.clock.now() < input.deadline
+    ) {
+      await recordNotSubmitted(
+        scan,
+        member,
+        await queue.authorization.readAuthorization({
+          snapshot: writer.observed.snapshot,
+          observedHead: writer.observed.head,
+          record,
+          binding,
+          queue: scan.value,
+        }),
+        "queue_disabled",
+      );
+    }
     return stop();
   }
   const auth = await queue.authorization.readAuthorization({
@@ -112,6 +192,11 @@ export async function submitQueueAdmission(
         "reason" in decision ? decision.reason : "refused"
       }`,
     );
+    if (
+      decision.action === "hold" &&
+      await recordNotSubmitted(scan, member, auth, "authorization_refused") ===
+        false
+    ) return stop();
     return { ready: true, submitted: false };
   }
   // A competing state writer between the readback and effect revokes this pass's authority.

@@ -125,6 +125,24 @@ export function planHostedClosures(
 }
 
 /**
+ * True for the retirement park itself (`applyHostedRetirements`): blocked on
+ * `HOSTED_AUTONOMY_RETIRED` with no operation in flight, the exact shape
+ * `planHostedRetirements` never plans again (its inline check is the pinned
+ * 01f482529 fix block, `tests/model/positives.ts`). Terminal: no retry,
+ * re-admission or delivery rule takes it.
+ */
+export function isHostedRetired(
+  record: Pick<
+    RepairStateSnapshotV1["work"][number],
+    "nextStep" | "intent" | "blocker"
+  >,
+): boolean {
+  return record.nextStep === "blocked" && record.intent === null &&
+    record.blocker?.kind === "other" &&
+    record.blocker.message === HOSTED_AUTONOMY_RETIRED;
+}
+
+/**
  * Records whose source issue is closed or gone and which can no longer produce
  * anything: the work no longer exists, so the record is parked as blocked with
  * a static reason that the retry pass refuses to clear. A record that produced

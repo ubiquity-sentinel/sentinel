@@ -24,20 +24,31 @@ import type {
   StepResultV1,
 } from "./loop-types.ts";
 
-function queueGuardReasonIsTransient(reason: QueueGuardReason): boolean {
-  switch (reason) {
-    case "capability_missing":
-    case "rule_unavailable":
-    case "observation_unavailable":
-    case "inactive_observation_unavailable":
-      return true;
-    case "custody":
-    case "member":
-    case "identity_drift":
-    case "merged_head":
-    case "queue_required":
-      return false;
-  }
+/**
+ * A hold is permanent only when the guard positively observed a state that
+ * forbids the operation. Observation, authorization and transport failures
+ * mean the operation was not observed, so they take the bounded retry wait.
+ */
+const QUEUE_GUARD_HOLD_TRANSIENT: Readonly<Record<QueueGuardReason, boolean>> =
+  {
+    capability_missing: true,
+    rule_unavailable: true,
+    observation_unavailable: true,
+    inactive_observation_unavailable: true,
+    authorization_unavailable: true,
+    custody: false,
+    member: false,
+    identity_drift: false,
+    merged_head: false,
+    queue_required: false,
+  };
+
+function queueGuardHoldIsTransient(reason: QueueGuardReason): boolean {
+  return QUEUE_GUARD_HOLD_TRANSIENT[reason];
+}
+
+function isQueueGuardReason(value: string): value is QueueGuardReason {
+  return Object.hasOwn(QUEUE_GUARD_HOLD_TRANSIENT, value);
 }
 
 export async function holdQueueRecord(
@@ -120,7 +131,7 @@ export async function guardQueueOperation(
     deps,
     context,
     record,
-    queueGuardReasonIsTransient(result.reason),
+    queueGuardHoldIsTransient(result.reason),
   );
 }
 export async function guardQueueDelivery(
@@ -201,11 +212,12 @@ export function queueEffectRefused(error: { detail: string }): boolean {
 }
 
 export function queueRefusalIsTransient(error: { detail: string }): boolean {
-  return error.detail === "native queue custody capability missing" ||
-    error.detail === "native queue custody hold: capability_missing" ||
-    error.detail === "native queue custody hold: rule_unavailable" ||
-    error.detail === "native queue custody hold: observation_unavailable" ||
-    error.detail ===
-      "native queue custody hold: inactive_observation_unavailable" ||
-    error.detail === "native queue custody hold: queue_evidence_unavailable";
+  if (
+    error.detail === "native queue custody capability missing" ||
+    error.detail === "native queue custody hold: queue_evidence_unavailable"
+  ) return true;
+  const prefix = "native queue custody hold: ";
+  if (!error.detail.startsWith(prefix)) return false;
+  const reason = error.detail.slice(prefix.length);
+  return isQueueGuardReason(reason) && queueGuardHoldIsTransient(reason);
 }

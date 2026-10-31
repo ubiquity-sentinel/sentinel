@@ -165,6 +165,18 @@ export class QueueGithub extends FakeGithub {
       }));
   }
 
+  /** A launcher merge commit's parents: the tip it landed on, the head. */
+  readCommitParents(
+    commit: GitSha,
+  ): Promise<PortResultV1<GitSha[] | null>> {
+    const pr = [...this.pulls.values()].find((row) => row.mergeSha === commit);
+    return Promise.resolve(portOk(
+      pr?.mergedOnto === undefined
+        ? null
+        : [pr.mergedOnto, this.heads.get(pr.branch)!],
+    ));
+  }
+
   /** First-parent refreshes from `reviewed` to `head` (1000: unrelated). */
   private distance(reviewed: GitSha, head: GitSha): number {
     let count = 0;

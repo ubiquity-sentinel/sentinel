@@ -50,7 +50,7 @@ import {
 
 export const PASS_MS = 5 * MINUTE;
 
-/** A second foreign repository (the delivery cap is global). */
+/** A second foreign repository (the delivery cap is per repository). */
 export const OTHER: RepositoryIdentityV1 = {
   owner: "ubiquity",
   name: "other-target",
@@ -262,12 +262,16 @@ export async function retirementFairnessLive(): Promise<FairnessV1> {
   };
 }
 
-// ----------------------------------------------- J3: one merge per pass
+// ------------------------------------------- J3: the retired merge slot
 /**
  * Three reviewed, green, exact-base delivery records in two repositories; the
- * first in id order is refused by GitHub on every merge. The delivery pass
- * stops merging for the whole pass once `merge` was called, so the others
- * starve while the refused record holds the one merge slot.
+ * first in id order is refused by GitHub on every merge. There is no per-pass
+ * merge slot: a refusal leaves that repository's tip where it was, the pass
+ * drops its cached tip and tip CI at every merge call, and the refused
+ * record's sibling re-reads that tip and merges in the same pass. Every
+ * gate-passing candidate merges, so the refused record starves nobody. (This
+ * world's tip is static, as in every scenario here, so the moved-tip refusal
+ * is proved by `tests/host/hosted-autonomy-merge-per-repository_test.ts`.)
  */
 export async function mergeSlotFairness(): Promise<FairnessV1> {
   const shapes: RecordShapeV1[] = [0, 1, 2].map((index) => ({
@@ -295,18 +299,19 @@ export async function mergeSlotFairness(): Promise<FairnessV1> {
   const starved = parts.slice(1).filter((part) =>
     !merged.has(part.record.target.pr!)
   ).map((part) => part.record.id);
-  const holders = log.every((pass) => pass.merges[0] === refused)
-    ? [parts[0]!.record.id]
-    : [];
-  const deferred = log.at(-1)!.actions.filter((action) =>
-    action.endsWith(":merge_deferred")
-  );
+  // No repository is serialised by a count any more, so nothing holds a slot;
+  // the refused record keeps taking its own failing merge call every pass.
+  const holders: string[] = [];
+  const refusals = log.filter((pass) => pass.merges.includes(refused)).length;
   return {
-    id: "delivery:one-merge-per-pass",
+    id: "delivery:no-merge-slot",
+    // The invalidation that replaces the count: after a merge call the cached
+    // tip and its CI are dropped, so the next candidate in that repository
+    // re-reads the tip and merges only onto it (or is refused `base_moved`).
     cap: anchor(
-      "f.mergeCalled",
+      "f.deliveryTipDropped",
       "ops/hosted-autonomy-delivery-pass.ts",
-      "      mergeCalled = true;",
+      "      deliveryTips.delete(scope.key);\n      tipGreen.delete(scope.key);",
     ),
     fleet: parts.length,
     passes,
@@ -314,7 +319,9 @@ export async function mergeSlotFairness(): Promise<FairnessV1> {
     holders,
     detail: `merge calls per pass: ${
       log.map((pass) => pass.merges.join("/")).join(",")
-    }; last pass: ${deferred.join(" ")}`,
+    }; the refused record called merge in ${refusals}/${passes} passes and blocked none of ${
+      parts.length - 1
+    } others`,
   };
 }
 

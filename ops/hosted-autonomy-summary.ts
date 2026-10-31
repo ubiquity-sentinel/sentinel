@@ -64,10 +64,10 @@ function reason(record: WorkRecordV1, actions: readonly string[]): string {
     return "Owner: candidate touches a protected path";
   }
   if (message.startsWith("review round ceiling reached:")) {
-    return "Review rounds spent; delivery or owner decision required";
+    return "Legacy review-round park; delivery or owner decision required";
   }
   if (message.startsWith("CI fix attempts exhausted")) {
-    return "Owner: CI fix attempts spent";
+    return "Legacy CI fix-exhausted park; inspect the task";
   }
   if (message.startsWith("candidate preservation unrecoverable")) {
     return "Owner: candidate preservation is unrecoverable";

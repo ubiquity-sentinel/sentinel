@@ -198,8 +198,9 @@ historicalTest(
     assertCasChain(state.log, INITIAL);
     assert.equal(result.actions.at(-1), "continuation:delivery:write_conflict");
     // Nothing after the refusal: no phase read, no closure, no retirement. The
-    // one read is the state-free review follow-up pass, which runs once after
-    // the whole chain unless it failed and never writes state.
+    // one read is shared by the state-free passes that run once after the
+    // whole chain unless it failed and never write state: the review
+    // follow-up pass, the base-repair pass and the CI resume pass.
     assert.equal(state.readsSinceWrite, 1);
     assert.equal(state.writes, 2);
     assert.deepEqual(github.closed, []);

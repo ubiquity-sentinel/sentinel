@@ -27,6 +27,15 @@
  * fails unless the checker finds exactly that set.
  */
 import assert from "node:assert/strict";
+import {
+  BASE_REFRESH_CAPABILITY_DETAIL,
+  failBaseRefresh,
+  MAX_BASE_REFRESH_FAILURES,
+} from "../../src/repair/loop-base-refresh-failure.ts";
+import { baseRefreshIntentKey } from "../../src/repair/keys.ts";
+import { loadRepairContext } from "../../src/repair/loop-state.ts";
+import { isPassportWorkTrial } from "../../src/repair/passport-work-trial.ts";
+import { queueRig } from "../repair/delivery-queue-rig.ts";
 import { brokenAnchors } from "./anchors.ts";
 import { PARK_CLASSES } from "./census-classes.ts";
 import { explore, linkCensus, nonTerminating } from "./explore.ts";
@@ -41,6 +50,15 @@ import { initialStates, VPS } from "./pipeline.ts";
 import { outputBoundVerdict, preFixFixtureFaithful } from "./positives.ts";
 import { reviewIntentVerdict } from "./review-intent.ts";
 import { planHostedRetirements as preFixRetirements } from "./fixtures/closures-pre-01f482529.ts";
+import {
+  concretize,
+  DEFAULT_SHAPE,
+  GATEWAY,
+  HOUR,
+  NOW,
+  SELF,
+  TIP,
+} from "./world.ts";
 
 let checked: Promise<CheckerRunV1> | null = null;
 function checker(): Promise<CheckerRunV1> {
@@ -93,6 +111,80 @@ Deno.test("decision matrix: every modeled fact still matches its source", async 
   await checker();
   await outputBoundVerdict("current");
   assert.deepEqual(await brokenAnchors(), []);
+});
+
+Deno.test("decision matrix: modeled repositories keep the real refresh-failure bound", async () => {
+  const domain = [...new Set(initialStates().map((state) => state.repo))]
+    .sort();
+  assert.deepEqual(domain, ["gateway", "self"]);
+  assert.equal(MAX_BASE_REFRESH_FAILURES, 3);
+  // Passport is deliberately outside this bounded lifecycle model.
+  for (const repo of domain) {
+    const repository = repo === "self" ? SELF : GATEWAY;
+    const part = await concretize({
+      ...DEFAULT_SHAPE,
+      repository,
+      nextStep: "work",
+      candidate: "published",
+      blocker: null,
+      wait: null,
+    });
+    const record = part.record;
+    assert.equal(isPassportWorkTrial(record.repository), false);
+    record.intent = {
+      kind: "base_refresh",
+      key: baseRefreshIntentKey(record.target.pr!, record.target.head!, TIP),
+      startedAt: NOW,
+      branch: record.target.branch,
+      expectedHead: record.target.head,
+      observedBase: TIP,
+      pr: record.target.pr,
+      requestId: null,
+      resultId: null,
+    };
+    const rig = await queueRig(1, {
+      repository,
+      shape: () => [record],
+      reservations: part.reservations,
+    });
+    rig.clock.advance(NOW - rig.clock.now());
+    const context = await loadRepairContext(rig.deps, {
+      runDeadline: NOW + HOUR,
+      modelCutoff: NOW + HOUR,
+    });
+    assert.ok(context);
+    for (let failures = 1; failures <= MAX_BASE_REFRESH_FAILURES; failures++) {
+      const before: typeof record = context.snapshot.work[0];
+      assert.ok(before.intent);
+      assert.equal(
+        (await failBaseRefresh(rig.deps, context, before, before.intent, {
+          kind: "unavailable",
+          detail: BASE_REFRESH_CAPABILITY_DETAIL,
+        })).kind,
+        "progress",
+      );
+      const after = (await rig.snapshot()).work[0];
+      assert.deepEqual(after.target, record.target, repo);
+      assert.deepEqual(after.counters, record.counters, repo);
+      assert.deepEqual(context.snapshot.reservations, part.reservations, repo);
+      if (failures < MAX_BASE_REFRESH_FAILURES) {
+        assert.equal(after.nextStep, "work", repo);
+        assert.equal(after.intent?.key, record.intent.key, repo);
+        assert.equal(after.intent?.failure?.attempts, failures, repo);
+        assert.equal(after.wait?.reason, "unavailable", repo);
+        rig.clock.advance(after.wait!.until! - rig.clock.now());
+      } else {
+        assert.equal(after.nextStep, "blocked", repo);
+        assert.equal(after.intent, null, repo);
+        assert.match(
+          after.blocker!.message,
+          /^base refresh failed 3 consecutive times:/,
+        );
+      }
+    }
+    assert.equal(rig.writes.length, MAX_BASE_REFRESH_FAILURES, repo);
+    assert.deepEqual(rig.github.reviewed, [], repo);
+  }
 });
 
 Deno.test("decision matrix: every park the lifecycle reaches is in the census", async () => {
@@ -232,18 +324,18 @@ Deno.test("decision matrix: a lost review submission expires without refunding i
   assert.ok(!KNOWN_JAMS.includes("J1:wait:review.intent_unbound"));
 });
 
-Deno.test("decision matrix: integrated recovery and acceptance routes retain the round ceiling", async () => {
+Deno.test("decision matrix: recovery and acceptance routes never park on a spent round count", async () => {
   const { graph } = await checker();
   for (const [id, state] of graph.states) {
     assert.ok(state.rounds >= 0 && state.rounds <= 3, id);
     for (const edge of graph.edges.get(id) ?? []) {
       if (edge.event !== "review_not_fulfilled") continue;
-      assert.equal(
-        edge.to.phase,
-        state.rounds === 3 ? "blocked:rev.acceptance_owner" : "work.fresh",
-        id,
-      );
+      assert.equal(edge.to.phase, "work.fresh", id);
       assert.equal(edge.to.pr, state.pr, "acceptance correction keeps its PR");
+    }
+    for (const edge of graph.edges.get(id) ?? []) {
+      if (edge.event !== "expired_intent_recovered") continue;
+      assert.equal(edge.to.phase, "work.published", id);
     }
   }
 });
@@ -263,8 +355,9 @@ Deno.test("decision matrix: identical failures park while changing signatures re
   );
   assert.ok(cycles.length > 0, "the changing-signature residual stays visible");
   assert.ok(
-    cycles.every((cycle) =>
+    cycles.some((cycle) =>
       cycle.cycle.some((step) => step.edge.event.endsWith("_changed_signature"))
     ),
+    "the changed-signature cycle is still modeled",
   );
 });

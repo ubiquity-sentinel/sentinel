@@ -33,6 +33,15 @@ import type {
   ReviewSubmissionV1,
 } from "./ports-github-requests.ts";
 
+/** Optional enrichment of one strict check read. */
+export interface GitHubChecksReadOptionsV1 {
+  /**
+   * Prove each Actions check run's workflow event. One bounded extra read is
+   * made per distinct workflow run and cached for this observation.
+   */
+  events?: boolean;
+}
+
 export interface GitHubPort {
   /** Trusted issue-bound existing-PR capability; never available to model workers. */
   readonly existingPrTakeover?: ExistingPrTakeoverPort;
@@ -59,11 +68,22 @@ export interface GitHubPort {
    * returned; every other one is skipped unread. A caller attributing given
    * head failures against a base passes their names, so an unrelated base run
    * (sentinel `development` carries 78-character `matrix_cell (<cellId>)`
-   * runs over the label bound) never refuses the read.
+   * runs over the label bound) never refuses the read. Without `names`, a
+   * status context whose latest status is pending is advisory and left out
+   * once at least one check run exists and every check run has completed
+   * (sentinel issue #192). A GitHub Actions run that completed `failure`
+   * while its job never started (no step, no runner) carries `neverStarted`
+   * (`src/github/never-started-job.ts`: bounded job reads, an unreadable job
+   * keeps the run as reported).
+   *
+   * With `options.events`, each GitHub Actions check run also carries its
+   * proven workflow `event`; a run whose event cannot be proved stays absent
+   * and attribution keeps its legacy path.
    */
   readChecks(
     head: GitSha,
     names?: ReadonlySet<string>,
+    options?: GitHubChecksReadOptionsV1,
   ): Promise<PortResultV1<GitHubChecksV1>>;
   /**
    * The check runs of `head` reduced to name and check suite, for the
@@ -79,6 +99,12 @@ export interface GitHubPort {
   ): Promise<PortResultV1<GitHubBranchProtectionsV1>>;
   /** Observe the current head of a ref (exact identity, not list order). */
   readRef(ref: string): Promise<PortResultV1<GitHubRefV1 | null>>;
+  /**
+   * Optional exact parents of one commit, in order (null: no such commit).
+   * The carried delivery reads a merge commit's parents to park a merge that
+   * landed off its tip at once (#156); absent, it keeps its bounded wait.
+   */
+  readCommitParents?(sha: GitSha): Promise<PortResultV1<GitSha[] | null>>;
   /**
    * Optional trusted deterministic candidate-base integration capability.
    *
@@ -188,6 +214,8 @@ export interface GitHubPort {
    * reconciled inside the supplied deadline. Never starts a model, never
    * reserves budget and never writes repair state.
    */
+  /** Local owned-completion notification; only prompts authenticated observation. */
+  onReviewCompletion?(listener: (operationKey: string) => void): () => void;
   drainReviews(
     request: ReviewDrainRequestV1,
   ): Promise<PortResultV1<ReviewDrainReportV1>>;

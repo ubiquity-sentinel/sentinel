@@ -249,6 +249,15 @@ export function runProof(
   });
 }
 
+/** A run that reached its startup-ready marker and then failed (#191). */
+export function startedFailureProof(intent: HostedExecutionIntentV1) {
+  return runProof(intent, "failed", {
+    startupReady: true,
+    baseSha: intent.revision,
+    terminalAt: intent.createdAt + 1500,
+  });
+}
+
 export function skippedProof(intent: HostedExecutionIntentV1) {
   return parseHostedNotStartedProofV1({
     execution: intent,

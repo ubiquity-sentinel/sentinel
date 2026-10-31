@@ -176,8 +176,15 @@ for (
         [1, 2, 3, 4, 5],
         "the HTTP reader reaches its cap",
       );
+      const tag = `followup:${request.id}:pr=1052`;
+      const perFinding = scenario.outcome.startsWith("filed=") ||
+        scenario.outcome.startsWith("exists=");
       assert.deepEqual(actions, [
-        `followup:${request.id}:pr=1052:${scenario.outcome}`,
+        perFinding
+          ? `${tag}:finding=${
+            candidate.findings[0].fingerprint
+          }:${scenario.outcome}`
+          : `${tag}:${scenario.outcome}`,
       ]);
       assert.equal(posts, scenario.outcome.startsWith("filed=") ? 1 : 0);
     } finally {

@@ -8,6 +8,7 @@ import { DenoGitExecutor } from "../../src/github/git-executor.ts";
 import type { DenoGitExecutorOptions } from "../../src/github/git-executor.ts";
 import type { HttpResponseV1, HttpTransportV1 } from "../../src/github/http.ts";
 import { createCandidatePreserver } from "../../src/host/actions-candidates.ts";
+import type { CandidateProofPassV1 } from "../../src/host/actions-candidates-proof.ts";
 import { composeGitHubHost } from "../../src/host/github.ts";
 import { candidatePreservationRef } from "../../src/repair/keys.ts";
 import type {
@@ -183,8 +184,10 @@ function preserverRun(input: {
   protectedPaths?: readonly string[];
   runtime?: ReplayRuntimeV1;
   ensure?: (taskId: WorkItemId, head: GitSha) => Promise<PortResultV1<void>>;
+  proofPass?: CandidateProofPassV1;
 }) {
   return createCandidatePreserver({
+    ...(input.proofPass === undefined ? {} : { proofPass: input.proofPass }),
     state: input.state,
     gate: input.gate,
     token: "dummy-token",
@@ -216,6 +219,8 @@ export async function preserveAttempt(input: {
   runtime?: ReplayRuntimeV1;
   ensure?: (taskId: WorkItemId, head: GitSha) => Promise<PortResultV1<void>>;
   gitExtra?: Partial<DenoGitExecutorOptions>;
+  /** The owning pass's one proof store per remote, as maintenance passes it. */
+  proofPass?: CandidateProofPassV1;
   pushOverride?: (
     realPush: (
       ref: string,
@@ -260,6 +265,7 @@ export async function preserveAttempt(input: {
     protectedPaths: input.protectedPaths,
     runtime: input.runtime,
     ensure: input.ensure,
+    proofPass: input.proofPass,
   });
   const result = await preserve({
     taskId: input.taskId,

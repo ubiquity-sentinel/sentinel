@@ -64,6 +64,26 @@ export abstract class GitHubReviewTransportState {
   protected readonly maxActiveReviews: number | null;
   protected readonly operations = new Map<string, OwnedReviewV1>();
   protected draining = false;
+  private readonly completionListeners = new Set<
+    (operationKey: string) => void
+  >();
+
+  onReviewCompletion(listener: (operationKey: string) => void): () => void {
+    this.completionListeners.add(listener);
+    for (const op of this.operations.values()) {
+      if (
+        op.runningSettled && op.processSettled && op.readyDurable &&
+        (op.phase === "ready" || op.phase === "published")
+      ) {
+        try {
+          listener(op.operationKey);
+        } catch { /* advisory notification */ }
+      }
+    }
+    return () => {
+      this.completionListeners.delete(listener);
+    };
+  }
 
   constructor(options: GitHubCodexReviewTransportOptionsV1) {
     this.client = options.client;
@@ -138,12 +158,25 @@ export abstract class GitHubReviewTransportState {
         final.ok ? null : final.error.detail,
       );
     })();
-    return run.catch(() => {
+    const owned = run.catch(() => {
       op.fault ??= DETAIL_FAILURE;
     }).finally(() => {
       op.done = true;
       op.runningSettled = true;
     });
+    void owned.then(() => {
+      if (
+        op.processSettled && op.readyDurable &&
+        (op.phase === "ready" || op.phase === "published")
+      ) {
+        for (const listener of this.completionListeners) {
+          try {
+            listener(op.operationKey);
+          } catch { /* advisory notification */ }
+        }
+      }
+    });
+    return owned;
   }
 
   // -------------------------------------------------------------------------

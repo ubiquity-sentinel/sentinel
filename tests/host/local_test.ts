@@ -30,11 +30,36 @@ Deno.test("local repository config parses with fixed local scope", () => {
   assert.equal(config.build.projectId, null);
   assert.equal(config.build.acceptance, null);
   assert.equal(config.secretRef, "secret://host/injected/sentinel-local-owner");
-  assert.ok(config.protectedPaths.includes("src/host/local.ts"));
-  assert.ok(config.protectedPaths.includes("src/contracts/local-release.ts"));
+  // Owner directive 2026-10-30: only credential, dispatch, merge-gate and
+  // promotion files stay protected. The local supervisor and budget modules
+  // are ordinary model work again, while every promotion caller and the
+  // receipt parser it trusts stay inside the single promotion boundary.
+  assert.ok(config.protectedPaths.includes("src/host/local-config.ts"));
   assert.ok(config.protectedPaths.includes("src/host/local-release.ts"));
-  assert.ok(config.protectedPaths.includes("src/host/local-supervisor.ts"));
-  assert.ok(config.protectedPaths.includes("src/budget/"));
+  assert.ok(
+    config.protectedPaths.includes("src/host/local-supervisor-release.ts"),
+  );
+  assert.ok(
+    config.protectedPaths.includes(
+      "src/host/actions-supervisor-installation.ts",
+    ),
+  );
+  // Round-3 native review: the hosted promotion callers, the installation
+  // parsers they trust and the unchanged `touchesProtected` predicate stay
+  // inside the single promotion boundary.
+  for (
+    const path of [
+      "src/host/local-supervisor.ts",
+      "src/host/actions-supervisor-source.ts",
+      "src/host/actions-supervisor-controller.ts",
+      "src/host/actions-supervisor-install-api.ts",
+      "src/repair/loop-records.ts",
+    ]
+  ) assert.ok(config.protectedPaths.includes(path), path);
+  assert.ok(config.protectedPaths.includes("src/contracts/local-release.ts"));
+  assert.ok(config.protectedPaths.includes(".github/workflows/"));
+  assert.ok(!config.protectedPaths.includes("src/host/local.ts"));
+  assert.ok(!config.protectedPaths.includes("src/budget/"));
   assert.ok(!config.protectedPaths.includes("src/"));
   const specs = Object.values(config.commandRegistry.commands);
   assert.equal(specs.length, 2);

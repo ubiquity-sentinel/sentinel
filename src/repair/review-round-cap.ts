@@ -1,23 +1,27 @@
 /**
- * The hard review-round ceiling (owner decision 2026-10-16: "ai.ubq.fi issue
- * 684 / PR 1059 reached 44 rounds; 44 rounds is insane, 3 round max").
+ * Review-round accounting (owner directive 2026-10-30: the review-round
+ * ceiling is not a permanent park).
  *
  * Pure policy shared by the runtime repair loop and the protected launcher:
- * no I/O or clock, so the launcher can ship it before
- * the runtime does. A task has spent the larger of its unrefunded
- * `review_request` admissions and its review-round counter less its refunds;
- * once that reaches its ceiling no further review is requested anywhere, and
- * a record that could only continue through another review parks with one of
- * the fixed messages below (its PR, head, evidence and charges kept).
+ * no I/O or clock. A task's rounds are still counted from the durable
+ * `review_request` admissions and its review-round counter less refunds: that
+ * history is accounting and is never reset. It no longer bounds admission:
+ * `reviewRoundsLeft` never returns zero, and no path parks a record because a
+ * round count is spent. A record keeps iterating (review -> fix -> review)
+ * until its current head has a completed review with no P0, or a different
+ * blocker applies. The two facts that were wrongly read off a zero are
+ * separate predicates: `currentHeadReviewTerminal` (the current head already
+ * holds the accepted review delivery needs) and `reviewedHeadCarried` (the
+ * reviewed head is delivered by a carried refresh).
+ *
+ * The fixed `REVIEW_ROUND_CEILING_*` messages and `ceilingParkMessage` remain
+ * only to recognize historical parks and the carried-delivery timeout/stall
+ * parks that share the prefix. No new ordinary review-round park is written.
  *
  * Rollback contract: nothing here is persisted except a blocker of the
- * existing `other` kind whose message starts with `REVIEW_ROUND_CEILING_PREFIX`,
- * which no generation-79 re-admission, re-arm or recovery rule matches.
- *
- * Delivery contract: a park is never handed back for review. Only the
- * REVIEWED and BASE_MOVED parks (`isDeliverableReviewRoundCeilingPark`) may be
- * merged, and only by the spent-round delivery rule, which re-verifies the
- * latest completed current-head review and the required CI itself.
+ * existing `other` kind whose message starts with `REVIEW_ROUND_CEILING_PREFIX`.
+ * The legacy cutoff helpers remain for the launcher's historical class
+ * reporting; they no longer grant or withhold a review round.
  */
 import { hasBlockingSeverity } from "../contracts/review-receipt.ts";
 import type { BudgetReservationV1 } from "../contracts/budget-reservation.ts";
@@ -25,9 +29,23 @@ import type { ReviewReceiptV1 } from "../contracts/review-receipt.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { HOSTED_RUNTIME_ROLLOUT } from "../host/hosted-runtime-rollout.ts";
+import { isPassportWorkTrial } from "./passport-work-trial.ts";
 
-/** Review rounds any task may spend, everywhere (owner decision 2026-10-16). */
-export const MAX_REVIEW_ROUNDS = 3;
+/**
+ * The last owner-set review-round ceiling (five, owner decision 2026-10-24).
+ * Retained as accounting history and for exported API compatibility; owner
+ * directive 2026-10-30 removed it as an admission limit. No path may park a
+ * record at this count.
+ */
+export const MAX_REVIEW_ROUNDS = 5;
+
+/**
+ * The 2026-10-16 ceiling. A record from before the CI-first era keeps it, and
+ * the legacy exception is defined against it, so the legacy class, the
+ * spent-round delivery rules and every pre-era record behave exactly as they
+ * did under three.
+ */
+export const LEGACY_REVIEW_ROUND_CEILING = 3;
 
 /** Prefix of every ceiling park message; parks are matched by exact text. */
 export const REVIEW_ROUND_CEILING_PREFIX = "review round ceiling reached: ";
@@ -113,7 +131,7 @@ export const REVIEW_ROUND_CEILING_MESSAGES: readonly string[] = [
  * hands it to runs of exactly those revisions; with no cutoff (null) nothing
  * is legacy. A record's pin is the rounds it had spent before the cutoff
  * (`legacyReviewRoundPin`), and the record is in the class once that pin
- * reaches `MAX_REVIEW_ROUNDS`:
+ * reaches `LEGACY_REVIEW_ROUND_CEILING`:
  *
  * - a record new under the CI-first runtime has no admission before its
  *   activation, so its pin is 0 and it can never get a fourth round;
@@ -132,6 +150,11 @@ export const REVIEW_ROUND_CEILING_MESSAGES: readonly string[] = [
  * (`legacyFinalRoundArmed`): only then may a review spend it. So a class
  * member whose head is green, or whose latest review left an unresolved
  * P0/P1, gets no further review: its rounds are spent like any other record's.
+ *
+ * The final round is spent by its admission, verdict or not, like every
+ * ordinary round: the one no-verdict re-request #155 item 2 proposed is not
+ * implemented (its review found it reopened parked legacy records through
+ * the raised-ceiling re-admission).
  */
 export interface LegacyReviewCutoffPinV1 {
   /**
@@ -212,11 +235,26 @@ const LEGACY_REPOSITORY: RepositoryIdentityV1 = {
   installationId: 155687488,
 };
 
-type RoundRecord = Pick<
-  WorkRecordV1,
-  "id" | "repository" | "source" | "related" | "counters" | "intent" | "target"
->;
+type RoundRecord =
+  & Pick<
+    WorkRecordV1,
+    | "id"
+    | "repository"
+    | "source"
+    | "related"
+    | "counters"
+    | "intent"
+    | "target"
+  >
+  & Partial<Pick<WorkRecordV1, "createdAt">>;
 type Ledger = { readonly reservations: readonly BudgetReservationV1[] };
+/**
+ * A ledger with the snapshot's review receipts (every repair snapshot has
+ * them); the ceiling functions read only its reservations.
+ */
+type ReviewedLedger = Ledger & {
+  readonly reviews?: readonly ReviewReceiptV1[];
+};
 /** The legacy cutoff an evaluation runs under; absent or null is none. */
 export type LegacyCutoff = number | null | undefined;
 
@@ -257,7 +295,8 @@ function countedCharges(
  * cutoff (its spent rounds less its counted review admissions created at or
  * after the cutoff), when the record is an ai.ubq.fi issue record with at
  * least one counted review admission before the cutoff (so it existed under
- * the old order) and that count reaches `MAX_REVIEW_ROUNDS`; otherwise null.
+ * the old order) and that count reaches `LEGACY_REVIEW_ROUND_CEILING`;
+ * otherwise null.
  * A record new under the CI-first runtime has no admission before the cutoff
  * and is never legacy, whatever its counter says.
  */
@@ -273,7 +312,7 @@ export function legacyReviewRoundPin(
   const after = charges.filter((charge) => charge.createdAt >= cutoff).length;
   if (after === charges.length) return null;
   const pin = reviewRoundsSpent(snapshot, record) - after;
-  return pin >= MAX_REVIEW_ROUNDS ? pin : null;
+  return pin >= LEGACY_REVIEW_ROUND_CEILING ? pin : null;
 }
 
 /**
@@ -305,16 +344,20 @@ export function legacyFinalRoundArmed(
     );
 }
 
-/** The merge gate's CI-red blockers (`loop-checks.ts`, `ci-rejection.ts`). */
+/**
+ * The merge gate's CI-red blockers (`loop-checks.ts`, `ci-rejection.ts`),
+ * with the legacy moved-base red-base park (`CI_BASE_RED_DETAIL`, #155).
+ */
 const CI_RED_PREFIXES = [
   "CI checks failed: ",
   "CI checks failed without base evidence: ",
+  "CI checks failed on the red reviewed base: ",
 ];
 
 /**
  * The shape of the owner's legacy class as the owner named it (decision-time
  * state, sequence 36388): an ai.ubq.fi issue record parked CI-red by the merge
- * gate whose spent rounds reach `MAX_REVIEW_ROUNDS`. Returns those spent
+ * gate whose spent rounds reach `LEGACY_REVIEW_ROUND_CEILING`. Returns those spent
  * rounds, otherwise null. It grants nothing; the launcher compares it with the
  * rule (`legacyReviewRoundClassDrift`).
  */
@@ -329,7 +372,7 @@ export function legacyReviewRoundClassPin(
     !CI_RED_PREFIXES.some((prefix) => blocker.message.startsWith(prefix))
   ) return null;
   const spent = reviewRoundsSpent(snapshot, record);
-  return spent >= MAX_REVIEW_ROUNDS ? spent : null;
+  return spent >= LEGACY_REVIEW_ROUND_CEILING ? spent : null;
 }
 
 /**
@@ -381,17 +424,25 @@ export function legacyReviewRoundClassDrift(
 }
 
 /**
- * The record's ceiling: its legacy pin + 1 once that final round is armed,
- * otherwise `MAX_REVIEW_ROUNDS`.
+ * The ordinary ceiling of one record (owner decision 2026-10-24): five for a
+ * record of the CI-first era, three for a record created before the pinned
+ * CI-first cutoff (`LEGACY_REVIEW_CUTOFF.activatedNotBefore`, 2026-10-17
+ * 17:05 UTC), for one with any review admitted before it, and for one whose
+ * creation time is not known. The legacy class and its final round are
+ * defined only for pre-era records, so they keep their exact rules.
  */
-export function reviewRoundCeiling(
+export function reviewRoundCeilingFor(
   snapshot: Ledger,
   record: RoundRecord,
-  cutoff?: LegacyCutoff,
 ): number {
-  return legacyFinalRoundArmed(snapshot, record, cutoff)
-    ? legacyReviewRoundPin(snapshot, record, cutoff)! + 1
-    : MAX_REVIEW_ROUNDS;
+  if (isPassportWorkTrial(record.repository)) return Number.MAX_SAFE_INTEGER;
+  const era = LEGACY_REVIEW_CUTOFF.activatedNotBefore;
+  const preEra = era === null || typeof record.createdAt !== "number" ||
+    record.createdAt < era ||
+    countedCharges(snapshot, record, "review_request").some((charge) =>
+      charge.createdAt < era!
+    );
+  return preEra ? LEGACY_REVIEW_ROUND_CEILING : MAX_REVIEW_ROUNDS;
 }
 
 /**
@@ -432,29 +483,120 @@ export function reviewRoundsSpent(
 }
 
 /**
- * True once the task has spent the ordinary ceiling (`MAX_REVIEW_ROUNDS`) by
- * the same count. The spent-round delivery rule qualifies a record on this: a
- * legacy record's one final round is extra, kept for a CI-fixed head.
+ * Historical accounting predicate: true once the task has passed its last
+ * owner-set ceiling (`reviewRoundCeilingFor`). Retained for the launcher's
+ * spent-delivery and diagnostic consumers; it never gates a review, a fix or
+ * a merge by itself, because `reviewRoundsLeft` no longer runs out.
  */
 export function ordinaryReviewRoundsSpent(
   snapshot: Ledger,
   record: RoundRecord,
 ): boolean {
-  return reviewRoundsSpent(snapshot, record) >= MAX_REVIEW_ROUNDS;
+  return reviewRoundsSpent(snapshot, record) >=
+    reviewRoundCeilingFor(snapshot, record);
+}
+
+/** No unresolved P0 and nothing uncounted: the review blocks nothing. */
+function cleanReceipt(review: ReviewReceiptV1): boolean {
+  return review.findingsUncounted === 0 &&
+    !hasBlockingSeverity(review.unresolvedSeverities);
+}
+
+/** Clean, and an issue review that accepted the task it judged. */
+function acceptedReceipt(
+  review: ReviewReceiptV1,
+  record: RoundRecord,
+): boolean {
+  return cleanReceipt(review) &&
+    (record.source.kind !== "issue" ||
+      review.taskAcceptance?.verdict === "fulfilled");
 }
 
 /**
- * Reviews this task may still request: `MAX_REVIEW_ROUNDS` minus the rounds
- * spent, never below zero, or exactly the one final round of a legacy record
- * once a CI fix armed it (`legacyFinalRoundArmed`).
+ * Reviews this task may still request. The review-round ceiling is retired
+ * (owner directive 2026-10-30): a spent count is accounting, never an
+ * admission gate, so this never returns zero and no caller may read it as a
+ * terminal review. An already terminally reviewed current head is
+ * `currentHeadReviewTerminal`, and a reviewed head its refreshed publication
+ * carries is `reviewedHeadCarried`.
  */
 export function reviewRoundsLeft(
-  snapshot: Ledger,
-  record: RoundRecord,
-  cutoff?: LegacyCutoff,
+  _snapshot: ReviewedLedger,
+  _record: RoundRecord,
+  _cutoff?: LegacyCutoff,
 ): number {
-  if (legacyFinalRoundArmed(snapshot, record, cutoff)) return 1;
-  return Math.max(0, MAX_REVIEW_ROUNDS - reviewRoundsSpent(snapshot, record));
+  return Number.MAX_SAFE_INTEGER;
+}
+
+/**
+ * True when the current head already holds the completed accepted review
+ * delivery needs: the record's latest completed pull request review judged
+ * the current head, left no unresolved P0 and nothing uncounted, and accepted
+ * the task (issue records). A spent round count never stands for this fact;
+ * callers that must not spend another review on such a head read it.
+ */
+export function currentHeadReviewTerminal(
+  snapshot: ReviewedLedger,
+  record: RoundRecord,
+): boolean {
+  const latest = latestCompletedPullRequestReview(snapshot, record);
+  return latest !== null &&
+    latest.pullRequest.head === record.target.head &&
+    acceptedReceipt(latest, record);
+}
+
+/**
+ * True when the record's reviewed head needs no new review before its merge:
+ * the current head already holds its completed accepted review
+ * (`currentHeadReviewTerminal`), or the spent count carries it
+ * (`spentReviewedHead`). The delivery line reads this; the runtime selects its
+ * carried-delivery path on `spentReviewedHead` alone.
+ */
+export function reviewedHeadCarried(
+  snapshot: ReviewedLedger,
+  record: RoundRecord,
+): boolean {
+  return currentHeadReviewTerminal(snapshot, record) ||
+    spentReviewedHead(snapshot, record);
+}
+
+/**
+ * True when the record's historical count is spent (`ordinaryReviewRoundsSpent`,
+ * accounting only) and its latest completed review is clean and accepted: the
+ * carried-delivery rule (`spentOnMovedBase`, `executeCarriedDelivery`) delivers
+ * this head without a new review. It is the historical spent-head fact, never
+ * an admission gate: a spent count keeps iterating on its ordinary path
+ * whenever this does not hold (an unreviewed or P0 head).
+ */
+export function spentReviewedHead(
+  snapshot: ReviewedLedger,
+  record: RoundRecord,
+): boolean {
+  const latest = latestCompletedPullRequestReview(snapshot, record);
+  return latest !== null && acceptedReceipt(latest, record) &&
+    ordinaryReviewRoundsSpent(snapshot, record);
+}
+
+/**
+ * The latest completed review of the record's pull request on any head (by
+ * completion, then observation instant, then id), or null.
+ */
+export function latestCompletedPullRequestReview(
+  snapshot: { readonly reviews?: readonly ReviewReceiptV1[] },
+  record: Pick<WorkRecordV1, "repository" | "target">,
+): ReviewReceiptV1 | null {
+  const pr = record.target.pr;
+  if (pr === null) return null;
+  let latest: ReviewReceiptV1 | null = null;
+  for (const review of snapshot.reviews ?? []) {
+    if (
+      review.outcome !== "completed" ||
+      review.pullRequest.number !== pr ||
+      !sameRepository(review.repository, record.repository)
+    ) continue;
+    if (latest === null || laterReview(review, latest)) latest = review;
+  }
+  return latest;
 }
 
 /**

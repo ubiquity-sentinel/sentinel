@@ -251,16 +251,18 @@ evidence (never from unverified transport lists or agent-set flags).
   `unresolvedSeverities` is validated to equal the distinct unresolved
   severities derived from findings. `resolved: true` requires authorizing
   `resolutionEvidence { authorizingIdentity, reference }` (trusted human dispute
-  or changed reviewed head); an agent-set flag alone never removes a P0/P1.
-  `findingsUncounted` records how many findings could not be retained (the
-  256-finding cap) — a receipt with `findingsUncounted > 0` and an empty
-  `unresolvedSeverities` is rejected, so truncation can never claim clean review
-  evidence.
+  or changed reviewed head); an agent-set flag alone never resolves a finding of
+  any severity. `findingsUncounted` records how many findings could not be
+  retained (the 256-finding cap) — a receipt with `findingsUncounted > 0` and an
+  empty `unresolvedSeverities` is rejected, so truncation can never claim clean
+  review evidence.
 - A completed receipt is the required evidence input to an exact-head merge
   request (see §5, merge authorization), and the merge parser additionally
-  requires zero uncounted findings and no unresolved P0/P1. The receipt is
-  identity/cleanliness evidence only — never current CI, protection or
-  authenticity evidence, and never by itself authorization.
+  requires zero uncounted findings and no unresolved P0. P1/P2/P3 remain
+  retained without blocking by severity; their follow-up uses the existing
+  authorized issue workflow. The receipt is identity/cleanliness evidence only —
+  never current CI, protection or authenticity evidence, and never by itself
+  authorization.
 
 ### BudgetReservationV1 (`kind: "budget_reservation"`)
 
@@ -393,6 +395,53 @@ records; the repair snapshot contains **only** work records, budget reservations
 and release requests. These sets never cross; duplicate release ids are
 rejected.
 
+### DeliveryTrainManifestV1 (`kind: "delivery_train"`)
+
+`src/contracts/delivery-train.ts` (redesign 2026-10-25 C12, WP3.1). A Git
+artifact contract, not a state record: no snapshot holds it and no stored shape
+changes. A tested-tip delivery train lands the literal reviewed heads of its
+members onto one exact tip `T` as one octopus commit `C` with parents
+`[T, H_1..H_k]`.
+
+- Shape:
+  `{ version: "v1", kind: "delivery_train", repository: { owner, name },
+  branch, base, members }`.
+  Each member is exactly
+  `{ recordId, pr, head, reviewedBase, receiptId, issueNumber }`: `recordId` is
+  a `WorkItemId`, `receiptId` matches `^[A-Za-z0-9._:-]{1,256}$`, `pr` and
+  `issueNumber` are positive safe integers, and `head`, `reviewedBase` and
+  `base` are full 40-hex SHAs. `branch` is a landing branch name, never under
+  `sentinel-train/`.
+- `parseDeliveryTrainManifestV1` rejects unknown and missing keys at every
+  level. It requires 1..63 members, strictly ordered by `(pr, recordId)`, and
+  refuses a duplicate pull request, record, head or issue, as well as a member
+  head equal to `base` (C's parents would repeat `T`). 63 members plus `T` is
+  the parent bound. `deliveryTrainManifestV1` sorts members, then parses.
+- Identity: `trainId = sha256hex(canonical([domain, manifest]))` with domain
+  `"sentinel-delivery-train-v1"` (`deliveryTrainIdV1`, the §3 canonical form),
+  so the digest is stable across key order. It is a `DeliveryTrainId` brand,
+  distinct from all other digests. The ref is
+  `refs/heads/sentinel-train/<trainId>` (`deliveryTrainRefV1`, parsed back by
+  `parseDeliveryTrainRefV1`). Idempotency comes from this digest-named ref,
+  never from commit SHA determinism. A bisection probe `M[:j]` is the prefix
+  manifest (`deliveryTrainPrefixV1`) and has its own id.
+- Commit message (`deliveryTrainCommitMessageV1`), exactly:
+  `Sentinel delivery train <trainId[0:12]>`, a blank line, `Delivers #a, #b, …`
+  (member issues in order, never a closing keyword), a blank line,
+  `Sentinel-Train: <trainId>` and
+  `Sentinel-Train-Manifest: <unpadded base64url of the canonical manifest>`.
+  `parseDeliveryTrainCommitMessageV1` decodes canonical base64url only, requires
+  the decoded JSON to be the canonical form of the parsed manifest and requires
+  the whole message to equal the rebuilt one; it tolerates one trailing newline
+  and is bounded to 262,144 characters.
+- `hasDeliveryTrainParentsV1` checks a commit's parents are exactly
+  `[base, head_1..head_k]`.
+- Consumers (pure, in `src/repair/`): `train-overlay.ts` (inclusion and the
+  landing tree check `treeChanges(T, C) == ⊎R_m`), `train-plan.ts`
+  (`selectActiveTrainV1`), `train-bisect.ts` and `train-proof.ts`
+  (`verifyTrainLandingV1`). No launcher or runtime path calls them yet;
+  `deliveryTrainModeV1` and the launcher phases (WP3.3, WP3.4) are separate.
+
 ## 5. Ports and result semantics
 
 `src/contracts/ports.ts` declares the operational interfaces. Every method
@@ -436,17 +485,18 @@ the callers rely on:
   `ReviewReceiptV1` (pending/unavailable/malformed are never authorization)
   binding the exact same PR number, head and base, with
   `findingsUncounted ===
-  0` and no unresolved P0/P1 (unresolved P2/P3 do not
-  block). Repository and reviewer identity are additionally checked against the
-  caller-supplied trusted adapter `policy { repository, expectedReviewer }`,
-  both strictly validated, so a request can never name another repository or
-  select a trusted reviewer. Parsing never grants authority: the receipt is
-  identity/cleanliness evidence only, not current CI, protection or authenticity
-  evidence — m01 re-observes the authoritative review by exact identifiers,
-  verifies trusted resolution authorization, requires effective strict
-  server-enforced up-to-date protections with no applicable token bypass, and
-  requires candidate ancestry containing `expectedBase` before an expected-head
-  merge.
+  0` and no unresolved P0 (unresolved P1/P2/P3 remain
+  retained and do not block by severity). Repository and reviewer identity are
+  additionally checked against the caller-supplied trusted adapter
+  `policy { repository, expectedReviewer }`, both strictly validated, so a
+  request can never name another repository or select a trusted reviewer.
+  Parsing never grants authority: the receipt is identity/cleanliness evidence
+  only, not current CI, protection or authenticity evidence — m01 re-observes
+  the authoritative review by exact identifiers, verifies trusted resolution
+  authorization, reads configured required checks and approvals, honours
+  effective configured requirements without requiring branch rules or rulesets
+  to exist, revalidates current CI and positive task acceptance, and requires
+  candidate ancestry containing `expectedBase` before an expected-head merge.
 - **Exact-head CAS vs. REST preconditions.**
   `GitHubPort.pushHead(ref, sha,
   expectedRef)` and
@@ -459,19 +509,23 @@ the callers rely on:
   current validation. The final merge compares
   `MergeRequestV1.expectedHead`/`expectedBase` against the current exact
   identities (`head_mismatch`/`base_mismatch`), and GitHub REST offers no atomic
-  base CAS: effective strict protection rules (branch up-to-date enforcement)
-  are what make a moved base block the merge server-side, so a moved base makes
-  the candidate outdated and requires current integrated validation plus a fresh
-  reviewed head. A `StateWriteResultV1` of `ambiguous` is a distinct
-  network-outcome kind (may have been applied) used for post-push
+  base CAS. The trusted controller rereads the base branch tip immediately
+  before the merge, requires it to equal `expectedBase`, and verifies the landed
+  merge identity and parents. These are trusted checks, not an atomic
+  server-side base guard; a moved base still requires the existing current
+  integrated validation and review rules. A `StateWriteResultV1` of `ambiguous`
+  is a distinct network-outcome kind (may have been applied) used for post-push
   reconciliation.
 - **Merge blocked reasons.** `MergeOutcomeV1` blocked reasons are
   `conflict | checks_pending | checks_failed | protection_required |
   head_mismatch | base_mismatch | review_required`
   — `base_mismatch` covers a moved/mismatched base (candidate no longer descends
-  from the exact validated base) and `review_required` covers a
-  missing/non-completed/outdated review or ineffective strict protection; none
-  of them is an error and none is ever mergeable from the same request.
+  from the exact validated base) and `review_required` covers
+  missing/non-completed/outdated or mismatched/untrusted review evidence, unmet
+  configured approval requirements, or failed task-acceptance authorization.
+  Absent or ineffective branch protection alone does not cause a refusal. The
+  P0-only severity policy and independent merge gates remain unchanged. None of
+  these blocked outcomes is an error or mergeable from the same request.
 - **State capabilities.** `StateReadView`, `RepairStateWriter` and
   `ReleaseStateWriter` are separate interfaces; `StateStore` combines them for
   tests, and consumers accept the narrow `Pick`-style capability types — a
@@ -509,13 +563,15 @@ the callers rely on:
   clock-derived guess, and every returned `MetricsSampleV1` binds that identity,
   window and its coverage.
 - **Implementation.** `ImplementationPort.runModel` takes a bounded pinned
-  request (`model: "gpt-5.6-luna"`, `reasoning: "max"`, `maxDurationMs`,
-  `maxOutputChars`, bounded evidence refs, secret-free base) and returns an
-  actual-observation receipt
+  request (`model: ModelIdV1`, a trusted route-selected string,
+  `reasoning: "max"`, `maxDurationMs`, `maxOutputChars`, bounded evidence refs,
+  secret-free base) and returns an actual-observation receipt
   (`observedModel/observedReasoning/durationMs/
   outputChars`) — never a CLI
   label alone — plus a locally validated candidate `head` (publication is the
-  trusted GitHub writer's job), `checkpointSha` and bounded `changedPaths`.
+  trusted GitHub writer's job), `checkpointSha` and bounded `changedPaths`. The
+  selected model string is a request identity, not by itself proof of the actual
+  provider/model route.
 - **Clock.** `Clock.now()` returns the current millisecond epoch; `SystemClock`
   is the production implementation.
 
@@ -741,14 +797,14 @@ records are validated, sparse/cyclic/symbol/accessor canonicalization is
 rejected, error messages never echo values, metrics denominator rules hold, the
 merge-authorization parser is covered by positive and negative cases (pending/
 unavailable/malformed/mismatched reviews, repository and reviewer policy
-binding, uncounted findings, unresolved P0/P1), and the minimal fake-port test
-pins result-kind discrimination, state capability separation,
-ambiguous-vs-conflict outcomes, one-based attempts and global budget conflict
-refusal, the fake-port loop smoke skeleton (two deterministic ticks, repair
-read/source/replay/review-wait plus an independent release read, unchanged-wait
-exit with no model call or write, §10) and the gateway-index fixture mapping
-into frozen `IncidentSummaryV1` records (§11). Fakes record calls and return
-canned results — no product logic lives in test fakes.
+binding, uncounted findings, the current P0-only severity contract), and the
+minimal fake-port test pins result-kind discrimination, state capability
+separation, ambiguous-vs-conflict outcomes, one-based attempts and global budget
+conflict refusal, the fake-port loop smoke skeleton (two deterministic ticks,
+repair read/source/replay/review-wait plus an independent release read,
+unchanged-wait exit with no model call or write, §10) and the gateway-index
+fixture mapping into frozen `IncidentSummaryV1` records (§11). Fakes record
+calls and return canned results — no product logic lives in test fakes.
 
 `tests/budget/` covers the budget controller: pure rolling-window arithmetic
 (strict `(now - duration, now]` boundaries, overlapping numeric caps, an

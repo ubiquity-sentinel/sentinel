@@ -503,9 +503,9 @@ Deno.test(
             assert.equal(result.nextStep, "work");
             assert.deepEqual(result.intent, record.intent);
             assert.equal(result.wait?.reason, "unavailable");
-            assert.equal(result.wait?.until, T0 + 5 * 60_000);
+            assert.equal(result.wait?.until, T0 + 2 * 60_000);
           }
-          clock.advance(5 * 60_000 + 1);
+          clock.advance(2 * 60_000 + 1);
           await run();
           assert.equal(
             preservationCalls,

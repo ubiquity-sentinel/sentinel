@@ -37,6 +37,7 @@ import {
   BASE_REFRESH_PRESERVE_DETAIL,
 } from "../../src/repair/loop-base-refresh-failure.ts";
 import { LEGACY_LOSS_DETAIL } from "../../src/repair/loop-legacy-loss.ts";
+import { CI_BASE_RED_DETAIL } from "../../src/repair/ci-rejection.ts";
 import { BASE, type RecordShapeV1, SELF } from "./world.ts";
 import {
   cleared,
@@ -311,6 +312,21 @@ export const LATE_CLASSES: ParkClassV1[] = [
     trigger: "pipeline",
     variants: [pub("round1", 1, "clean"), pub("spent", 3, "clean")],
   },
+  {
+    // Issue #155: a legacy final-round head on a moved base, red only
+    // through its red reviewed base, that its review cannot carry (or whose
+    // tip stayed red past the bound): owner-gated, named every pass.
+    id: "del.legacy_base_red",
+    message: `${CI_BASE_RED_DETAIL}: validate(failure)`,
+    kind: "other",
+    writer: W(
+      "src/repair/loop-carried-delivery.ts",
+      'markBlocked(record, "other", park, deps.clock.now()),',
+      "w.del.legacy_base_red",
+    ),
+    trigger: "pipeline",
+    variants: [pub("legacy", 3, "clean", { legacy: true })],
+  },
   // ------------------------------------------------------------ base refresh
   {
     id: "ref.conflict",
@@ -456,8 +472,8 @@ export const LATE_CLASSES: ParkClassV1[] = [
     message: RETIRED_MERGED_MESSAGE,
     kind: "other",
     writer: W(
-      "src/repair/loop-review-observation.ts",
-      'markTerminalBlocked(record, "other", RETIRED_MERGED_MESSAGE, now)',
+      "src/repair/loop-base-refresh.ts",
+      'clearIntent(markBlocked(record, "other", RETIRED_MERGED_MESSAGE, at), at),',
       "w.term.merged_outside",
     ),
     trigger: "human",

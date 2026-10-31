@@ -15,18 +15,21 @@
  *   #154): GitHub creates a `needs:` job's check run only once its
  *   dependencies finish, so green existing runs alone are not green CI;
  * - running, absent or not yet created checks (or a base whose runs cannot
- *   be read to tell), a failed check still running on the base, or a failure
+ *   be read to tell), an Actions run whose job never started (a billing or
+ *   spending-limit stop, on the head or the base: no evidence either way),
+ *   a failed check still running on the base, or a failure
  *   no base evidence attributes (the base check was cancelled, absent or
  *   inconclusive, or the head's own check never concluded): a bounded
  *   `ci_pending` wait (`since` kept across polls) and, for a never-reviewed
  *   head, a precise park after `PRE_REVIEW_CI_BOUND_MS` that the launcher's
  *   re-run and green rules re-admit; meanwhile a moved base refreshes the
  *   head at its next poll;
- * - a candidate-caused failure: the exhausted park once `CI_FIX_ATTEMPTS` are
- *   spent; a head reviewed clean on this base returns to `work` for the
- *   existing CI correction; a never-reviewed head gets the CI fix marker where
- *   the pre-review route is open (`preReviewCiFixRouteOpen`), and otherwise
- *   parks awaiting a CI fix;
+ * - a candidate-caused failure: a head reviewed clean on this base returns
+ *   to `work` for the existing CI correction; a never-reviewed head gets the
+ *   CI fix marker where the pre-review route is open
+ *   (`preReviewCiFixRouteOpen`), and otherwise parks awaiting a CI fix. The
+ *   retry counter is accounting only: owner directive 2026-10-30 removed the
+ *   attempt cap, so a spent count never parks the head;
  * - a red base: a 30-minute `backoff`, nothing charged.
  *
  * A head already reviewed clean on this base (the re-request after a missing
@@ -41,30 +44,33 @@
  * at its own admission (`counters.retries` through `countRetry`), after the
  * failure is re-derived from live check runs (`confirmPreReviewCiFix`).
  */
+import { ownBaseRed } from "./base-repair.ts";
 import type { GitHubCheckV1 } from "../contracts/ports.ts";
 import type { WorkRecordV1, WorkWaitV1 } from "../contracts/work-record.ts";
 import {
   attributeFailedChecks,
+  baseRepairFindingOpen,
+  checkPending,
   ciCorrectable,
   ciCorrectionFinding,
   ciCorrectionRouteOpen,
-  ciFixExhaustedDetail,
-  decideCiDisposition,
   failedChecks,
   latestChecks,
   preReviewAbsentDetail,
   preReviewPendingDetail,
   preReviewRedDetail,
   preReviewUnattributedDetail,
+  readCiChecks,
 } from "./ci-rejection.ts";
 import {
-  ciFixesLeft,
   ciFixMarker,
+  isCiFixMarker,
   PRE_REVIEW_CI_BOUND_MS,
   preReviewCiFixRouteOpen,
 } from "./ci-first-policy.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
 import { absentExpectedChecks, decideCiGate } from "./loop-checks.ts";
+import { selectMergeGateChecksV1 } from "./merge-gate-checks.ts";
 import {
   observeHeadFailure,
   RED_BASE_RECHECK_MS,
@@ -74,6 +80,7 @@ import {
   headAcceptedByReview,
   headAwaitsPreReviewCiFix,
 } from "./loop-review-records.ts";
+import { existingHeadContinuationShape } from "./loop-eligibility.ts";
 import { legacyCutoff } from "./loop-review-round-cap.ts";
 import { persistWork } from "./loop-state.ts";
 import type {
@@ -121,12 +128,12 @@ function holdForCi(
 }
 
 /**
- * The bounded pre-review CI wait: re-polled every `CHECK_POLL_MS` with its
- * original `since`, and parked with `detail` once `PRE_REVIEW_CI_BOUND_MS`
- * has passed. A head reviewed clean on this base is never parked (see
- * `holdForCi`): its missing-acceptance recovery re-polls it like R79 does.
+ * The bounded pre-review CI wait keeps its original `since`. An unchanged
+ * pending observation defers without rewriting the wait; a later invocation
+ * reads the head again, and the original bound still parks it. A head reviewed
+ * clean on this base keeps its existing missing-acceptance recovery exception.
  */
-function awaitChecks(
+async function awaitChecks(
   deps: RepairCycleDepsV1,
   context: LoopContextV1,
   record: WorkRecordV1,
@@ -145,7 +152,17 @@ function awaitChecks(
       markBlocked(record, "other", detail(checks), now),
     );
   }
-  return persistWork(
+  const waitingStep = headAcceptedByReview(context.snapshot, record)
+    ? record.nextStep
+    : "work";
+  if (
+    record.wait?.reason === "ci_pending" &&
+    record.nextStep === waitingStep && record.blocker === null &&
+    record.intent === null
+  ) {
+    return { kind: "deferred", detail: "CI remains pending" };
+  }
+  const held = await persistWork(
     deps,
     context,
     holdForCi(context, record, {
@@ -154,6 +171,9 @@ function awaitChecks(
       until: deps.clock.now() + CHECK_POLL_MS,
     }, now),
   );
+  // A slow checkpoint can cross its own poll interval. Count the actual
+  // write, then yield this record instead of immediately observing it again.
+  return held.kind === "progress" ? { ...held, yield: true } : held;
 }
 
 /** A candidate-caused failure on the head a review was about to judge. */
@@ -164,13 +184,6 @@ function routeCandidateFailure(
   checks: readonly GitHubCheckV1[],
   now: number,
 ): Promise<StepResultV1> {
-  if (!ciFixesLeft(record)) {
-    return persistWork(
-      deps,
-      context,
-      markBlocked(record, "other", ciFixExhaustedDetail(checks), now),
-    );
-  }
   // A head already reviewed clean against this base (a re-request after a
   // missing task acceptance) takes the existing CI correction route; if its
   // failure is gone by the correction's admission, `confirmCiCorrection`
@@ -188,8 +201,8 @@ function routeCandidateFailure(
   // Any other red head has no completed review: a new candidate, and also a
   // REVIEWED record's refreshed head. Both take the CI fix marker where the
   // pre-review fix route is open (in process, and hosted from generation 81)
-  // and park where it is closed (hosted generation 80, or no fix or round
-  // left by the ceiling's own count).
+  // and park where it is closed (hosted generation 80, or an unavailable fix
+  // route). A spent round or CI-fix count is accounting only.
   const marked = atWork(record, ciFixMarker(now), now);
   if (
     headAwaitsPreReviewCiFix(
@@ -197,7 +210,13 @@ function routeCandidateFailure(
       marked,
       preReviewCiFixRouteOpen(deps),
       legacyCutoff(context),
-    )
+    ) ||
+    // The existing-published-head continuation authorizes this exact shape:
+    // its head is re-proved live and its failure re-derived before any
+    // charge, so the unchanged fix marker is the durable admission of its
+    // next wave. This is the SEPARATE continuation predicate, never the
+    // shared `ciPublicationShape` the delivery gate and launcher also read.
+    (existingHeadContinuationShape(record) && isCiFixMarker(marked.wait))
   ) return persistWork(deps, context, marked);
   return persistWork(
     deps,
@@ -233,15 +252,16 @@ export async function gateReviewOnCi(
     return { kind: "deferred", detail: cooling.detail };
   }
   const now = deps.clock.now();
-  const observed = await deps.github.readChecks(head);
+  const observed = await readCiChecks(deps.github, head);
   if (!observed.ok) return UNAVAILABLE;
   const checks = observed.value.checks;
-  const decision = decideCiGate(checks);
+  const gating = selectMergeGateChecksV1(record.repository, checks).checks;
+  const decision = decideCiGate(gating);
   if (decision === "proceed") {
     // Every existing run is green; the jobs GitHub has not created yet are
     // awaited like running ones (bounded, uncharged, the same park prefix),
     // and so is a base whose runs cannot be read (no evidence either way).
-    const absent = await absentExpectedChecks(deps, record, checks);
+    const absent = await absentExpectedChecks(deps, record, gating);
     if (absent !== null && absent.length === 0) return null;
     return awaitChecks(
       deps,
@@ -257,22 +277,27 @@ export async function gateReviewOnCi(
       deps,
       context,
       record,
-      latestChecks(checks).filter((check) => check.status !== "completed"),
+      latestChecks(gating).filter(checkPending),
       now,
     );
   }
-  const failed = failedChecks(checks);
+  const failed = failedChecks(gating);
   // Only the failed names are attributed, so only they are read on the base:
   // an unrelated base run over the strict bounds (the self `development`
   // tip's `matrix_cell (<cellId>)` runs) cannot defer a red head forever.
-  const base = await deps.github.readChecks(
+  const base = await readCiChecks(
+    deps.github,
     record.target.base,
     new Set(failed.map((check) => check.name)),
   );
   if (!base.ok) return UNAVAILABLE;
-  const disposition = decideCiDisposition(
+  const disposition = await ownBaseRed(
+    deps,
+    record,
     attributeFailedChecks(failed, base.value.checks),
   );
+  // A base-repair recognition or tip read that is unavailable mutates nothing.
+  if (disposition === null) return UNAVAILABLE;
   switch (disposition.kind) {
     case "candidate":
       return routeCandidateFailure(
@@ -339,7 +364,11 @@ export async function confirmPreReviewCiFix(
     case "candidate":
       return {
         kind: "confirmed",
-        finding: ciCorrectionFinding(record.target.base, observed.checks),
+        finding: ciCorrectionFinding(
+          record.target.base,
+          observed.checks,
+          observed.redBase === true && baseRepairFindingOpen(deps),
+        ),
       };
     case "clean":
       return persistWork(deps, context, clearWait(record, now));

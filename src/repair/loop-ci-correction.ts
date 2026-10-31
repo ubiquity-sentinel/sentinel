@@ -19,21 +19,23 @@
  * memory and in the correction request; the durable record holds the ordinary
  * lifecycle step, wait or blocker message.
  */
+import { ownBaseRed } from "./base-repair.ts";
 import type { GitHubCheckV1 } from "../contracts/ports.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import {
   attributeFailedChecks,
+  baseRepairFindingOpen,
   ciCorrectable,
   ciCorrectionFinding,
   ciCorrectionRouteOpen,
   type CiDispositionV1,
-  ciFixExhaustedDetail,
-  decideCiDisposition,
   failedChecks,
+  readCiChecks,
   unattributedDetail,
 } from "./ci-rejection.ts";
-import { ciFixesLeft } from "./ci-first-policy.ts";
+import { RED_BASE_RECHECK_MS } from "./ci-first-policy.ts";
 import { CHECK_POLL_MS } from "./loop-bounds.ts";
+import { selectMergeGateChecksV1 } from "./merge-gate-checks.ts";
 import {
   headAcceptedByReview,
   headTaskAcceptanceMissing,
@@ -53,8 +55,11 @@ import {
   setWait,
 } from "./transitions.ts";
 
-/** Re-observation interval while the reviewed base itself is red. */
-export const RED_BASE_RECHECK_MS = 30 * 60_000;
+/**
+ * Re-observation interval while the reviewed base itself is red (defined with
+ * the pure red-base hold, `isRedBaseHold`, which the delivery line reads).
+ */
+export { RED_BASE_RECHECK_MS };
 
 const UNAVAILABLE: StepResultV1 = {
   kind: "deferred",
@@ -64,7 +69,8 @@ const UNAVAILABLE: StepResultV1 = {
 /**
  * Attribute the failed head checks through one base observation. The base read
  * is an ordinary GitHub read under the caller's cooldown gate; a failed read
- * attributes nothing (null).
+ * attributes nothing (null), and so does an unavailable base-repair
+ * recognition or tip read (`ownBaseRed`).
  */
 async function attributeAgainstBase(
   deps: RepairCycleDepsV1,
@@ -72,12 +78,17 @@ async function attributeAgainstBase(
   failed: readonly GitHubCheckV1[],
 ): Promise<CiDispositionV1 | null> {
   // Only the failed names are read on the base (see `gateReviewOnCi`).
-  const base = await deps.github.readChecks(
+  const base = await readCiChecks(
+    deps.github,
     record.target.base,
     new Set(failed.map((check) => check.name)),
   );
   if (!base.ok) return null;
-  return decideCiDisposition(attributeFailedChecks(failed, base.value.checks));
+  return ownBaseRed(
+    deps,
+    record,
+    attributeFailedChecks(failed, base.value.checks),
+  );
 }
 
 /**
@@ -90,9 +101,14 @@ export async function observeHeadFailure(
 ): Promise<CiDispositionV1 | { kind: "clean" } | null> {
   const head = record.target.head;
   if (head === null) return { kind: "clean" };
-  const observed = await deps.github.readChecks(head);
+  const observed = await readCiChecks(deps.github, head);
   if (!observed.ok) return null;
-  const failed = failedChecks(observed.value.checks);
+  const failed = failedChecks(
+    selectMergeGateChecksV1(
+      record.repository,
+      observed.value.checks,
+    ).checks,
+  );
   if (failed.length === 0) return { kind: "clean" };
   return attributeAgainstBase(deps, record, failed);
 }
@@ -147,24 +163,9 @@ export async function routeFailedDeliveryChecks(
     !ciCorrectionRouteOpen(deps) ||
     !ciCorrectable(record, context.snapshot, legacyCutoff(context))
   ) {
-    // A head the runtime would correct but for its spent CI fixes parks with
-    // the exact exhausted detail, which no launcher rule re-admits.
-    const exhausted = ciCorrectionRouteOpen(deps) && !ciFixesLeft(record) &&
-      ciCorrectable(
-        {
-          ...record,
-          counters: { ...record.counters, retries: 0 },
-        },
-        context.snapshot,
-        legacyCutoff(context),
-      );
-    return persistBlocked(
-      deps,
-      context,
-      record,
-      exhausted ? ciFixExhaustedDetail(failed) : legacyDetail,
-      now,
-    );
+    // Owner directive 2026-10-30 retired the CI-fix attempt cap: a spent fix
+    // count never parks the head, so only the legacy detail remains.
+    return persistBlocked(deps, context, record, legacyDetail, now);
   }
   const disposition = await attributeAgainstBase(deps, record, failed);
   // Transient: mutate nothing; the next turn re-observes both revisions.
@@ -264,7 +265,11 @@ export async function confirmCiCorrection(
   if (observed.kind === "candidate") {
     return {
       kind: "confirmed",
-      finding: ciCorrectionFinding(record.target.base, observed.checks),
+      finding: ciCorrectionFinding(
+        record.target.base,
+        observed.checks,
+        observed.redBase === true && baseRepairFindingOpen(deps),
+      ),
     };
   }
   const now = deps.clock.now();

@@ -29,15 +29,23 @@
  * after generation 77 and re-admits nothing while a runtime without that
  * deferral is active (see `BASE_REFRESH_LEGACY_RUNTIMES`).
  */
-import { type GitSha, isGitSha } from "../src/contracts/brands.ts";
+import {
+  asWorkItemId,
+  type GitSha,
+  isGitSha,
+} from "../src/contracts/brands.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
+import type { CandidatePreservationV1 } from "../src/contracts/work-record.ts";
+import { passportTrialCanReconsider } from "../src/repair/passport-work-trial.ts";
 import {
   parseRepairStateSnapshotV1,
   type RepairStateSnapshotV1,
 } from "../src/contracts/state-snapshots.ts";
 import { parseWorkRecordV1 } from "../src/contracts/work-record.ts";
-import { candidateBranch } from "../src/repair/keys.ts";
-import { reviewRoundsLeft } from "../src/repair/review-round-cap.ts";
+import {
+  candidateBranch,
+  candidatePreservationRef,
+} from "../src/repair/keys.ts";
 import {
   BASE_REFRESH_BASE_READ_DETAIL,
   BASE_REFRESH_PR_OBSERVATION_DETAIL,
@@ -52,10 +60,6 @@ import {
   hostedIssueKey,
   sameRepository,
 } from "./hosted-autonomy-policy.ts";
-import {
-  LEGACY_ROUND_REQUIRES_CI_FIRST,
-  legacyFinalRoundAdmissible,
-} from "./hosted-autonomy-ci-first.ts";
 import type { HostedAutonomyScopeV1 } from "./hosted-autonomy-scopes.ts";
 import type { HostedAutonomyHeadPullV1 } from "./hosted-autonomy-types.ts";
 
@@ -111,6 +115,9 @@ export interface BaseRefreshCandidateV1 {
    * (`hosted-autonomy-conflict-retries.ts`) shares this verification.
    */
   detail?: string;
+  /** New trial routes retain their already-published PR and exact original ref. */
+  expectedPr?: number;
+  preservation?: CandidatePreservationV1;
 }
 
 /** A verified re-admission, applied by `applyBaseRefreshReadmissions`. */
@@ -131,20 +138,20 @@ export function planBaseRefreshReadmissions(
   runtimeSha: GitSha,
   closedIssues: ReadonlySet<string>,
   onDenied?: (denial: { id: string; reason: string }) => void,
-  /** The installed runtime is a proven CI-first runtime (`ciFirstRuntimeProven`). */
-  ciFirst = false,
-  /** The launcher's legacy review cutoff (`launcherLegacyCutoff`). */
-  cutoff: number | null = null,
 ): BaseRefreshCandidateV1[] {
   if (!isGitSha(runtimeSha)) return [];
   const legacyRuntime = BASE_REFRESH_LEGACY_RUNTIMES.has(runtimeSha);
   const candidates: BaseRefreshCandidateV1[] = [];
   for (const record of snapshot.work) {
     const blocker = record.blocker;
+    const trialCount = record.target.pr !== null &&
+      passportTrialCanReconsider(record, snapshot.reservations) &&
+      /^base refresh failed (?:[3-9]|[1-9][0-9]+) consecutive times: (?:not_found|unavailable) candidate could not be preserved$/
+        .test(blocker?.message ?? "");
     if (
       record.nextStep !== "blocked" || blocker === null ||
       blocker.kind !== "other" ||
-      !BASE_REFRESH_AUTH_BLOCKERS.has(blocker.message)
+      (!BASE_REFRESH_AUTH_BLOCKERS.has(blocker.message) && !trialCount)
     ) continue;
     if (legacyRuntime) {
       onDenied?.({
@@ -157,7 +164,8 @@ export function planBaseRefreshReadmissions(
     // wait and the dead PR identity cleared.
     if (
       record.intent !== null || record.wait !== null ||
-      record.target.pr !== null || record.source.kind !== "issue" ||
+      (!trialCount && record.target.pr !== null) ||
+      record.source.kind !== "issue" ||
       record.related.issueNumber === null
     ) continue;
     if (
@@ -165,17 +173,9 @@ export function planBaseRefreshReadmissions(
         hostedIssueKey(record.repository, record.related.issueNumber),
       )
     ) continue;
-    // The re-admitted refresh publishes a new head that needs a review round
-    // of its own; with none left (the hard ceiling) the record stays blocked.
-    if (reviewRoundsLeft(snapshot, record, cutoff) === 0) {
-      onDenied?.({ id: record.id, reason: "review_rounds_spent" });
-      continue;
-    }
-    // A legacy record's one final round is spent only on a green head.
-    if (!legacyFinalRoundAdmissible(snapshot, record, ciFirst)) {
-      onDenied?.({ id: record.id, reason: LEGACY_ROUND_REQUIRES_CI_FIRST });
-      continue;
-    }
+    // The re-admitted refresh publishes a new head that is reviewed again.
+    // Review rounds are accounting, never an admission limit (owner directive
+    // 2026-10-30), so a spent count never denies it.
     const head = record.target.head;
     const candidateState = record.target.candidateState;
     const branch = candidateBranch(record.id);
@@ -188,11 +188,22 @@ export function planBaseRefreshReadmissions(
       onDenied?.({ id: record.id, reason: "unpublished_candidate" });
       continue;
     }
+    if (
+      trialCount && (candidateState.preserved.head !== head ||
+        candidateState.preserved.base !== record.target.base)
+    ) continue;
     candidates.push({
       id: record.id,
       repository: record.repository,
       branch,
       head,
+      ...(trialCount && record.target.pr !== null
+        ? {
+          expectedPr: record.target.pr,
+          preservation: candidateState.preserved,
+          detail: "passport_trial_base_refresh",
+        }
+        : {}),
     });
   }
   return candidates;
@@ -232,6 +243,8 @@ export function decideBaseRefreshReadmission(
   if (open.length > 1) return { kind: "refused", reason: "pr_ambiguous" };
   const pull = open[0];
   if (
+    (candidate.expectedPr !== undefined &&
+      pull.number !== candidate.expectedPr) ||
     pull.author === null ||
     !HOSTED_AUTONOMY_TRUSTED_AUTHORS.includes(pull.author) ||
     pull.headSha !== candidate.head || pull.baseRef !== baseBranch
@@ -269,6 +282,17 @@ export async function verifyBaseRefreshReadmissions(
 ): Promise<BaseRefreshReadmissionV1[]> {
   const verified: BaseRefreshReadmissionV1[] = [];
   for (const candidate of candidates) {
+    if (
+      candidate.preservation !== undefined && candidate.preservation.ref !==
+        await candidatePreservationRef(
+          candidate.repository,
+          asWorkItemId(candidate.id),
+          candidate.preservation.operationKey,
+        )
+    ) {
+      actions.push(`retry:${candidate.id}:skipped:preservation_identity`);
+      continue;
+    }
     const scope = await scopeFor(candidate.repository);
     const surface = scope.surface;
     if (surface === null || surface.listPullsByHeadRef === undefined) {

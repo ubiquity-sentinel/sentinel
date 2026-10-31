@@ -18,6 +18,7 @@ import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import { buildMemoryLessonsV1 } from "../src/repair/memory-lessons.ts";
 import { githubGitAuthEnv } from "../src/host/local.ts";
 import { createRepairStateStore, DenoGitRunner } from "../src/state/mod.ts";
+import { GitMaintenanceIndex } from "../src/state/maintenance-index.ts";
 import type { StateReadView } from "../src/contracts/ports.ts";
 import {
   HOSTED_CONTROLLER_REMOTE,
@@ -34,6 +35,10 @@ import {
   maintenanceFailureCategory,
 } from "./hosted-autonomy-state.ts";
 import { createHostedAutonomyGitHub } from "./hosted-autonomy-github.ts";
+import {
+  composeBackupCi,
+  readBackupCiMode,
+} from "../src/host/backup-ci-compose.ts";
 import { repeatFailureRouteIdentity } from "./hosted-autonomy-repeat-failure.ts";
 import {
   CURRENT_MATRIX_HISTORY_DEADLINE_MESSAGE,
@@ -142,6 +147,11 @@ export async function runHostedAutonomyMain(input?: {
     checkoutClean: facts.clean,
   });
   if (!validated) return report(failed("identity_rejected", null));
+  const runFromVerifiedSource = (deps: HostedAutonomyDepsV1) =>
+    runHostedAutonomy({
+      ...deps,
+      acceptanceCorrectionSourceRevision: facts.head as GitSha,
+    });
   // Split by purpose, mirroring the hosted runtime: the scoped sentinel App
   // token authenticates every repository-visible code-change op (merge, issue
   // closure, CI approval) so it is attributed to ubiquity-sentinel[bot], while
@@ -187,7 +197,7 @@ export async function runHostedAutonomyMain(input?: {
     if (input) {
       try {
         result = await compatibility(input.deps.state, input.deps.clock) ??
-          await runHostedAutonomy({
+          await runFromVerifiedSource({
             ...input.deps,
             onQueueCustodyReady,
           });
@@ -230,6 +240,14 @@ export async function runHostedAutonomyMain(input?: {
         }
         return report(disposition);
       }
+      // One backup CI consumer for every surface (spec §11.4, §11.8): the
+      // lower-only mode and the committed targets; absent, all reads native.
+      const backupCi = await composeBackupCi({
+        mode: readBackupCiMode(env),
+        root: Deno.cwd(),
+        scratch: `${scratch}/backup-ci`,
+        clock: { now: () => Date.now() },
+      });
       // One surface per exact repository identity: the durable snapshot may
       // carry work for several repositories, and each record is delivered under
       // its OWN repository, never under the self repository.
@@ -243,6 +261,7 @@ export async function runHostedAutonomyMain(input?: {
         const created = createHostedAutonomyGitHub(
           isHostedSelf(repository) ? selfToken : apiToken,
           repository,
+          backupCi,
         );
         surfaces.set(key, created);
         return created;
@@ -251,8 +270,13 @@ export async function runHostedAutonomyMain(input?: {
         prefix: "sentinel-maintenance-matrix-",
       });
       try {
-        result = await runHostedAutonomy({
+        result = await runFromVerifiedSource({
           state,
+          currentMatrixIndex: new GitMaintenanceIndex({
+            scratchDir: `${scratch}/maintenance-index`,
+            remoteUrl: HOSTED_CONTROLLER_REMOTE,
+            runner,
+          }),
           githubFor,
           clock: { now: () => Date.now() },
           queue: createHostedQueueCoordinator({

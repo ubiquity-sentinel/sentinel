@@ -5,12 +5,14 @@ import {
   maintenanceFailureCategory,
   readReleaseSafely,
   readRepairSafely,
+  shareRepairRead,
   skipped,
 } from "./hosted-autonomy-state.ts";
 import {
   readHostedClosedIssues,
   runHostedRetryPass,
 } from "./hosted-autonomy-retry-pass.ts";
+import { retryWritten } from "./hosted-autonomy-retry-actions.ts";
 import { runHostedClosurePass } from "./hosted-autonomy-closure-pass.ts";
 import {
   createHostedAutonomyScopes,
@@ -40,6 +42,9 @@ import {
   settledSince,
 } from "./hosted-autonomy-continuation.ts";
 import { runHostedFollowUpPass } from "./hosted-autonomy-follow-up-pass.ts";
+import { runHostedBaseRepairPass } from "./hosted-autonomy-base-repair.ts";
+import { runHostedCiResumePass } from "./hosted-autonomy-ci-resume.ts";
+import { runHostedOutageObservationPass } from "./hosted-autonomy-outage-observation.ts";
 import { runHostedQueueCustody } from "./hosted-autonomy-queue-pass.ts";
 import { protectQueueState } from "./hosted-autonomy-queue-state.ts";
 import type {
@@ -196,10 +201,12 @@ export async function runHostedAutonomy(
     if (result.status === "failed") return result;
     let followUps: string[];
     let followUpComplete = true;
+    // The read-only passes after the chain share one state read.
+    const readOnly = { ...scoped, state: shareRepairRead(scoped.state) };
     const finishFollowup = beginMaintenanceProgress("followup");
     try {
       followUps = await runHostedFollowUpPass(
-        scoped,
+        readOnly,
         startedAt + HOSTED_AUTONOMY_PASS_DEADLINE_MS,
       );
     } catch {
@@ -207,6 +214,26 @@ export async function runHostedAutonomy(
       followUpComplete = false;
     } finally {
       finishFollowup();
+    }
+    // Base CI passes: a red base's repair issue, then re-runs of the CI that
+    // GitHub never started (billing), each failing alone.
+    for (
+      const [phase, pass, tag] of [
+        ["base_repair", runHostedBaseRepairPass, "base-repair"],
+        ["ci_resume", runHostedCiResumePass, "ci-resume"],
+      ] as const
+    ) {
+      const finish = beginMaintenanceProgress(phase);
+      try {
+        followUps = [
+          ...followUps,
+          ...await pass(readOnly, startedAt + HOSTED_AUTONOMY_PASS_DEADLINE_MS),
+        ];
+      } catch {
+        followUps = [...followUps, `${tag}:unexpected_error`];
+      } finally {
+        finish();
+      }
     }
     await deps.onQueueCustodyReady?.(followUpComplete && !degraded);
     return followUps.length === 0
@@ -457,29 +484,56 @@ async function runHostedAutonomyChain(
         now: deps.clock.now(),
       }),
     );
+    // The CI-outage notices live on the same tracker and follow the same
+    // rule: only a pass that wrote nothing touches the self scope, and a
+    // self surface without the tracker files nothing and reports nothing.
+    const tracker = selfSurface?.ciOutageTracker;
+    if (tracker !== undefined) {
+      const finishOutage = beginMaintenanceProgress("ci_outage");
+      try {
+        actions.push(
+          ...await runHostedOutageObservationPass(deps, {
+            tracker,
+            classifyTip: (repository, tip) => {
+              try {
+                return deps.githubFor(repository)?.classifyTipStart?.(tip) ??
+                  Promise.resolve(null);
+              } catch {
+                return Promise.resolve(null);
+              }
+            },
+          }, startedAt + HOSTED_AUTONOMY_PASS_DEADLINE_MS),
+        );
+      } catch {
+        actions.push("ci-outage:unexpected_error");
+      } finally {
+        finishOutage();
+      }
+    }
   } finally {
     finishObservation();
   }
 
   const suffix = (value: string) =>
     actions.some((action) => action.endsWith(value));
-  const reason: HostedAutonomyReasonV1 =
-    actions.some((action) => action.startsWith("retry:"))
-      ? "retried"
-      : suffix(":already_recorded")
-      ? "already_recorded"
-      : suffix(":base_moved")
-      ? "base_moved"
-      : suffix(":checks_pending")
-      ? "checks_pending"
-      : suffix(":merge_refused")
-      ? "merge_refused"
-      : suffix(":merge_not_observed")
-      ? "merge_not_observed"
-      : suffix(":foreign_author")
-      ? "foreign_author"
-      : actions.length > 0
-      ? "no_authorizing_review"
-      : "no_change";
+  // A read-only retry line (a repeated denial or skip) is not a retry: only a
+  // written one is, so a pass that wrote nothing reports its own class.
+  const reason: HostedAutonomyReasonV1 = retryWritten(actions)
+    ? "retried"
+    : suffix(":already_recorded")
+    ? "already_recorded"
+    : suffix(":base_moved")
+    ? "base_moved"
+    : suffix(":checks_pending")
+    ? "checks_pending"
+    : suffix(":merge_refused")
+    ? "merge_refused"
+    : suffix(":merge_not_observed")
+    ? "merge_not_observed"
+    : suffix(":foreign_author")
+    ? "foreign_author"
+    : actions.length > 0
+    ? "no_authorizing_review"
+    : "no_change";
   return skipped(reason, observedHead, actions);
 }

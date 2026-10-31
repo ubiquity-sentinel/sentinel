@@ -1,9 +1,10 @@
 /**
  * Pins the bridge to the owner-pinned driver's bridge-facing VpsJournalMetrics
- * interface (ubiquity-sentinel/sentinel#150). Each composition runs the exact upstream
- * metrics bytes of ai.ubq.fi 21e4a2a9 (pinned today) or e50c298b
- * (ubiquity/ai.ubq.fi#1027) through the real loader, so a mismatch with the
- * driver fails here instead of refusing every VPS release at release time.
+ * interface (ubiquity-sentinel/sentinel#150, #161, #162). Each composition runs the
+ * exact upstream metrics bytes of ai.ubq.fi 21e4a2a9 (pinned today), e50c298b
+ * (ubiquity/ai.ubq.fi#1027) or 6c3afe42 (#1155 and #1162) through the real
+ * loader, so a mismatch with the driver fails here instead of refusing every
+ * VPS release at release time.
  */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -15,6 +16,8 @@ import {
 } from "../../src/host/vps-release.ts";
 import type { VpsQueryLimits } from "../../src/release/vps-metrics.ts";
 import {
+  DENO_DRIVER_SHA,
+  denoDriverFiles,
   FAKE_DRIVER,
   installVpsDriverHook,
   JOINED_DRIVER_SHA,
@@ -132,7 +135,7 @@ Deno.test("VPS driver interface: vendored upstream sources are the exact pinned 
     for (const file of Object.keys(blobs)) {
       await upstreamSource(
         revision as keyof typeof UPSTREAM_BLOBS,
-        file as keyof (typeof UPSTREAM_BLOBS)[typeof JOINED_DRIVER_SHA],
+        file as Parameters<typeof upstreamSource>[1],
       );
     }
   }
@@ -403,5 +406,207 @@ Deno.test("VPS driver interface: a mismatched interface or absent telemetry cust
         await tree.cleanup();
       }
     });
+  }
+});
+
+Deno.test("VPS driver interface: 6c3afe42 pins the six-argument journal argv, checkpoint schema 2, the state-read bound and a Deno lock", async () => {
+  const reader = await upstreamSource(DENO_DRIVER_SHA, "vps-journal-reader.ts");
+  assert.match(
+    reader,
+    /`--until=@\$\{end \/ 1000\}`, "--output=json", "--all", "--no-pager"\], limits, root\)/,
+  );
+  assert.match(
+    reader,
+    /args\.length !== 6 \|\|[^;]*args\[3\] !== "--output=json" \|\|\s*args\[4\] !== "--all" \|\|\s*args\[5\] !== "--no-pager"\s*\)\s*throw new Error\("VPS journal command refused"\)/,
+  );
+  const types = await upstreamSource(DENO_DRIVER_SHA, "vps-metrics-types.ts");
+  assert.match(types, /export type VpsJoinCheckpoint = \{\s*schema: 2;/);
+  assert.match(types, /export const VPS_METRICS_STATE_READ_MS = 10_000;/);
+  assert.match(
+    await upstreamSource(DENO_DRIVER_SHA, "vps-metrics-join.ts"),
+    /item\.schema !== 2 \|\|/,
+  );
+  const storage = await upstreamSource(
+    DENO_DRIVER_SHA,
+    "vps-metrics-storage.ts",
+  );
+  assert.match(
+    storage,
+    /export function createVpsJoinFileStorage\(\s*root: string,\s*policy: VpsMetricsRetention,\s*cipher: VpsJoinCipher,\s*current: \(scope: VpsMetricsScope\) => Promise<VpsMetricsScope>,\s*now = Date\.now,\s*stateReadMs = VPS_METRICS_STATE_READ_MS\s*\): VpsJoinStorage/,
+  );
+  assert.match(
+    storage,
+    /const cutoff = Date\.now\(\) - policy\.evidenceMaxAgeMs;/,
+    "each save prunes the shared directory by the one owner retention",
+  );
+  const lock = await upstreamSource(DENO_DRIVER_SHA, "deploy-lock.ts");
+  assert.doesNotMatch(lock, /["']bun:/);
+  assert.match(lock, /while \(!file\.tryLockSync\(true\)\)/);
+  assert.match(lock, /info\.uid !== deno\.uid\(\)/);
+
+  const tree = await writeVpsDriverTree(
+    DENO_DRIVER_SHA,
+    await denoDriverFiles(),
+  );
+  try {
+    const module = await import(
+      new URL(`file://${tree.releaseRoot}/ops/vps-journal-reader.ts`).href
+    ) as {
+      runVpsJournalCommand(
+        args: readonly string[],
+        limits: VpsQueryLimits,
+        cwd: string,
+      ): Promise<string>;
+    };
+    const limits = { deadline: Date.now() + 1_000, maxBytes: 1, maxEntries: 1 };
+    const range = ["--since=@1", "--until=@2"];
+    for (
+      const args of [
+        ["--unit=ai-ubq-fi.service", ...range, "--output=json", "--no-pager"],
+        [
+          "--unit=ai-ubq-fi.service",
+          ...range,
+          "--output=json",
+          "--no-pager",
+          "--all",
+        ],
+      ]
+    ) {
+      assert.throws(
+        () => module.runVpsJournalCommand(args, limits, TARGET),
+        /VPS journal command refused/,
+        `refused before any child: ${args.join(" ")}`,
+      );
+    }
+  } finally {
+    await tree.cleanup();
+  }
+});
+
+Deno.test("VPS driver interface: the #1155/#1162 joined interface reads six-argument slices, keeps the 10 s state-read default and one retention", async () => {
+  const tree = await writeVpsDriverTree(
+    DENO_DRIVER_SHA,
+    await denoDriverFiles(),
+  );
+  const created: Record<string, unknown>[] = [];
+  const hook = installVpsDriverHook({
+    create: (deps) => {
+      created.push(deps);
+      return {};
+    },
+  });
+  try {
+    const runs: (readonly string[])[] = [];
+    const now = STARTED + 90_000;
+    const retention = {
+      evidenceMaxAgeMs: 172_800_000,
+      evidenceMaxBytes: 16_777_216,
+    };
+    const cipher = await testCipher();
+    const checkpoints: { schema?: unknown }[] = [];
+    const composed = await composeTrustedVpsReleaseHost({
+      ...hostOptions(tree, () => now),
+      telemetry: {
+        retention,
+        cipher: {
+          seal: (plain, data) => {
+            checkpoints.push(JSON.parse(new TextDecoder().decode(plain)));
+            return cipher.seal(plain, data);
+          },
+          open: cipher.open,
+        },
+      },
+      journalCoverage: (start, end) =>
+        Promise.resolve(journalCoverage(start, end)),
+      platform: {
+        fetch,
+        run: () => Promise.reject(new Error("no generic command expected")),
+        journal: (args) => {
+          runs.push(args);
+          const [start, end] = journalRange(args);
+          return Promise.resolve(journalRows(requests, start, end));
+        },
+      },
+    });
+    assert.ok(composed.ok, "the Deno-loadable driver composes");
+    const work = composed.value.metricsWork;
+    assert.ok(work, "the controller receives the tick contract");
+    work.beginTick(now);
+    const sample = await composed.value.port.sampleMetrics(window);
+    assert.ok(sample.ok && sample.value.coverage === "complete");
+    assert.equal(sample.value.requestCount, 3);
+    assert.equal(sample.value.fiveXxCount, 1);
+    assert.deepEqual(runs, [[
+      "--unit=ai-ubq-fi.service",
+      `--since=@${STARTED / 1000}`,
+      `--until=@${(STARTED + 30_000) / 1000}`,
+      "--output=json",
+      "--all",
+      "--no-pager",
+    ]]);
+    assert.deepEqual(
+      hook.storageCalls,
+      [{ arity: 5, policy: retention }],
+      "no stateReadMs override; storage prunes by the metrics' own retention",
+    );
+    assert.ok(checkpoints.length > 0);
+    assert.ok(
+      checkpoints.every((checkpoint) => checkpoint.schema === 2),
+      "the sealed join checkpoint is schema 2",
+    );
+    assert.equal(created.length, 1);
+    assert.equal(
+      "preparePayload" in created[0],
+      false,
+      "without an owner preparation the driver keeps its own",
+    );
+  } finally {
+    await tree.cleanup();
+  }
+});
+
+Deno.test("VPS driver interface: an owner preparePayload reaches the pinned driver unchanged; a non-function is unavailable", async () => {
+  const tree = await writeVpsDriverTree(
+    DENO_DRIVER_SHA,
+    await denoDriverFiles(),
+  );
+  const created: Record<string, unknown>[] = [];
+  installVpsDriverHook({
+    create: (deps) => {
+      created.push(deps);
+      return {};
+    },
+  });
+  try {
+    const telemetry = {
+      retention: { evidenceMaxAgeMs: 1_000, evidenceMaxBytes: 1_000 },
+      cipher: await testCipher(),
+    };
+    const preparePayload = () =>
+      Promise.reject(new Error("no preparation expected"));
+    const options = hostOptions(tree, () => STARTED + 90_000);
+    const composed = await composeTrustedVpsReleaseHost({
+      ...options,
+      telemetry,
+      preparePayload,
+    });
+    assert.ok(composed.ok);
+    assert.equal(created.length, 1);
+    assert.equal(created[0].preparePayload, preparePayload);
+    const invalid = await composeTrustedVpsReleaseHost({
+      ...options,
+      telemetry,
+      preparePayload: "bun" as unknown as typeof preparePayload,
+    });
+    assert.equal(invalid.ok, false);
+    if (!invalid.ok) {
+      assert.equal(
+        invalid.error.detail,
+        "trusted VPS release capabilities are unavailable",
+      );
+    }
+    assert.equal(created.length, 1, "no driver for an invalid preparation");
+  } finally {
+    await tree.cleanup();
   }
 });

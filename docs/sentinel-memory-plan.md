@@ -141,7 +141,7 @@ not machine-consumed.
    process refuses the equivalent attempt -> changed evidence admits; plus a
    cell-death capture scenario.
 8. Documentation: DECISIONS.md entry + ledger handoff of evidence (not ledger
-   edits by non-Astra owners).
+   edits by workers; only the current primary integration owner writes the ledger).
 
 ## Lane identity
 

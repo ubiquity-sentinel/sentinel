@@ -281,28 +281,18 @@ function transientRuleGuard(rig: Rig, proofActivated = false) {
   return calls;
 }
 
-function assertHeld(
+function assertQueueWait(
   rig: Rig,
   before: RepairStateSnapshotV1,
+  wait: NonNullable<WorkRecordV1["wait"]>,
   allowReads = false,
-  transient = false,
 ) {
   const after = rig.state.repair!;
   const row = after.work[0];
-  const now = rig.clock.now();
-  const unavailableSince = before.work[0].wait?.reason === "unavailable"
-    ? before.work[0].wait.since
-    : now;
   assert.deepEqual(row, {
     ...before.work[0],
-    wait: transient
-      ? {
-        reason: "unavailable",
-        since: unavailableSince,
-        until: now + CHECK_POLL_MS,
-      }
-      : { reason: "backoff", since: now, until: null },
-    updatedAt: now,
+    wait,
+    updatedAt: rig.clock.now(),
   });
   for (
     const key of [
@@ -322,6 +312,32 @@ function assertHeld(
   assert.deepEqual(rig.github.preservationRequests, []);
   assert.equal(rig.model.requests.length, 0);
   assert.equal(rig.replay.requests.length, 0);
+}
+
+function assertHeld(
+  rig: Rig,
+  before: RepairStateSnapshotV1,
+  allowReads = false,
+) {
+  assertQueueWait(rig, before, {
+    reason: "backoff",
+    since: rig.clock.now(),
+    until: null,
+  }, allowReads);
+}
+
+function assertRetrying(
+  rig: Rig,
+  before: RepairStateSnapshotV1,
+  allowReads = false,
+) {
+  assertQueueWait(rig, before, {
+    reason: "unavailable",
+    since: before.work[0].wait?.reason === "unavailable"
+      ? before.work[0].wait.since
+      : rig.clock.now(),
+    until: rig.clock.now() + CHECK_POLL_MS,
+  }, allowReads);
 }
 
 const boundaries: {
@@ -480,7 +496,7 @@ const boundaries: {
   },
 ];
 
-Deno.test("native queue refusals preserve custody at runtime boundaries", async (t) => {
+Deno.test("native queue membership holds and observation failures retry at runtime boundaries", async (t) => {
   for (const reason of ["member", "observation_unavailable"] as const) {
     for (const boundary of boundaries) {
       await t.step(`${reason}: ${boundary.name}`, async () => {
@@ -491,12 +507,11 @@ Deno.test("native queue refusals preserve custody at runtime boundaries", async 
         const before = structuredClone(rig.context.snapshot);
         const result = await boundary.run(rig);
         assert.deepEqual(result, { kind: "progress" });
-        assertHeld(
-          rig,
-          before,
-          false,
-          boundary.delivery || reason === "observation_unavailable",
-        );
+        if (
+          boundary.delivery || reason === "observation_unavailable"
+        ) {
+          assertRetrying(rig, before);
+        } else assertHeld(rig, before);
         assert.equal(rig.inspections.length, 1);
       });
     }
@@ -515,7 +530,7 @@ Deno.test("missing native queue capability uses a bounded wait", async () => {
     ),
     { kind: "progress" },
   );
-  assertHeld(rig, before, false, true);
+  assertRetrying(rig, before);
 });
 
 Deno.test("direct implementation and review admission recheck custody immediately before reserving", async (t) => {
@@ -657,12 +672,12 @@ Deno.test("preactivation rule observation failure polls and resumes an existing 
   assert.equal(calls.http, 0);
 });
 
-Deno.test("activated proof policy polls unknown rules with a bounded wait", async () => {
+Deno.test("activated proof policy retries unknown rules without expiring the record", async () => {
   const rig = harness(baseRecord());
   const calls = transientRuleGuard(rig, true);
   const before = structuredClone(rig.state.repair!);
   await executeWorkStep(rig.deps, rig.context, rig.record);
-  assertHeld(rig, before, false, true);
+  assertRetrying(rig, before);
   assert.deepEqual(calls, { rules: 1, queuePulls: 0, http: 0 });
 });
 

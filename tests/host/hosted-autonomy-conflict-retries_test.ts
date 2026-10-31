@@ -406,14 +406,16 @@ Deno.test("conflict re-admission: local refusals preserve activation, shape and 
     { candidates: [], denials: ["conflict_block_after_activation"] },
     "the resolving runtime's own block is final",
   );
+  // A spent review-round count is accounting, never a shape refusal (owner
+  // directive 2026-10-30): the resolution is planned and its head reviewed.
   assert.deepEqual(
     plan(
       await conflictBlocked({
         counters: { attempts: 2, retries: 0, reviewRounds: 3 },
       }),
     ),
-    { candidates: [], denials: ["conflict_unresolvable_shape"] },
-    "no review round left",
+    { candidates: [HEAD], denials: [] },
+    "a spent count never withholds the resolution",
   );
   assert.deepEqual(
     plan(await conflictBlocked(), [], new Set([hostedIssueKey(REPO, 640)])),

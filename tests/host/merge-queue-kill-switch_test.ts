@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { createHostedQueueCoordinator } from "../../ops/hosted-autonomy-queue-host.ts";
 import { runHostedQueueCustody } from "../../ops/hosted-autonomy-queue-pass.ts";
-import { createQueueIntent } from "../../ops/hosted-autonomy-queue-intent.ts";
+import {
+  createQueueIntent,
+  parseQueueIntent,
+} from "../../ops/hosted-autonomy-queue-intent.ts";
+import { isQueueHeld } from "../../ops/hosted-autonomy-queue-policy.ts";
 import { parseRepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import { composeLocalGitHub } from "../../src/host/local-github.ts";
 import {
@@ -106,6 +110,8 @@ async function factoryRig() {
   let activeRule = false;
   let member = false;
   let admissionReady = false;
+  let refuseAdmission = false;
+  let moveStateHeadBeforeResponse = false;
   let enqueues = 0;
   const accepted = await authorityRig();
   const acceptedSource: Source = {
@@ -137,6 +143,10 @@ async function factoryRig() {
       );
       assert.equal(state.repair!.reservations[0].outcome, "ambiguous");
       enqueues++;
+      // A competing state writer wins while the request is in flight.
+      if (moveStateHeadBeforeResponse) state.repairHead = SHA3;
+      // HTTP 403 is the native client's definite not-submitted result.
+      if (refuseAdmission) return Promise.resolve(response({}, 403));
       return Promise.resolve(
         response(pendingWire({ merge_method: "merge" }), 202),
       );
@@ -302,6 +312,12 @@ async function factoryRig() {
     readyForAdmission: () => {
       admissionReady = true;
       activeRule = true;
+    },
+    refuseAdmission: () => {
+      refuseAdmission = true;
+    },
+    moveStateHeadBeforeResponse: () => {
+      moveStateHeadBeforeResponse = true;
     },
     setRule: (value: boolean) => {
       activeRule = value;
@@ -546,4 +562,112 @@ Deno.test("actual coordinator factory switches off after a real HTTP admission a
     assert.deepEqual(rig.state.repair!.reservations, charged.reservations);
     assert.equal(restarted.config.proofActivated, true);
   }
+});
+
+function restartable(rig: Awaited<ReturnType<typeof factoryRig>>) {
+  return (selector: string) =>
+    runHostedQueueCustody({
+      state: rig.state,
+      clock: rig.clock,
+      githubFor: () => null,
+      queue: rig.coordinator(selector, rig.acceptedSource),
+    }, rig.clock.now() + 60000);
+}
+
+Deno.test("actual coordinator factory reconciles a definitely-unsent HTTP admission only after a restart refusal (#169)", async () => {
+  const rig = await factoryRig();
+  rig.readyForAdmission();
+  rig.refuseAdmission();
+  const run = restartable(rig);
+  const charges = structuredClone(rig.state.repair!.reservations);
+  const counters = structuredClone(rig.state.repair!.work[0].counters);
+  const first = await run("on");
+  assert.equal(first.ready, true, first.actions.join(" "));
+  assert.equal(rig.enqueues, 1);
+  assert.equal(
+    parseQueueIntent(rig.state.repair!.work[0])?.stage,
+    "not_submitted",
+  );
+  const unsent = structuredClone(rig.state.repair!.work[0]);
+  // Switching admission off is not a refusal: the durable result stays held.
+  for (const selector of ["off", "observe", "invalid"]) {
+    rig.clock.advance(60_000);
+    const off = await run(selector);
+    assert.equal(off.ready, true, off.actions.join(" "));
+    assert.deepEqual(rig.state.repair!.work[0], unsent);
+  }
+  // A restarted coordinator authenticates the removed merge_queue rule.
+  rig.setRule(false);
+  rig.clock.advance(60_000);
+  const restarted = await run("on");
+  assert.equal(restarted.ready, true, restarted.actions.join(" "));
+  assert.ok(
+    restarted.actions.includes(
+      `queue:${rig.facts.record.id}:not_submitted_reconciled`,
+    ),
+    restarted.actions.join(" "),
+  );
+  const row = rig.state.repair!.work[0];
+  assert.equal(row.intent, null);
+  assert.equal(isQueueHeld(row), false);
+  assert.deepEqual(row.counters, counters);
+  assert.deepEqual(rig.state.repair!.reservations, charges);
+  assert.equal(rig.enqueues, 1);
+  assert.ok(
+    rig.calls.every((call) =>
+      call.startsWith("GET ") || call === "POST /graphql" ||
+      call === "PUT /pulls/7/merge-async"
+    ),
+  );
+});
+
+Deno.test("actual coordinator factory keeps at-most-once custody for a late not-submitted response after a moved state head (#169)", async () => {
+  const rig = await factoryRig();
+  rig.readyForAdmission();
+  rig.refuseAdmission();
+  rig.moveStateHeadBeforeResponse();
+  const run = restartable(rig);
+  const charges = structuredClone(rig.state.repair!.reservations);
+  const first = await run("on");
+  assert.equal(first.ready, false, first.actions.join(" "));
+  assert.ok(
+    first.actions.includes(
+      `queue:${rig.facts.record.id}:submission_state_unverified`,
+    ),
+    first.actions.join(" "),
+  );
+  assert.equal(rig.enqueues, 1);
+  // The late definite response never became durable: the intent stays uncertain.
+  assert.equal(
+    parseQueueIntent(rig.state.repair!.work[0])?.stage,
+    "unresolved",
+  );
+  const uncertain = structuredClone(rig.state.repair!.work[0]);
+  // Neither a restart refusal with native absence nor elapsed time clears it.
+  rig.setRule(false);
+  for (const advance of [60_000, 7 * 60 * 60 * 1000]) {
+    rig.clock.advance(advance);
+    const restarted = await run("on");
+    assert.equal(restarted.ready, true, restarted.actions.join(" "));
+    assert.equal(
+      restarted.actions.some((action) =>
+        action.endsWith(":not_submitted_reconciled")
+      ),
+      false,
+    );
+    assert.deepEqual(rig.state.repair!.work[0], uncertain);
+    assert.ok(isQueueHeld(rig.state.repair!.work[0]));
+  }
+  rig.setRule(true);
+  rig.clock.advance(60_000);
+  const parked = await run("on");
+  assert.ok(
+    parked.actions.includes(
+      `queue:${rig.facts.record.id}:owner_park:admission_unresolved`,
+    ),
+    parked.actions.join(" "),
+  );
+  assert.deepEqual(rig.state.repair!.work[0], uncertain);
+  assert.deepEqual(rig.state.repair!.reservations, charges);
+  assert.equal(rig.enqueues, 1);
 });

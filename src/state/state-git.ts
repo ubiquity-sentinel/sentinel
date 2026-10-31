@@ -336,6 +336,10 @@ export class StateGitTransport {
       "fetch",
       "-q",
       "--no-tags",
+      // Git >= 2.47 detaches `maintenance run --auto` after fetch, and since
+      // 2.54 its geometric repack can still be pruning this private scratch
+      // store when the history cache measures it (`diskBytes` NotFound).
+      "--no-auto-gc",
       // Keep the current commit and its real parent for manifest validation;
       // exact historical witnesses explicitly retain complete ancestry.
       ...(history === "latest" ? ["--depth=2"] : []),

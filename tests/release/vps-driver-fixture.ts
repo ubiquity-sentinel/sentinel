@@ -11,6 +11,12 @@ import type { VpsIdentity } from "../../src/contracts/vps-release-wire.ts";
 export const WINDOW_DRIVER_SHA = "21e4a2a94b3de80a67cb95159ff3249723efca8f";
 /** ai.ubq.fi e50c298b: the merge of ubiquity/ai.ubq.fi#1027. */
 export const JOINED_DRIVER_SHA = "e50c298ba7c4da720b432c782b7b1989c6f58e22";
+/**
+ * ai.ubq.fi 6c3afe42: the merge of ubiquity/ai.ubq.fi#1162, after #1155
+ * (2de00a80). Deno-loadable driver graph, six-argument journalctl argv with
+ * `--all`, join checkpoint schema 2 and the `stateReadMs` storage bound.
+ */
+export const DENO_DRIVER_SHA = "6c3afe42cc2399c9496da7eec47328b6ae3cbaf1";
 /** `git rev-parse <revision>:ops/<file>` in ubiquity/ai.ubq.fi. */
 export const UPSTREAM_BLOBS = {
   [WINDOW_DRIVER_SHA]: {
@@ -27,8 +33,22 @@ export const UPSTREAM_BLOBS = {
     "vps-metrics-storage.ts": "55ed61ff77dd43455af8ce36fd45e9fdc5614fb7",
     "deploy-lock.ts": "046524bf4640d051c0bb9c13694b2e3bfd2e07da",
   },
+  [DENO_DRIVER_SHA]: {
+    "vps-release-contract.ts": "1bf9fc987fc69747ea1d53b279be45de8ff63c6d",
+    "vps-release-metrics.ts": "d28dad35713769bd53ad8d7b53723661ff5582a8",
+    "vps-metrics-types.ts": "6e6fc80116e1413e7becb50e3207f9c0a0551039",
+    "vps-metrics-join.ts": "e32fa8f6ced518045c951c3f994dbdc9d86c46ec",
+    "vps-journal-reader.ts": "2f14911c957b0b8a70f55a5fa9724242f19cca41",
+    "vps-metrics-storage.ts": "a35faac27faa2924dab4ecae391df6d935e2e10f",
+    "vps-release-journal.ts": "2610fb5b2e2dc5f836cb7ddd604350bab29b02d2",
+    "deploy-lock.ts": "a4edfb81e8e6a007016aa4e08f92d0d6c61683b3",
+    "io.ts": "968241986a614be5ce0146a2e8840828438c9066",
+  },
 } as const;
 type Revision = keyof typeof UPSTREAM_BLOBS;
+type UpstreamFile = {
+  [R in Revision]: keyof (typeof UPSTREAM_BLOBS)[R];
+}[Revision];
 
 async function gitBlobId(bytes: Uint8Array): Promise<string> {
   const header = new TextEncoder().encode(`blob ${bytes.byteLength}\0`);
@@ -49,7 +69,7 @@ async function sha256(bytes: Uint8Array): Promise<string> {
 /** Exact upstream bytes, refused unless they are the recorded Git blob. */
 export async function upstreamSource(
   revision: Revision,
-  file: keyof (typeof UPSTREAM_BLOBS)[typeof JOINED_DRIVER_SHA],
+  file: UpstreamFile,
 ): Promise<string> {
   const blobs: Record<string, string> = UPSTREAM_BLOBS[revision];
   const expected = blobs[file];
@@ -73,6 +93,8 @@ export type VpsDriverFixtureHook = {
   run(program: string, args: string[], cwd: string): Promise<string>;
   evaluated: string[];
   storageRoots: string[];
+  /** Argument count and retention of each join storage construction. */
+  storageCalls: { arity: number; policy: unknown }[];
   sealed: Map<string, { sequence: number; bytes: Uint8Array }>;
 };
 const HOOK = Symbol.for("sentinel.test.vps-driver-fixture");
@@ -86,6 +108,7 @@ export function installVpsDriverHook(
     run: () => Promise.reject(new Error("no native command authorized")),
     evaluated: [],
     storageRoots: [],
+    storageCalls: [],
     sealed: new Map(),
     ...hook,
   };
@@ -108,8 +131,9 @@ export const DENO_STORAGE =
   `import { canonicalVps } from "./vps-release-contract.ts";
 ${hookRead}
 hook.evaluated.push("storage");
-export function createVpsJoinFileStorage(root, policy, cipher, current, now = Date.now) {
+export function createVpsJoinFileStorage(root, policy, cipher, current, now = Date.now, stateReadMs) {
   hook.storageRoots.push(root);
+  hook.storageCalls.push({ arity: arguments.length, policy });
   return {
     load: (scope) => Promise.resolve(hook.sealed.get(scope.operationId)?.bytes ?? null),
     save: async (scope, expected, bytes) => {
@@ -150,6 +174,23 @@ export async function joinedDriverFiles(): Promise<Record<string, string>> {
       "vps-journal-reader.ts",
     ] as const
   ) files[`ops/${file}`] = await upstreamSource(JOINED_DRIVER_SHA, file);
+  return files;
+}
+/** The real #1155/#1162 metrics graph with the same storage stand-in. */
+export async function denoDriverFiles(): Promise<Record<string, string>> {
+  const files: Record<string, string> = {
+    "ops/vps-release-driver.ts": FAKE_DRIVER,
+    "ops/vps-metrics-storage.ts": DENO_STORAGE,
+  };
+  for (
+    const file of [
+      "vps-release-contract.ts",
+      "vps-release-metrics.ts",
+      "vps-metrics-types.ts",
+      "vps-metrics-join.ts",
+      "vps-journal-reader.ts",
+    ] as const
+  ) files[`ops/${file}`] = await upstreamSource(DENO_DRIVER_SHA, file);
   return files;
 }
 
@@ -325,12 +366,16 @@ export function journalCoverage(start: number, end: number) {
     digest: "c".repeat(64),
   };
 }
-/** Parses the fixed bounded journalctl argv the #1027 reader builds. */
+/**
+ * Parses exactly one of the fixed journalctl argv shapes the pinned readers
+ * build: five arguments through #1027, six with `--all` since #1155.
+ */
 export function journalRange(args: readonly string[]): [number, number] {
-  assert.equal(args.length, 5);
+  assert.ok(args.length === 5 || args.length === 6, args.join(" "));
   assert.equal(args[0], "--unit=ai-ubq-fi.service");
   assert.equal(args[3], "--output=json");
-  assert.equal(args[4], "--no-pager");
+  if (args.length === 6) assert.equal(args[4], "--all");
+  assert.equal(args.at(-1), "--no-pager");
   const since = /^--since=@(\d+(?:\.\d+)?)$/.exec(args[1]);
   const until = /^--until=@(\d+(?:\.\d+)?)$/.exec(args[2]);
   assert.ok(since && until, `unexpected journal range ${args.join(" ")}`);

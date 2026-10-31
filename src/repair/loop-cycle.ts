@@ -35,14 +35,41 @@ import type {
 } from "./loop-types.ts";
 import { executeStep } from "./loop-work.ts";
 import { rankEligibleWork, rankReviewDrain } from "./selection.ts";
+import { createStepLog } from "./step-line.ts";
 import { setWait } from "./transitions.ts";
 
-/** One run of the bounded repair loop. */
+/** Scheduling boundary, never a persisted work status. */
+export type RepairCycleAdvanceV1 =
+  | { kind: "progress" }
+  | { kind: "waiting"; outcome: RepairCycleOutcomeV1 };
+
+/** Direct callers consume one observation without hosted suspension. */
 export async function runRepairCycle(
   deps: RepairCycleDepsV1,
   options: RepairCycleOptionsV1,
   registerPostDrain?: (continuation: PostDrainReviewContinuationV1) => void,
 ): Promise<RepairCycleOutcomeV1> {
+  const cycle = advanceRepairCycle(deps, options, registerPostDrain);
+  for (;;) {
+    const next = await cycle.next();
+    if (next.done) return next.value;
+    if (next.value.kind === "waiting") {
+      await cycle.return(next.value.outcome);
+      return next.value.outcome;
+    }
+  }
+}
+
+/** Original bounds and invocation-local sets survive each scheduling yield. */
+export async function* advanceRepairCycle(
+  deps: RepairCycleDepsV1,
+  options: RepairCycleOptionsV1,
+  registerPostDrain?: (continuation: PostDrainReviewContinuationV1) => void,
+): AsyncGenerator<
+  RepairCycleAdvanceV1,
+  RepairCycleOutcomeV1,
+  readonly string[] | undefined
+> {
   const bounds = createRunBounds(deps, options);
   const { runDeadline } = bounds;
   const stepLimit = options.stepLimit ?? DEFAULT_STEP_LIMIT;
@@ -58,6 +85,13 @@ export async function runRepairCycle(
   // bounds are deferred so that lower-ranked deterministic work still runs;
   // the run ends in the existing typed "margin" outcome when nothing remains.
   const deferred = new Set<string>();
+  const awakened = new Set<string>();
+  const receiveWake = (ids: readonly string[] | undefined) => {
+    for (const id of ids ?? []) {
+      deferred.delete(id);
+      awakened.add(id);
+    }
+  };
   const baseReviewAttempted = new Set<string>();
 
   // One run-local attempt per task and legacy-loss phase: a phase is never
@@ -83,6 +117,8 @@ export async function runRepairCycle(
   // iteration must never re-poll the sources: subsequent loop iterations reuse
   // the run-local deferral tracking instead of repeating intake reads.
   let intakePolled = false;
+  // One bounded advisory `sentinel_step` line per selected step (C5.2).
+  const logStep = createStepLog();
 
   registerPostDrain?.(
     createPostDrainContinuation(deps, bounds, stepLimit, tracking),
@@ -141,6 +177,8 @@ export async function runRepairCycle(
         }
         didWork = true;
         tracking.steps++;
+        receiveWake(yield { kind: "progress" });
+        continue;
       }
 
       // Intake (and the shared cooldown gate behind it) is awaited wall-clock
@@ -176,6 +214,7 @@ export async function runRepairCycle(
     if (takeover?.kind === "progress") {
       didWork = true;
       tracking.steps++;
+      receiveWake(yield { kind: "progress" });
       continue;
     }
     if (takeover?.kind === "deferred") continue;
@@ -191,6 +230,7 @@ export async function runRepairCycle(
     if (baseReview?.kind === "progress") {
       didWork = true;
       tracking.steps++;
+      receiveWake(yield { kind: "progress" });
       continue;
     }
     if (baseReview?.kind === "deferred") continue;
@@ -212,6 +252,7 @@ export async function runRepairCycle(
     if (bridged.kind === "progress") {
       didWork = true;
       tracking.steps++;
+      receiveWake(yield { kind: "progress" });
       continue;
     }
 
@@ -234,6 +275,7 @@ export async function runRepairCycle(
       if (orphan.kind === "progress") {
         didWork = true;
         tracking.steps++;
+        receiveWake(yield { kind: "progress" });
         continue;
       }
     }
@@ -259,6 +301,7 @@ export async function runRepairCycle(
       if (drained.kind === "progress") {
         didWork = true;
         tracking.steps++;
+        receiveWake(yield { kind: "progress" });
         continue;
       }
     }
@@ -275,6 +318,7 @@ export async function runRepairCycle(
     if (missingTaskReview?.kind === "progress") {
       didWork = true;
       tracking.steps++;
+      receiveWake(yield { kind: "progress" });
       continue;
     }
 
@@ -290,6 +334,7 @@ export async function runRepairCycle(
     if (alreadySatisfied?.kind === "progress") {
       didWork = true;
       tracking.steps++;
+      receiveWake(yield { kind: "progress" });
       continue;
     }
 
@@ -302,11 +347,21 @@ export async function runRepairCycle(
     if (resumed?.kind === "progress") {
       didWork = true;
       tracking.steps++;
+      receiveWake(yield { kind: "progress" });
       continue;
     }
 
     const rank = rankEligibleWork(
-      context.snapshot,
+      awakened.size === 0 ? context.snapshot : {
+        ...context.snapshot,
+        work: context.snapshot.work.map((record) =>
+          awakened.has(record.id) &&
+            record.nextStep === "review" &&
+            record.wait?.reason === "review_pending"
+            ? { ...record, wait: null }
+            : record
+        ),
+      },
       deps.configs,
       deps.clock.now(),
     );
@@ -315,10 +370,16 @@ export async function runRepairCycle(
         return { status: "source_error", detail: sourceError };
       }
       tracking.postDrainAllowed = true;
-      return {
-        status: "idle",
-        detail: idleDetail(context.snapshot, rank.skipped),
+      const wake = yield {
+        kind: "waiting",
+        outcome: {
+          status: "idle",
+          detail: idleDetail(context.snapshot, rank.skipped),
+        },
       };
+      receiveWake(wake);
+      tracking.postDrainAllowed = false;
+      continue;
     }
 
     let selected: WorkRecordV1 | null = null;
@@ -352,19 +413,34 @@ export async function runRepairCycle(
       // re-check and exact identity), so it stays open here; every other
       // margin exit keeps it closed.
       tracking.postDrainAllowed = true;
-      return {
-        status: "margin",
-        detail: deferred.size > 0
-          ? "all eligible work is deferred (cooldown or run bounds)"
-          : cannotFit ?? "no operation fits the remaining run margin",
+      const wake = yield {
+        kind: "waiting",
+        outcome: {
+          status: "margin",
+          detail: deferred.size > 0
+            ? "all eligible work is deferred (cooldown or run bounds)"
+            : cannotFit ?? "no operation fits the remaining run margin",
+        },
       };
+      receiveWake(wake);
+      tracking.postDrainAllowed = false;
+      continue;
     }
 
+    awakened.delete(selected.id);
     context.executionBaseline = selected;
+    // Monotonic wall time: the injected run clock is never read for the log.
+    const stepStartedAt = performance.now();
     const result = await executeStep(deps, context, selected);
     context.executionBaseline = null;
+    logStep(
+      selected,
+      result.kind,
+      Math.round(performance.now() - stepStartedAt),
+    );
     if (result.kind === "deferred") {
       deferred.add(selected.id);
+      receiveWake(yield { kind: "progress" });
       continue;
     }
     if (result.kind === "state_error") {
@@ -385,6 +461,8 @@ export async function runRepairCycle(
     }
     didWork = true;
     tracking.steps++;
+    if (result.yield === true) deferred.add(selected.id);
+    receiveWake(yield { kind: "progress" });
   }
 }
 

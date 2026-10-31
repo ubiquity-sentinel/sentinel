@@ -118,11 +118,13 @@ const SCENARIOS: ScenarioV1[] = [
     },
   },
   {
-    name: "hosted exhausted CI fixes",
+    name: "hosted past the retired CI fix cap",
     options: { hosted: true, retries: 3, attempts: 4, checks: RED },
     expect: (record) => {
-      assert.equal(record.nextStep, "blocked");
-      assert.match(record.blocker?.message ?? "", /^CI fix attempts exhausted/);
+      // Owner directive 2026-10-30: the spent count no longer parks; the
+      // hosted run carries the zero-length CI fix marker R80 consumes.
+      assert.equal(record.nextStep, "work");
+      assert.ok(isCiFixMarker(record.wait), JSON.stringify(record.wait));
     },
   },
 ];

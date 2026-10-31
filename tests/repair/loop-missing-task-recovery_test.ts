@@ -597,32 +597,35 @@ Deno.test("missing task review recovery: current attempt never falls back to an 
   }
 });
 
-Deno.test("missing task review recovery: three prior rounds park at the hard ceiling without a fourth review or accepting the legacy verdict", async () => {
-  // The live 263 shape: no round is left (owner decision 2026-10-16), so the
-  // missing-acceptance block becomes the ceiling park instead of a review.
+Deno.test("missing task review recovery: three prior rounds re-review instead of parking at a ceiling", async () => {
+  // The live 263 shape: rounds are accounting (owner directive 2026-10-30),
+  // so the missing acceptance is recovered with a fourth round instead of a
+  // hard-ceiling park, and the legacy verdict is never accepted in passing.
   const rig = await missingTaskMemoryRig({}, 3);
   const original = canonicalStringify(rig.legacy);
   await rig.run(1);
   const state = await rig.snapshot();
   const work = state.work[0]!;
-  assert.equal(work.nextStep, "blocked");
-  assert.equal(work.blocker?.kind, "other");
+  assert.equal(work.nextStep, "review");
+  assert.equal(work.blocker, null);
+  assert.equal(work.wait?.reason, "review_pending");
+  assert.equal(work.counters.reviewRounds, 4, "the fourth round is admitted");
+  assert.equal(rig.github.reviewRequestIdentities.length, 1);
   assert.equal(
-    work.blocker?.message,
-    "review round ceiling reached: the completed review carries no task acceptance",
+    state.reservations.filter((row) => row.purpose === "review_request")
+      .length,
+    4,
   );
-  assert.equal(work.counters.reviewRounds, 3);
-  assert.equal(rig.github.reviewRequestIdentities.length, 0);
-  assert.deepEqual(state.reservations, rig.charges);
   assert.equal(
     canonicalStringify(state.reviews.find((row) => row.id === rig.legacy.id)),
     original,
   );
   assert.equal(rig.github.calls.includes("merge"), false);
   assert.equal(rig.model.requests.length, 0);
-  // The park is final: the recovery no longer matches it.
-  const parked = await rig.snapshot();
+  // The saved round is observed, not charged again, and the record is never
+  // blocked for the spent count.
   await rig.run(1);
-  assert.deepEqual(await rig.snapshot(), parked);
-  assert.equal(rig.github.reviewRequestIdentities.length, 0);
+  const again = await rig.snapshot();
+  assert.equal(again.work[0]!.blocker, null);
+  assert.equal(rig.github.reviewRequestIdentities.length, 1);
 });

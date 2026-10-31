@@ -3,6 +3,10 @@ import type { GitSha } from "../../src/contracts/brands.ts";
 import type { HostedExecutionIntentV1 } from "../../src/contracts/hosted-supervisor.ts";
 import { hostedOrdinaryAdmitted } from "../../src/contracts/hosted-supervisor-verification.ts";
 import {
+  parseHostedInstallationRecordV1,
+  validateHostedInstallationTransition,
+} from "../../src/contracts/hosted-supervisor-installation.ts";
+import {
   portOk,
   type ReleaseStateWriter,
   type StateReadView,
@@ -28,19 +32,22 @@ import {
   run,
   runProof,
   skippedProof,
+  startedFailureProof,
 } from "./actions-supervisor-fixture.ts";
 import { exited, hostedEnv } from "./hosted-runtime-fixture.ts";
 
 async function settle(
   rig: RigV1,
   execution: HostedExecutionIntentV1,
-  outcome: "healthy" | "failed" | "not_started",
+  outcome: "healthy" | "failed" | "not_started" | "started_failure",
 ) {
   rig.clock.advance(5_000);
   rig.evidence.settlements.set(
     execution.id,
     outcome === "not_started"
       ? skippedProof(execution)
+      : outcome === "started_failure"
+      ? startedFailureProof(execution)
       : runProof(execution, outcome),
   );
   assert.equal(
@@ -474,7 +481,11 @@ Deno.test("starvation: failed installation restores exact prior; same failed SHA
         await ready(rig);
         installEvidence(rig);
         const boot = requireRun(await rig.prepare(launcherRun(3)));
-        await settle(rig, boot, "failed");
+        // A runtime that reached startup-ready and failed gets no retry (#191).
+        await settle(rig, boot, "started_failure");
+        const pending = (await rig.snapshot()).hostedInstallations?.[0];
+        assert.equal(pending?.phase, "rollback_pending");
+        assert.equal(pending?.retriedBootstrapProof, undefined);
         const rollback = requireRun(await rig.prepare(launcherRun(4)));
         assert.equal(rollback.purpose, "bootstrap");
         assert.equal(rollback.revision, LAUNCHER);
@@ -500,6 +511,123 @@ Deno.test("starvation: failed installation restores exact prior; same failed SHA
           assert.equal(state.hostedRuntimes[0].execution, null);
           assert.equal(hostedOrdinaryAdmitted(state.hostedRuntimes[0]), false);
         }
+      } finally {
+        await rig.cleanup();
+      }
+    });
+  }
+});
+
+Deno.test("starvation: a bootstrap that never reached startup-ready retries once at its exact pointer without a rollback journal", async (t) => {
+  for (const first of ["not_started", "failed"] as const) {
+    await t.step(first, async () => {
+      const rig = await makeRig();
+      try {
+        await ready(rig);
+        installEvidence(rig);
+        const boot = requireRun(await rig.prepare(launcherRun(3)));
+        await settle(rig, boot, first);
+        const waiting = await rig.snapshot();
+        const journal = waiting.hostedInstallations?.[0];
+        assert.equal(journal?.phase, "bootstrapping");
+        assert.equal(journal?.pointerIntent, null);
+        assert.equal(journal?.bootstrapProof, null);
+        assert.equal(journal?.bootstrapExecutionId, boot.id);
+        assert.equal(journal?.retriedBootstrapProof?.execution.id, boot.id);
+        assert.equal(waiting.hostedRuntimes[0].execution, null);
+        assert.equal(waiting.hostedRuntimes[0].verificationBlocked, true);
+        const retry = requireRun(await rig.prepare(launcherRun(4)));
+        assert.equal(retry.purpose, "bootstrap");
+        assert.equal(retry.revision, CANDIDATE);
+        assert.equal(retry.launcherSha, CANDIDATE);
+        assert.equal(retry.generation, boot.generation);
+        assert.notEqual(retry.id, boot.id);
+        const retrying = await rig.snapshot();
+        assert.equal(
+          retrying.hostedInstallations?.[0].bootstrapExecutionId,
+          retry.id,
+        );
+        assert.equal(retrying.hostedRuntimes[0].activeRevision, CANDIDATE);
+        assert.equal(retrying.hostedRuntimes[0].generation, 2);
+        assert.equal(
+          (await hostReplay(rig, retry)).get("modelStartsEnabled"),
+          "false",
+        );
+        await settle(rig, retry, "healthy");
+        const accepted = (await rig.snapshot()).hostedInstallations?.[0];
+        assert.equal(accepted?.phase, "accepted");
+        assert.equal(accepted?.bootstrapProof?.execution.id, retry.id);
+        assert.deepEqual(
+          accepted?.retriedBootstrapProof,
+          journal?.retriedBootstrapProof,
+        );
+        const ordinary = requireRun(await rig.prepare(launcherRun(5)));
+        assert.equal(ordinary.purpose, "ordinary");
+        assert.equal(ordinary.revision, CANDIDATE);
+        assert.equal(ordinary.generation, 2);
+      } finally {
+        await rig.cleanup();
+      }
+    });
+  }
+});
+
+Deno.test("starvation: a retry that again never starts journals the exact rollback and the SHA cannot reinstall", async (t) => {
+  for (const second of ["not_started", "failed", "started_failure"] as const) {
+    await t.step(second, async () => {
+      const rig = await makeRig();
+      try {
+        await ready(rig);
+        installEvidence(rig);
+        const boot = requireRun(await rig.prepare(launcherRun(3)));
+        await settle(rig, boot, "not_started");
+        const retry = requireRun(await rig.prepare(launcherRun(4)));
+        const retrying = await rig.snapshot();
+        await settle(rig, retry, second);
+        const journal = (await rig.snapshot()).hostedInstallations?.[0];
+        assert.equal(journal?.phase, "rollback_pending");
+        assert.equal(journal?.bootstrapProof?.execution.id, retry.id);
+        assert.equal(journal?.retriedBootstrapProof?.execution.id, boot.id);
+        assert.equal(journal?.pointerIntent?.action, "rollback");
+        assert.equal(journal?.pointerIntent?.expectedRevision, CANDIDATE);
+        assert.equal(journal?.pointerIntent?.nextRevision, LAUNCHER);
+        assert.equal(journal?.pointerIntent?.expectedGeneration, 2);
+        // The single retry is consumed: no third attempt can bind, and only a
+        // never-started first settlement can admit one.
+        const idle = { ...retrying.hostedRuntimes[0], execution: null };
+        const third = { ...retry, id: "99:1:repair", runId: 99 };
+        assert.equal(
+          validateHostedInstallationTransition(
+            retrying.hostedInstallations!,
+            [{
+              ...retrying.hostedInstallations![0],
+              bootstrapExecutionId: third.id,
+            }],
+            idle,
+            { ...idle, execution: third },
+          ),
+          "installation execution identity is immutable",
+        );
+        assert.throws(
+          () =>
+            parseHostedInstallationRecordV1({
+              ...retrying.hostedInstallations![0],
+              retriedBootstrapProof: startedFailureProof(boot),
+            }),
+          /never reached startup-ready/,
+        );
+        const rollback = requireRun(await rig.prepare(launcherRun(5)));
+        assert.equal(rollback.purpose, "bootstrap");
+        assert.equal(rollback.revision, LAUNCHER);
+        assert.equal(rollback.generation, 3);
+        await settle(rig, rollback, "healthy");
+        const ordinary = requireRun(await rig.prepare(launcherRun(6)));
+        const state = await rig.snapshot();
+        assert.equal(state.hostedInstallations?.length, 1);
+        assert.equal(state.hostedInstallations?.[0].phase, "rolled_back");
+        assert.equal(ordinary.purpose, "ordinary");
+        assert.equal(ordinary.revision, LAUNCHER);
+        assert.equal(ordinary.generation, 3);
       } finally {
         await rig.cleanup();
       }

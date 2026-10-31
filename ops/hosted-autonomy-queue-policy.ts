@@ -1,12 +1,16 @@
 /** Pure custody and authorization decisions; all observations come from the coordinator. */
 import { isGitSha } from "../src/contracts/brands.ts";
+import { canonicalStringify } from "../src/contracts/canonical.ts";
+import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
 import type {
   QueueBinding,
   QueueDriftReason,
   QueueMembership,
   QueuePolicyDecision,
+  QueuePullIdentity,
   QueueRead,
+  QueueSnapshot,
 } from "../src/github/merge-queue-types.ts";
 
 export type QueueMode = "off" | "observe" | "on";
@@ -126,6 +130,52 @@ export interface QueueAuthorizationFacts {
   reentry: boolean;
   failedQueueAdmissions: number;
 }
+/** Null authorization fields are incomplete evidence, never a refusal. */
+export function hasCompleteQueueAuthorizationFacts(
+  facts: QueueAuthorizationFacts,
+): boolean {
+  return facts.reviewAuthorized !== null && facts.latestReceiptId !== null &&
+    facts.taskDigest !== null && facts.optedOut !== null &&
+    facts.headCiGreen !== null && facts.workflowAccepted !== null &&
+    facts.rulesAccepted !== null && facts.exactPatch !== null &&
+    facts.pathsDisjoint !== null && facts.tipEligible !== null;
+}
+
+/**
+ * #169: native absence of a definitely-unsent admission is proven only when
+ * every read of the pass agrees: the pass's initial queue snapshot, each
+ * fresh queue scan, the pull membership read and the coordinator's
+ * authorization membership.  An entry observed by any one of them, a merged
+ * revision, a moved head, a different pull identity or an incomplete read
+ * keeps strict custody.
+ */
+export function hasConsistentQueueAbsence(input: {
+  repository: RepositoryIdentityV1;
+  binding: QueueBinding;
+  pull: QueuePullIdentity;
+  snapshots: readonly QueueRead<QueueSnapshot>[];
+  memberships: readonly QueueRead<QueueMembership>[];
+}): boolean {
+  const { binding, pull } = input;
+  const listed = (entry: QueueSnapshot["entries"][number]): boolean =>
+    entry.pull.number === binding.pullRequest ||
+    entry.pull.nodeId === pull.nodeId;
+  return input.snapshots.length >= 2 && input.memberships.length >= 2 &&
+    pull.number === binding.pullRequest && pull.head === binding.head &&
+    input.snapshots.every((scan) =>
+      scan.status === "complete" &&
+      canonicalStringify(scan.value.repository) ===
+        canonicalStringify(input.repository) &&
+      scan.value.baseRef === "development" && !scan.value.entries.some(listed)
+    ) &&
+    input.memberships.every((member) =>
+      member.status === "complete" && member.value.entry === null &&
+      member.value.mergedRevision === null &&
+      member.value.pull.head === binding.head &&
+      canonicalStringify(member.value.pull) === canonicalStringify(pull)
+    );
+}
+
 function sameBindingPull(
   facts: QueueAuthorizationFacts,
   membership: QueueMembership,

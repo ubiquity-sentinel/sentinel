@@ -1332,10 +1332,11 @@ for (const [name, midPass, next, nextDispositions] of MID_PASS) {
  * own (it refuses this receipt), the serial work step (never with external
  * implementations), the review settlements (review charges only, including
  * three exact-base review admission settlements and the owner-successor
- * review, whose newly reserved review_request charge cannot alias this
- * implementation/retry charge), the
- * historical quarantine (dedicated charges, never requested here) and the
- * uncertainty quarantine (its fixed generation-63 charges, only while
+ * review, whose newly reserved review_request charges cannot alias this
+ * implementation/retry charge, plus the human-merge settlement of an
+ * outstanding review admission, whose review_request charge likewise cannot),
+ * the historical quarantine (dedicated charges, never requested here) and
+ * the uncertainty quarantine (its fixed generation-63 charges, only while
  * generation 63 is active). A new or moved one changes this table: before
  * updating it, prove it cannot tear an output-bound cell's charge, or tag
  * that settler's first write so the re-entry can tell whose pair it is.
@@ -1346,6 +1347,7 @@ const AUDITED_SETTLERS = {
   "src/host/matrix-quarantine-state.ts": 1,
   "src/host/matrix-uncertainty-maintenance.ts": 1,
   "src/host/owner-successor-acceptance.ts": 1,
+  "src/repair/human-merge.ts": 1,
   "src/repair/loop-accounting.ts": 2,
   "src/repair/loop-base-satisfaction.ts": 3,
   "src/repair/loop-conflict-resolution.ts": 1,

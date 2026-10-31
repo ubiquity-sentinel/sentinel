@@ -1,3 +1,5 @@
+import { canonicalStringify } from "../contracts/canonical.ts";
+import { isPassportWorkTrial } from "./passport-work-trial.ts";
 import { guardQueueOperation } from "./loop-queue-guard.ts";
 /** Repair loop internals: review result. */
 import type { ReviewObservationV1 } from "../contracts/ports.ts";
@@ -25,7 +27,6 @@ import {
   reviewWaitSince,
 } from "./loop-review-records.ts";
 import { requestReviewFor } from "./loop-review-request.ts";
-import { reviewRoundsSpentOut } from "./loop-review-round-cap.ts";
 import {
   persistTransition,
   persistWork,
@@ -45,6 +46,7 @@ import {
   classifyReviewTerminalDisposition,
   TASK_ACCEPTANCE_MISSING_DETAIL,
   TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL,
+  TASK_ACCEPTANCE_UNCERTAIN_DETAIL,
   taskAcceptanceRefusal,
 } from "./review-gate.ts";
 import {
@@ -60,12 +62,8 @@ import {
   setIntent,
   setWait,
 } from "./transitions.ts";
-import {
-  REVIEW_ROUND_CEILING_REJECTED,
-  REVIEW_ROUND_CEILING_UNACCEPTED,
-} from "./review-round-cap.ts";
 
-/** Missing acceptance permits another review, never delivery or receipt rewriting. */
+/** Missing acceptance, or Passport uncertainty, may request a new counted review. */
 export async function recoverMissingTaskReview(
   deps: RepairCycleDepsV1,
   context: LoopContextV1,
@@ -73,6 +71,8 @@ export async function recoverMissingTaskReview(
   receipt: ReviewReceiptV1,
   observedOperationKey: string,
 ): Promise<StepResultV1 | null> {
+  const trialUncertain = isPassportWorkTrial(record.repository) &&
+    receipt.taskAcceptance?.verdict === "uncertain";
   const issueNumber = record.related.issueNumber;
   const config = configFor(deps, record.repository);
   if (
@@ -80,7 +80,8 @@ export async function recoverMissingTaskReview(
     record.source.id !== String(issueNumber) ||
     record.related.incidentId !== null ||
     record.counters.reviewRounds < 1 ||
-    receipt.taskAcceptance !== null || receipt.outcome !== "completed" ||
+    (receipt.taskAcceptance !== null && !trialUncertain) ||
+    receipt.outcome !== "completed" ||
     receipt.resultId === null || receipt.completedAt === null ||
     !sameRepositoryIdentity(receipt.repository, record.repository) ||
     receipt.pullRequest.number !== record.target.pr ||
@@ -152,12 +153,28 @@ export async function recoverMissingTaskReview(
   const existing = context.snapshot.reviews.find((review) =>
     review.id === receipt.id
   );
+  const immutableContent = (value: ReviewReceiptV1) => ({
+    ...value,
+    observedAt: 0,
+    submittedAt: 0,
+  });
+  if (
+    trialUncertain && existing !== undefined &&
+    canonicalStringify(immutableContent(existing)) !==
+      canonicalStringify(immutableContent(receipt))
+  ) {
+    return {
+      kind: "deferred",
+      detail: "uncertain task acceptance recovery receipt content changed",
+    };
+  }
   if (
     existing !== undefined && (
       existing.requestId !== receipt.requestId ||
       existing.resultId !== receipt.resultId ||
       existing.outcome !== "completed" ||
-      (existing.taskAcceptance ?? null) !== null ||
+      canonicalStringify(existing.taskAcceptance ?? null) !==
+        canonicalStringify(receipt.taskAcceptance ?? null) ||
       existing.pullRequest.head !== receipt.pullRequest.head ||
       existing.pullRequest.base !== receipt.pullRequest.base ||
       existing.pullRequest.number !== receipt.pullRequest.number ||
@@ -341,11 +358,11 @@ export async function applyObservedReview(
       // candidate does not satisfy it. That is a P1 (an unaccepted candidate
       // never merges), so the receipt carries the reviewer's acceptance
       // statement as its leading P1 finding and the record continues exactly
-      // as a P0/P1 verdict does below: a correction while a round is left
-      // (B6a). With none left, or when the receipt cannot carry the finding,
-      // it parks once on the owner-gated message (B6b), never re-admitted.
+      // as a P0/P1 verdict does below: a correction (B6a). Owner directive
+      // 2026-10-30: a spent review-round count never parks it; only a receipt
+      // that cannot carry the finding parks once on the owner-gated message.
       const corrected = await withAcceptanceFinding(receipt);
-      if (corrected === null || reviewRoundsSpentOut(context, record)) {
+      if (corrected === null) {
         return parkWithReceipt(
           deps,
           context,
@@ -357,19 +374,14 @@ export async function applyObservedReview(
       receipt = corrected;
       unresolved = true;
     } else if (refusal !== null) {
-      if (refusal === TASK_ACCEPTANCE_MISSING_DETAIL) {
-        // At the hard review-round ceiling a missing acceptance is final: the
-        // generation-79 recovery answers its own detail with another review,
-        // so the record parks with the ceiling message and the receipt.
-        if (reviewRoundsSpentOut(context, record)) {
-          return parkWithReceipt(
-            deps,
-            context,
-            record,
-            receipt,
-            REVIEW_ROUND_CEILING_UNACCEPTED,
-          );
-        }
+      if (
+        refusal === TASK_ACCEPTANCE_MISSING_DETAIL ||
+        (isPassportWorkTrial(record.repository) &&
+          refusal === TASK_ACCEPTANCE_UNCERTAIN_DETAIL)
+      ) {
+        // A missing acceptance is recovered with another review (its own
+        // detail is answered by generation 79's recovery); owner directive
+        // 2026-10-30 removed the spent-round park that used to make it final.
         const recovered = await recoverMissingTaskReview(
           deps,
           context,
@@ -388,18 +400,9 @@ export async function applyObservedReview(
       );
     }
   }
-  // A blocking verdict in the last affordable round can never be corrected
-  // into a reviewed head (the correction would need another round): the
-  // record parks with the rejecting receipt instead of a model start.
-  if (unresolved && reviewRoundsSpentOut(context, record)) {
-    return parkWithReceipt(
-      deps,
-      context,
-      record,
-      receipt,
-      REVIEW_ROUND_CEILING_REJECTED,
-    );
-  }
+  // A blocking verdict advances to its correction (`advanceToCorrection`
+  // below). Owner directive 2026-10-30: the correction keeps unbounded review
+  // rounds, so a blocking verdict is never parked for a spent round count.
   const withEvidence: WorkRecordV1 = {
     ...record,
     evidence: mergeEvidence(record.evidence, [{

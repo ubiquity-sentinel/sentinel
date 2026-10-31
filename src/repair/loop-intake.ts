@@ -13,6 +13,7 @@ import {
   sanitizeSkippedIssue,
 } from "../github/client-response.ts";
 import { candidateBranch } from "./keys.ts";
+import { isCiOutageNotice } from "./ci-outage-notice.ts";
 import {
   checkGithubCooldown,
   createRunBounds,
@@ -376,6 +377,9 @@ export async function pollIntake(
         const baseByRepository = new Map<string, GitSha | null>();
         for (const issue of issues.value) {
           if (issue.state !== "open") continue;
+          // An App-filed CI outage notice asks the owner for billing; no
+          // code change fixes it, so it is never admitted as a task.
+          if (isCiOutageNotice(issue)) continue;
           const issueKey =
             `${issueRepository.owner}/${issueRepository.name}#${issue.number}`;
           if (seenIssues.has(issueKey)) continue;

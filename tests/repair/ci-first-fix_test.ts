@@ -1,9 +1,10 @@
 /**
  * CI fixes under the owner's pipeline order (2026-10-16): a red head gets a
- * charged CI fix that never counts as a review round, at most three per
- * record (`counters.retries`), and every corrected head passes CI before its
- * next review. Each case runs the real repair loop in process over real Git
- * state with fake GitHub/model ports.
+ * charged CI fix that never counts as a review round, and every corrected
+ * head passes CI before its next review. Owner directive 2026-10-30 removed
+ * the three-fix cap: `counters.retries` is lifetime accounting and a spent
+ * count never parks a record. Each case runs the real repair loop in process
+ * over real Git state with fake GitHub/model ports.
  */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -21,7 +22,6 @@ import {
 import { ciRig } from "./ci-correction-rig.ts";
 
 const SHA5 = "5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b" as GitSha;
-const SHA6 = "6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c" as GitSha;
 const CI_FINDING =
   /^Required CI checks failed on this candidate while the same checks passed on its base /;
 
@@ -181,50 +181,40 @@ Deno.test("CI first: an unresolved P1 is no rejection: the reviewed green head m
   }
 });
 
-Deno.test("CI first: three CI fixes, then a precise park and no fourth charge", async () => {
-  const { rig } = await ciFirstRig("cf-three", {
-    heads: [SHA4, SHA5, SHA6],
+Deno.test("CI first: a fourth CI fix proceeds instead of parking on the spent count", async () => {
+  const { rig } = await ciFirstRig("cf-more-than-three", {
+    retries: 3,
+    attempts: 4,
+    heads: [SHA4],
     checks: {
       [SHA3]: red(SHA3),
-      [SHA4]: red(SHA4),
-      [SHA5]: red(SHA5),
-      [SHA6]: red(SHA6),
       [SHA1]: GREEN_BASE,
     },
   });
   try {
-    for (let run = 0; run < 8; run++) {
-      const outcome = await rig.run();
-      assert.equal(outcome.status, "idle", JSON.stringify(outcome));
-      if (taskRecord(await rig.snapshot()).nextStep === "blocked") break;
-      rig.clock.advance(5 * 60_000 + 1);
-    }
+    const outcome = await rig.run();
+    assert.equal(outcome.status, "idle", JSON.stringify(outcome));
     const state = await rig.snapshot();
     const work = taskRecord(state);
-    assert.equal(work.nextStep, "blocked");
+    assert.equal(work.blocker, null, "the retired cap never parks");
+    assert.equal(work.counters.retries, 4, "the fourth fix is charged");
+    assert.equal(rig.model.requests.length, 1, "exactly one more fix");
     assert.equal(
-      work.blocker?.message,
-      "CI fix attempts exhausted (3 of 3): validate(failure)",
+      modelCharges(state).length,
+      5,
+      "1 implementation + the 3 seeded retries + the fourth",
     );
-    assert.equal(work.target.head, SHA6);
-    assert.equal(work.target.pr, 7, "the PR is kept for the coordinator");
-    assert.equal(work.counters.retries, 3);
-    assert.equal(work.counters.reviewRounds, 0, "no fix spent a round");
-    assert.equal(rig.model.requests.length, 3, "exactly three fixes");
-    assert.equal(modelCharges(state).length, 4, "1 implementation + 3 fixes");
-    assert.equal(reviewCharges(state).length, 0, "no red head is reviewed");
-    assert.equal(rig.github.calls.includes("requestReview"), false);
-    // Later runs never spend anything on the parked record.
-    rig.clock.advance(24 * 60 * 60_000);
-    await rig.run();
-    assert.equal(rig.model.requests.length, 3);
-    assert.deepEqual((await rig.snapshot()).reservations, state.reservations);
+    assert.equal(
+      rig.github.calls.includes("requestReview"),
+      true,
+      "the fixed green head reaches review",
+    );
   } finally {
     await rig.ctx.cleanup();
   }
 });
 
-Deno.test("CI first: a reviewed head whose CI fixes are spent gets the exhausted park at the merge gate", async () => {
+Deno.test("CI first: a reviewed head whose CI fixes are spent keeps correcting at the merge gate", async () => {
   const { rig, charges } = await ciRig("cf-merge-exhausted", {
     checks: {
       [SHA3]: [check("validate", SHA3, "failure")],
@@ -249,15 +239,26 @@ Deno.test("CI first: a reviewed head whose CI fixes are spent gets the exhausted
     assert.ok(written.ok && written.value.status === "applied");
     const outcome = await rig.run();
     assert.equal(outcome.status, "idle", JSON.stringify(outcome));
-    assert.equal(rig.model.requests.length, 0, "no fourth fix");
+    assert.equal(rig.model.requests.length, 1, "a fourth fix is admitted");
     const after = await rig.snapshot();
-    assert.equal(after.work[0].nextStep, "blocked");
+    const blocker = after.work[0].blocker;
     assert.equal(
-      after.work[0].blocker?.message,
-      "CI fix attempts exhausted (3 of 3): validate(failure)",
+      (blocker?.message ?? "").startsWith(
+        "CI fix attempts exhausted (3 of 3): ",
+      ),
+      false,
+      "the retired cap never parks",
     );
+    assert.equal(blocker, null);
+    assert.equal(after.work[0].counters.retries, 4);
+    assert.equal(after.work[0].counters.reviewRounds, 2);
+    assert.equal(after.work[0].nextStep, "review");
     assert.equal(rig.github.calls.includes("merge"), false, "never merged");
-    assert.deepEqual(after.reservations, charges, "nothing charged");
+    assert.equal(
+      after.reservations.length,
+      charges.length + 2,
+      "the correction retry and its fresh review admission are both charged",
+    );
   } finally {
     await rig.ctx.cleanup();
   }

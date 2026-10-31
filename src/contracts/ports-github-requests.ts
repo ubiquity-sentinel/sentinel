@@ -1,3 +1,4 @@
+import type { BackupCiConclusionV1, BackupCiContextV1 } from "./backup-ci.ts";
 import type { GitSha, WorkItemId } from "./brands.ts";
 import type { SelfMergeProofV1 } from "./self-merge.ts";
 import type {
@@ -86,6 +87,42 @@ export interface GitHubCheckV1 {
   head: GitSha;
   startedAt: number | null;
   completedAt: number | null;
+  /**
+   * Present (always `true`) only on a GitHub Actions check run that completed
+   * `failure` while its job never started: the job reports no step and no
+   * runner (a billing or spending-limit stop). Such a run is no CI evidence
+   * either way (`failedChecks`, `decideCiGate`). Absent on every other check
+   * and on every record or fixture written before it existed.
+   */
+  neverStarted?: true;
+  /**
+   * Present only on a backup CI stand-in for a never-started observation
+   * (docs/backup-ci-spec.md §11.1): the verified receipt whose conclusion this
+   * check now carries. Never persisted; absent on every native check.
+   */
+  backup?: GitHubCheckBackupV1;
+  /**
+   * A resolved backup result of a natively started check name, read only by
+   * CI attribution (`attributeFailedChecks`); inert everywhere else. Never
+   * persisted.
+   */
+  backupPeer?: { conclusion: BackupCiConclusionV1; receipt: string };
+  /**
+   * The workflow event (`pull_request`, `push`, ...) that produced this
+   * GitHub Actions check run, present only when a read explicitly asked for
+   * events and the real client proved it from the run's exact Actions id,
+   * job id and head. Never persisted; absent keeps legacy attribution.
+   */
+  event?: string;
+}
+
+/** The backup CI receipt a stand-in check carries (never persisted). */
+export interface GitHubCheckBackupV1 {
+  receipt: string;
+  context: BackupCiContextV1;
+  runnerId: string;
+  legRunId: number;
+  legJobId: number;
 }
 
 export interface GitHubChecksV1 {
@@ -159,11 +196,13 @@ export interface CarriedPatchRequestV1 {
 
 /**
  * The patch proof, derived from git: each side's unique merge base and the
- * SHA-256 (lowercase hex) of the exact bytes of its merge-base patch (`git
- * diff --binary --full-index --no-renames <merge base> <head>`, every
- * rendering option fixed). Full blob ids on every index line bind both sides
- * of every changed path, so equal digests mean equal contents, modes, renames
- * (as delete and add) and binary payloads. It authorizes nothing by itself
+ * SHA-256 (lowercase hex) of the exact bytes of its merge-base raw listing
+ * (`git diff --raw --no-abbrev -z --no-renames <merge base> <head>`) and patch
+ * (`git diff --binary --full-index --no-renames <merge base> <head>`), every
+ * rendering option fixed. The listing names both modes and full blob ids of
+ * every changed path (a mode-only change has no index line in the patch,
+ * #156), so equal digests mean equal contents, modes, renames (as delete and
+ * add) and binary payloads. It authorizes nothing by itself
  * (`carriedPatchHolds`).
  */
 export interface CarriedPatchProofV1 {
@@ -348,6 +387,17 @@ export type MergeOutcomeV1 =
     selfMerge?: SelfMergeProofV1;
   }
   | { outcome: "ambiguous"; head: GitSha | null; mergeSha: GitSha | null }
+  /**
+   * The pull request merged, but its merge commit's parents are not exactly
+   * [the reviewed base, the reviewed head]: the merged tree is one no CI ran
+   * on. Never booked as a delivery; the loop parks the record.
+   */
+  | {
+    outcome: "merged_off_tip";
+    head: GitSha;
+    mergeSha: GitSha;
+    parents: GitSha[];
+  }
   | {
     outcome: "blocked";
     reason:
@@ -368,11 +418,12 @@ export type MergeOutcomeV1 =
  *
  * REST has no atomic base CAS: `expectedBase` is a precondition the adapter
  * re-validates immediately before an expected-head merge, not an API
- * guarantee. Effective strict server-enforced protections (requiring up-to-
- * date branches with no applicable token bypass) plus candidate ancestry
- * containing `expectedBase` are required; a moved base then makes the
- * candidate outdated and the server blocks the merge (base_mismatch) until
- * the exact current base is integrated and validated again. The review
+ * guarantee. Branch rules are not a merge requirement (owner directive
+ * 2026-10-24), so the adapter re-reads the base branch tip as the last read
+ * before the merge call and refuses (base_mismatch) unless it is exactly
+ * `expectedBase`; candidate ancestry containing `expectedBase` is required,
+ * and a merge whose commit's parents are not exactly [`expectedBase`,
+ * `expectedHead`] is reported `merged_off_tip`, never `merged`. The review
  * receipt is identity/cleanliness evidence only — it is never current CI,
  * protection or authenticity evidence, so the adapter must re-observe the
  * authoritative review by exact identifiers and verify trusted resolution

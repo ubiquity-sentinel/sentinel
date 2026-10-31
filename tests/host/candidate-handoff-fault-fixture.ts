@@ -64,7 +64,7 @@ import {
 // ---------------------------------------------------------------------------
 
 /** Production `CHECK_POLL_MS`, used only as a fixture clock offset. */
-export const FIXTURE_CHECK_POLL_MS = 5 * 60_000;
+export const FIXTURE_CHECK_POLL_MS = 2 * 60_000;
 
 /** Static safe detail for the fixture's injected acknowledgement rejection. */
 const INJECTED_ACK_UNAVAILABLE_DETAIL =

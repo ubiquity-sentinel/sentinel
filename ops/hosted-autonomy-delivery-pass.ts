@@ -24,6 +24,7 @@ import {
   baseAndHeadAreMerged,
   boundReviewReceipts,
   buildHostedReleaseRequest,
+  mergedExactlyOn,
   readTrustedTask,
 } from "./hosted-autonomy-delivery.ts";
 import {
@@ -38,11 +39,13 @@ import {
   carriedPatchRefusal,
   carriedRecordAwaited,
   carriedRequestBindsDelivery,
+  HOSTED_AUTONOMY_SPENT_MOVED_BASE_MERGE,
   latestAuthorizingReceipt,
   parkedStep,
   preMergeGate,
   spentDelivered,
   spentDeliveryAdmissible,
+  spentOnTip,
   spentReadWindow,
 } from "./hosted-autonomy-spent-delivery.ts";
 import {
@@ -54,12 +57,14 @@ import {
   deliveryEligible,
   HOSTED_AUTONOMY_RETIRED,
   HOSTED_AUTONOMY_SELF_SCOPE,
+  HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR,
   HOSTED_AUTONOMY_TRUSTED_AUTHORS,
   hostedDeliveryKey,
   isHostedSelf,
   sameRepository,
 } from "./hosted-autonomy-policy.ts";
 import type {
+  HostedAutonomyPullV1,
   HostedAutonomyRecordV1,
   HostedAutonomyResultV1,
 } from "./hosted-autonomy-types.ts";
@@ -76,6 +81,7 @@ import {
   acceptanceOwnerGateActions,
   acceptanceOwnerGated,
 } from "./hosted-autonomy-acceptance.ts";
+import { retryWritten } from "./hosted-autonomy-retry-actions.ts";
 
 export async function runHostedDeliveryPass(
   context: HostedAutonomyPassContextV1,
@@ -209,9 +215,13 @@ export async function runHostedDeliveryPass(
     );
     if (hostedPassDeadlineReached(context)) return defer();
     if (selfTip === null) {
-      return actions.length > 0
-        ? skipped("retried", observedHead, actions)
-        : skipped("base_moved", observedHead, actions);
+      // `retried` only after a retry write of this pass (`retryWritten`); a
+      // repeated read-only denial or any other action leaves `base_moved`.
+      return skipped(
+        retryWritten(actions) ? "retried" : "base_moved",
+        observedHead,
+        actions,
+      );
     }
   }
 
@@ -220,27 +230,90 @@ export async function runHostedDeliveryPass(
   // pass, starting at an offset that rotates with the pass clock so no record
   // is starved by the ones ordered before it.
   // A record an earlier write of this pass settled takes no read slot.
-  const spentReadable = spentReadWindow(
+  // #156 (6): the tip of each repository with a spent record reviewed on its
+  // own head is read once (cached for the gates), before the window; a
+  // record whose base is not that tip (D3 off) can only end `base_moved`, so
+  // it is left out and only its pull request is read, for the lost write of
+  // a merge that moved the tip itself (`behindTip`).
+  const spentCandidates = spentReadWindow(
     snapshot,
     deps.clock.now(),
     context.settled,
   );
-  // The tip's own CI, read at most once per repository per pass (a2).
-  const tipGreen = new Map<string, boolean>();
-  // Set as soon as `surface.merge` is called, whatever it answers (merged,
-  // refused, lost, thrown): that merge may have landed, so the base tip and
-  // the tip CI read above are stale and every later gate would admit a merge
-  // onto a commit whose CI was never checked. No further merge is attempted
-  // in this pass; an already-merged pull is still settled read-only.
-  let mergeCalled = false;
-
+  const spentTips = new Map<string, string | null>();
   for (const record of snapshot.work) {
+    if (
+      !spentCandidates.has(record.id) || !eligible(record) ||
+      strictGateway(record) ||
+      boundReviewReceipts(snapshot, record).length === 0
+    ) continue;
+    spentTips.set(
+      record.id,
+      await deliveryTip(await scopeFor(record.repository)),
+    );
+    if (hostedPassDeadlineReached(context)) return defer();
+  }
+  const movedBaseMerge = deps.spentMovedBaseMerge ??
+    HOSTED_AUTONOMY_SPENT_MOVED_BASE_MERGE;
+  const spentReadable = spentReadWindow(
+    snapshot,
+    deps.clock.now(),
+    context.settled,
+    (record) =>
+      spentOnTip(record, spentTips.get(record.id) ?? null, movedBaseMerge),
+  );
+  const behindTip = new Set(
+    [...spentCandidates].filter((id) => !spentReadable.has(id)),
+  );
+  // The tip's own CI: read once per repository per pass, and dropped (with
+  // the cached tip) at every merge call there so a later merge re-reads it.
+  const tipGreen = new Map<string, boolean>();
+  // There is no per-pass merge count: every record whose gates hold may merge
+  // in one pass. A merge moves only its own repository's tip, so the cached
+  // tip and tip CI of the repository that was just written to are dropped and
+  // the next candidate there re-reads its own base before its merge call (see
+  // the invalidation next to `surface.merge` below).
+  // A production release request already records this exact delivery.
+  const productionRecorded = (record: HostedAutonomyRecordV1) =>
+    snapshot.releaseRequests.some((request) =>
+      sameRepository(request.target.repository, record.repository) &&
+      request.source.pullRequest === record.target.pr &&
+      request.source.head === record.target.head &&
+      request.source.base === record.target.base &&
+      request.target.environment === "production"
+    );
+  // A non-carried review/delivery record outside the Gateway whose reviewed
+  // base is not the tip this pass ALREADY read for its repository (never an
+  // extra tip read): every merge gate it could reach refuses it `base_moved`
+  // before any effect (the moved-base rule is Gateway-only), so only its pull
+  // request is read, for the lost write of a merge that moved the tip itself
+  // (as `behindTip`). A self delivery already recorded keeps its read-free
+  // `already_recorded`.
+  const offReadTip = (record: HostedAutonomyRecordV1, key: string) => {
+    const tip = deliveryTips.get(key);
+    return typeof tip === "string" && tip !== record.target.base &&
+      boundReviewReceipts(snapshot, record).length > 0 &&
+      !isGatewayVpsRepository(record.repository) &&
+      !productionRecorded(record);
+  };
+
+  // Deterministic delivery order: the oldest record first, never list
+  // position, with the id as the tie-break so two passes over the same
+  // snapshot attempt the same candidates in the same sequence. The only
+  // per-pass bound is the run window checked at the top of every iteration.
+  const deliveryOrder = [...snapshot.work].sort((left, right) =>
+    left.createdAt - right.createdAt ||
+    (left.id < right.id ? -1 : left.id > right.id ? 1 : 0)
+  );
+  for (const record of deliveryOrder) {
     if (hostedPassDeadlineReached(context)) return defer();
     if (!eligible(record)) continue;
     const pullRequest = record.target.pr;
     const head = record.target.head;
     const base = record.target.base;
     let mergedThisRecord = false;
+    // The tip re-read immediately before this pass's merge call (#156).
+    let mergedOnto: string | null = null;
     if (pullRequest === null || head === null || base === null) continue;
     if (strictGateway(record)) {
       const booking = await queueBookingDraft(context, record);
@@ -284,12 +357,39 @@ export async function runHostedDeliveryPass(
       actions.push(`delivery:${record.id}:carried_awaiting_runtime`);
       continue;
     }
-    if (parked && !spentReadable.has(record.id)) {
+    if (
+      parked && !spentReadable.has(record.id) && !behindTip.has(record.id)
+    ) {
       actions.push(`delivery:${record.id}:spent_deferred`);
       continue;
     }
     const scope = await scopeFor(record.repository);
     if (hostedPassDeadlineReached(context)) return defer();
+    // #156 (3, 6): a record this pass can only adopt, never merge (a carried
+    // head the runtime waits on with `unavailable`, which may precede any
+    // merge, or a spent record behind the tip), reads its pull request first
+    // and nothing else unless that pull request is already merged. A
+    // review/delivery record outside the Gateway whose base is not the tip
+    // this pass already read for its repository is the same case: its gate
+    // can only answer `base_moved` (`offReadTip`).
+    const onlyAdoptable = carried && !carriedMergeAwaited(record)
+      ? "carried_awaiting_runtime"
+      : behindTip.has(record.id) || (!parked && offReadTip(record, scope.key))
+      ? "base_moved"
+      : null;
+    let prefetched: HostedAutonomyPullV1 | null = null;
+    if (
+      onlyAdoptable !== null && scope.surface !== null &&
+      scope.baseBranch !== null
+    ) {
+      prefetched = await readPull(scope, pullRequest);
+      if (hostedPassDeadlineReached(context)) return defer();
+      if (prefetched === null || prefetched.headSha !== head) continue;
+      if (prefetched.merged !== true) {
+        actions.push(`delivery:${record.id}:${onlyAdoptable}`);
+        continue;
+      }
+    }
     // The trusted live source-issue statement is read over the record's OWN
     // authenticated surface immediately before the merge and the release
     // request; the shared predicate then binds the LATEST completed review's
@@ -318,15 +418,7 @@ export async function runHostedDeliveryPass(
     let receipt = verdict.receipt;
     const self = isHostedSelf(record.repository);
     const gateway = isGatewayVpsRepository(record.repository);
-    if (
-      (self || gateway) &&
-      snapshot.releaseRequests.some((request) =>
-        sameRepository(request.target.repository, record.repository) &&
-        request.source.pullRequest === pullRequest &&
-        request.source.head === head && request.source.base === base &&
-        request.target.environment === "production"
-      )
-    ) {
+    if ((self || gateway) && productionRecorded(record)) {
       actions.push(`delivery:${record.id}:already_recorded`);
       continue;
     }
@@ -338,7 +430,7 @@ export async function runHostedDeliveryPass(
       actions.push(`delivery:${record.id}:default_branch_unreadable`);
       continue;
     }
-    let pull = await readPull(scope, pullRequest);
+    let pull = prefetched ?? await readPull(scope, pullRequest);
     if (hostedPassDeadlineReached(context)) return defer();
     if (pull === null || pull.headSha !== head) continue;
     if (
@@ -374,10 +466,6 @@ export async function runHostedDeliveryPass(
       }
       if (gateway && deps.queueCustody?.ready !== true) {
         actions.push(`delivery:${record.id}:queue_context_unavailable`);
-        continue;
-      }
-      if (mergeCalled) {
-        actions.push(`delivery:${record.id}:merge_deferred`);
         continue;
       }
       if (carried && !carriedMergeAwaited(record)) {
@@ -487,10 +575,18 @@ export async function runHostedDeliveryPass(
       }
       if (proofLine !== null) actions.push(proofLine);
       let merged: { merged: boolean; sha: string | null } | null;
-      mergeCalled = true;
+      // A merge call, whatever it answers (merged, refused, lost, thrown), is
+      // an external write: the base tip and tip CI read for this repository
+      // are stale from now on. The next candidate re-reads and re-verifies its
+      // own base through `deliveryTip` and the uncached re-read above, so one
+      // that is off the moved tip is refused by the existing gate instead of
+      // merging onto a commit no CI ran on.
+      deliveryTips.delete(scope.key);
+      tipGreen.delete(scope.key);
       // Once admitted, preserve the existing merge verification/bookkeeping
       // settlement even if the cutoff is crossed inside the effect.
       mergedThisRecord = true;
+      mergedOnto = tipNow;
       try {
         merged = evidence === undefined
           ? await scope.surface.merge(pullRequest, head)
@@ -515,7 +611,9 @@ export async function runHostedDeliveryPass(
       // Crash window: the merge succeeded but its state write was lost. Only
       // the App's own verified merge with green required CI on the exact head
       // is adopted (a carried one only with its patch proof); a hand merge is
-      // reported and nothing is recorded.
+      // reported and nothing is recorded. A carried merge off its tip is
+      // reported (and parked) below on its parents alone, so the expensive
+      // patch proof is read only for one that landed exactly on T (#156).
       if (
         (!self && foreignProof === null) ||
         !await adoptableSpentMerge(
@@ -525,6 +623,8 @@ export async function runHostedDeliveryPass(
           head,
         ) ||
         (carried &&
+          (foreignProof?.kind === "queue" ||
+            mergedExactlyOn(pull, base, head)) &&
           (await carriedPatchRefusal(scope.surface, receipt, head, base))
               .refusal !== null)
       ) {
@@ -538,6 +638,35 @@ export async function runHostedDeliveryPass(
     }
     if (!mergedThisRecord && hostedPassDeadlineReached(context)) return defer();
     if (pull.merged !== true || pull.mergeCommitSha === null) continue;
+    // #156 (1): a merge THIS pass made is booked only when its commit's
+    // parents are exactly [the tip re-read immediately before the call, the
+    // head]. GitHub has no compare-and-swap on the base, so a commit that
+    // landed meanwhile (an owner merge) makes the merge a tree no CI ran on:
+    // it is reported and nothing is written. (A carried merge parks below.)
+    if (
+      mergedOnto !== null && !carried && pull.mergeCommitSha === revision &&
+      !mergedExactlyOn(pull, mergedOnto, head)
+    ) {
+      actions.push(`delivery:${record.id}:merged_off_tip:sha=${revision}`);
+      continue;
+    }
+    // The same refusal is durable across passes: an App-made merge of a
+    // non-carried record is booked only on exactly [its reviewed base, its
+    // head], so a later pass never adopts a refused off-tip merge as an
+    // outside merge (review finding, upheld 3 of 3). A queue merge has the
+    // queue's parents and keeps its own proof; an owner's merge is not the
+    // App's. With the moved-base merge rule (D3) on, an App merge onto a
+    // moved tip is intended, so only the same-pass check above applies.
+    if (
+      !movedBaseMerge && !carried && foreignProof?.kind !== "queue" &&
+      pull.mergedBy === HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR &&
+      (base === null || !mergedExactlyOn(pull, base, head))
+    ) {
+      actions.push(
+        `delivery:${record.id}:merged_off_tip:sha=${pull.mergeCommitSha}`,
+      );
+      continue;
+    }
     if (!self) {
       foreignProof ??= await resolveHostedDelivery(
         context,
@@ -557,8 +686,9 @@ export async function runHostedDeliveryPass(
       }
       receipt = foreignProof.receipt;
     }
-    // A merge performed earlier in THIS pass is an external write and keeps
-    // the one-merge bound; an already-merged pull is read-only.
+    // A merge performed earlier in THIS pass is an external write; its
+    // repository's cached tip was dropped at the call, and an already-merged
+    // pull is read-only.
     if (revision === null) revision = pull.mergeCommitSha;
     if (revision !== pull.mergeCommitSha) continue;
     // A carried merge is booked only when it landed exactly on the refreshed
@@ -567,14 +697,13 @@ export async function runHostedDeliveryPass(
     // merge) is reported and, on the Gateway, parked precisely instead.
     if (
       carried && foreignProof?.kind !== "queue" &&
-      (pull.parents.length !== 2 || pull.parents[0] !== base ||
-        pull.parents[1] !== head)
+      !mergedExactlyOn(pull, base, head)
     ) {
       actions.push(
         `delivery:${record.id}:carried_merged_off_tip:sha=${revision}`,
       );
-      // A self record is never rewritten here: its runtime parks it once its
-      // bounded wait for the delivery record ends.
+      // A self record is never rewritten here: its runtime reads the merge
+      // commit's parents itself and parks it with the same blocker (#156).
       if (!gateway) continue;
       const now = deps.clock.now();
       if (!Number.isSafeInteger(now) || now < snapshot.updatedAt) {
@@ -632,8 +761,9 @@ export async function runHostedDeliveryPass(
       );
       actions.push(`delivery:${record.id}:foreign_merged`);
       revisions.push(revision);
-      // The direct effect cap only stops another merge. Already-merged queue
-      // deliveries can still be booked after this external merge.
+      // Nothing count-based stops the next candidate here: the delivery loop
+      // re-reads the moved tip for it and merges it only if its own base is
+      // that tip (or defers it `base_moved`).
       continue;
     }
 
@@ -782,9 +912,7 @@ async function writeDeliveryState(
   return {
     kind: "hosted_autonomy",
     status: "applied",
-    reason: actions.some((action) => action.startsWith("retry:"))
-      ? "retried"
-      : "applied",
+    reason: retryWritten(actions) ? "retried" : "applied",
     beforeHead: observedHead,
     appliedHead: write.value.head,
     actions,

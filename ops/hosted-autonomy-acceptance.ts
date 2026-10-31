@@ -31,11 +31,19 @@
  * them.
  */
 import type { HostedRuntimeRecordV1 } from "../src/contracts/hosted-supervisor.ts";
+import type { GitSha } from "../src/contracts/brands.ts";
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import { HOSTED_RUNTIME_ROLLOUT } from "../src/host/hosted-runtime-rollout.ts";
 import { TASK_ACCEPTANCE_OWNER_GATE_DETAIL } from "../src/repair/acceptance-correction.ts";
 import { releaseRequestMatchesDelivery } from "../src/repair/loop-records.ts";
-import { TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL } from "../src/repair/review-gate.ts";
+import {
+  TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL,
+  TASK_ACCEPTANCE_UNCERTAIN_DETAIL,
+} from "../src/repair/review-gate.ts";
+import {
+  isPassportWorkTrial,
+  passportTrialCanReconsider,
+} from "../src/repair/passport-work-trial.ts";
 import { ordinaryReviewRoundsSpent } from "../src/repair/review-round-cap.ts";
 import { ciCorrectionRuntimeProven } from "./hosted-autonomy-ci-retries.ts";
 import { hostedIssueKey } from "./hosted-autonomy-policy.ts";
@@ -85,6 +93,18 @@ export function acceptanceCorrectionRuntimeProven(
     runtime.generation >=
       HOSTED_AUTONOMY_ACCEPTANCE_CORRECTION_MIN_GENERATION &&
     ciCorrectionRuntimeProven(runtime, allowlist);
+}
+
+/** The executing clean source proves modern correction only for its own install. */
+export function acceptanceCorrectionSelfInstalledRuntimeProven(
+  runtime: HostedRuntimeRecordV1 | null | undefined,
+  sourceRevision: GitSha | undefined,
+): boolean {
+  return sourceRevision !== undefined && runtime !== null &&
+    runtime !== undefined && runtime.activeRevision === sourceRevision &&
+    Number.isSafeInteger(runtime.generation) && runtime.generation >= 82 &&
+    acceptanceCorrectionRuntimeProven(runtime, new Set([sourceRevision])) &&
+    runtime.lastHealthyProof?.execution.launcherSha === sourceRevision;
 }
 
 /** An issue task blocked with no operation in flight on `message`, exactly. */
@@ -144,11 +164,18 @@ export function planAcceptanceReadmissions(
   /** `acceptanceCorrectionRuntimeProven` of the installed runtime. */
   runtimeProven: boolean,
   onDenied?: (denial: RetryDenialV1) => void,
+  /** Same-source self-install proof, required for every Passport trial class. */
+  modernRuntimeProven = false,
 ): RetryPlanV1[] {
   const plans: RetryPlanV1[] = [];
   for (const record of snapshot.work) {
+    const trial = isPassportWorkTrial(record.repository);
     if (
-      !blockedOn(record, TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL) ||
+      !(blockedOn(record, TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL) ||
+        (trial &&
+          [TASK_ACCEPTANCE_OWNER_GATE_DETAIL, TASK_ACCEPTANCE_UNCERTAIN_DETAIL]
+            .some((message) => blockedOn(record, message)))) ||
+      (trial && !passportTrialCanReconsider(record, snapshot.reservations)) ||
       record.counters.reviewRounds < 1 ||
       closedIssues.has(
         hostedIssueKey(record.repository, record.related.issueNumber!),
@@ -156,7 +183,7 @@ export function planAcceptanceReadmissions(
       ordinaryReviewRoundsSpent(snapshot, record) ||
       !exactPublication(snapshot, record)
     ) continue;
-    if (!runtimeProven) {
+    if (!(modernRuntimeProven || (!trial && runtimeProven))) {
       onDenied?.({
         id: record.id,
         repository: record.repository,

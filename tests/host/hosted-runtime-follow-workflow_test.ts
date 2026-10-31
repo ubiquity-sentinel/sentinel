@@ -80,7 +80,7 @@ Deno.test("follow workflow uses only the checked-out dispatcher action before fi
   assert.ok(workflow.includes("ref: ${{ github.sha }}"));
   assert.ok(workflow.includes("persist-credentials: false"));
   assert.ok(
-    workflow.includes("auto-follow: ${{ vars.SENTINEL_AUTO_FOLLOW || 'off' }}"),
+    workflow.includes("auto-follow: ${{ vars.SENTINEL_AUTO_FOLLOW || 'on' }}"),
   );
   assert.ok(
     workflow.indexOf("uses: ./.github/actions/hosted-runtime-control") <

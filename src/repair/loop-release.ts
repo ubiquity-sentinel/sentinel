@@ -28,9 +28,17 @@ import {
   isReleaseDeferredWait,
   observeGatewayVpsDelivery,
 } from "./vps-delivery.ts";
+import {
+  completeMergeAccepted,
+  deferRelease,
+} from "./loop-release-merge-accepted.ts";
 import { persistWork } from "./loop-state.ts";
 import {
-  deliveryTaskRefusal,
+  type CarriedReleaseProverV1,
+  gitCarriedReleaseProver,
+  releaseDeliveryTaskRefusal,
+} from "./carried-release.ts";
+import {
   readDeliveryTaskContext,
   releaseRequestReceipt,
   semanticRefusalKind,
@@ -82,26 +90,6 @@ export function waitRelease(
   );
 }
 
-/**
- * Merged; release deferred while the release path is disabled (JAM B12). The
- * record stays at `delivery` beside its open request: it is never marked
- * done, because only this record consumes the release outcome (acceptance
- * reconciles the closure, a failed or rolled-back release blocks it) and a
- * done record never moves again. Written once; selection then skips it.
- */
-export function deferRelease(
-  deps: RepairCycleDepsV1,
-  context: LoopContextV1,
-  record: WorkRecordV1,
-  now: number,
-): Promise<StepResultV1> {
-  return persistWork(
-    deps,
-    context,
-    setWait(record, { reason: "unavailable", since: now, until: null }, now),
-  );
-}
-
 /** One positively read and reparsed release snapshot; anything else is null. */
 export async function readReleaseSnapshot(
   state: Pick<StateReadView, "readRelease">,
@@ -128,9 +116,10 @@ export interface ReleaseResumeRunV1 {
  * deferred record exists, the release ref is read ONCE; a deferred record
  * whose request the release ref now records (or that is no longer an open,
  * intent-free deferral) has its wait released, so the ordinary delivery step
- * observes the release outcome on this same run. A still-deferred record is
- * not touched, an unreadable release ref changes nothing, and each record is
- * looked at once per run, so the pass never loops or rewrites.
+ * observes the release outcome on this same run. While the release path is
+ * disabled, a merged PR at the exact recorded revision completes the record.
+ * A still-deferred record is not touched and an unreadable ref changes
+ * nothing; each record is looked at once per run, so the pass never loops.
  */
 export async function resumeDeferredRelease(
   deps: RepairCycleDepsV1,
@@ -154,7 +143,18 @@ export async function resumeDeferredRelease(
     if (
       record.intent === null && request !== undefined &&
       gatewayReleaseDeferred(run.release, request)
-    ) continue;
+    ) {
+      const completed = await completeMergeAccepted(
+        deps,
+        context,
+        record,
+        request,
+        run.release,
+        deps.clock.now(),
+      );
+      if (completed !== null) return completed;
+      continue;
+    }
     const now = deps.clock.now();
     const since = record.wait!.since;
     return persistWork(
@@ -306,13 +306,19 @@ export async function observeHostedReleaseAcceptance(
   return waitRelease(deps, context, record, now);
 }
 
-/** Existing accepted behavior: closure intent when an issue is attached. */
+/**
+ * Existing accepted behavior: closure intent when an issue is attached. A
+ * carried delivery (Sentinel #152) is authorized as of its reviewed identity
+ * while its git patch proof holds (`releaseDeliveryTaskRefusal`); `carried`
+ * is the step's one prover.
+ */
 export async function acceptRelease(
   deps: RepairCycleDepsV1,
   context: LoopContextV1,
   record: WorkRecordV1,
   request: ReleaseRequestV1,
   now: number,
+  carried: CarriedReleaseProverV1 | undefined = gitCarriedReleaseProver(deps),
 ): Promise<StepResultV1> {
   const queueGuard = await guardQueueDelivery(
     deps,
@@ -341,7 +347,13 @@ export async function acceptRelease(
   // delivery, so a missing or non-authorizing reference fails closed instead
   // of persisting a closure intent.
   const referenced = releaseRequestReceipt(context.snapshot.reviews, request);
-  const semantic = await deliveryTaskRefusal(deps, record, referenced);
+  const semantic = await releaseDeliveryTaskRefusal(
+    deps,
+    record,
+    request,
+    referenced,
+    carried,
+  );
   if (semantic === "wait") return waitRelease(deps, context, record, now);
   if (semantic !== null) {
     return persistWork(
@@ -364,7 +376,7 @@ export async function acceptRelease(
   const withIntent = setIntent(record, intent, now);
   const persisted = await persistWork(deps, context, withIntent);
   if (persisted.kind !== "progress") return persisted;
-  return retryClosure(deps, context, withIntent);
+  return retryClosure(deps, context, withIntent, carried);
 }
 
 /** Existing failed/rolled_back behavior: an ordinary blocked record. */
@@ -424,20 +436,32 @@ export async function observeReleaseAcceptance(
   }
   const now = deps.clock.now();
   if (isGatewayVpsRepository(record.repository)) {
-    // Merged, release deferred while the release path is disabled: no release
-    // record can be observed for this request, so the record waits in its one
-    // stable shape instead of re-arming a poll every cycle (JAM B12).
+    // Merged, deferred: with the release path disabled the exact merge
+    // completes the record (owner directive 2026-10-31); enabled still waits.
     if (record.intent === null && request.status === "open") {
       const release = await readReleaseSnapshot(deps.state);
       if (release !== null && gatewayReleaseDeferred(release, request)) {
+        const accepted = await completeMergeAccepted(
+          deps,
+          context,
+          record,
+          request,
+          release,
+          now,
+        );
+        if (accepted !== null) return accepted;
         return deferRelease(deps, context, record, now);
       }
     }
+    // A carried request binds only while its git patch proof holds (Sentinel
+    // #152); one prover serves this whole step.
+    const carried = gitCarriedReleaseProver(deps);
     const observed = await observeGatewayVpsDelivery(
       deps.state,
       record,
       request,
       releaseRequestReceipt(context.snapshot.reviews, request),
+      carried,
     );
     if (observed.kind === "blocked") {
       return persistWork(
@@ -451,7 +475,7 @@ export async function observeReleaseAcceptance(
     }
     const checks = await gateDeliveryOnChecks(deps, context, record, now);
     if (checks !== null) return checks;
-    return acceptRelease(deps, context, record, request, now);
+    return acceptRelease(deps, context, record, request, now, carried);
   }
   const release = await deps.state.readRelease();
   if (!release.ok || release.value.status !== "found") {

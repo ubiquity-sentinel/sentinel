@@ -138,6 +138,11 @@ export function buildChildEnvironment(
   if (typeof env.SENTINEL_MERGE_QUEUE === "string") {
     child.SENTINEL_MERGE_QUEUE = env.SENTINEL_MERGE_QUEUE;
   }
+  // Backup CI's lower-only mode (spec §11.8): forwarded as given, so the
+  // child's exact parse reads anything but `on` and `shadow` as `off`.
+  if (typeof env.SENTINEL_BACKUP_CI === "string") {
+    child.SENTINEL_BACKUP_CI = env.SENTINEL_BACKUP_CI;
+  }
   if (legacyReviewCutoff !== null) {
     child[LEGACY_REVIEW_CUTOFF_ENV] = String(legacyReviewCutoff);
   }

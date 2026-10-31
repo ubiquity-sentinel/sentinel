@@ -24,7 +24,7 @@ import { hostedRepositoryKey } from "../../ops/hosted-autonomy.ts";
 import { SHA1, SHA2, SHA3, T0 } from "../state/helpers.ts";
 import { assertGen79Parses, gen79Available } from "../state/gen77-contracts.ts";
 import { loadGen79Modules } from "../host/gen77-runtime-source.ts";
-import { l79Available, loadL79Modules } from "../host/l79-launcher-source.ts";
+import { loadL79Modules } from "../host/l79-launcher-source.ts";
 import {
   CAP_BASE_MOVED,
   CAP_REJECTED,
@@ -41,21 +41,23 @@ import {
   sha,
 } from "./review-round-cap-rig.ts";
 
-const available = await gen79Available() && await l79Available();
+/**
+ * True only when both rollback trees can be read here: the commit exists and
+ * L79's tree is fully extractable (a partial clone cannot fetch it offline).
+ */
+async function l79Extractable(): Promise<boolean> {
+  try {
+    const loaded = await loadL79Modules([]);
+    await loaded.dispose();
+    return true;
+  } catch {
+    return false;
+  }
+}
+const r79Available = await gen79Available();
+const l79Ready = await l79Extractable();
 const HOUR = 60 * MINUTE;
 const ID = "issue-1";
-
-/** A rig whose every repair-state write is retained for the parser proof. */
-async function recordingRig(options: CapRigOptionsV1 = {}) {
-  const rig = await capRig(options);
-  const written: RepairStateSnapshotV1[] = [];
-  const write = rig.state.writeRepair.bind(rig.state);
-  rig.state.writeRepair = (next, head) => {
-    written.push(structuredClone(next));
-    return write(next, head);
-  };
-  return { rig, written };
-}
 
 interface ParkV1 {
   message: string;
@@ -63,85 +65,94 @@ interface ParkV1 {
   written: RepairStateSnapshotV1[];
 }
 
-async function runs(rig: CapRigV1, count: number) {
-  for (let run = 0; run < count; run++) {
-    await rig.run();
-    rig.clock.advance(16 * MINUTE);
-  }
-}
-
-/** Each park, produced by this tree's own loop. */
+/**
+ * The historical parks, built directly: the retired ceiling no longer writes
+ * them, but generation 79 must still parse and ignore the shapes already in
+ * durable state. Each snapshot is the exact shape the ceiling wrote (an
+ * `other` blocker with the fixed message; PR, head, receipts and charges
+ * kept).
+ */
 async function parks(): Promise<ParkV1[]> {
-  const out: ParkV1[] = [];
-  const atRound3 = (mode: "p1" | "missing_acceptance") =>
-    recordingRig({
-      reviewRounds: 3,
-      nextStep: "review",
-      wait: { reason: "review_pending", since: T0 - MINUTE, until: T0 },
-      reservations: reviewCharges(ID, 3),
-    }).then((made) => {
-      made.rig.github.bind(3);
-      made.rig.github.reviewMode = mode;
-      return made;
-    });
-  {
-    const made = await recordingRig();
-    made.rig.github.reviewMode = "no_verdict";
-    await runs(made.rig, 5);
-    out.push({ message: CAP_UNREVIEWED, ...made });
-  }
-  {
-    const made = await atRound3("p1");
-    await runs(made.rig, 1);
-    out.push({ message: CAP_REJECTED, ...made });
-  }
-  {
-    const made = await atRound3("missing_acceptance");
-    await runs(made.rig, 1);
-    out.push({ message: CAP_UNACCEPTED, ...made });
-  }
-  {
-    const made = await recordingRig();
-    for (let move = 0; move < 4; move++) {
-      await runs(made.rig, 2);
-      made.rig.github.remoteBase = sha(0x2100 + move);
-    }
-    await runs(made.rig, 1);
-    out.push({ message: CAP_BASE_MOVED, ...made });
-  }
-  {
-    const made = await recordingRig({
-      reviewRounds: 3,
-      nextStep: "delivery",
-      reservations: reviewCharges(ID, 3),
-      reviews: [completedReceipt(3, SHA3, "clean")],
-      record: {
-        intent: {
-          kind: "merge",
-          key: `merge:${PR}:${SHA3}`,
-          startedAt: T0 - 30 * MINUTE,
-          branch: "sentinel/repair/issue-1",
-          expectedHead: SHA3,
-          observedBase: SHA1,
-          pr: PR,
-          requestId: null,
-          resultId: null,
+  const clean = completedReceipt(3, SHA3, "clean");
+  const rejected = (() => {
+    const receipt = completedReceipt(3, SHA3, "p1");
+    return {
+      ...receipt,
+      findings: receipt.findings.map((finding) => ({
+        ...finding,
+        severity: "P0" as const,
+        message: "P0 finding",
+      })),
+      unresolvedSeverities: ["P0" as const],
+    };
+  })();
+  const specs: Array<{ message: string; options: CapRigOptionsV1 }> = [
+    {
+      message: CAP_UNREVIEWED,
+      options: { reviewRounds: 3, reservations: reviewCharges(ID, 3) },
+    },
+    {
+      message: CAP_REJECTED,
+      options: {
+        reviewRounds: 3,
+        reservations: reviewCharges(ID, 3),
+        reviews: [rejected],
+      },
+    },
+    {
+      message: CAP_UNACCEPTED,
+      options: {
+        reviewRounds: 3,
+        reservations: reviewCharges(ID, 3),
+        reviews: [completedReceipt(3, SHA3, "unaccepted")],
+      },
+    },
+    {
+      message: CAP_BASE_MOVED,
+      options: {
+        reviewRounds: 3,
+        nextStep: "delivery",
+        reservations: reviewCharges(ID, 3),
+        reviews: [clean],
+        record: {
+          target: {
+            base: SHA2,
+            branch: "sentinel/repair/issue-1",
+            checkpoint: null,
+            head: SHA3,
+            pr: PR,
+          },
         },
       },
-    });
-    made.rig.github.remoteBase = SHA2;
-    await runs(made.rig, 1);
-    out.push({ message: CAP_BASE_MOVED, ...made });
-  }
-  {
-    // An accepted head returned to work (a CI fix) with no round left.
-    const made = await recordingRig({
-      reviewRounds: 3,
-      reservations: reviewCharges(ID, 3),
-      reviews: [completedReceipt(3, SHA3, "clean")],
-    });
-    await runs(made.rig, 1);
-    out.push({ message: CAP_REVIEWED, ...made });
+    },
+    {
+      message: CAP_REVIEWED,
+      options: {
+        reviewRounds: 3,
+        reservations: reviewCharges(ID, 3),
+        reviews: [clean],
+      },
+    },
+  ];
+  const out: ParkV1[] = [];
+  for (const spec of specs) {
+    const rig = await capRig(spec.options);
+    const before = await rig.snapshot();
+    const record = {
+      ...before.work[0]!,
+      nextStep: "blocked" as const,
+      wait: null,
+      blocker: { kind: "other" as const, message: spec.message, since: T0 },
+    };
+    const next = { ...before, sequence: before.sequence + 1, work: [record] };
+    const current = await rig.state.readRepair();
+    assert.ok(current.ok && current.value.status === "found");
+    const written = await rig.state.writeRepair(next, current.value.head);
+    assert.ok(
+      written.ok && written.value.status === "applied",
+      JSON.stringify(written),
+    );
+    out.push({ message: spec.message, rig, written: [structuredClone(next)] });
   }
   for (const park of out) {
     const work = await park.rig.work();
@@ -155,7 +166,7 @@ async function parks(): Promise<ParkV1[]> {
 Deno.test({
   name:
     "rollback to generation 79: R79's parsers accept every snapshot the ceiling writes",
-  ignore: !available,
+  ignore: !r79Available,
   async fn() {
     for (const park of await parks()) {
       assert.ok(park.written.length > 0);
@@ -168,7 +179,7 @@ Deno.test({
 Deno.test({
   name:
     "rollback to generation 79: R79's own loop and matrix readiness leave every park alone",
-  ignore: !available,
+  ignore: !r79Available,
   async fn() {
     const loaded = await loadGen79Modules([
       "src/repair/loop.ts",
@@ -265,7 +276,7 @@ Deno.test({
 Deno.test({
   name:
     "rollback to generation 79: L79's planners and every L79/R79 blocker matcher leave every park alone",
-  ignore: !available,
+  ignore: !(r79Available && l79Ready),
   async fn() {
     const launcher = await loadL79Modules([
       "ops/hosted-autonomy.ts",

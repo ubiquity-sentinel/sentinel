@@ -23,6 +23,7 @@ import {
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import type { BudgetReservationV1 } from "../../src/contracts/budget-reservation.ts";
+import type { CandidateProofPassV1 } from "../../src/host/actions-candidates-proof.ts";
 import { CLOSED_C_WAVE } from "../../src/host/modern-matrix-recovery.ts";
 import { implementationIntentKey } from "../../src/repair/keys.ts";
 import {
@@ -101,7 +102,11 @@ async function checked(
  * ordinary producer (oldest first, run ids from FIRST_RUN), each with its own
  * settled proof under a consistent runtime pointer.
  */
-export async function releaseHistory(root: string, producers: number) {
+export async function releaseHistory(
+  root: string,
+  producers: number,
+  stride = 1,
+) {
   const env = testGitEnv(`${root}/home`);
   const remote = `${root}/remote.git`;
   const work = `${root}/history-work`;
@@ -115,7 +120,7 @@ export async function releaseHistory(root: string, producers: number) {
   await Deno.mkdir(`${work}/hostedRuntimes`, { recursive: true });
   let parent: string | null = null;
   for (let sequence = 1; sequence <= producers + 1; sequence++) {
-    const runId = FIRST_RUN + sequence - 2;
+    const runId = FIRST_RUN + Math.floor((sequence - 2) / stride);
     const runtime = {
       version: "v1",
       kind: "hosted_runtime",
@@ -233,6 +238,8 @@ class CostRunner implements GitRunnerV1 {
 
 export async function walkRig(input: {
   producers: number;
+  historyStride?: number;
+  index?: (root: string, remote: string) => unknown;
   rows: { record: WorkRecordV1; charge: BudgetReservationV1 }[];
   plans?: Map<number, PlanRow>;
   gitCost?: (args: string[]) => number;
@@ -267,7 +274,11 @@ export async function walkRig(input: {
     prefix: "sentinel-history-reach-",
     dir: decodeURIComponent(new URL("../../", import.meta.url).pathname),
   });
-  const remote = await releaseHistory(root, input.producers);
+  const remote = await releaseHistory(
+    root,
+    input.producers,
+    input.historyStride,
+  );
   let now = T0 + 10_000_000;
   const clock = { now: () => now };
   const runner = new CostRunner(
@@ -491,7 +502,7 @@ export async function walkRig(input: {
   const unrecoverable: string[] = [];
   const walk = () =>
     (recoverHostedCurrentMatrix as (...args: unknown[]) => Promise<unknown>)(
-      deps,
+      { ...deps, currentMatrixIndex: input.index?.(root, remote) },
       CLOSED_C_WAVE,
       () => {},
       (kind: string) => unrecoverable.push(kind),
@@ -624,6 +635,8 @@ export async function preservationWalkRig() {
   const calls = {
     recovered: [] as number[],
     preserved: [] as string[],
+    // The proof pass every cycle of a producer pass was built with (#185).
+    proofPasses: [] as (CandidateProofPassV1 | undefined)[],
     ingested: [] as string[],
   };
   const refs = new Map<string, GitSha>();
@@ -784,7 +797,10 @@ export async function preservationWalkRig() {
         state,
         clock,
         configs: [{ repository: REPO }],
-        cycleFor: () => ({ clock, github }),
+        cycleFor: (_config: unknown, proofPass?: CandidateProofPassV1) => {
+          calls.proofPasses.push(proofPass);
+          return { clock, github };
+        },
         prepareTarget: () => Promise.resolve(),
         ingest,
         importerFor: () => ({}),

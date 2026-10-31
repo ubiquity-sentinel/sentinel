@@ -9,6 +9,7 @@ import {
   missingExpectedChecks,
 } from "../src/repair/ci-coverage.ts";
 import { isGatewayVpsRepository } from "../src/repair/vps-delivery.ts";
+import { isPassportDeployCheck } from "../src/repair/merge-gate-checks.ts";
 import { HOSTED_AUTONOMY_REQUIRED_CHECK } from "./hosted-autonomy-policy.ts";
 import { createHostedMismatchDispositionObservations } from "./hosted-autonomy-mismatch-github.ts";
 import type {
@@ -29,7 +30,24 @@ import {
   REQUEST_TIMEOUT_MS,
   RUN_LISTING_PAGE_SIZE,
 } from "./hosted-autonomy-github-listing.ts";
-import { createHostedFollowUpIssues } from "./hosted-autonomy-github-issues.ts";
+import {
+  createHostedBaseRepairIssues,
+  createHostedFollowUpIssues,
+} from "./hosted-autonomy-github-issues.ts";
+import { createHostedRetryLabel } from "./hosted-autonomy-retry-label.ts";
+import {
+  classifyTipChecks,
+  createHostedOutageTracker,
+} from "./hosted-autonomy-outage-observation.ts";
+import { completedJobNeverStarted } from "../src/github/never-started-job.ts";
+import { createHostedActionsJobReads } from "./hosted-autonomy-github-jobs.ts";
+import type { BackupCiConsumerV1 } from "../src/github/backup-ci-observations.ts";
+import {
+  backupNeverStartedRemains,
+  failedNamesWithBackup,
+  type HostedBackupCiReadContextV1,
+  substituteBackupRuns,
+} from "./hosted-autonomy-backup-ci-read.ts";
 import { createMergeBaseTreeChanges } from "./hosted-autonomy-github-trees.ts";
 import {
   parseHostedAutonomyHeadPulls,
@@ -94,10 +112,13 @@ const PULL_FILE_PAGES = 30;
 export function createHostedAutonomyGitHub(
   token: string,
   repository: RepositoryIdentityV1,
+  /** Backup CI consumer (docs/backup-ci-spec.md §11.4); absent: native. */
+  backupCi?: BackupCiConsumerV1,
 ): HostedAutonomyGitHubV1 {
   const scope = `${repository.owner}/${repository.name}`;
 
   const request = createHostedAutonomyRequest(token);
+  const jobReads = createHostedActionsJobReads(request, scope);
   const effect = createHostedAutonomyEffect(token);
   const rawRead = createHostedAutonomyRawRead(token);
   async function readPull(
@@ -176,6 +197,7 @@ export function createHostedAutonomyGitHub(
    */
   async function readCompleteCheckRuns(
     head: string,
+    substitute = true,
   ): Promise<Record<string, unknown>[] | null> {
     const runs = await readCompleteListing(
       (page) =>
@@ -195,8 +217,21 @@ export function createHostedAutonomyGitHub(
       const conclusion = run["conclusion"];
       if (conclusion !== null && typeof conclusion !== "string") return null;
     }
-    return runs;
+    // Verified backup CI stand-ins for never-started runs (spec §11.4).
+    return backup === null || !substitute
+      ? runs
+      : await substituteBackupRuns(backup, head, runs);
   }
+
+  /**
+   * Deployment observations are evidence, never gates (owner directive
+   * 2026-10-30): Passport's dispatch-only deploy checks stay in the complete
+   * read above but are left out of every gate decision below.
+   */
+  const gatingRuns = (runs: readonly Record<string, unknown>[]) =>
+    runs.filter((run) =>
+      !isPassportDeployCheck(repository, String(run["name"]))
+    );
 
   /** Complete workflow-run listing for exactly one commit. */
   const readHeadRuns = (head: string) =>
@@ -206,6 +241,32 @@ export function createHostedAutonomyGitHub(
       "workflow_runs",
       RUN_LISTING_PAGE_SIZE,
     );
+
+  /** The backup CI hook's reads, over this same token (spec §11.4). */
+  const backup: HostedBackupCiReadContextV1 | null = backupCi === undefined
+    ? null
+    : {
+      backupCi,
+      repository,
+      listAll: (head) =>
+        readCompleteListing(
+          (page) =>
+            `/repos/${scope}/commits/${head}/check-runs?filter=all&per_page=${LISTING_PAGE_SIZE}&page=${page}`,
+          "check_runs",
+          LISTING_PAGE_SIZE,
+        ),
+      listRuns: readHeadRuns,
+      listStatuses: (head) =>
+        readCompleteListing(
+          (page) =>
+            `/repos/${scope}/commits/${head}/status?per_page=${LISTING_PAGE_SIZE}&page=${page}`,
+          "statuses",
+          LISTING_PAGE_SIZE,
+        ),
+      readJob: (jobId) =>
+        request("GET", `/repos/${scope}/actions/jobs/${jobId}`),
+      verdicts: new Map(),
+    };
 
   return {
     mismatchDisposition: createHostedMismatchDispositionObservations(
@@ -247,16 +308,19 @@ export function createHostedAutonomyGitHub(
       );
     },
     async hasAllChecksGreen(head: string, base?: string) {
-      const runs = await readCompleteCheckRuns(head);
+      const complete = await readCompleteCheckRuns(head);
       // An unreadable, incomplete, drifted or malformed listing is no
       // evidence either way: unreadable (null), never green and never red.
-      if (runs === null) return null;
+      if (complete === null) return null;
+      const runs = gatingRuns(complete);
       // Only the runs reported on the exact head count, and the listing was
       // already proven complete and bound to this head. Zero runs is not
       // green: a foreign repository's own completed CI is the only
       // deterministic signal it can supply, so a head with no CI at all is
       // never delivered, and it is not red either (no CI ran).
       if (runs.length === 0) return null;
+      // A never-started run no backup result stands in for is no evidence.
+      if (backupNeverStartedRemains(runs)) return null;
       // Every run on that head must be completed and green (success, or a
       // job the workflow itself skipped or marked neutral), which excludes
       // anything pending, queued or failed — including a failure that only
@@ -270,14 +334,46 @@ export function createHostedAutonomyGitHub(
       if (!green || base === undefined) return green;
       // The runs that exist are green; a job GitHub creates late (`needs:`)
       // must exist too, by the base's own check suites (issue #154).
-      const baseRuns = await readCompleteCheckRuns(base);
-      if (baseRuns === null) return null;
-      const expected = suitedChecks(baseRuns);
+      const baseComplete = await readCompleteCheckRuns(base);
+      if (baseComplete === null) return null;
+      const expected = suitedChecks(gatingRuns(baseComplete));
       if (expected === null) return null;
       const reported = runs.map((run) => ({ name: String(run["name"]) }));
       return missingExpectedChecks(reported, expected).length === 0;
     },
+    async failedChecks(head: string, conclusions: readonly string[]) {
+      const complete = await readCompleteCheckRuns(head);
+      if (complete === null) return null;
+      const runs = gatingRuns(complete);
+      // A job that never started (a billing stop) is no failing check; a
+      // red backup result standing in for one is (spec §11.5), within the
+      // conclusions the caller asks for.
+      return await failedNamesWithBackup(
+        head,
+        runs,
+        (h, r) => jobReads.failedCheckNames(h, r, conclusions),
+        conclusions,
+      );
+    },
+    runNeverStarted: (id: number, head: string) =>
+      jobReads.runNeverStarted(id, head),
     readPull,
+    async readPullStatus(number: number) {
+      if (!Number.isSafeInteger(number) || number <= 0) return null;
+      const pull = await request("GET", `/repos/${scope}/pulls/${number}`);
+      if (pull === null || typeof pull !== "object" || Array.isArray(pull)) {
+        return null;
+      }
+      const object = pull as Record<string, unknown>;
+      const state = object["state"];
+      const merged = object["merged"];
+      if (
+        object["number"] !== number ||
+        (state !== "open" && state !== "closed") ||
+        typeof merged !== "boolean"
+      ) return null;
+      return { number, state, merged };
+    },
     async listPullsByHeadRef(branch: string) {
       // One bounded page filtered by GitHub to this repository's exact head
       // ref; the parser refuses a full page (unprovable completeness), a fork
@@ -364,6 +460,11 @@ export function createHostedAutonomyGitHub(
           attempt < 1 || typeof status !== "string" ||
           (conclusion !== null && typeof conclusion !== "string")
         ) return null;
+        // Only the CI resume pass reads these; each is present only when
+        // GitHub reported it strictly (absent is unknown).
+        const updatedAt = runCreatedAt(run["updated_at"]);
+        const attemptStartedAt = runCreatedAt(run["run_started_at"]);
+        const workflow = run["workflow_id"];
         parsed.push({
           id: run["id"] as number,
           headSha: head,
@@ -371,6 +472,12 @@ export function createHostedAutonomyGitHub(
           conclusion,
           runAttempt: attempt,
           createdAt: runCreatedAt(run["created_at"]),
+          ...(updatedAt === null ? {} : { updatedAt }),
+          ...(attemptStartedAt === null ? {} : { attemptStartedAt }),
+          ...(typeof workflow === "number" && Number.isSafeInteger(workflow) &&
+              workflow > 0
+            ? { workflowId: workflow }
+            : {}),
         });
       }
       return parsed;
@@ -600,10 +707,13 @@ export function createHostedAutonomyGitHub(
         }
         return bodies;
       },
-      async fileIssue(input: { title: string; body: string }) {
+      async fileIssue(
+        input: { title: string; body: string; labels?: string[] },
+      ) {
         const created = await request("POST", `/repos/${scope}/issues`, {
           title: input.title,
           body: input.body,
+          ...(input.labels === undefined ? {} : { labels: input.labels }),
         });
         if (created === null || typeof created !== "object") return null;
         const number = Number((created as Record<string, unknown>)["number"]);
@@ -650,6 +760,40 @@ export function createHostedAutonomyGitHub(
         .join("");
     },
     followUpIssues: createHostedFollowUpIssues(request, repository),
+    baseRepairIssues: createHostedBaseRepairIssues(request, repository),
+    retryLabel: createHostedRetryLabel(request, repository),
+    ciOutageTracker: createHostedOutageTracker(request, repository),
+    async classifyTipStart(tip: string) {
+      // The outage notice describes the target's own CI: native CI runs only,
+      // never a deployment job.
+      const complete = await readCompleteCheckRuns(tip, false);
+      if (complete === null) return null;
+      return classifyTipChecks(
+        gatingRuns(complete).map((run) => ({
+          id: Number(run["id"]),
+          name: String(run["name"]),
+          status: String(run["status"]),
+          conclusion: typeof run["conclusion"] === "string"
+            ? run["conclusion"]
+            : null,
+        })),
+        async (run) => {
+          if (!Number.isSafeInteger(run.id) || run.id <= 0) return "unknown";
+          const job = await request(
+            "GET",
+            `/repos/${scope}/actions/jobs/${run.id}`,
+          );
+          const verdict = job === null
+            ? null
+            : completedJobNeverStarted(job, run.id, tip);
+          return verdict === true
+            ? "not_started"
+            : verdict === false
+            ? "started"
+            : "unknown";
+        },
+      );
+    },
     async merge(number: number, head: string, message?: string) {
       const response = await request(
         "PUT",

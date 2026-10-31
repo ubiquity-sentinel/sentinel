@@ -9,8 +9,8 @@ This runbook preserves activation requirements; current ownership, exact revisio
 - Keep credentials/state/promotion capabilities in trusted stages; model cells receive neither. Current-head review and CI remain autonomous target merge gates.
 - For future efforts without equivalent authorization, obtain explicit approval for each development-triggered hosted attempt after local checks. For this effort, the 2026-10-20 owner grant authorizes hosted workflow control, direct development pushes, launcher/runtime/state updates and gated autonomous merges without repeated approval. Record workflow, target, exact SHA, expected duration and remaining hosted-only assertion before each attempt.
 - Dispatch and inspect the identified attempt with the installed `sentinel` CLI. Missing settlement, startup proof or exact revision identity is pending, never healthy. Bootstrap success does not establish issue delivery.
-- Keep `SENTINEL_AUTO_FOLLOW` off until the first controlled CI-green launcher advance and self-install are verified; then enable it and verify exact advance/dispatch readback. Delete retained ceremony modules only in DESIGN.md §4 dependency order after their consumers are replaced.
-- Prove green scheduled cycles and at least one autonomous issue → PR → completed gateway `codex-auto-review` → merge per target, with current CI and no unresolved P0/P1. The ai.ubq.fi scope is issue repairs only for now; keep `sentinel-release` disabled. The broader gateway gates below are separate future activation work.
+- `SENTINEL_AUTO_FOLLOW` is on by default since 2026-10-24, after many verified controlled advances and self-installs; verify the first automatic advance and dispatch readback. Retained ceremony modules remain until their consumers are replaced and the integration owner supplies an approved dependency order; DESIGN.md is absent from this checkout.
+- Prove green scheduled cycles and at least one autonomous issue → PR → completed internal native Codex review → merge per target, with current CI and positive task acceptance. P0 is the only severity-based merge blocker; retain P1 and lower findings as receipt-bound issue follow-ups. The AI and Passport scopes are issue repairs only for now; keep `sentinel-release` disabled. The broader gateway gates below are separate future activation work.
 
 ## Gateway VPS release boundary
 
@@ -19,6 +19,22 @@ The gateway's current deployment instructions use its existing trusted VPS path.
 Preserve the existing `deploy:vps` path, exclusive `.data/deploy.lock`, immutable `.data/releases/<full-sha>` directories, `current` symlink, configured service, persistent KV and `.env`. Trusted deployment remains separate from model work. Verify exact source/archive identity, health SHA, `vps-<sha>` body/header identity and the target's required authenticated direct Mac-to-VPS inference acceptance.
 
 A Sentinel VPS release/receipt integration needs an approved exact contract beyond merely calling the deployment command: record the healthy prior and promotion intent before switching, verify the exact candidate, preserve interrupted monitoring and exact rollback proof, and refuse to overwrite a newer unrelated revision. Reconcile promotion ownership and any active target work before transfer.
+
+### Release bridge host grants (owner-installed)
+
+The owner installs the bridge's SSH forced command (`ops/vps-release-bridge.ts`). Before re-pinning its driver at or after ai.ubq.fi 6c3afe42 (ubiquity/ai.ubq.fi#1162, after #1155), add these driver grants to the forced command's `deno run` flags (sentinel#162). They are recorded in `VPS_RELEASE_BRIDGE_DRIVER_GRANTS` and `vpsReleaseBridgeDriverDenoFlags` (`src/host/release-bridge-grants.ts`). `tests/host/vps-release-bridge-grants_test.ts` runs the exact upstream lock, checkpoint storage, journal runner and command runner under exactly these flags, and checks that each one is needed. They add to the bridge's own installation, state and network grants.
+
+- `--allow-sys=uid`. The deploy lock must be a mode `0600` file owned by `Deno.uid()`, so run the bridge as the uid that owns `<root>/.data/deploy.lock`. Without this grant, every locked driver operation and every metrics checkpoint load or save throws `NotCapable`.
+- `--allow-run`, unscoped. The driver runs its commands through `Deno.Command`, and the journal reader runs `/usr/bin/journalctl` through `node:child_process`.
+- `--allow-read=<root>` and `--allow-write=<root>/.data`. The release store checks `realpath(<root>)`, and the lock, journal, releases and `.data/sentinel-vps-metrics` live under `.data`.
+- `--allow-env=NODE_V8_COVERAGE`. Deno's `node:child_process` reads it even when the child has an explicit environment, so without it every journal read fails. Add `PATH` when release preparation uses the sparse command runner.
+- A Deno that has `FsFile.prototype.tryLockSync`. Upstream verified 2.9.7.
+
+Do not use `--allow-all`. At ai.ubq.fi `development` 3393df1, the Deno lock opens a `/dev/fd/<n>` alias. Deno 2.9.8 allows that only under `--allow-all`, so a pin at that revision cannot take the lock under these grants.
+
+The capabilities host must not carry a `platform` substitute; the bridge refuses one, so the command and journal runners are always the pinned tree's own (sentinel#161). Install one `telemetry.retention` for every bridge that shares `<root>/.data/sentinel-vps-metrics`, because each checkpoint save prunes that directory by its `evidenceMaxAgeMs`. The bridge accepts the driver's default 10 s `stateReadMs`.
+
+Release preparation stays Bun-only through 6c3afe42. Until ubiquity/ai.ubq.fi#1178 item 1 ships a Deno-safe `preparePayload` and the capabilities host supplies it as `host.preparePayload`, the bridge can drive only candidates already prepared under `<root>/.data/releases/<sha>`. Keep `sentinel-release` disabled.
 
 ## Required target decisions and proof
 

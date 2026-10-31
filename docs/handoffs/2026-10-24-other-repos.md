@@ -73,6 +73,43 @@ closed ones.
 - Ten ai.ubq.fi PRs from forks (1284 to 1294) are open for issues 1281 to 1283.
   They are not Sentinel's.
 
+## Update 19:40 UTC: ai.ubq.fi open issues and what blocks each
+
+Ten ai.ubq.fi issues are open. #300 is closed: commit 0c120c11f6 fixed it on
+2026-09-22, and Sentinel's runs found nothing to change.
+
+| Issue      | State in Sentinel                                   | What it needs                                                                                                                                  |
+| ---------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1283       | Sentinel PR 1295 at `ci_pending`                    | Base evidence, see below. Its `rust-native` failure is `cargo fmt --check` in `rust/crates/gateway-admin/src/audit.rs`, a file the PR changed. |
+| 1214       | Sentinel PR 1256 at `ci_pending`                    | Base evidence, see below. `validate` and `portable` fail.                                                                                      |
+| 1249       | Sentinel PR 1257 parked at the review-round ceiling | A hand fix, or the owner's decision on the parked PR.                                                                                          |
+| 1281, 1282 | Parked: candidate edits `src/auth/` (reserved)      | Hand fix in `src/auth/passport.ts`.                                                                                                            |
+| 1210, 1211 | Parked: candidate edits `ops/gpg-dsh.sh` (reserved) | Hand fix.                                                                                                                                      |
+| 1182       | Parked: candidate edits `ops/gpg-dsh.sh` (reserved) | Hand fix, or a documented quiescence step.                                                                                                     |
+| 1176       | Parked on reserved docs/scripts                     | Item 1 is owner-only; items 2 to 4 are a test and doc edits.                                                                                   |
+| 1213       | Index of the four findings                          | Close it once 1210 and 1211 are closed; 1209 and 1212 are already closed.                                                                      |
+
+**Root cause of the two `ci_pending` PRs.** Gateway CI runs only on
+`pull_request: [closed]` and `workflow_dispatch`. A closed-PR run attaches its
+check runs to the PR head, not to the merge commit, so the ai.ubq.fi
+`development` tip (3393df1e78) has no check runs at all. Sentinel attributes a
+red head by comparing it with the same checks on the base. With none, every red
+ai.ubq.fi head is "unattributed", waits up to 6 hours and parks, and no CI fix
+can start.
+
+- Sentinel side (in progress in this session): the pre-merge dispatcher will
+  also dispatch Gateway CI once on `development` when a red head's base has no
+  run, so the base gets its own check runs.
+- ai.ubq.fi side (owner action, Sentinel #181): `scripts/test-scope.ts` grants
+  the complete check set to `pull_request`, `push` and `merge_group` events
+  only. Opted-in `workflow_dispatch` runs get the scoped set, so a head and its
+  base can run different jobs. Granting the complete set to dispatch runs with
+  `base_ref=development` and `sentinel_pr_author=ubiquity-sentinel[bot]` makes
+  the comparison like-for-like. The file is reserved for Sentinel, so this is a
+  hand edit.
+- Several contributors have open bounty PRs for 1281 to 1283 (1284 to 1298).
+  They are not Sentinel's.
+
 ## Limits
 
 - Never add branch protection rules or rulesets on Sentinel's repository.

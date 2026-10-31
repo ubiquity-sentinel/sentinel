@@ -52,6 +52,7 @@ import {
   blockedRecoveryBinding,
   blockedRecoveryMatchesProducer,
 } from "./matrix-blocked-candidate.ts";
+import { resolvedConflictCandidate } from "./matrix-conflict-candidate.ts";
 
 export function createActionsMatrixArtifactHttpTransport(
   fetchFn: FetchLikeV1 = globalThis.fetch as unknown as FetchLikeV1,
@@ -238,6 +239,19 @@ export function createActionsMatrixArtifactTransport(
                 task.id,
                 request.intentKey,
               );
+          const resolved = await resolvedConflictCandidate(
+            task,
+            snapshot.reservations,
+          );
+          const consumedConflict = resolved !== null &&
+            resolved.reservationId === request.reservationId &&
+            resolved.intentKey === request.intentKey &&
+            resolved.expectedBase === request.expectedBase &&
+            resolved.attempt === request.attempt &&
+            reservation.settledAt !== null &&
+            reservation.settledAt <= options.clock.now() + TOLERANCE &&
+            intent !== null &&
+            intent.startedAt <= options.clock.now() + TOLERANCE;
           if (
             reservation.taskId !== request.taskId ||
             !sameRepo(reservation.repository, request.repository) ||
@@ -255,12 +269,12 @@ export function createActionsMatrixArtifactTransport(
                     reservation.settledAt >= reservation.createdAt)))) ||
             !recoverable ||
             task.target.base !== request.expectedBase ||
-            (!implementing && !preserving) ||
-            intent?.key !== request.intentKey ||
-            request.intentKey !==
-              implementationIntentKey(request.reservationId) ||
-            intent.requestId !== request.reservationId ||
-            intent.observedBase !== request.expectedBase
+            (!implementing && !preserving && !consumedConflict) ||
+            (!consumedConflict && (intent?.key !== request.intentKey ||
+              request.intentKey !==
+                implementationIntentKey(request.reservationId) ||
+              intent.requestId !== request.reservationId ||
+              intent.observedBase !== request.expectedBase))
           ) refuse();
           requested.set(request.reservationId, request);
         }

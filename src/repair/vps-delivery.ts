@@ -1,13 +1,17 @@
 /** Exact gateway delivery binding shared by the repair and maintenance consumers. */
+import type { GitSha } from "../contracts/brands.ts";
 import { hasBlockingSeverity } from "../contracts/review-receipt.ts";
 import { canonicalStringify } from "../contracts/canonical.ts";
-import type { StateReadView } from "../contracts/ports.ts";
+import type { GitHubPort, StateReadView } from "../contracts/ports.ts";
 import {
   parseReleaseRequestV1,
   type ReleaseRequestV1,
 } from "../contracts/release.ts";
 import type { ReviewReceiptV1 } from "../contracts/review-receipt.ts";
-import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
+import type {
+  EvidenceRefV1,
+  RepositoryIdentityV1,
+} from "../contracts/shared.ts";
 import {
   parseReleaseStateSnapshotV1,
   type ReleaseStateSnapshotV1,
@@ -18,6 +22,11 @@ import {
   type VpsReleaseRecordV1,
 } from "../contracts/vps-release.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import {
+  type CarriedReleaseProverV1,
+  carriedReleaseReceipt,
+  proveCarriedRelease,
+} from "./carried-release.ts";
 import { closureIntentKey, releaseRequestId } from "./keys.ts";
 import {
   releaseRequestMatchesDelivery,
@@ -68,6 +77,41 @@ export async function gatewayRequestBindsDelivery(
   }
 }
 
+/**
+ * The carried variant of `gatewayRequestBindsDelivery` (Sentinel #152). The
+ * durable request of a carried merge names the completed, clean review of an
+ * EARLIER head H0 (on B0) of the same pull request and gives the merged
+ * refreshed head H1 on tip T as its source (`carriedReleaseReceipt`, by the
+ * caller's fixed reviewer). It binds only while the caller's existing patch
+ * proof, re-derived between H0/B0 and H1/T, holds (`proveCarriedRelease`); a
+ * receipt of the record's own head never binds here, so the exact binder
+ * keeps every other request.
+ */
+export async function carriedGatewayRequestBindsDelivery(
+  request: ReleaseRequestV1,
+  record: WorkRecordV1,
+  review: ReviewReceiptV1 | null,
+  carried: CarriedReleaseProverV1,
+  revision: string = request.revision,
+): Promise<boolean> {
+  try {
+    const parsed = parseReleaseRequestV1(request);
+    return isGatewayVpsRepository(record.repository) &&
+      record.repository.installationId > 0 &&
+      (record.nextStep === "delivery" || record.nextStep === "review") &&
+      parsed.revision === revision &&
+      parsed.id === await releaseRequestId(
+          record.repository,
+          parsed.revision,
+          parsed.source.pullRequest,
+        ) &&
+      carriedReleaseReceipt(parsed, record, review, carried.reviewer) &&
+      await proveCarriedRelease(record, review, carried) === "holds";
+  } catch {
+    return false;
+  }
+}
+
 /** A saved closure retry retains the original source/request tuple. */
 export function gatewayClosureIntentBindsRequest(
   record: WorkRecordV1,
@@ -102,6 +146,71 @@ export function gatewayReleaseDeferred(
 }
 
 /**
+ * The release path is disabled exactly while the release ref holds no VPS
+ * release record at all: the fact the launcher's closure pass reports as
+ * `release_path=disabled` (`queued` once any VPS record exists), derived from
+ * the same positively read release snapshot. Once a VPS record exists the
+ * release path is enabled for this decision, so VPS acceptance stays required.
+ */
+export function releasePathDisabled(
+  release: Pick<ReleaseStateSnapshotV1, "vpsReleases">,
+): boolean {
+  return (release.vpsReleases ?? []).length === 0;
+}
+
+/** Delivery evidence for a merged PR accepted while the release path is disabled. */
+export function mergeAcceptedReleaseDisabledRef(
+  pullRequest: number,
+  mergeSha: GitSha,
+): EvidenceRefV1 {
+  return {
+    kind: "review_receipt",
+    ref:
+      `artifact:delivery/merge-accepted-release-disabled/${pullRequest}/${mergeSha}`,
+  };
+}
+
+/**
+ * The exact fact that closes a release-disabled delivery (owner directive
+ * 2026-10-31, issue repairs end at merge): the PR is positively read as
+ * merged at the request's exact recorded merge revision, on the exact reviewed
+ * head. `refused` means the observed PR contradicts that identity and must
+ * keep waiting; `unavailable` means no such observation was made and the
+ * record is retried later. Neither ever completes the record.
+ */
+export type MergeAcceptedObservationV1 =
+  | { kind: "accepted"; mergeSha: GitSha }
+  | { kind: "refused" }
+  | { kind: "unavailable" };
+
+export async function observeMergeAcceptedDelivery(
+  github: Pick<GitHubPort, "readPullRequest">,
+  record: WorkRecordV1,
+  request: ReleaseRequestV1,
+): Promise<MergeAcceptedObservationV1> {
+  const pullRequest = record.target.pr;
+  const head = record.target.head;
+  if (pullRequest === null || head === null) return { kind: "refused" };
+  let read;
+  try {
+    read = await github.readPullRequest(pullRequest);
+  } catch {
+    return { kind: "unavailable" };
+  }
+  if (!read.ok) return { kind: "unavailable" };
+  const pull = read.value;
+  if (pull === null) return { kind: "unavailable" };
+  if (pull.state !== "merged" || pull.mergeSha === null) {
+    return { kind: "refused" };
+  }
+  if (
+    pull.number !== pullRequest || pull.head !== head ||
+    pull.mergeSha !== request.revision
+  ) return { kind: "refused" };
+  return { kind: "accepted", mergeSha: pull.mergeSha };
+}
+
+/**
  * The one stable runtime shape of a deferred release: a Gateway record at
  * `delivery` holding an open-ended `unavailable` wait. Selection skips it
  * (`isWaiting`), so it costs no step and no write; the runtime's once-per-run
@@ -126,14 +235,27 @@ export type GatewayVpsAcceptanceV1 =
  * Strict r12 parsing preserves candidate/prior/driver/controller, health,
  * telemetry, inference and native settlement provenance; no caller boolean,
  * Deno/hosted receipt or newer descendant revision substitutes for that tuple.
+ * With `carried` (Sentinel #152), a carried request binds through
+ * `carriedGatewayRequestBindsDelivery` instead (its patch proof re-derived);
+ * without it, and for every request the exact binder binds, nothing changes.
  */
 export async function observeGatewayVpsDelivery(
   state: Pick<StateReadView, "readRelease">,
   record: WorkRecordV1,
   request: ReleaseRequestV1,
   review: ReviewReceiptV1 | null,
+  carried?: CarriedReleaseProverV1,
 ): Promise<GatewayVpsAcceptanceV1> {
-  if (!await gatewayRequestBindsDelivery(request, record, review)) {
+  if (
+    !await gatewayRequestBindsDelivery(request, record, review) &&
+    (carried === undefined ||
+      !await carriedGatewayRequestBindsDelivery(
+        request,
+        record,
+        review,
+        carried,
+      ))
+  ) {
     return { kind: "wait" };
   }
   if (request.status === "cancelled" || request.status === "failed") {

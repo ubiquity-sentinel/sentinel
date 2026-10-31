@@ -3,6 +3,7 @@ import {
   CI_TEST_SHARDS,
   discoverCiTests,
   planCiTestShards,
+  planCiTestWorkers,
 } from "../../ops/ci-shards.ts";
 
 Deno.test("CI shards cover every discovered test exactly once, including model and future directories", async () => {
@@ -40,5 +41,26 @@ Deno.test("CI host thirds balance measured file cost independently of discovery 
   assert.throws(
     () => planCiTestShards([files[0]], { [files[0]]: NaN }),
     /timing/,
+  );
+});
+Deno.test("CI workers cover a shard once and balance measured work", () => {
+  const files = [19, 18, 17, 3, 2, 1].map((_, index) =>
+    `tests/host/worker-${index}_test.ts`
+  );
+  const weights = Object.fromEntries(
+    files.map((file, index) => [file, [19, 18, 17, 3, 2, 1][index]]),
+  );
+  const groups = planCiTestWorkers(files, 3, weights);
+  assert.deepEqual(groups.flat().sort(), [...files].sort());
+  assert.equal(groups.length, 3);
+  const loads = groups.map((group) =>
+    group.reduce((sum, file) => sum + weights[file], 0)
+  );
+  assert.deepEqual(loads, [20, 20, 20]);
+  assert.deepEqual(planCiTestWorkers([...files].reverse(), 3, weights), groups);
+  assert.throws(() => planCiTestWorkers(files, 0, weights), /worker count/);
+  assert.throws(
+    () => planCiTestWorkers([files[0], files[0]], 2, weights),
+    /duplicate/,
   );
 });

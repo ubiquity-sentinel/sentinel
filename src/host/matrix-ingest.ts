@@ -6,6 +6,7 @@ import {
   type MatrixPlanV1,
 } from "../contracts/matrix.ts";
 import { candidateBranch, candidatePreservationRef } from "../repair/keys.ts";
+import { resolvedConflictResolution } from "../repair/conflict-resolution.ts";
 import {
   createRunBounds,
   handleModelReceipt,
@@ -30,6 +31,10 @@ import {
   resultMatchesCell,
   settlementClassification,
 } from "./matrix-ingest-state.ts";
+import {
+  replayAccountedNoChange,
+  replayConsumedConflict,
+} from "./matrix-ingest-replay.ts";
 
 export type MatrixIngestDispositionV1 =
   | "ingested"
@@ -203,6 +208,21 @@ export async function ingestMatrixResults(
     // conflict intent for the timeout reset below.
     let receiptHead: GitSha | null = null;
     const intent = record.intent;
+    const resolved = resolvedConflictResolution(intent);
+    const consumedConflict = await replayConsumedConflict(
+      cell,
+      result,
+      record,
+      reservation,
+      context,
+      intent,
+      resolved,
+      options,
+    );
+    if (consumedConflict !== null) {
+      entries.push({ cellId: cell.cellId, ...consumedConflict });
+      continue;
+    }
     if (
       intent?.kind === "candidate_preservation" &&
       intent.requestId === cell.reservationId &&
@@ -283,6 +303,22 @@ export async function ingestMatrixResults(
         disposition: "duplicate",
         detail: "implementation intent already consumed",
       });
+      continue;
+    }
+    const accountedNoChange = await replayAccountedNoChange(
+      deps,
+      bounds,
+      context,
+      plan,
+      cell,
+      result,
+      record,
+      reservation,
+      intent,
+      receiptHead,
+    );
+    if (accountedNoChange !== null) {
+      entries.push({ cellId: cell.cellId, ...accountedNoChange });
       continue;
     }
     let step: StepResultV1;

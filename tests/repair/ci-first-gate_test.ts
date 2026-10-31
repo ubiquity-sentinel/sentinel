@@ -146,10 +146,10 @@ for (
       assert.equal(work.nextStep, "work");
       assert.equal(work.wait?.reason, "ci_pending");
       const since = work.wait!.since;
-      assert.equal(work.wait!.until, since + 5 * 60_000);
+      assert.equal(work.wait!.until, since + 2 * 60_000);
       assert.equal(rig.github.calls.includes("requestReview"), false);
       // A later poll keeps the original start of the wait.
-      rig.clock.advance(5 * 60_000 + 1);
+      rig.clock.advance(2 * 60_000 + 1);
       await rig.run();
       work = taskRecord(await rig.snapshot());
       assert.equal(work.wait?.reason, "ci_pending");
@@ -415,7 +415,7 @@ Deno.test("CI first: a head waiting on a cancelled base is refreshed uncharged o
 });
 
 for (const hosted of [false, true]) {
-  Deno.test(`CI first: three spent CI fixes park the red head for good (${hosted ? "hosted" : "in process"})`, async () => {
+  Deno.test(`CI first: a fourth fix proceeds past three spent fixes (${hosted ? "hosted" : "in process"})`, async () => {
     const { rig, charges } = await ciFirstRig(`cf-exhausted-${hosted}`, {
       hosted,
       retries: 3,
@@ -426,15 +426,26 @@ for (const hosted of [false, true]) {
       await rig.run();
       const after = await rig.snapshot();
       const work = taskRecord(after);
-      assert.equal(work.nextStep, "blocked");
+      assert.notEqual(work.nextStep, "blocked");
       assert.equal(
-        work.blocker?.message,
-        "CI fix attempts exhausted (3 of 3): validate(failure)",
+        (work.blocker?.message ?? "").startsWith(
+          "CI fix attempts exhausted (3 of 3): ",
+        ),
+        false,
+        "the retired cap never parks",
       );
-      assert.equal(rig.model.requests.length, 0, "no fourth fix");
-      assert.equal(rig.github.calls.includes("requestReview"), false);
-      assert.deepEqual(after.reservations, charges, "nothing charged");
-      assert.equal(modelCharges(after).length, 4);
+      if (hosted) {
+        // A hosted run hands the fix to its matrix cell rather than starting
+        // the model in-process; the record carries the zero-length marker.
+        assert.equal(rig.model.requests.length, 0);
+        assert.equal(work.counters.retries, 3);
+        assert.ok(isCiFixMarker(work.wait), JSON.stringify(work.wait));
+      } else {
+        assert.equal(rig.model.requests.length, 1, "a fourth fix is admitted");
+        assert.equal(work.counters.retries, 4);
+        assert.equal(modelCharges(after).length, 5);
+        assert.ok(after.reservations.length > charges.length);
+      }
     } finally {
       await rig.ctx.cleanup();
     }

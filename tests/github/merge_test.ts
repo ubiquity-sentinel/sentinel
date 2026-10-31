@@ -38,6 +38,7 @@ import {
 import { asFindingFingerprint } from "../../src/contracts/brands.ts";
 import { canonicalStringifySha256 } from "../../src/contracts/canonical.ts";
 import {
+  baseTipRead,
   blockedReason,
   checksRead,
   CLEAN_COMPLETION,
@@ -49,6 +50,7 @@ import {
   happyScript,
   mergeCall,
   mergedPort,
+  mergeParentsRead,
   mergeRequest,
   pullEntry,
   putCount,
@@ -120,6 +122,8 @@ Deno.test("mergePullRequest: a published closing link requires the exact bound t
       repeat: true,
     },
     ...issueEntries,
+    baseTipRead(),
+    mergeParentsRead(),
     ...(put
       ? [
         httpRespond(
@@ -288,6 +292,7 @@ Deno.test("mergePullRequest: already-merged PR reconciles to the exact merge ide
       merged_at: "2026-09-07T02:00:00Z",
       merge_commit_sha: SHA3,
     }),
+    mergeParentsRead(),
   ]);
   const result = await port.mergePullRequest(mergeRequest());
   assert.ok(result.ok);
@@ -376,6 +381,8 @@ Deno.test("mergePullRequest: unresolved P1 findings never block the exact-head m
       commentsRead([]),
       ...rulesRead(),
       ...checksRead(),
+      baseTipRead(),
+      mergeParentsRead(),
       httpRespond(
         "PUT",
         "/repos/ubiquity-sentinel/sentinel/pulls/1/merge",
@@ -587,6 +594,8 @@ Deno.test(
           ),
           repeat: true,
         },
+        baseTipRead(),
+        mergeParentsRead(),
         httpRespond(
           "PUT",
           "/repos/ubiquity-sentinel/sentinel/pulls/1/merge",
@@ -788,6 +797,8 @@ Deno.test("mergePullRequest: human resolution requires the trusted authenticated
     clock: CLOCK,
     script: [
       ...evidenceScript,
+      baseTipRead(),
+      mergeParentsRead(),
       httpRespond(
         "PUT",
         "/repos/ubiquity-sentinel/sentinel/pulls/1/merge",

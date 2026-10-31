@@ -3,6 +3,7 @@ import { asCommandId } from "../contracts/brands.ts";
 import { parseCommandRegistryV1 } from "../contracts/command-registry.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
+import { isPassportWorkTrial } from "../repair/passport-work-trial.ts";
 
 type TargetPolicyV1 = Pick<
   RepositoryConfigV1,
@@ -63,29 +64,21 @@ const GATEWAY_PROTECTED_PATHS = [
 
 const PASSPORT_PROTECTED_PATHS = [
   ".env",
+  // act configuration files the backup CI leg must never read from the
+  // target tree (docs/backup-ci-spec.md §13, A1).
+  ".actrc",
+  ".secrets",
+  ".vars",
+  ".input",
   ".npmrc",
-  "AGENTS.md",
-  "docs/DECISIONS.md",
-  "docs/CLOUDFLARE.md",
+  ".git/",
   ".github/workflows/",
-  "package.json",
-  "bun.lock",
-  "bunfig.toml",
-  "deno.json",
-  "deno.lock",
-  "tsconfig.json",
-  "tsconfig.worker.json",
-  "wrangler.jsonc",
-  "worker-configuration.d.ts",
-  "scripts/",
-  "kv-service/",
 ] as const;
 
 export function isPassportTarget(
-  repository: Pick<RepositoryIdentityV1, "owner" | "name">,
+  repository: Pick<RepositoryIdentityV1, "owner" | "name"> | undefined,
 ): boolean {
-  return repository.owner.toLowerCase() === "ubiquity" &&
-    repository.name.toLowerCase() === "passport.ubq.fi";
+  return isPassportWorkTrial(repository);
 }
 
 /** How a target's own CI workflow is asked to test a Sentinel pull request. */
@@ -150,9 +143,8 @@ export function selectTrustedTargetPolicyV1(
           },
         },
       }),
-      protectedPaths: [
-        ...new Set([...template.protectedPaths, ...PASSPORT_PROTECTED_PATHS]),
-      ],
+      // The trial permits ordinary product files, including inherited bans.
+      protectedPaths: [...PASSPORT_PROTECTED_PATHS],
     };
   }
   if (

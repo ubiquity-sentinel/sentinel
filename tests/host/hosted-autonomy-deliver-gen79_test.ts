@@ -422,6 +422,7 @@ Deno.test({
       for (const [index, candidate] of [live, hostile].entries()) {
         const issue = renderFollowUpIssue({
           candidate,
+          finding: candidate.findings[0],
           mergeRevision: request.revision,
           depth: index + 1,
         })!;

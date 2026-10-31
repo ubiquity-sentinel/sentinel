@@ -14,7 +14,11 @@ import { needsHostedLegacyStateView } from "../../src/host/hosted-runtime-rollba
 import { parseReleaseStateSnapshotV1 as parseLegacyRelease } from "../fixtures/runtime-1838df31/state-snapshots.ts";
 import { pushRawTree, testGitEnv } from "../state/helpers.ts";
 import { childLine, exited, hostedEnv } from "./hosted-runtime-fixture.ts";
-import { requireRun, runProof } from "./actions-supervisor-fixture.ts";
+import {
+  requireRun,
+  runProof,
+  startedFailureProof,
+} from "./actions-supervisor-fixture.ts";
 import {
   LEGACY_RUNTIME,
   liveInstallRig,
@@ -240,7 +244,7 @@ Deno.test("legacy execution recovery: historical degraded admission cannot veto 
     const repairBefore = await rig.repair.readRepair();
     const bootstrap = requireRun(await rig.prepare(1));
     rig.clock.advance(5000);
-    rig.evidence.settlements.set(bootstrap.id, runProof(bootstrap, "failed"));
+    rig.evidence.settlements.set(bootstrap.id, startedFailureProof(bootstrap));
     assert.equal((await rig.finalize(1)).status, "idle");
     const rollback = requireRun(await rig.prepare(2));
     assert.equal(rollback.purpose, "bootstrap");

@@ -1,4 +1,5 @@
 import type { HttpTransportV1 } from "../github/http.ts";
+import { HOSTED_CONTROLLER_DEPLOYMENT } from "../contracts/hosted-controller-deployment.ts";
 import {
   activeSupervisorRuns,
   FOLLOW_DEVELOPMENT_REF,
@@ -17,7 +18,10 @@ import {
   readFollowCi,
   recheckFollowCi,
 } from "./hosted-runtime-follow-ci.ts";
-import { readFollowState } from "./hosted-runtime-follow-state.ts";
+import {
+  type FollowExecution,
+  readFollowState,
+} from "./hosted-runtime-follow-state.ts";
 
 export interface HostedRuntimeFollowJournal {
   observedDevelopmentSha: string | null;
@@ -29,6 +33,8 @@ export interface HostedRuntimeFollowJournal {
   checkName: string;
   decision: "advanced" | "unchanged" | "dry_run" | "deferred" | "failed";
   reason: string;
+  /** Set only when a completed recorded execution no longer blocks the follow. */
+  staleExecution?: { runId: number; runAttempt: number };
 }
 
 export interface HostedRuntimeFollowResult {
@@ -89,7 +95,16 @@ export async function runHostedRuntimeFollow(
     safeToDispatch = true;
     const state = await readFollowState(api);
     journal.installedRevision = state.installedRevision;
-    if (state.executionInFlight) throw new FollowError("execution_in_flight");
+    if (state.executionInFlight) {
+      if (
+        state.execution === null ||
+        !await completedExecutionRun(api, state.execution)
+      ) throw new FollowError("execution_in_flight");
+      journal.staleExecution = {
+        runId: state.execution.runId,
+        runAttempt: state.execution.runAttempt,
+      };
+    }
     if (state.installationUnresolved) {
       throw new FollowError("installation_unresolved");
     }
@@ -103,6 +118,11 @@ export async function runHostedRuntimeFollow(
       deps.maxDepth ?? 400,
     );
     let selected: FollowCiProof | null = null;
+    // A candidate whose workflow files differ from the launcher's needs a
+    // workflow-capable owner push: skip it (an older candidate may still
+    // qualify) and defer, never attempt a ref write GitHub refuses.
+    let launcherWorkflows: string | null | undefined;
+    let workflowChanged = false;
     for (const candidate of chain) {
       if (candidate === launcherSha || state.failedRevisions.has(candidate)) {
         continue;
@@ -112,6 +132,13 @@ export async function runHostedRuntimeFollow(
         proof === null ||
         !await api.ancestor(state.installedRevision, candidate)
       ) continue;
+      if (launcherWorkflows === undefined) {
+        launcherWorkflows = await api.workflowsTree(launcherSha);
+      }
+      if (await api.workflowsTree(candidate) !== launcherWorkflows) {
+        workflowChanged = true;
+        continue;
+      }
       journal.candidateSha = candidate;
       journal.ciRunId = proof.runId;
       journal.ciAttempt = proof.attempt;
@@ -122,6 +149,8 @@ export async function runHostedRuntimeFollow(
       journal.decision = chain.length === 1 ? "unchanged" : "deferred";
       journal.reason = chain.length === 1
         ? "launcher_current"
+        : workflowChanged
+        ? "workflow_change_needs_owner_advance"
         : "no_eligible_candidate";
     } else if (deps.flag !== "on") {
       journal.decision = "dry_run";
@@ -185,6 +214,28 @@ export async function runHostedRuntimeFollow(
     safeToDispatch,
     exitCode: journal.decision === "failed" ? 1 : 0,
   };
+}
+
+/**
+ * True only for the exact recorded run: it must still exist, be completed at
+ * the recorded attempt, dispatch from the recorded launcher SHA and be the
+ * supervisor workflow. Anything else keeps today's refusal (fail closed).
+ */
+async function completedExecutionRun(
+  api: HostedRuntimeFollowApi,
+  execution: FollowExecution,
+): Promise<boolean> {
+  let run: Record<string, unknown>;
+  try {
+    run = record(await api.get(`/actions/runs/${execution.runId}`));
+  } catch {
+    return false;
+  }
+  return run.id === execution.runId &&
+    run.status === "completed" &&
+    run.run_attempt === execution.runAttempt &&
+    run.head_sha === execution.launcherSha &&
+    run.path === HOSTED_CONTROLLER_DEPLOYMENT.supervisorWorkflowPath;
 }
 
 /** The captured chain is a total ancestry order; its first green member is maximal. */

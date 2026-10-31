@@ -1,4 +1,5 @@
 import type { ClosedCWaveRecoveryDepsV1 } from "../src/host/modern-matrix-recovery.ts";
+import type { GitSha } from "../src/contracts/brands.ts";
 import type { runMatrixUncertaintyMaintenance } from "../src/host/matrix-uncertainty-maintenance.ts";
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import type { ReviewTaskStatementV1 } from "../src/contracts/review-receipt.ts";
@@ -77,6 +78,13 @@ export interface HostedAutonomyPullV1 {
   mergeable?: boolean | null;
 }
 
+/** Fresh pull status only; never a merged-delivery or ancestry proof. */
+export interface HostedAutonomyPullStatusV1 {
+  readonly number: number;
+  readonly state: "open" | "closed";
+  readonly merged: boolean;
+}
+
 /**
  * One pull request whose head is EXACTLY a branch of the same repository (no
  * fork), as listed by head ref. Only the identity facts the base-refresh
@@ -98,6 +106,12 @@ export interface HostedAutonomyHeadPullV1 {
  * `createdAt` is the run's first-attempt creation time (GitHub's `created_at`,
  * epoch milliseconds), where GitHub's re-run window starts; null when GitHub
  * did not report it as a strict UTC timestamp (an unknown age).
+ *
+ * The optional fields serve only the CI resume pass
+ * (`hosted-autonomy-ci-resume.ts`); absent or null is unknown, which never
+ * re-runs anything: `updatedAt` (GitHub's `updated_at`, for a completed run
+ * the completion of its latest attempt), `attemptStartedAt` (`run_started_at`,
+ * the latest attempt's start) and `workflowId` (`workflow_id`).
  */
 export interface HostedAutonomyHeadRunV1 {
   id: number;
@@ -106,6 +120,9 @@ export interface HostedAutonomyHeadRunV1 {
   conclusion: string | null;
   runAttempt: number;
   createdAt: number | null;
+  updatedAt?: number | null;
+  attemptStartedAt?: number | null;
+  workflowId?: number | null;
 }
 
 export interface HostedAutonomyGitHubV1 {
@@ -144,6 +161,27 @@ export interface HostedAutonomyGitHubV1 {
    */
   hasAllChecksGreen(head: string, base?: string): Promise<boolean | null>;
   /**
+   * Base-repair read: the names of the check runs on the exact commit whose
+   * latest run of that name completed with one of `conclusions`, leaving out
+   * a GitHub Actions run whose job never started (no step, no runner: a
+   * billing or spending-limit stop; bounded job reads, an unreadable job
+   * keeps its failure). Empty when none did, null when the complete listing
+   * cannot be read. Optional: a surface without it files no base-repair
+   * issue.
+   */
+  failedChecks?(
+    commit: string,
+    conclusions: readonly string[],
+  ): Promise<string[] | null>;
+  /**
+   * CI resume read: true when the latest attempt of completed workflow run
+   * `id` on `head` failed only through jobs that never started (at least one
+   * failed job, each with no step and no runner), false when a failed job
+   * ran, null when its job listing cannot be read completely and bound to
+   * that run and head. Optional: a surface without it resumes nothing.
+   */
+  runNeverStarted?(id: number, head: string): Promise<boolean | null>;
+  /**
    * `baseBranch` is the branch the merge must be integrated into; a merged
    * pull whose integration cannot be verified without it reads as null.
    */
@@ -151,6 +189,14 @@ export interface HostedAutonomyGitHubV1 {
     number: number,
     baseBranch: string | null,
   ): Promise<HostedAutonomyPullV1 | null>;
+  /**
+   * Exact current pull status for retirement only. No ancestry is read or
+   * authorized. Malformed or unavailable evidence cannot retire. A surface
+   * without this capability retains its existing full-reader path.
+   */
+  readPullStatus?(
+    number: number,
+  ): Promise<HostedAutonomyPullStatusV1 | null>;
   /**
    * Every pull request (any state) whose head is exactly `branch` of THIS
    * repository, or null when that listing cannot be read and proven complete.
@@ -257,6 +303,46 @@ export interface HostedAutonomyGitHubV1 {
    * repository for review follow-ups. Absent means no follow-up is filed.
    */
   followUpIssues?: HostedFollowUpIssuesV1;
+
+  /**
+   * Optional trusted launcher capability: list the App's issues and file a
+   * base-repair issue in THIS repository. Absent means none is filed.
+   */
+  baseRepairIssues?: HostedBaseRepairIssuesV1;
+
+  /**
+   * Optional trusted launcher capability: the owner's `sentinel:retry` label
+   * on THIS repository's issues (`ops/hosted-autonomy-retry-label.ts`).
+   * Absent means no label exit is read or taken.
+   */
+  retryLabel?: HostedRetryLabelV1;
+  /** Sentinel's own CI-outage tracker (used on the self scope only). */
+  ciOutageTracker?:
+    import("./hosted-autonomy-outage-observation.ts").OutageTrackerV1;
+  /**
+   * The start class of one target tip's complete check listing (never
+   * started, started, undetermined), or null when it cannot be read.
+   */
+  classifyTipStart?(
+    tip: string,
+  ): Promise<
+    import("./hosted-autonomy-outage-observation.ts").OutageTipStartV1 | null
+  >;
+}
+
+/** The owner's one-label re-admission handle (redesign 2026-10-25, C6). */
+export interface HostedRetryLabelV1 {
+  /**
+   * Numbers of THIS repository's OPEN issues (never pull requests) that carry
+   * the `sentinel:retry` label, from one complete bounded listing; null when
+   * the listing cannot be proven complete and well formed.
+   */
+  listOpenRetryLabeled(): Promise<ReadonlySet<number> | null>;
+  /**
+   * Remove `sentinel:retry` from one issue: true only when GitHub accepted
+   * the removal and its answer (the remaining labels) no longer carries it.
+   */
+  removeRetryLabel(number: number): Promise<boolean>;
 }
 
 /** One issue or pull request of a created-since listing. */
@@ -270,6 +356,33 @@ export interface HostedIssueListingItemV1 {
   pullRequest: boolean;
   /** The body's first line (LF or CRLF), empty for an empty body. */
   firstLine: string;
+}
+
+/** One issue or pull request the sentinel App created. */
+export interface HostedAppIssueV1 {
+  number: number;
+  state: "open" | "closed";
+  /** True for a pull request (the issues listing returns both). */
+  pullRequest: boolean;
+  /** The body's first line (LF or CRLF), empty for an empty body. */
+  firstLine: string;
+}
+
+/** Launcher-only base-repair issues of ONE repository (the App token). */
+export interface HostedBaseRepairIssuesV1 {
+  /**
+   * Every issue and pull request of this repository the sentinel App
+   * created, open or closed, from one complete bounded listing; null when it
+   * cannot be proven complete, App-created and bound to this repository.
+   */
+  listAppAuthored(): Promise<readonly HostedAppIssueV1[] | null>;
+  /**
+   * Create one issue with exactly this title and body and no label: its
+   * number only when GitHub's answer is this repository's App-created issue
+   * echoing the exact text; otherwise null (the create may still have
+   * happened).
+   */
+  create(input: { title: string; body: string }): Promise<number | null>;
 }
 
 /** The creator and first body line of one existing issue (never a PR). */
@@ -339,7 +452,9 @@ export interface HostedSelfObservationV1 {
     input: { jobId: number; maxBytes: number },
   ): Promise<string | null>;
   listOpenIssueBodies(): Promise<string[] | null>;
-  fileIssue(input: { title: string; body: string }): Promise<number | null>;
+  fileIssue(
+    input: { title: string; body: string; labels?: string[] },
+  ): Promise<number | null>;
 }
 
 /**
@@ -368,6 +483,9 @@ export interface HostedAutonomyDepsV1 {
     import("./hosted-autonomy-queue-context.ts").HostedQueueCustodyContext;
   onQueueCustodyReady?(ready: boolean): void | Promise<void>;
   state: StateReadView & RepairStateWriter;
+  /** Trusted derived discovery only, never work/charge/settlement authority. */
+  currentMatrixIndex?:
+    import("../src/contracts/maintenance-index.ts").CurrentMatrixIndexPortV1;
   /**
    * Resolve the GitHub surface for one exact repository identity. A null (or
    * throwing) resolver is an unreadable surface: the affected record is
@@ -415,6 +533,8 @@ export interface HostedAutonomyDepsV1 {
    * HOSTED_AUTONOMY_ACCEPTANCE_CORRECTION_RUNTIMES.
    */
   acceptanceCorrectionRuntimes?: ReadonlySet<string>;
+  /** Clean native-verified executing source; stamped only by protected main. */
+  acceptanceCorrectionSourceRevision?: GitSha;
   /**
    * `repeatFailureRouteIdentity` of the non-secret model-route selector this
    * maintenance job was handed; a change re-arms a repeat-failure park.

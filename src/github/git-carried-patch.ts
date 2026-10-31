@@ -14,10 +14,15 @@
  * - each patch is `git diff` between that merge base and the head with every
  *   rendering choice fixed (`--binary --full-index --no-renames`, no external
  *   diff or textconv, no color, fixed prefixes, algorithm, submodule format
- *   and quoting), read as raw bytes (binary-safe) and hashed with SHA-256.
- *   `--full-index` puts both full blob ids of every changed path on its index
- *   line, so equal bytes mean equal old and new contents, equal modes, equal
- *   renames (as a delete and an add) and equal binary payloads.
+ *   and quoting), read as raw bytes (binary-safe) and hashed with SHA-256
+ *   together with the side's raw listing (`git diff --raw --no-abbrev -z
+ *   --no-renames`). `--full-index` puts both full blob ids of a content change
+ *   on its index line, but a mode-only change prints no index line (#156): the
+ *   raw listing names both modes and both full blob ids of EVERY changed path,
+ *   so equal digests mean equal old and new contents, equal modes, equal
+ *   renames (as a delete and an add) and equal binary payloads, the same
+ *   (path, old mode, old blob, new mode, new blob) sets the launcher compares
+ *   from GitHub's Git trees.
  *
  * The proof also names the refreshed head's first parent (the head the
  * refresh merged the tip into) and counts the first-parent commits from the
@@ -133,16 +138,37 @@ async function uniqueMergeBase(
   return portOk(bases[0] as GitSha);
 }
 
-/** SHA-256 (lowercase hex) of the exact merge-base patch bytes. */
-export async function patchDigest(
+/**
+ * Fixed raw listing of every changed path (#156): both modes and both full
+ * blob ids, NUL-terminated, so a mode-only change, which prints no index line
+ * in the patch, still binds the content it applies to.
+ */
+const RAW_ARGS = [
+  "-c",
+  "core.quotePath=true",
+  "-c",
+  "diff.relative=false",
+  "-c",
+  "diff.renames=false",
+  "diff",
+  "--no-ext-diff",
+  "--no-textconv",
+  "--no-color",
+  "--raw",
+  "--no-abbrev",
+  "-z",
+  "--no-renames",
+  "--ignore-submodules=none",
+] as const;
+
+/** The exact bytes of one fixed diff rendering, bounded. */
+async function diffBytes(
   run: CarriedPatchGitRunV1,
+  args: readonly string[],
   from: GitSha,
   to: GitSha,
-): Promise<PortResultV1<string>> {
-  const result = await run(
-    [...PATCH_ARGS, from, to, "--"],
-    CARRIED_PATCH_MAX_BYTES,
-  );
+): Promise<PortResultV1<Uint8Array>> {
+  const result = await run([...args, from, to, "--"], CARRIED_PATCH_MAX_BYTES);
   if (!result.ok) {
     return result.timeout === true || result.overflow === true
       ? portError("unavailable", STATIC_BOUND)
@@ -150,15 +176,31 @@ export async function patchDigest(
   }
   const bytes = result.stdoutBytes;
   if (bytes === undefined) return portError("unavailable", STATIC_PATCH);
-  const digest = new Uint8Array(
-    await crypto.subtle.digest(
-      "SHA-256",
-      bytes.buffer.slice(
-        bytes.byteOffset,
-        bytes.byteOffset + bytes.byteLength,
-      ) as ArrayBuffer,
-    ),
+  return portOk(bytes);
+}
+
+/**
+ * SHA-256 (lowercase hex) of one side's exact merge-base change: the decimal
+ * byte length of its raw listing and a newline, that listing, then the patch
+ * bytes (the length makes the boundary unambiguous).
+ */
+export async function patchDigest(
+  run: CarriedPatchGitRunV1,
+  from: GitSha,
+  to: GitSha,
+): Promise<PortResultV1<string>> {
+  const raw = await diffBytes(run, RAW_ARGS, from, to);
+  if (!raw.ok) return raw;
+  const patch = await diffBytes(run, PATCH_ARGS, from, to);
+  if (!patch.ok) return patch;
+  const header = new TextEncoder().encode(`${raw.value.byteLength}\n`);
+  const input = new Uint8Array(
+    header.byteLength + raw.value.byteLength + patch.value.byteLength,
   );
+  input.set(header, 0);
+  input.set(raw.value, header.byteLength);
+  input.set(patch.value, header.byteLength + raw.value.byteLength);
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", input));
   return portOk(
     Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join(""),
   );

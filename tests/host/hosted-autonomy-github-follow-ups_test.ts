@@ -16,7 +16,6 @@ import { createHostedAutonomyGitHub } from "../../ops/hosted-autonomy-github.ts"
 import { parseHostedAutonomyPull } from "../../ops/hosted-autonomy-github-pull.ts";
 import {
   FOLLOW_UP_MAX_BODY_CHARS,
-  FOLLOW_UP_MAX_FINDINGS,
   followUpMarker,
   parseFollowUpMarker,
   planFollowUpCandidates,
@@ -402,7 +401,7 @@ function finding(
   };
 }
 
-Deno.test("follow-up render: bounded body, deterministic overflow, only open P1/P2/P3", () => {
+Deno.test("follow-up render: one bounded issue per open P1/P2/P3 finding", () => {
   const many = Array.from({ length: 25 }, (_, index) =>
     finding(
       index,
@@ -411,87 +410,99 @@ Deno.test("follow-up render: bounded body, deterministic overflow, only open P1/
         index + 3
       }`,
     ));
-  const issue = renderFollowUpIssue({
-    candidate: candidateWith(many),
-    mergeRevision: "8a99ecbeaf8fd5f845fd6be034e284dd370f332c",
-    depth: 1,
-  })!;
-  assert.ok(
-    issue.body.length <= FOLLOW_UP_MAX_BODY_CHARS,
-    `${issue.body.length}`,
+  const candidate = candidateWith(many);
+  const revision = "8a99ecbeaf8fd5f845fd6be034e284dd370f332c";
+  const issues = candidate.findings.map((item) =>
+    renderFollowUpIssue({
+      candidate,
+      finding: item,
+      mergeRevision: revision,
+      depth: 1,
+    })!
   );
-  assert.ok(issue.listed > 0 && issue.listed < FOLLOW_UP_MAX_FINDINGS);
-  assert.equal(issue.listed + issue.omitted, 25);
-  assert.ok(
-    issue.body.includes(
-      `\n${issue.omitted} more findings are recorded only in review receipt`,
-    ),
-  );
-  assert.equal(
-    issue.title,
-    "Review follow-ups from #1052: 25 P1/P2/P3 findings",
-  );
-  // Every P2 is listed before any P3, in a stable order.
-  const severities = [...issue.body.matchAll(/^### \d+\. (P[23]) at /gm)].map((
-    m,
-  ) => m[1]);
-  assert.deepEqual(severities, [...severities].sort());
-  assert.ok(issue.body.includes("[truncated]"));
+  assert.equal(issues.length, 25);
+  assert.equal(new Set(issues.map((issue) => issue.findingKey)).size, 25);
+  for (const [index, issue] of issues.entries()) {
+    assert.ok(issue.body.length <= FOLLOW_UP_MAX_BODY_CHARS);
+    assert.ok(issue.title.length <= 120);
+    assert.equal(issue.listed, 1);
+    assert.equal(issue.omitted, 0);
+    assert.ok(issue.title.startsWith(`[P${index % 2 === 0 ? "3" : "2"}] t`));
+    assert.ok(
+      issue.title.includes(`(src/f${index}.ts:${index + 1}-${index + 3})`),
+    );
+    assert.ok(issue.body.includes(`finding=${issue.findingKey} `));
+    assert.ok(issue.body.includes("~~~text"));
+    assert.ok(!issue.body.includes("more findings"));
+  }
+  assert.ok(issues.some((issue) => issue.body.includes("[truncated]")));
 
   const mixed = candidateWith([
     finding(1, "P2", "[P2] open\n\nsrc/f1.ts:3"),
     finding(2, "P3", "[P3] resolved", "src/f2.ts", true),
   ]);
+  assert.equal(mixed.findings.length, 1);
   const rendered = renderFollowUpIssue({
     candidate: mixed,
-    mergeRevision: "8a99ecbeaf8fd5f845fd6be034e284dd370f332c",
+    finding: mixed.findings[0],
+    mergeRevision: revision,
     depth: 2,
   })!;
   assert.equal(rendered.listed, 1);
-  assert.ok(
-    !rendered.body.includes("[P3] resolved"),
-    "a resolved finding is never listed",
-  );
+  assert.ok(!rendered.body.includes("[P3] resolved"));
   assert.ok(rendered.body.includes("[`src/f1.ts:3`]("));
   assert.ok(rendered.body.includes("#L3-L3)"));
-  assert.ok(rendered.body.startsWith(
-    followUpMarker({
-      owner: "ubiquity",
-      name: "ai.ubq.fi",
-      pullRequest: 1052,
-      receiptId: mixed.receipt.id,
-      depth: 2,
-    })!,
-  ));
+  assert.equal(
+    rendered.title,
+    "[P2] open (src/f1.ts:3)",
+  );
+  const marker = followUpMarker({
+    owner: "ubiquity",
+    name: "ai.ubq.fi",
+    pullRequest: 1052,
+    receiptId: mixed.receipt.id,
+    depth: 2,
+    finding: mixed.findings[0].fingerprint,
+  })!;
+  assert.ok(rendered.body.startsWith(marker));
+  assert.equal(
+    parseFollowUpMarker(marker)?.finding,
+    mixed.findings[0].fingerprint,
+  );
   assert.equal(
     candidateWith([finding(1, "P0", "[P0] blocks")]),
     undefined,
     "a P0 review is never a candidate",
   );
-  // Owner directive 2026-10-24: a P1 no longer blocks the merge, so a merged
-  // PR's unresolved P1 is follow-up work like a P2/P3.
   assert.notEqual(
     candidateWith([finding(1, "P1", "[P1] follow-up")]),
     undefined,
     "an unresolved P1 is filed as follow-up work",
   );
   assert.equal(
-    renderFollowUpIssue({ candidate: mixed, mergeRevision: "x", depth: 1 }),
+    renderFollowUpIssue({
+      candidate: mixed,
+      finding: mixed.findings[0],
+      mergeRevision: "x",
+      depth: 1,
+    }),
     null,
   );
   assert.equal(
     renderFollowUpIssue({
       candidate: mixed,
-      mergeRevision: "8a99ecbeaf8fd5f845fd6be034e284dd370f332c",
+      finding: mixed.findings[0],
+      mergeRevision: revision,
       depth: 4,
     }),
     null,
   );
 });
-
 Deno.test("follow-up render: the reviewer's text is inert and the issue stays admissible", async () => {
+  const candidate = candidateWith([finding(1, "P3", HOSTILE, "src/a b.ts")]);
   const issue = renderFollowUpIssue({
-    candidate: candidateWith([finding(1, "P3", HOSTILE, "src/a b.ts")]),
+    candidate,
+    finding: candidate.findings[0],
     mergeRevision: "8a99ecbeaf8fd5f845fd6be034e284dd370f332c",
     depth: 1,
   })!;
@@ -519,9 +530,13 @@ Deno.test("follow-up render: the reviewer's text is inert and the issue stays ad
     "the fence outlasts every tilde run",
   );
   assert.ok(
-    body.split("\n", 1)[0].startsWith("<!-- sentinel:review-followup:v1 "),
+    body.split("\n", 1)[0].startsWith("<!-- sentinel:review-followup:v2 "),
   );
   assert.equal(parseFollowUpMarker(body.split("\n", 1)[0])?.pullRequest, 1052);
+  assert.equal(
+    parseFollowUpMarker(body.split("\n", 1)[0])?.finding,
+    candidate.findings[0].fingerprint,
+  );
   const statement = { issueNumber: 9999, title: issue.title, body };
   const checked = await checkReviewTaskStatement({
     ...statement,

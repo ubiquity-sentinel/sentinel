@@ -1,6 +1,8 @@
 import { ingestMatrixResults } from "../src/host/matrix.ts";
 import type { MatrixIngestOptionsV1 } from "../src/host/matrix-ingest.ts";
+import { CandidateProofPassV1 } from "../src/host/actions-candidates-proof.ts";
 import { matrixDigestV1 } from "../src/contracts/matrix.ts";
+import { resolvedConflictCandidate } from "../src/host/matrix-conflict-candidate.ts";
 import {
   HOSTED_RUNTIME_ID,
   type HostedExecutionSettlementV1,
@@ -10,6 +12,10 @@ import {
 import type { ReleaseStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import type { GitSha } from "../src/contracts/brands.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
+import {
+  type MatrixProducerPlanMembershipV1,
+  parseMatrixProducerPlanMembershipV1,
+} from "../src/contracts/maintenance-index.ts";
 import type {
   PortResultV1,
   RepairStateWriter,
@@ -75,6 +81,10 @@ export async function recoverHostedMatrixProducer(
   // through its one composed writer, which marks this before writing; a
   // consumer deferral marks it too.
   const writes = { attempted: false };
+  // Every candidate this pass preserves for one target is proved in ONE
+  // fresh store that this pass creates and removes (#185): the target's
+  // history is fetched once per pass instead of once per candidate.
+  const proofs = new CandidateProofPassV1();
   try {
     const outcome = await recoverProducerWithinBudget(
       deps,
@@ -87,6 +97,7 @@ export async function recoverHostedMatrixProducer(
       readProducer,
       scope,
       writes,
+      proofs,
     );
     return { ...outcome, mayHaveWritten: writes.attempted };
   } catch (error) {
@@ -99,6 +110,8 @@ export async function recoverHostedMatrixProducer(
       deps.clock.now() >= deadlineAt
     ) throw new Error(CURRENT_MATRIX_HISTORY_DEADLINE_MESSAGE);
     throw error;
+  } finally {
+    await proofs.close();
   }
 }
 
@@ -113,6 +126,7 @@ async function recoverProducerWithinBudget(
   readProducer: HostedProducerReaderV1 | undefined,
   scope: HostedProducerScopeV1,
   writes: { attempted: boolean },
+  proofs: CandidateProofPassV1,
 ): Promise<Omit<HostedProducerRecoveryV1, "mayHaveWritten">> {
   const checkDeadline = () => {
     if (deps.clock.now() >= deadlineAt) {
@@ -252,7 +266,7 @@ async function recoverProducerWithinBudget(
   // The exact request bindings are pure facts of the repair snapshot: compute
   // them before building any matrix port, so a producer no record binds to
   // costs no target or artifact read.
-  const bound = producerRequests(
+  const bound = await producerRequests(
     before.snapshot,
     saved.execution,
     dedicated,
@@ -457,6 +471,18 @@ async function recoverProducerWithinBudget(
   const intersection = wave.plan.cells.filter((cell) =>
     requests.some((request) => request.reservationId === cell.reservationId)
   );
+  // The transport authenticates the complete plan before selecting results.
+  // This positive descriptor says nothing about missing or late artifacts.
+  let plan: MatrixProducerPlanMembershipV1 | undefined;
+  try {
+    plan = parseMatrixProducerPlanMembershipV1({
+      planDigest: wave.planDigest,
+      plannerJobId: wave.provenance.plannerJobId,
+      reservationIds: wave.plan.cells.map((cell) => cell.reservationId),
+    });
+  } catch {
+    // An older composed reader without complete provenance cannot accelerate.
+  }
   if (intersection.length === 0) {
     await custody();
     const fresh = await state.readRepair();
@@ -470,7 +496,11 @@ async function recoverProducerWithinBudget(
     ) {
       throw integrityFault("current matrix repair custody changed");
     }
-    return { result: null, deferred: false };
+    return {
+      result: null,
+      deferred: false,
+      ...(plan === undefined ? {} : { plan }),
+    };
   }
   const fresh = await state.readRepair();
   if (!fresh.ok || fresh.value.status !== "found") {
@@ -511,7 +541,7 @@ async function recoverProducerWithinBudget(
     await ports.prepareTarget(config);
     checkDeadline();
     const cycle = {
-      ...ports.cycleFor(config),
+      ...ports.cycleFor(config, proofs),
       state,
       controllerSha: saved.execution.revision,
       externalImplementations: true,
@@ -626,6 +656,67 @@ async function recoverProducerWithinBudget(
     }
     for (const cell of cells) {
       const entry = report.entries.find((row) => row.cellId === cell.cellId);
+      if (
+        entry?.disposition === "duplicate" &&
+        entry.detail ===
+          "receipt already consumed; exact conflict result rehydrated"
+      ) {
+        await custody();
+        const read = await state.readRepair();
+        const record = before.snapshot.work.find((row) =>
+          row.id === cell.taskId
+        );
+        const fresh = read.ok && read.value.status === "found"
+          ? read.value.snapshot.work.find((row) => row.id === cell.taskId)
+          : undefined;
+        const binding = fresh && record &&
+            canonicalStringify(fresh) === canonicalStringify(record) &&
+            read.ok && read.value.status === "found"
+          ? await resolvedConflictCandidate(
+            fresh,
+            read.value.snapshot.reservations,
+          )
+          : null;
+        if (
+          binding === null || binding.reservationId !== cell.reservationId ||
+          binding.intentKey !== cell.intentKey
+        ) {
+          unfinished++;
+          continue;
+        }
+        const github = ports.cycleFor(config, proofs).github;
+        checkDeadline();
+        const preserved = await github.preserveCandidate({
+          taskId: binding.taskId,
+          candidate: binding.candidate,
+          publishedHead: binding.publishedHead,
+        });
+        // An admitted effect completes all custody/ref/state readbacks even if
+        // its own bounded proof consumed the remainder of this walk's budget.
+        await custody(false);
+        const observed = preserved.ok
+          ? await github.readRef(binding.candidate.ref)
+          : null;
+        const afterPreserve = await state.readRepair();
+        await custody(false);
+        if (
+          !afterPreserve.ok || afterPreserve.value.status !== "found" ||
+          !read.ok || read.value.status !== "found" ||
+          afterPreserve.value.head !== read.value.head ||
+          canonicalStringify(afterPreserve.value.snapshot) !==
+            canonicalStringify(read.value.snapshot)
+        ) {
+          throw integrityFault(
+            "current matrix conflict preservation readback changed",
+          );
+        }
+        if (
+          !preserved.ok || !observed?.ok ||
+          observed.value?.sha !== binding.candidate.head
+        ) unfinished++;
+        else ingested++;
+        continue;
+      }
       let record: (typeof settled)[number];
       let restore: typeof restoreInflightCandidate;
       if (entry?.disposition === "ingested") {
@@ -656,7 +747,7 @@ async function recoverProducerWithinBudget(
         record,
         wave,
         state,
-        github: ports.cycleFor(config).github,
+        github: ports.cycleFor(config, proofs).github,
         clock: deps.clock,
         readbackFailure: (write) =>
           new CurrentMatrixRecoveryIntegrityFailure(
@@ -750,5 +841,11 @@ async function recoverProducerWithinBudget(
       revisions: [],
     },
     deferred: false,
+    ...(plan === undefined ||
+        intersection.some((cell) =>
+          !wave.results.some((result) => result.cellId === cell.cellId)
+        )
+      ? {}
+      : { plan }),
   };
 }

@@ -637,6 +637,11 @@ export interface ReleaseBridgeCapabilities {
   acquireOwner(
     job: ReleaseBridgeAuthenticatedJob,
   ): Promise<{ release(): Promise<void> } | null>;
+  /**
+   * No `platform` substitute: the driver's command and journal runners are the
+   * pinned tree's own (sentinel#161). `preparePayload`, when the owner supplies
+   * one, reaches the pinned driver unchanged (sentinel#162).
+   */
   host: Omit<
     TrustedVpsReleaseHostOptionsV1,
     | "stateRead"
@@ -646,6 +651,7 @@ export interface ReleaseBridgeCapabilities {
     | "controllerSha"
     | "targetRoot"
     | "pinnedDriver"
+    | "platform"
   >;
 }
 /** Existing clearEnv Git transport; header exists only inside trusted Git children. */
@@ -829,9 +835,10 @@ export async function runReleaseBridge(
       };
     }
     if (pin.activation !== "owner_activated") refuse("setup_only");
-    if (capabilities === null || pin.capabilitiesSha256 === null) {
-      refuse("capability_unavailable");
-    }
+    if (
+      capabilities === null || pin.capabilitiesSha256 === null ||
+      "platform" in Object(capabilities.host)
+    ) refuse("capability_unavailable");
     const job = await authenticateReleaseBridgeJob(
       input,
       pin,

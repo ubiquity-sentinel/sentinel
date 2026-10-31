@@ -115,8 +115,8 @@ export interface GitExecutorV1 {
   ): Promise<PortResultV1<GitSha>>;
   /**
    * Optional carried-review patch proof (`git-carried-patch.ts`): each side's
-   * unique merge base and the SHA-256 of its exact binary merge-base patch,
-   * read only from the trusted local object store (no checkout, index, ref,
+   * unique merge base and the SHA-256 of its exact raw listing and binary
+   * merge-base patch, read only from the trusted local object store (no checkout, index, ref,
    * hook, network or credential). Missing objects, an ambiguous or absent
    * merge base and bounds are typed failures, never a proof.
    */

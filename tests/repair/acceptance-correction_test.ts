@@ -18,7 +18,6 @@ import {
   TASK_ACCEPTANCE_FINDING_ID,
   TASK_ACCEPTANCE_FINDING_MAX_CHARS,
   TASK_ACCEPTANCE_FINDING_PREFIX,
-  TASK_ACCEPTANCE_OWNER_GATE_DETAIL,
   withAcceptanceFinding,
 } from "../../src/repair/acceptance-correction.ts";
 import {
@@ -88,29 +87,35 @@ Deno.test("B6a: a not-fulfilled acceptance with a round left becomes a correctio
   }
 });
 
-Deno.test("B6b: a not-fulfilled acceptance with every round spent parks once, owner-gated, with its receipt", async () => {
+Deno.test("B6b: a not-fulfilled acceptance with every round spent still corrects, never parks for the count", async () => {
   const rig = await acceptanceRig("b6b-owner-gate", 3);
   try {
     const key = rig.operationKey;
     await rig.run();
     const state = await rig.snapshot();
     const work = state.work[0]!;
-    assert.equal(work.nextStep, "blocked");
-    assert.equal(work.blocker?.kind, "other");
-    assert.equal(
-      work.blocker?.message,
-      TASK_ACCEPTANCE_OWNER_GATE_DETAIL,
-    );
+    // Owner directive 2026-10-30: a spent count is accounting. The refusal
+    // becomes a correction like any P1 and the next round is admitted.
+    assert.equal(work.nextStep, "review");
+    assert.equal(work.blocker, null);
     const id = await reviewReceiptId(key, SHA2);
     const receipt = state.reviews.find((review) => review.id === id);
-    assert.ok(receipt, "the park keeps its receipt");
+    assert.ok(receipt, "the receipt is durable evidence");
     assert.deepEqual(receipt.unresolvedSeverities, ["P1"]);
-    assert.equal(rig.model.requests.length, 0, "no fourth round is bought");
-    assert.equal(rig.github.reviewRequestIdentities.length, 0);
+    assert.equal(rig.model.requests.length, 1, "one correction session");
+    assert.equal(rig.github.reviewRequestIdentities.length, 1, "round 4");
     assert.deepEqual(
-      state.reservations,
-      rig.charges,
-      "nothing charged or refunded",
+      state.reservations.filter((row) => row.purpose === "review_request")
+        .map((row) => row.attempt),
+      [1, 2, 3, 4],
+      "every round stays charged; the fourth is admitted",
+    );
+    assert.equal(
+      state.reservations.some((row) =>
+        row.outcome === "confirmed_not_submitted"
+      ),
+      false,
+      "nothing refunded",
     );
     assert.equal(rig.github.calls.includes("merge"), false);
   } finally {
@@ -118,15 +123,16 @@ Deno.test("B6b: a not-fulfilled acceptance with every round spent parks once, ow
   }
 });
 
-Deno.test("B6: the live round shapes move (576, 653, 660 correct; 611, 1127, 118 park owner-gated)", async (t) => {
-  // Counted rounds of the live records at sequence 41474.
-  const shapes: [string, number, "correct" | "park"][] = [
-    ["653", 1, "correct"],
-    ["576 and 660", 2, "correct"],
-    ["611 and 1127", 3, "park"],
-    ["118", 22, "park"],
+Deno.test("B6: every live round shape keeps correcting (576, 653, 660, 611, 1127, 118)", async (t) => {
+  // Counted rounds of the live records at sequence 41474. Rounds are
+  // accounting (owner directive 2026-10-30), so no shape parks for its count.
+  const shapes: [string, number][] = [
+    ["653", 1],
+    ["576 and 660", 2],
+    ["611 and 1127", 3],
+    ["118", 22],
   ];
-  for (const [label, rounds, outcome] of shapes) {
+  for (const [label, rounds] of shapes) {
     await t.step(`${label}: ${rounds} round(s) spent`, async () => {
       const rig = await acceptanceRig(`b6-live-${rounds}`, rounds, true);
       try {
@@ -137,41 +143,34 @@ Deno.test("B6: the live round shapes move (576, 653, 660 correct; 611, 1127, 118
         const receipt = state.reviews.find((review) => review.id === receiptId);
         assert.ok(receipt);
         assert.deepEqual(receipt.unresolvedSeverities, ["P1"]);
-        if (outcome === "correct") {
-          // A hosted run leaves the correction to the planner's cell.
-          assert.equal(work.nextStep, "work");
-          assert.equal(work.blocker, null);
-          assert.equal(work.target.head, SHA2);
-          assert.equal(headNeedsCorrection(state, work, true, true), true);
-          assert.equal(headAwaitsCiCorrection(state, work, true), false);
-          assert.equal(
-            isMatrixImplementationReadyV1(
-              work,
-              state,
-              repairConfigs({
-                sessionBound: {
-                  maxDurationMs: 240_000,
-                  maxOutputChars: 200_000,
-                },
-              })[0],
-              rig.clock.now(),
-              true,
-              true,
-              true,
-            ),
+        // A hosted run leaves the correction to the planner's cell, whatever
+        // the spent count.
+        assert.equal(work.nextStep, "work");
+        assert.equal(work.blocker, null);
+        assert.equal(work.target.head, SHA2);
+        assert.equal(headNeedsCorrection(state, work, true, true), true);
+        assert.equal(headAwaitsCiCorrection(state, work, true), false);
+        assert.equal(
+          isMatrixImplementationReadyV1(
+            work,
+            state,
+            repairConfigs({
+              sessionBound: {
+                maxDurationMs: 240_000,
+                maxOutputChars: 200_000,
+              },
+            })[0],
+            rig.clock.now(),
             true,
-          );
-          assert.equal(
-            correctionFindings(state, work)?.[0]?.message,
-            receipt.findings[0]!.message,
-          );
-        } else {
-          assert.equal(work.nextStep, "blocked");
-          assert.equal(
-            work.blocker?.message,
-            TASK_ACCEPTANCE_OWNER_GATE_DETAIL,
-          );
-        }
+            true,
+            true,
+          ),
+          true,
+        );
+        assert.equal(
+          correctionFindings(state, work)?.[0]?.message,
+          receipt.findings[0]!.message,
+        );
         assert.equal(work.counters.reviewRounds, rounds);
         const byId = (a: { id: string }, b: { id: string }) =>
           a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
@@ -184,7 +183,7 @@ Deno.test("B6: the live round shapes move (576, 653, 660 correct; 611, 1127, 118
   }
 });
 
-Deno.test("B6a: the correction keeps the three-round cap; a third not-fulfilled verdict parks owner-gated", async () => {
+Deno.test("B6a: a third not-fulfilled verdict keeps correcting; the spent count never parks", async () => {
   const rig = await acceptanceRig("b6a-cap", 2);
   try {
     await rig.run();
@@ -208,12 +207,21 @@ Deno.test("B6a: the correction keeps the three-round cap; a third not-fulfilled 
     rig.clock.advance(15 * 60_000 + 1);
     await rig.run();
     const state = await rig.snapshot();
-    const parked = state.work[0]!;
-    assert.equal(parked.nextStep, "blocked");
-    assert.equal(parked.blocker?.message, TASK_ACCEPTANCE_OWNER_GATE_DETAIL);
-    assert.equal(parked.counters.reviewRounds, 3);
-    assert.equal(rig.model.requests.length, 1, "no correction after the cap");
-    assert.equal(rig.github.reviewRequestIdentities.length, 1, "no 4th round");
+    const continued = state.work[0]!;
+    // No park: the record keeps correcting. The rolling budget's own bounded
+    // wait (`budget_cap`, with an `until`) is the only pause, and the record
+    // leaves it on its own; the spent round count is unchanged accounting.
+    assert.equal(continued.nextStep, "work");
+    assert.equal(continued.blocker, null);
+    assert.equal(continued.wait?.reason, "budget_cap");
+    assert.ok(continued.wait?.until !== null);
+    assert.equal(continued.counters.reviewRounds, 3);
+    assert.ok(rig.model.requests.length >= 2, "corrections continue");
+    assert.equal(
+      rig.github.reviewRequestIdentities.length,
+      1,
+      "no review is bought while the budget waits",
+    );
     assert.equal(
       state.reservations.filter((row) => row.purpose === "review_request")
         .length,

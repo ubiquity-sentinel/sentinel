@@ -5,7 +5,11 @@ import {
   parseRepairStateSnapshotV1 as parseLegacyRepair,
 } from "../fixtures/runtime-1838df31/state-snapshots.ts";
 import { parseHostedReleaseRecordV1 as parseLegacyRecord } from "../fixtures/runtime-1838df31/hosted-supervisor-release.ts";
-import { requireRun, runProof } from "./actions-supervisor-fixture.ts";
+import {
+  requireRun,
+  runProof,
+  startedFailureProof,
+} from "./actions-supervisor-fixture.ts";
 import { childLine, exited, hostedEnv } from "./hosted-runtime-fixture.ts";
 import { runHostedRuntimeLauncher } from "../../src/host/hosted-runtime-launcher.ts";
 import {
@@ -149,7 +153,7 @@ Deno.test("hosted migration workflow: failed self-install restores the exact leg
     const repairBefore = await rig.repair.readRepair();
     const bootstrap = requireRun(await rig.prepare(1));
     rig.clock.advance(5_000);
-    rig.evidence.settlements.set(bootstrap.id, runProof(bootstrap, "failed"));
+    rig.evidence.settlements.set(bootstrap.id, startedFailureProof(bootstrap));
     assert.equal((await rig.finalize(1)).status, "idle");
     const rollback = requireRun(await rig.prepare(2));
     assert.equal(rollback.revision, LEGACY_RUNTIME);
