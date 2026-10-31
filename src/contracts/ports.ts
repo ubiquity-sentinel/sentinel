@@ -162,7 +162,11 @@ export type {
   ReviewSubmissionV1,
 } from "./ports-github-requests.ts";
 
-export type { GitHubCooldownGateV1, GitHubPort } from "./ports-github.ts";
+export type {
+  GitHubChecksReadOptionsV1,
+  GitHubCooldownGateV1,
+  GitHubPort,
+} from "./ports-github.ts";
 
 export type {
   EncryptedArtifactV1,

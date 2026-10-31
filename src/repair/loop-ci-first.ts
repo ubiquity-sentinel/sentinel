@@ -60,6 +60,7 @@ import {
   preReviewPendingDetail,
   preReviewRedDetail,
   preReviewUnattributedDetail,
+  readCiChecks,
 } from "./ci-rejection.ts";
 import {
   ciFixesLeft,
@@ -250,7 +251,7 @@ export async function gateReviewOnCi(
     return { kind: "deferred", detail: cooling.detail };
   }
   const now = deps.clock.now();
-  const observed = await deps.github.readChecks(head);
+  const observed = await readCiChecks(deps.github, head);
   if (!observed.ok) return UNAVAILABLE;
   const checks = observed.value.checks;
   const decision = decideCiGate(checks);
@@ -282,7 +283,8 @@ export async function gateReviewOnCi(
   // Only the failed names are attributed, so only they are read on the base:
   // an unrelated base run over the strict bounds (the self `development`
   // tip's `matrix_cell (<cellId>)` runs) cannot defer a red head forever.
-  const base = await deps.github.readChecks(
+  const base = await readCiChecks(
+    deps.github,
     record.target.base,
     new Set(failed.map((check) => check.name)),
   );

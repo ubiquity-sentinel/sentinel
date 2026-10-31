@@ -75,6 +75,7 @@ import {
   ciCheckLabels,
   failedChecks,
   latestChecks,
+  readCiChecks,
   unattributedDetail,
 } from "./ci-rejection.ts";
 import { ensureBaseRefreshIntent } from "./loop-base-refresh.ts";
@@ -209,7 +210,7 @@ export async function spentOnMovedBase(
   if (cooling.kind === "deferred") {
     return { kind: "deferred", detail: cooling.detail };
   }
-  const observed = await deps.github.readChecks(head);
+  const observed = await readCiChecks(deps.github, head);
   if (!observed.ok) {
     return { kind: "deferred", detail: "CI check observation unavailable" };
   }
@@ -370,7 +371,7 @@ async function holdUncorrectableLegacyHead(
   const park = observed.kind === "base_red"
     ? baseRedDetail(failed)
     : unattributedDetail(failed);
-  const tip = await deps.github.readChecks(observedBase);
+  const tip = await readCiChecks(deps.github, observedBase);
   if (!tip.ok) {
     return { kind: "deferred", detail: "CI check observation unavailable" };
   }
@@ -523,7 +524,7 @@ export async function executeCarriedDelivery(
   // `CARRIED_REFRESH_LIMIT` times). A red the base caused, or one no base
   // evidence attributes yet, may still be cured by a refresh onto a moved tip,
   // so it keeps that path (review finding, upheld 3 of 3).
-  const checks = await deps.github.readChecks(head);
+  const checks = await readCiChecks(deps.github, head);
   if (!checks.ok) {
     return { kind: "deferred", detail: "CI check observation unavailable" };
   }
