@@ -294,7 +294,11 @@ Deno.test("human merge: an exact authorizing review is retained on the release r
   }
 });
 
-Deno.test("human merge: a gateway merge without verified queue proof is held, not booked", async () => {
+Deno.test("human merge: a re-admitted gateway record completes without a permanent queue backoff", async () => {
+  // The first re-admission moved the parked record to `review` with its merged
+  // pull. The completion step's queue-custody guard then wrote a permanent
+  // `backoff`/`until: null`, so selection never ran the observation again.
+  // A human merge has no Sentinel queue delivery to prove; it completes.
   const merged = mergedPr();
   const id = asWorkItemId("issue-1");
   const rig = await makeRig("human-merge-queue-custody", {
@@ -312,7 +316,7 @@ Deno.test("human merge: a gateway merge without verified queue proof is held, no
       pr: 7,
     });
     const written = await rig.store.writeRepair(
-      seededSnapshot([record]),
+      seededSnapshot([record], { reviews: [localReceipt()] }),
       null,
     );
     assert.ok(written.ok && written.value.status === "applied");
@@ -323,13 +327,20 @@ Deno.test("human merge: a gateway merge without verified queue proof is held, no
     const work = state.work[0]!;
     assert.equal(
       work.nextStep,
-      "review",
-      "queue custody is checked before outside-merge bookkeeping",
+      "done",
+      "the re-admitted human merge is a completed delivery",
     );
-    assert.equal(work.wait?.reason, "backoff");
-    assert.equal(work.wait?.until, null);
-    assert.deepEqual(work.evidence, []);
-    assert.deepEqual(state.releaseRequests, []);
+    assert.equal(work.wait, null, "no permanent backoff is written");
+    assert.equal(work.blocker, null);
+    assert.equal(work.intent, null);
+    assert.equal(work.target.pr, 7);
+    assert.deepEqual(work.evidence, [{
+      kind: "review_receipt",
+      ref:
+        `artifact:review-receipt/human-merge-v1/7/${SHA3}/${SHA2}/${HUMAN_MERGE_ACTOR}`,
+    }]);
+    assert.equal(state.releaseRequests.length, 1);
+    assert.equal(state.releaseRequests[0]!.revision, SHA2);
   } finally {
     await rig.ctx.cleanup();
   }

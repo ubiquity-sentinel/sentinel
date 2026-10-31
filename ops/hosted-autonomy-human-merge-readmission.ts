@@ -15,13 +15,22 @@
  * human merge and stays refused: its merged pull must not name the Sentinel
  * application as the merger.
  *
+ * The first re-admission write exposed a third shape: the completion step's
+ * queue-custody guard wrote a permanent `backoff` wait (`until: null`) on a
+ * record already at `review`, so selection treated the merged pull as waiting
+ * forever. That guard no longer runs for a human merge, but the records
+ * already carrying the shape are corrected here: a `review` record with a
+ * permanent backoff, a retained pull and no intent is re-admitted only when
+ * that exact pull is merged into the base branch by a readable non-Sentinel
+ * actor, so a genuine queue-custody hold is never released.
+ *
  * Nothing is charged and no counter, reservation or evidence moves here: the
- * record keeps its reviewed head, base and counters, only the verified open
- * pull identity on its own branch is restored, and the runtime then settles
- * the exact outstanding review admission itself. The rule is not part of the
- * prefix table of `HOSTED_AUTONOMY_RETRYABLE` because the parked record no
- * longer names its pull request and a merged pull can never pass that table's
- * open-pull verification.
+ * record keeps its reviewed head, base and counters, only the verified pull
+ * identity on its own branch is restored (and the stuck wait cleared), and the
+ * runtime then settles the exact outstanding review admission itself. The rule
+ * is not part of the prefix table of `HOSTED_AUTONOMY_RETRYABLE` because the
+ * parked record no longer names its pull request and a merged pull can never
+ * pass that table's open-pull verification.
  */
 import type { GitSha } from "../src/contracts/brands.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
@@ -40,15 +49,20 @@ import {
 import type { HostedAutonomyScopeV1 } from "./hosted-autonomy-scopes.ts";
 import type { HostedAutonomyHeadPullV1 } from "./hosted-autonomy-types.ts";
 
-/** The two parks this rule re-admits, by the exact blocker they wrote. */
-export type HumanMergeParkV1 = "head_mismatch" | "merge_off_base";
+/** The parks this rule re-admits, by the exact shape they wrote. */
+export type HumanMergeParkV1 =
+  | "head_mismatch"
+  | "merge_off_base"
+  | "review_backoff";
 
 /** Action detail of every verified human-merge head re-admission. */
 const READMISSION_DETAIL = "human_merge_head_moved";
 /** Action detail of a re-admission from the moved-base park. */
 const MERGED_OFF_TIP_READMISSION_DETAIL = "human_merge_merged_off_base";
+/** Action detail of a re-admission from the stuck review backoff. */
+const REVIEW_BACKOFF_READMISSION_DETAIL = "human_merge_review_backoff";
 
-/** A blocked record that passed every local gate; remote facts pending. */
+/** A record that passed every local gate; remote facts pending. */
 export interface HumanMergeCandidateV1 {
   id: string;
   repository: RepositoryIdentityV1;
@@ -56,7 +70,9 @@ export interface HumanMergeCandidateV1 {
   branch: string;
   /** The exact reviewed head the record keeps unchanged. */
   head: GitSha;
-  /** Which park wrote the blocker; the merge-actor gate depends on it. */
+  /** The retained pull identity; null for the head-mismatch park. */
+  pullRequest: number | null;
+  /** Which shape wrote the record; the merge-actor gate depends on it. */
   parkedBy: HumanMergeParkV1;
 }
 
@@ -77,8 +93,9 @@ function parkOf(message: string): HumanMergeParkV1 | null {
 }
 
 /**
- * Pure local gating: exactly the terminal shape the old runtime wrote (a
- * blocked record, no intent or wait, the exact message) with a saved branch
+ * Pure local gating: the exact shapes the runtime wrote — a blocked record
+ * with no intent or wait and one exact message, or the stuck `review` record
+ * whose completion was held by a permanent backoff — each with a saved branch
  * and reviewed head. Closed-issue and review-round gates deliberately do not
  * apply: the delivery already happened, so the record only needs its
  * bookkeeping completed.
@@ -89,18 +106,28 @@ export function planHumanMergeHeadReadmissions(
   const candidates: HumanMergeCandidateV1[] = [];
   for (const record of snapshot.work) {
     if (
-      record.nextStep !== "blocked" || record.blocker === null ||
-      record.blocker.kind !== "other" ||
-      record.intent !== null || record.wait !== null ||
-      record.target.head === null || record.target.branch === null
+      record.intent !== null || record.target.head === null ||
+      record.target.branch === null
     ) continue;
-    const parkedBy = parkOf(record.blocker.message);
+    let parkedBy: HumanMergeParkV1 | null = null;
+    if (record.nextStep === "blocked" && record.wait === null) {
+      if (record.blocker !== null && record.blocker.kind === "other") {
+        parkedBy = parkOf(record.blocker.message);
+      }
+    } else if (
+      // The first re-admission left the completion step's permanent custody
+      // hold on a record that is already at `review` with its merged pull.
+      record.nextStep === "review" && record.blocker === null &&
+      record.target.pr !== null && record.wait?.reason === "backoff" &&
+      record.wait.until === null
+    ) parkedBy = "review_backoff";
     if (parkedBy === null) continue;
     candidates.push({
       id: record.id,
       repository: record.repository,
       branch: record.target.branch,
       head: record.target.head,
+      pullRequest: record.target.pr,
       parkedBy,
     });
   }
@@ -116,7 +143,8 @@ export function planHumanMergeHeadReadmissions(
  * on another base all refuse without a write. A record parked by the off-base
  * message is only re-admitted when the same pull read names its merger and
  * that merger is not the Sentinel application: a park the runtime's own
- * trusted merge wrote keeps its exact-tip refusal.
+ * trusted merge wrote keeps its exact-tip refusal. The stuck review backoff
+ * uses the same merger gate, so a real queue-custody hold is never released.
  */
 export function decideHumanMergeHeadReadmission(
   candidate: HumanMergeCandidateV1,
@@ -148,11 +176,14 @@ export function decideHumanMergeHeadReadmission(
   if (pull.baseRef !== baseBranch) {
     return { kind: "refused", reason: "pr_base_mismatch" };
   }
+  if (candidate.pullRequest !== null && pull.number !== candidate.pullRequest) {
+    return { kind: "refused", reason: "pr_identity_mismatch" };
+  }
   if (
     pull.author === null ||
     !HOSTED_AUTONOMY_TRUSTED_AUTHORS.includes(pull.author)
   ) return { kind: "refused", reason: "pr_foreign" };
-  if (candidate.parkedBy === "merge_off_base") {
+  if (candidate.parkedBy !== "head_mismatch") {
     if (mergedBy === null || mergedBy === undefined || mergedBy.length === 0) {
       return { kind: "refused", reason: "merge_actor_unreadable" };
     }
@@ -168,6 +199,8 @@ export function decideHumanMergeHeadReadmission(
       pullRequest: pull.number,
       detail: candidate.parkedBy === "merge_off_base"
         ? MERGED_OFF_TIP_READMISSION_DETAIL
+        : candidate.parkedBy === "review_backoff"
+        ? REVIEW_BACKOFF_READMISSION_DETAIL
         : READMISSION_DETAIL,
     },
   };
@@ -222,7 +255,7 @@ export async function verifyHumanMergeHeadReadmissions(
     } catch {
       pulls = null;
     }
-    const mergedBy = candidate.parkedBy === "merge_off_base" &&
+    const mergedBy = candidate.parkedBy !== "head_mismatch" &&
         pulls !== null && pulls.length === 1
       ? await readMergedBy(surface, pulls[0].number, scope.baseBranch)
       : undefined;
