@@ -146,10 +146,10 @@ for (
       assert.equal(work.nextStep, "work");
       assert.equal(work.wait?.reason, "ci_pending");
       const since = work.wait!.since;
-      assert.equal(work.wait!.until, since + 5 * 60_000);
+      assert.equal(work.wait!.until, since + 2 * 60_000);
       assert.equal(rig.github.calls.includes("requestReview"), false);
       // A later poll keeps the original start of the wait.
-      rig.clock.advance(5 * 60_000 + 1);
+      rig.clock.advance(2 * 60_000 + 1);
       await rig.run();
       work = taskRecord(await rig.snapshot());
       assert.equal(work.wait?.reason, "ci_pending");

@@ -26,7 +26,7 @@ export const MAX_INCIDENT_SCAN_PAGES = 128;
 
 export const REVIEW_POLL_MS = 15 * 60_000;
 
-export const CHECK_POLL_MS = 5 * 60_000;
+export const CHECK_POLL_MS = 2 * 60_000;
 
 export const RELEASE_POLL_MS = 5 * 60_000;
 

@@ -59,7 +59,7 @@ const BRANCH = "sentinel/repair/issue-1";
 const OLD_HEAD = SHA3;
 const PREPARED = "7f0b28dc5c6f8a1a2b3c4d5e6f7a8b9c0d1e2f3a" as GitSha;
 const UNRELATED = "abcdefabcdefabcdefabcdefabcdefabcdefabcd" as GitSha;
-const CHECK_POLL_MS = 5 * 60_000;
+const CHECK_POLL_MS = 2 * 60_000;
 
 async function gitRun(
   cwd: string,
