@@ -252,19 +252,28 @@ Deno.test("conflict guard: a moved base returns the record to a plain refresh at
   }
 });
 
-Deno.test("conflict guard: a moved base with no review round left plans nothing", async () => {
-  const snapshot = snapshotOf(
-    [
-      await marked(INCOMPLETE, {
-        counters: { attempts: 2, retries: 0, reviewRounds: 3 },
-      }),
-    ],
-    [charge("ambiguous")],
-  );
-  assert.deepEqual(plan(snapshot, TIP), {
-    plans: [],
-    denials: ["conflict_resolution_rounds_spent"],
-  });
+Deno.test("conflict guard: a moved base plans the resolution whatever rounds are spent", async () => {
+  // Rounds are accounting, never a gate (owner directive 2026-10-30): a
+  // spent count cannot deny the conflict resolution a reviewed head needs
+  // after its base moved.
+  for (const reviewRounds of [3, 5, 22]) {
+    const snapshot = snapshotOf(
+      [
+        await marked(INCOMPLETE, {
+          counters: { attempts: 2, retries: 0, reviewRounds },
+        }),
+      ],
+      [charge("ambiguous")],
+    );
+    const planned = plan(snapshot, TIP);
+    assert.deepEqual(planned.denials, [], String(reviewRounds));
+    assert.equal(planned.plans.length, 1, String(reviewRounds));
+    assert.equal(planned.plans[0].nextStep, "work");
+    assert.equal(planned.plans[0].advanceBase, true);
+    assert.equal(planned.plans[0].observedBase, TIP);
+    assert.equal(planned.plans[0].grant, 0);
+    assert.equal(planned.plans[0].reviewRounds, null);
+  }
 });
 
 Deno.test("conflict guard: a not-started resolution whose charge is still reserved falls through and plans nothing", async () => {

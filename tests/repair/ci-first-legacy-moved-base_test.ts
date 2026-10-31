@@ -27,12 +27,8 @@ import { portOk } from "../../src/contracts/ports.ts";
 import { reviewTaskStatementDigest } from "../../src/contracts/review-receipt.ts";
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import { isCarriedMergeMarker } from "../../src/repair/carried-review.ts";
-import {
-  CI_BASE_RED_DETAIL,
-  CI_UNATTRIBUTED_DETAIL,
-} from "../../src/repair/ci-rejection.ts";
+import { CI_BASE_RED_DETAIL } from "../../src/repair/ci-rejection.ts";
 import { CARRIED_WAIT_BOUND_MS } from "../../src/repair/loop-carried-delivery.ts";
-import { legacyReviewRoundClassPin } from "../../src/repair/review-round-cap.ts";
 import { planHostedRetries } from "../../ops/hosted-autonomy-retries.ts";
 import { legacyHeldHeadActions } from "../../ops/hosted-autonomy-retry-pass.ts";
 import { ciGreenHeadKey } from "../../ops/hosted-autonomy-ci-retries.ts";
@@ -161,35 +157,43 @@ async function legacyRig(
 
 const RED_BASE = () => [check("validate", SHA1, "failure")];
 const BASE_RED_PARK = `${CI_BASE_RED_DETAIL}: validate(failure)`;
-const UNATTRIBUTED_PARK = `${CI_UNATTRIBUTED_DETAIL}: validate(failure)`;
 
-Deno.test("legacy moved base: a red head on its red reviewed base its review cannot carry parks with the base-red blocker, reported every pass, never a correction", async () => {
+Deno.test("legacy moved base: a red head on its red reviewed base is refreshed onto the green tip and re-reviewed, never parked for spent rounds", async () => {
   const { rig, writes } = await legacyRig("legacy-moved-red-base", RED_BASE());
   try {
     await rig.run();
     const snapshot = await rig.snapshot();
     const record = taskRecord(snapshot, ID);
-    assert.equal(record.nextStep, "blocked");
-    // Base evidence exists: the blocker names the red reviewed base, never
-    // "without base evidence" (#155).
-    assert.equal(record.blocker?.message, BASE_RED_PARK);
+    // Owner directive 2026-10-30: rounds are accounting, never a park. The
+    // head is mechanically refreshed onto the green tip and its next review
+    // is admitted instead of parking on the red reviewed base.
+    assert.equal(record.nextStep, "review");
+    assert.equal(record.blocker, null);
+    assert.equal(record.target.base, SHA2);
+    assert.equal(record.target.head, PREP3);
+    assert.equal(record.wait?.reason, "review_pending");
+    assert.equal(
+      record.counters.reviewRounds,
+      5,
+      "the spent rounds stay counted",
+    );
     assert.equal(rig.model.requests.length, 0, "no CI fix started");
-    assert.deepEqual(rig.github.reviewRequestIdentities, []);
-    // Still the owner's legacy class shape, so drift reporting keeps it.
-    assert.notEqual(legacyReviewRoundClassPin(snapshot, record), null);
-    // No launcher rule takes it, and every pass names it.
+    assert.equal(
+      rig.github.reviewRequestIdentities.length,
+      1,
+      "one new review round is admitted",
+    );
+    // No launcher rule parks or re-admits it: it owns its ordinary path.
     assert.deepEqual(launcherPlans(snapshot, rig.clock.now()), []);
-    assert.deepEqual(legacyHeldHeadActions(snapshot, CUT, TIPS), [
-      `retry:${ID}:denied:legacy_base_red`,
-    ]);
-    assert.deepEqual(legacyHeldHeadActions(snapshot, null, TIPS), []);
-    // Next runs: the parked record is left alone, nothing charged.
-    const reservations = snapshot.reservations.length;
-    rig.clock.advance(15 * 60_000);
+    assert.deepEqual(legacyHeldHeadActions(snapshot, CUT, TIPS), []);
+    // Next run: still iterating on its review, never blocked.
+    rig.clock.advance(15 * 60_000 + 1);
     await rig.run();
     const again = await rig.snapshot();
-    assert.deepEqual(taskRecord(again, ID), record);
-    assert.equal(again.reservations.length, reservations);
+    const still = taskRecord(again, ID);
+    assert.equal(still.nextStep, "review");
+    assert.equal(still.blocker, null);
+    assert.equal(rig.model.requests.length, 0);
     if (GEN79) {
       for (const written of writes) await assertGen79Parses(written);
     }
@@ -198,7 +202,7 @@ Deno.test("legacy moved base: a red head on its red reviewed base its review can
   }
 });
 
-Deno.test("legacy moved base: a failure no base evidence attributes parks unattributed, reported while its base is not the tip", async () => {
+Deno.test("legacy moved base: a failure no base evidence attributes is refreshed onto the green tip and re-reviewed", async () => {
   // The reviewed base never ran `validate` (no base evidence).
   const { rig } = await legacyRig("legacy-moved-unattributed", [
     check("lint", SHA1, "success"),
@@ -207,47 +211,39 @@ Deno.test("legacy moved base: a failure no base evidence attributes parks unattr
     await rig.run();
     const snapshot = await rig.snapshot();
     const record = taskRecord(snapshot, ID);
-    assert.equal(record.blocker?.message, UNATTRIBUTED_PARK);
+    assert.equal(record.nextStep, "review");
+    assert.equal(record.blocker, null);
+    assert.equal(record.target.base, SHA2);
+    assert.equal(record.target.head, PREP3);
+    assert.equal(record.counters.reviewRounds, 5);
     assert.deepEqual(launcherPlans(snapshot, rig.clock.now()), []);
-    assert.deepEqual(legacyHeldHeadActions(snapshot, CUT, TIPS), [
-      `retry:${ID}:denied:legacy_unattributed`,
-    ]);
-    // On its unchanged base the flake re-run and the green rule still act.
-    const onBase = new Map([[hostedRepositoryKey(AIUBQ), SHA1 as string]]);
-    assert.deepEqual(legacyHeldHeadActions(snapshot, CUT, onBase), []);
+    assert.deepEqual(legacyHeldHeadActions(snapshot, CUT, TIPS), []);
   } finally {
     await rig.ctx.cleanup();
   }
 });
 
-Deno.test("legacy moved base: a base check still running is awaited, bounded, and never re-admitted as a correction meanwhile", async () => {
+Deno.test("legacy moved base: a base check still running is refreshed onto the green tip and re-reviewed, never re-admitted as a correction", async () => {
   const { rig, writes } = await legacyRig("legacy-moved-base-pending", [
     check("validate", SHA1, null, "in_progress"),
   ]);
   try {
     await rig.run();
     let record = taskRecord(await rig.snapshot(), ID);
-    assert.equal(record.nextStep, "delivery");
+    assert.equal(record.nextStep, "review");
     assert.equal(record.blocker, null);
-    assert.equal(record.wait?.reason, "ci_pending");
-    const since = record.wait!.since;
+    assert.equal(record.target.base, SHA2);
+    assert.equal(record.target.head, PREP3);
+    assert.equal(record.wait?.reason, "review_pending");
     assert.deepEqual(launcherPlans(await rig.snapshot(), rig.clock.now()), []);
-    for (
-      let hour = 0;
-      hour <= 7 && record.nextStep !== "blocked";
-      hour++
-    ) {
+    for (let hour = 0; hour < 3; hour++) {
       rig.clock.advance(HOUR);
       await rig.run();
       record = taskRecord(await rig.snapshot(), ID);
-      if (record.nextStep !== "blocked") {
-        assert.equal(record.wait?.since, since, "the wait keeps its start");
-      }
+      assert.equal(record.nextStep, "review", `hour ${hour}`);
+      assert.equal(record.blocker, null, `hour ${hour}`);
     }
-    assert.ok(rig.clock.now() - since >= CARRIED_WAIT_BOUND_MS);
-    assert.equal(record.nextStep, "blocked");
-    assert.equal(record.blocker?.message, UNATTRIBUTED_PARK);
-    assert.equal(rig.model.requests.length, 0);
+    assert.equal(rig.model.requests.length, 0, "no CI fix started");
     assert.deepEqual(launcherPlans(await rig.snapshot(), rig.clock.now()), []);
     if (GEN79) {
       for (const written of writes) await assertGen79Parses(written);

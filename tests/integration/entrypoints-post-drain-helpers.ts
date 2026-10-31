@@ -43,7 +43,7 @@ export async function postDrainTaskScenario(
     | "wrong-head"
     | "unavailable"
     | "missing-acceptance"
-    | "missing-acceptance-capped"
+    | "missing-acceptance-spent-rounds"
     | "failed-drain"
     | "deadline"
     | "foreign-only"
@@ -315,7 +315,8 @@ export async function postDrainTaskScenario(
               ? { verdict: "unavailable" as const }
               : {}),
             taskAcceptance: mode === "missing-acceptance" ||
-                mode === "missing-acceptance-capped" || mode === "unavailable"
+                mode === "missing-acceptance-spent-rounds" ||
+                mode === "unavailable"
               ? null
               : {
                 issueNumber: 1,
@@ -489,7 +490,7 @@ export async function postDrainTaskScenario(
     assert.equal(
       state.reviews.length,
       (positive || mode === "missing-acceptance" ||
-          mode === "missing-acceptance-capped" || mode === "moved-base"
+          mode === "missing-acceptance-spent-rounds" || mode === "moved-base"
         ? 1
         : 0) + (collision ? 1 : 0),
       "a completed result may be retained without authorizing delivery",
@@ -509,16 +510,14 @@ export async function postDrainTaskScenario(
       assert.equal(state.reviews[0].taskAcceptance, null);
       assert.equal(state.work[0].nextStep, "review");
     }
-    if (mode === "missing-acceptance-capped") {
-      // No review round is left (the hard ceiling, owner decision
-      // 2026-10-16): the drained receipt parks the record with the ceiling's
-      // fixed message instead of waiting for a review it can never get.
+    if (mode === "missing-acceptance-spent-rounds") {
+      // Rounds are accounting, never a park (owner directive 2026-10-30):
+      // the drained receipt with no acceptance leaves the record in review
+      // for another round, exactly like a missing acceptance with rounds
+      // left. Nothing is blocked for the spent count.
       assert.equal(state.reviews[0].taskAcceptance, null);
-      assert.equal(state.work[0].nextStep, "blocked");
-      assert.equal(
-        state.work[0].blocker?.message,
-        "review round ceiling reached: the completed review carries no task acceptance",
-      );
+      assert.equal(state.work[0].nextStep, "review");
+      assert.equal(state.work[0].blocker, null);
       assert.equal(state.work[0].counters.reviewRounds, attempt);
     }
     assert.deepEqual(state.reservations, charges);

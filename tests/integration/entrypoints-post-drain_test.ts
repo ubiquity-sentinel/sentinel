@@ -34,10 +34,13 @@ for (
     "wrong-head",
     "unavailable",
     "missing-acceptance",
-    "missing-acceptance-capped",
     "deadline",
   ] as const
 ) {
   Deno.test(`entrypoint: post-drain refuses ${mode}`, () =>
     postDrainTaskScenario(mode));
 }
+Deno.test(
+  "entrypoint: post-drain keeps a spent-round missing acceptance in review",
+  () => postDrainTaskScenario("missing-acceptance-spent-rounds"),
+);

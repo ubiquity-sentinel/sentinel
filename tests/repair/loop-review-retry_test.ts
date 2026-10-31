@@ -123,7 +123,7 @@ Deno.test(
 );
 
 Deno.test(
-  "review no-verdict: the hard three-round ceiling parks the task without a fourth review",
+  "review no-verdict: a no-verdict head is reviewed again instead of parked at a three-round ceiling",
   async () => {
     const { rig, work } = await rigAtReviewWait("review-no-verdict-blocked");
     try {
@@ -152,25 +152,35 @@ Deno.test(
       assert.equal(continued.status, "idle", JSON.stringify(continued));
       state = await rig.snapshot();
       const record = state.work[0]!;
-      assert.equal(record.nextStep, "blocked");
-      assert.equal(record.blocker?.kind, "other");
-      assert.equal(
-        record.blocker?.message,
-        "review round ceiling reached: the current head has no completed review",
-      );
-      assert.equal(record.wait, null);
-      assert.equal(record.counters.reviewRounds, 3);
+      // Rounds are accounting (owner directive 2026-10-30): the no-verdict
+      // head is reviewed again under a new round, never parked for its count.
+      assert.equal(record.nextStep, "review");
+      assert.equal(record.blocker, null);
+      assert.equal(record.wait?.reason, "review_pending");
+      assert.equal(record.counters.reviewRounds, 4, "the fourth round");
       assert.equal(record.target.head, work.target.head);
       assert.equal(record.target.pr, work.target.pr, "the PR is kept");
       assert.equal(
         rig.github.reviewRequestIdentities.length,
-        requestsBefore,
-        "no fourth review is requested",
+        requestsBefore + 1,
+        "the fourth review is requested",
+      );
+      for (const charge of chargesBefore) {
+        assert.deepEqual(
+          state.reservations.find((row) => row.id === charge.id),
+          charge,
+          `${charge.id} is kept exactly; nothing is refunded`,
+        );
+      }
+      assert.equal(
+        state.reservations.length,
+        chargesBefore.length + 1,
+        "only the fourth review is added",
       );
       assert.deepEqual(
-        state.reservations,
-        chargesBefore,
-        "every charge is kept exactly; nothing is refunded or added",
+        state.reservations.filter((row) => row.purpose === "review_request")
+          .map((row) => row.attempt).sort((a, b) => a - b),
+        [1, 2, 3, 4],
       );
       assert.equal(rig.model.requests.length, implementationsBefore);
       assert.equal(rig.github.calls.includes("merge"), false);

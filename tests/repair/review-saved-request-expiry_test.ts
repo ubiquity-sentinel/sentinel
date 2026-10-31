@@ -50,7 +50,7 @@ import {
   repairConfigs,
 } from "./helpers.ts";
 import { exactOpenPr, positiveLifecycle } from "./loop-candidate-fixtures.ts";
-import { CAP_UNREVIEWED, seededState } from "./review-round-cap-rig.ts";
+import { seededState } from "./review-round-cap-rig.ts";
 
 const LIVE = JSON.parse(
   await Deno.readTextFile(
@@ -476,30 +476,31 @@ Deno.test("JAM B5 live replay: every saved request with no bound journal moves o
   );
 
   await t.step(
-    "647 / PR 1011: rounds spent (legacy pin 4, green, unarmed) -> UNREVIEWED park",
+    "647 / PR 1011: rounds spent (legacy pin 4, green, unarmed) -> round five is requested",
     async () => {
       const rig = await liveRig(647);
       const { record } = rig.shape;
       const outcome = await rig.run();
       assert.notEqual(outcome.status, "state_error", JSON.stringify(outcome));
-      const { state, work } = await assertRecovered(rig, 4);
-      assert.equal(work.nextStep, "blocked");
-      assert.equal(work.blocker?.kind, "other");
-      assert.equal(work.blocker?.message, CAP_UNREVIEWED);
-      assert.equal(work.wait, null);
-      assert.equal(
-        rig.github.reviewRequestIdentities.length,
-        0,
-        "no fifth round",
+      // Rounds are accounting (owner directive 2026-10-30): the green head
+      // gets its next review, never an UNREVIEWED park for the spent count.
+      const { state, work } = await assertRecovered(rig, 5);
+      assert.equal(work.nextStep, "review");
+      assert.equal(work.wait?.reason, "review_pending");
+      assert.equal(work.blocker, null);
+      assert.deepEqual(
+        rig.github.reviewRequestIdentities.map((row) => row.operationKey),
+        [reviewOperationKey(1011, record.target.head!, 5)],
+        "the fifth round is admitted",
       );
       assert.equal(
         reviewCharges(state, record.id).length,
-        4,
-        "the ambiguous round-4 admission stays the last charge",
+        5,
+        "the ambiguous round-4 admission stays charged; round five is added",
       );
       await rig.run();
-      assert.deepEqual(await rig.work(), work, "the park is final");
-      assert.equal(rig.github.reviewRequestIdentities.length, 0);
+      assert.deepEqual(await rig.work(), work, "the fresh round is awaited");
+      assert.equal(rig.github.reviewRequestIdentities.length, 1);
     },
   );
 });
