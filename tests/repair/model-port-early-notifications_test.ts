@@ -1,5 +1,7 @@
 /** Production consumer proof: notifications precede the turn/start response. */
 import assert from "node:assert/strict";
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 import { createLocalRepositoryConfig } from "../../src/host/local-config.ts";
 import { CodexSubprocessSession } from "../../src/repair/codex-transport.ts";
 import { CodexImplementationPort } from "../../src/repair/model-port.ts";
@@ -9,6 +11,18 @@ import {
   runtimeRequest,
   SCHEMA_FILE_CHANGE_ITEM,
 } from "./model-port-helpers.ts";
+
+// Custody bounds retained memory, not garbage waiting for V8's next collection.
+// A warm CI process may otherwise allow more than 32 MiB of dead allocations
+// between collections. Keep collection available only in this test context.
+setFlagsFromString("--expose-gc");
+const collectGarbage = runInNewContext("gc") as () => void;
+setFlagsFromString("--no-expose-gc");
+
+function retainedHeapUsed(): number {
+  collectGarbage();
+  return Deno.memoryUsage().heapUsed;
+}
 
 type Scenario = "large" | "forged-only" | "late-reroute" | "evidence-overflow";
 
@@ -123,11 +137,12 @@ async function runScenario(scenario: Scenario) {
     return response;
   };
   let retainedEvidenceBytes = 0;
-  const before = Deno.memoryUsage().heapUsed;
+  const before = retainedHeapUsed();
   let peak = before;
+  // Full collection is intentionally infrequent so sampling cannot starve the turn.
   const sampler = setInterval(() => {
-    peak = Math.max(peak, Deno.memoryUsage().heapUsed);
-  }, 10);
+    peak = Math.max(peak, retainedHeapUsed());
+  }, 100);
   const port = new CodexImplementationPort({
     openSession: () => Promise.resolve(session),
     checkoutDir: dir,
@@ -151,6 +166,7 @@ async function runScenario(scenario: Scenario) {
   });
   try {
     const result = await port.runModel(request);
+    peak = Math.max(peak, retainedHeapUsed());
     assert.equal(interrupts, 0, "volume never requests an interrupt");
     assert.equal(session.isSettled(), true);
     assert.equal(session.getFailure(), null);
