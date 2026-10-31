@@ -150,17 +150,17 @@ Deno.test("native review: a recovered envelope bound to another snapshot is refu
   assert.equal(outcome.result, null);
 });
 
-Deno.test("native review: an unrecoverable envelope keeps the fixed json_syntax category", async () => {
+Deno.test("native review: syntax and a recovered candidate rejected on keys stay distinct", async () => {
   assert.equal(
     await rejectedFinalCategory('{"verdict":"clean","verdict":"clean"}'),
     `${MALFORMED_PREFIX}[json_syntax]`,
   );
-  // A rewrite that parses but whose shape is then refused (here an invented
-  // key) is still reported as the escaping failure it is.
+  // Recovery produced JSON, but an invented result key still refuses.
+  // Keep that rejection stage distinct from unrecoverable JSON syntax.
   assert.equal(
     await rejectedFinalCategory(
       '{"verdict":"clean","summary":"Uses "a", "b": "c" now","findings":[]}',
     ),
-    `${MALFORMED_PREFIX}[json_syntax]`,
+    `${MALFORMED_PREFIX}[recovered_result_keys]`,
   );
 });
