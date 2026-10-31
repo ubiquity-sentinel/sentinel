@@ -10,7 +10,7 @@ import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { settleReviewCharge } from "./loop-accounting.ts";
 import { CHECK_POLL_MS } from "./loop-bounds.ts";
 import { persistMergedDelivery } from "./loop-merge.ts";
-import { sameRepositoryIdentity } from "./loop-records.ts";
+import { configFor, sameRepositoryIdentity } from "./loop-records.ts";
 import { loadSnapshot, persistWork } from "./loop-state.ts";
 import { readDeliveryTaskContext } from "./loop-task-context.ts";
 import type {
@@ -18,11 +18,7 @@ import type {
   RepairCycleDepsV1,
   StepResultV1,
 } from "./loop-types.ts";
-import {
-  mergedOffTipMessage,
-  observedMergeLanding,
-  queueMayHaveMerged,
-} from "./merge-off-tip.ts";
+import { mergedOffTipMessage, queueMayHaveMerged } from "./merge-off-tip.ts";
 import { latestCompletedReview } from "./review-round-cap.ts";
 import { authorizingReceipt } from "./review-gate.ts";
 import { clearIntent, markBlocked, setWait } from "./transitions.ts";
@@ -123,19 +119,21 @@ function reservedReviewAdmission(
 }
 
 /**
- * Landing proof for a human merge whose pull request head moved on after the
- * reviewed head. Only the record's own base is checked: a merge commit (or a
- * squash/rebase landing, whose sole parent is the base) that sits on
- * `record.target.base` merged this pull request into this record's base
- * branch, while any other base is an off-tip landing and stays refused. A
- * merge commit that cannot be read is never booked. The booked outcome keeps
- * the reviewed head so the ordinary delivery bookkeeping, which revalidates
- * the record's own reviewed head, is unchanged.
+ * Landing proof for a human merge. A human merge that ran after the record's
+ * base branch moved is the normal GitHub case: the merge commit's first parent
+ * is the branch's newer tip, not the base SHA recorded at review time. The
+ * landing is therefore accepted when it sits on the reviewed base itself, or
+ * when the pull request's own base ref is the record's configured base branch
+ * (owner rule 2026-10-30: a human merge is a completed delivery). Only a pull
+ * merged into another branch is an off-tip landing and stays refused. A merge
+ * commit that cannot be read is never booked. The booked outcome keeps the
+ * reviewed head so the ordinary delivery bookkeeping, which revalidates the
+ * record's own reviewed head, is unchanged.
  */
-async function humanMergeOnRecordBase(
+async function humanMergeLanding(
   deps: RepairCycleDepsV1,
   record: WorkRecordV1,
-  mergedHead: GitSha,
+  pull: GitHubPullRequestV1,
   mergeSha: GitSha,
 ): Promise<MergeOutcomeV1 | "unavailable"> {
   const booked: MergeOutcomeV1 = {
@@ -154,9 +152,12 @@ async function humanMergeOnRecordBase(
     return "unavailable";
   }
   if (!parents.ok || parents.value === null) return "unavailable";
-  return parents.value[0] === record.target.base ? booked : {
+  if (parents.value[0] === record.target.base) return booked;
+  const baseBranch = configFor(deps, record.repository)?.baseBranch ?? null;
+  if (baseBranch !== null && pull.baseRef === baseBranch) return booked;
+  return {
     outcome: "merged_off_tip",
-    head: mergedHead,
+    head: pull.head,
     mergeSha,
     parents: parents.value,
   };
@@ -223,13 +224,11 @@ export async function completeHumanMerge(
   }
   const pr = current.target.pr!;
   const head = current.target.head!;
-  // A head the review never covered is a completed human delivery too: its
-  // merge is booked on the record's own base and carries no authorizing
-  // receipt. The exact reviewed head keeps the strict [base, head] landing.
+  // A human merge is a completed delivery even when the base branch moved on
+  // after the review: the landing is proven by the pull's own base ref, and a
+  // head the review never covered carries no authorizing receipt.
   const diverged = pull.head !== head;
-  const landed = diverged
-    ? await humanMergeOnRecordBase(deps, current, pull.head, mergeSha)
-    : await observedMergeLanding(deps, current, head, mergeSha);
+  const landed = await humanMergeLanding(deps, current, pull, mergeSha);
   if (landed === "unavailable") {
     const now = deps.clock.now();
     return persistWork(
