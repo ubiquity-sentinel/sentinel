@@ -91,25 +91,80 @@ for (const boundary of ["fixture", "original replay"] as const) {
   );
 }
 
+const deadLocalCandidate = (id: ReturnType<typeof asWorkItemId>) =>
+  workRecord("issue-1", {
+    source: { kind: "issue", id: "1", revision: SHA1 },
+    related: { incidentId: null, issueNumber: 1 },
+    target: {
+      base: SHA1,
+      branch: candidateBranch(id),
+      checkpoint: null,
+      head: null,
+      pr: null,
+      candidateState: { preserved: null, publishedHead: null },
+    },
+    nextStep: "work",
+  });
+
 Deno.test(
-  "candidate lifecycle: a missing preserved descriptor without intent defers safely",
+  "candidate lifecycle: a dead worker-local candidate starts one fresh implementation from the base",
   async () => {
     const rig = await makeRig("candidate-descriptor", { summaries: false });
     try {
       const id = asWorkItemId("issue-1");
-      const record = workRecord("issue-1", {
-        source: { kind: "issue", id: "1", revision: SHA1 },
-        related: { incidentId: null, issueNumber: 1 },
-        target: {
-          base: SHA1,
-          branch: candidateBranch(id),
-          checkpoint: null,
-          head: null,
-          pr: null,
-          candidateState: { preserved: null, publishedHead: null },
-        },
-        nextStep: "work",
+      const written = await rig.store.writeRepair(
+        seededSnapshot([deadLocalCandidate(id)]),
+        null,
+      );
+      assert.ok(written.ok && written.value.status === "applied");
+
+      // The placeholder descriptor owns no publishable artifact and its
+      // deterministic branch is absent, so the row is released to exactly one
+      // fresh implementation start over the base (no checkoutBase).
+      await rig.run();
+      assert.equal(rig.model.requests.length, 1, "one fresh implementation");
+      assert.equal(rig.model.requests[0]!.base, SHA1);
+      assert.equal(
+        rig.model.requests[0]!.checkoutBase,
+        undefined,
+        "a released dead candidate starts from the base",
+      );
+      assert.equal(rig.github.pushes.length, 0, "nothing published");
+      const state = await rig.snapshot();
+      const work = state.work[0]!;
+      assert.ok(work.target.head !== null, "the fresh candidate head");
+      assert.equal(
+        work.intent?.kind,
+        "candidate_preservation",
+        "the fresh candidate then awaits its deterministic preservation",
+      );
+      assert.deepEqual(work.target.candidateState, {
+        preserved: null,
+        publishedHead: null,
       });
+      assert.equal(
+        rig.github.calls.filter((call) => call === "requestReview").length,
+        0,
+        "no review without a preserved descriptor",
+      );
+    } finally {
+      await rig.ctx.cleanup();
+    }
+  },
+);
+
+Deno.test(
+  "candidate lifecycle: a released dead candidate refuses uncharged when its branch is live",
+  async () => {
+    const rig = await makeRig("candidate-descriptor-live", {
+      summaries: false,
+      // A worker pushed the candidate but died before recording it: the
+      // deterministic branch exists while publishedHead is still null.
+      github: { branchRefSha: SHA3 },
+    });
+    try {
+      const id = asWorkItemId("issue-1");
+      const record = deadLocalCandidate(id);
       const before = canonicalStringify(record);
       const written = await rig.store.writeRepair(
         seededSnapshot([record]),
@@ -120,11 +175,10 @@ Deno.test(
       const outcome = await rig.run();
       assert.equal(outcome.status, "margin", JSON.stringify(outcome));
       const state = await rig.snapshot();
-      assert.equal(state.sequence, 1, "a safe deferral writes nothing");
+      assert.equal(state.sequence, 1, "an uncharged refusal writes nothing");
       assert.equal(canonicalStringify(state.work[0]), before);
       assert.equal(state.reservations.length, 0);
       assert.equal(rig.model.requests.length, 0, "no model start");
-      assert.equal(rig.replay.requests.length, 0, "no replay run");
       assert.equal(rig.github.pushes.length, 0, "no push");
       assert.equal(rig.github.preservationRequests.length, 0);
       assert.equal(

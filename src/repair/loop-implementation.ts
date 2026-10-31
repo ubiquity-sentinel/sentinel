@@ -58,6 +58,7 @@ import {
   replaceWorkMutation,
 } from "./loop-state.ts";
 import { existingHeadContinuationShape } from "./loop-eligibility.ts";
+import { verifyNoLiveLocalCandidateBranch } from "./loop-local-candidate.ts";
 import { legacyCutoff } from "./loop-review-round-cap.ts";
 import { readBase, readIssueForModel } from "./loop-task-context.ts";
 import type {
@@ -190,6 +191,17 @@ export async function prepareImplementationStart(
     const refused = await verifyExistingPublishedHead(deps, record);
     if (refused !== null) return refused;
   }
+
+  // A dead worker-local candidate is released to a fresh base start only when
+  // its deterministic branch is also absent: a live branch it never recorded
+  // would be orphaned by a different fresh head and the record terminally
+  // blocked at publication. The live ref read refuses the start uncharged;
+  // every other record is unaffected.
+  const localCandidateRefused = await verifyNoLiveLocalCandidateBranch(
+    deps,
+    record,
+  );
+  if (localCandidateRefused !== null) return localCandidateRefused;
 
   // A reviewed head awaiting a CI correction carries no persisted CI evidence
   // (generation 76 could not parse it): the attribution is re-derived from the
