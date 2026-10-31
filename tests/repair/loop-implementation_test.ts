@@ -1,18 +1,36 @@
 /** Candidate eligibility, implementation uncertainty and P0 correction. */
 import assert from "node:assert/strict";
+import { RollingStartBudget } from "../../src/budget/mod.ts";
 import { asWorkItemId } from "../../src/contracts/brands.ts";
+import { DurableGitHubCooldownGate } from "../../src/repair/github-cooldown.ts";
+import { prepareImplementationStart } from "../../src/repair/loop-implementation.ts";
+import type {
+  LoopContextV1,
+  RepairCycleDepsV1,
+} from "../../src/repair/loop-types.ts";
 import {
   candidateBranch,
   implementationIntentKey,
 } from "../../src/repair/keys.ts";
 import {
   reservation,
+  reviewReceipt,
   SHA1,
   SHA2,
   SHA3,
   T0,
   workRecord,
 } from "../state/helpers.ts";
+import {
+  FakeClock,
+  FakeGithub,
+  FakeIncidents,
+  FakeModel,
+  FakeReplay,
+  MemoryState,
+  repairConfigs,
+} from "./helpers.ts";
+import { exactOpenPr, positiveLifecycle } from "./loop-candidate-fixtures.ts";
 import {
   issueRecord,
   makeMemoryRig,
@@ -21,7 +39,6 @@ import {
   seededSnapshot,
   SHA4,
 } from "./loop-rig.ts";
-import { positiveLifecycle } from "./loop-candidate-fixtures.ts";
 
 Deno.test("generated/cache-only candidates are never a repair", async () => {
   const rig = await makeRig("artifactonly", {
@@ -461,3 +478,99 @@ Deno.test("P1/P2/P3-only findings never spend a correction round", async () => {
     await rig.ctx.cleanup();
   }
 });
+
+Deno.test(
+  "existing-head continuation: a review-rejected head takes the correction path",
+  async () => {
+    const head = SHA2;
+    const id = "issue-1";
+    const branch = candidateBranch(asWorkItemId(id));
+    const record = workRecord(id, {
+      source: { kind: "issue", id: "1", revision: SHA1 },
+      related: { incidentId: null, issueNumber: 1 },
+      target: {
+        base: SHA1,
+        branch,
+        checkpoint: null,
+        head,
+        pr: 7,
+        candidateState: { preserved: null, publishedHead: head },
+      },
+    });
+    const github = new FakeGithub({
+      baseSha: SHA1,
+      candidateLifecycle: {
+        ...positiveLifecycle(),
+        refs: { [`refs/heads/${branch}`]: head },
+        pullRequests: [exactOpenPr(7, head, branch)],
+      },
+    });
+    const rejected = reviewReceipt("review-rejected", {
+      pullRequest: { number: 7, head, base: SHA1 },
+      outcome: "completed",
+      resultId: "result-1",
+      observedReviewer: "chatgpt-codex-connector[bot]",
+      findings: [{
+        id: "finding-p0",
+        severity: "P0",
+        path: "src/app.ts",
+        message: "required fix",
+        fingerprint: "b".repeat(64),
+        resolved: false,
+        resolutionEvidence: null,
+      }],
+      unresolvedSeverities: ["P0"],
+      completedAt: T0 + 1500,
+    });
+    const state = new MemoryState();
+    state.repair = seededSnapshot([record], { reviews: [rejected] });
+    state.repairHead = SHA1;
+    const clock = new FakeClock(T0);
+    const configs = repairConfigs({
+      sessionBound: { maxDurationMs: 240_000, maxOutputChars: 200_000 },
+    });
+    const deps: RepairCycleDepsV1 = {
+      clock,
+      state,
+      configs,
+      controllerSha: SHA1,
+      github,
+      githubCooldown: new DurableGitHubCooldownGate({ state, clock }),
+      incidents: new FakeIncidents({ summaries: [] }),
+      replay: new FakeReplay(),
+      model: new FakeModel(),
+      budget: new RollingStartBudget({ clock, state, configs }),
+    };
+    const context: LoopContextV1 = {
+      snapshot: state.repair,
+      head: SHA1,
+      executionBaseline: record,
+      bounds: {
+        runDeadline: clock.now() + 60 * 60_000,
+        modelCutoff: clock.now() + 60 * 60_000,
+      },
+    };
+
+    const prepared = await prepareImplementationStart(
+      deps,
+      context,
+      record,
+      configs[0]!,
+      undefined,
+      { existingHeadContinuation: true },
+    );
+
+    assert.equal(prepared.kind, "prepared", JSON.stringify(prepared));
+    if (prepared.kind !== "prepared") return;
+    assert.equal(
+      prepared.request.checkoutBase,
+      head,
+      "the correction starts from the rejected existing published head",
+    );
+    assert.deepEqual(
+      prepared.request.reviewFindings,
+      [{ severity: "P0", path: "src/app.ts", message: "required fix" }],
+      "the rejection's exact finding is carried into the correction",
+    );
+  },
+);

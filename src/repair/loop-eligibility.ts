@@ -27,6 +27,32 @@ import {
 } from "./review-round-cap.ts";
 
 /**
+ * The existing-published-head continuation shape (owner throughput, 2026-10-30):
+ * an issue record whose own published pull request head IS its target head
+ * while no durable candidate descriptor was preserved
+ * (`candidateState.preserved === null`). These are the rows the formerly
+ * configured protected-path park left holding an existing PR and no
+ * descriptor: the ordinary lane refuses to regenerate, publish or review them
+ * from an unverified head, so nothing advanced them.
+ *
+ * The continuation start corrects that EXACT head (`checkoutBase`) instead of
+ * starting a fresh candidate from the base, which would overwrite an
+ * unverified head. `publishedHead` must name the target head, so the
+ * unpublished-candidate park (`publishedHead !== head`) and every record
+ * without a recorded custody binding stay refused.
+ */
+export function existingHeadContinuationShape(record: WorkRecordV1): boolean {
+  const { base, branch, candidateState, head, pr } = record.target;
+  return record.source.kind === "issue" &&
+    head !== null && head !== base && pr !== null && branch !== null &&
+    candidateState !== undefined && candidateState.preserved === null &&
+    candidateState.publishedHead === head &&
+    // Takeover custody keeps its own reviewed-head correction authority
+    // (only an unresolved P0 corrects it); it is never re-authorized here.
+    !hasTakeoverCustody(record);
+}
+
+/**
  * A review round is left for the candidate a model start of `record` would
  * produce: an ordinary round, or the one CI fix an open legacy final round
  * admits (a reviewed red head awaiting its CI correction; that fix arms the
@@ -113,9 +139,10 @@ export function isMatrixImplementationReadyV1(
     !isStaleImplementationIntent(record.intent, now)
   ) return false;
   const candidateState = record.target.candidateState;
+  const continuation = existingHeadContinuationShape(record);
   if (
     candidateState !== undefined && candidateState.preserved === null &&
-    !hasTakeoverCustody(record)
+    !hasTakeoverCustody(record) && !continuation
   ) {
     return false;
   }
@@ -128,7 +155,12 @@ export function isMatrixImplementationReadyV1(
       ciRouteOpen,
       preReviewRouteOpen,
       cutoff,
-    );
+    ) ||
+    // A published head no review has refused still has one authorized start:
+    // the continuation that re-verifies and corrects that exact head (the
+    // planner's admission re-proves the live PR head and the live CI failure
+    // before anything is charged).
+    continuation;
 }
 
 // ---------------------------------------------------------------------------

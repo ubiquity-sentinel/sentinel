@@ -17,7 +17,7 @@ import {
   MATRIX_IMPLEMENTATION_DEFERRED,
 } from "./loop-bounds.ts";
 import { ciCorrectionRouteOpen } from "./ci-rejection.ts";
-import { preReviewCiFixRouteOpen } from "./ci-first-policy.ts";
+import { isCiFixMarker, preReviewCiFixRouteOpen } from "./ci-first-policy.ts";
 import {
   conflictResolutionAdmissible,
   conflictResolutionRouteOpen,
@@ -32,6 +32,7 @@ import {
   settleFailedImplementation,
 } from "./loop-implementation-result.ts";
 import { prepareImplementationStart } from "./loop-implementation.ts";
+import { existingHeadContinuationShape } from "./loop-eligibility.ts";
 import { executeMerge, reconcileMergeIntent } from "./loop-merge.ts";
 import { executeCandidatePreservation } from "./loop-preservation.ts";
 import { executePublishStep } from "./loop-publication.ts";
@@ -139,12 +140,22 @@ export async function executeWorkStep(
   // regenerated, never published and never reviewed from an unverified head.
   const candidateState = record.target.candidateState;
   if (candidateState !== undefined && candidateState.preserved === null) {
-    if (existingPr.status !== "custody_ready") {
+    // A custody_ready takeover needs its live custody proof; the
+    // existing-published-head continuation (exact published head, no
+    // descriptor) instead re-proves that exact PR head in the review
+    // freshness gate below before any reservation.
+    if (
+      existingPr.status !== "custody_ready" &&
+      !existingHeadContinuationShape(record)
+    ) {
       return {
         kind: "deferred",
         detail: "candidate preservation descriptor unavailable",
       };
     }
+    // The continuation's durable fix marker is its admission to the
+    // correction start, not a review request: the exact published head is
+    // re-verified and its live failure re-derived at implementation admission.
     if (
       record.intent === null && !headNeedsCorrection(
         context.snapshot,
@@ -152,7 +163,8 @@ export async function executeWorkStep(
         ciCorrectionRouteOpen(deps),
         preReviewCiFixRouteOpen(deps),
         legacyCutoff(context),
-      )
+      ) &&
+      !(existingHeadContinuationShape(record) && isCiFixMarker(record.wait))
     ) return await requestReviewFor(deps, context, record, record.target.pr!);
   }
 
@@ -299,6 +311,11 @@ export async function executeImplementationStep(
     context,
     record,
     config,
+    undefined,
+    // The serial lane authorizes the same existing-published-head
+    // continuation the matrix planner does, so its exact live head and CI
+    // are re-proved before a marker write or correction start.
+    { existingHeadContinuation: existingHeadContinuationShape(record) },
   );
   if (prepared.kind !== "prepared") return prepared;
   const submitGuard = await guardQueueOperation(

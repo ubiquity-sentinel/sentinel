@@ -24,16 +24,27 @@ import {
   REASONING,
   runBoundsProofRef,
 } from "./loop-bounds.ts";
-import { ciCorrectionRouteOpen } from "./ci-rejection.ts";
-import { preReviewCiFixRouteOpen } from "./ci-first-policy.ts";
+import {
+  baseRepairFindingOpen,
+  ciCorrectionFinding,
+  ciCorrectionRouteOpen,
+} from "./ci-rejection.ts";
+import { isCiFixMarker, preReviewCiFixRouteOpen } from "./ci-first-policy.ts";
 import {
   conflictMarker,
   conflictResolutionAdmissible,
   conflictResolutionRouteOpen,
 } from "./conflict-resolution.ts";
-import { confirmCiCorrection } from "./loop-ci-correction.ts";
+import {
+  confirmCiCorrection,
+  observeHeadFailure,
+} from "./loop-ci-correction.ts";
 import { confirmPreReviewCiFix } from "./loop-ci-first.ts";
 import { confirmConflictResolution } from "./loop-conflict-resolution.ts";
+import {
+  gateExistingHeadContinuation,
+  verifyExistingPublishedHead,
+} from "./loop-existing-head-continuation.ts";
 import {
   correctionFindings,
   headAwaitsCiCorrection,
@@ -46,6 +57,7 @@ import {
   persistWork,
   replaceWorkMutation,
 } from "./loop-state.ts";
+import { existingHeadContinuationShape } from "./loop-eligibility.ts";
 import { legacyCutoff } from "./loop-review-round-cap.ts";
 import { readBase, readIssueForModel } from "./loop-task-context.ts";
 import type {
@@ -70,13 +82,32 @@ import {
 // Implementation: durable admission, durable intent, then one run.
 // ---------------------------------------------------------------------------
 
+/**
+ * Optional start kinds the caller may authorize beyond the ordinary lifecycle.
+ * The matrix planner passes `existingHeadContinuation`, the admission a
+ * custody_ready record with no preserved candidate otherwise never gets.
+ */
+export interface ImplementationStartOptionsV1 {
+  /**
+   * Admit the existing-published-head continuation (`existingHeadContinuationShape`)
+   * as a correction of the record's exact published head.
+   */
+  existingHeadContinuation?: boolean;
+}
+
 export async function prepareImplementationStart(
   deps: RepairCycleDepsV1,
   context: LoopContextV1,
   record: WorkRecordV1,
   config: RepositoryConfigV1,
   beforeAdmission?: (request: ModelRunRequestV1) => Promise<boolean>,
+  options?: ImplementationStartOptionsV1,
 ): Promise<StepResultV1 | PreparedImplementationV1> {
+  // The continuation is only ever the shape the caller authorized: a record
+  // whose exact published PR head is its target head with no preserved
+  // candidate. Anything else keeps the ordinary admission rules unchanged.
+  const continuation = options?.existingHeadContinuation === true &&
+    existingHeadContinuationShape(record);
   const queueGuard = await guardQueueOperation(deps, context, record, "resume");
   if (queueGuard !== null) return queueGuard;
   const existingPr = await routeExistingPr(deps, context, record);
@@ -149,6 +180,17 @@ export async function prepareImplementationStart(
     conflict = { head: confirmed.head, mergeBase: confirmed.mergeBase };
   }
 
+  // The authorized existing-published-head continuation: the exact published
+  // head is re-proved against the LIVE pull request BEFORE anything is written
+  // or charged (a head that moved since custody is refused here with no state
+  // write, so no CI-first marker is ever written for an unverified head). A
+  // completed review does not refuse: a custody_ready head whose red CI still
+  // needs its correction is exactly this start.
+  if (continuation) {
+    const refused = await verifyExistingPublishedHead(deps, record);
+    if (refused !== null) return refused;
+  }
+
   // A reviewed head awaiting a CI correction carries no persisted CI evidence
   // (generation 76 could not parse it): the attribution is re-derived from the
   // live check runs here, before anything is charged. Anything but a live
@@ -185,6 +227,52 @@ export async function prepareImplementationStart(
     const confirmed = await confirmPreReviewCiFix(deps, context, record);
     if (confirmed.kind !== "confirmed") return confirmed;
     ciFinding = confirmed.finding;
+  }
+  // A head its own review rejected is never "green awaiting review": it takes
+  // the ordinary correction path below (checkoutBase on that exact head), so
+  // the green-continuation gate must not intercept it.
+  const rejectedHead = headNeedsCorrection(
+    context.snapshot,
+    record,
+    ciRouteOpen,
+    preReviewOpen,
+    legacyCutoff(context),
+  );
+  // A continuation head whose fix marker is already durable: re-derive the
+  // live failure over that exact published head BEFORE anything is charged.
+  // A candidate-caused failure becomes the correction finding admission
+  // carries; a head that cleared its failure loses the marker uncharged (its
+  // next step requests the review), and a moved base or unproven attribution
+  // is handed back to the CI-first gate's bounded waits.
+  if (
+    continuation && isCiFixMarker(record.wait) && !rejectedHead &&
+    conflict === null && ciFinding === null
+  ) {
+    const observed = await observeHeadFailure(deps, record);
+    if (observed === null) {
+      return { kind: "deferred", detail: "CI check observation unavailable" };
+    }
+    if (observed.kind === "candidate") {
+      ciFinding = ciCorrectionFinding(
+        record.target.base,
+        observed.checks,
+        observed.redBase === true && baseRepairFindingOpen(deps),
+      );
+    } else if (observed.kind === "clean") {
+      return persistWork(deps, context, clearWait(record, deps.clock.now()));
+    } else {
+      return await gateExistingHeadContinuation(deps, context, record);
+    }
+  }
+  // A verified continuation head with no marker yet: the CI-first gate writes
+  // it (or waits, backs off, parks or defers a green head) and nothing is
+  // charged: a red candidate head takes its unchanged fix marker (uncharged
+  // progress; the next wave's marker admission starts the authenticated
+  // correction) and anything else waits, backs off, parks or stays deferred.
+  if (
+    continuation && !rejectedHead && conflict === null && ciFinding === null
+  ) {
+    return await gateExistingHeadContinuation(deps, context, record);
   }
 
   // The issue value is read BEFORE the reservation (and after the initial
@@ -284,14 +372,10 @@ export async function prepareImplementationStart(
     };
   }
 
-  const rejectedHead = headNeedsCorrection(
-    context.snapshot,
-    record,
-    ciRouteOpen,
-    preReviewOpen,
-    legacyCutoff(context),
-  );
-  if (hasTakeoverCustody(record) && conflict === null && !rejectedHead) {
+  if (
+    hasTakeoverCustody(record) && conflict === null && !rejectedHead &&
+    !continuation
+  ) {
     return {
       kind: "deferred",
       detail: "existing PR has no authorized correction",
@@ -322,7 +406,7 @@ export async function prepareImplementationStart(
     base: record.target.base,
     ...(conflict !== null
       ? { checkoutBase: conflict.head, mergeBase: conflict.mergeBase }
-      : rejectedHead && record.target.head !== null
+      : (rejectedHead || continuation) && record.target.head !== null
       ? { checkoutBase: record.target.head }
       : {}),
     issue,

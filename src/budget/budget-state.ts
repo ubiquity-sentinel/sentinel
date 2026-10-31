@@ -36,6 +36,7 @@ import {
   candidateBranch,
   implementationIntentKey,
 } from "../repair/keys.ts";
+import { existingHeadContinuationShape } from "../repair/loop-eligibility.ts";
 import { headAcceptedByReview } from "../repair/loop-review-records.ts";
 import {
   disabledPolicy,
@@ -241,7 +242,12 @@ export class BudgetStateContext {
       const retry = next.counters.retries - before.counters.retries;
       if (
         retry !== 0 && (retry !== 1 || mergeBase !== null ||
-          !ciPublicationShape(before) ||
+          // The existing-published-head continuation is the one preserved-null
+          // shape admitted to a CI fix: its exact head is re-proved live and
+          // the shared `ciPublicationShape` (delivery gate, launcher) keeps
+          // refusing it.
+          (!ciPublicationShape(before) &&
+            !existingHeadContinuationShape(before)) ||
           (!isCiFixMarker(before.wait) && !headAcceptedByReview(prior, before)))
       ) return null;
       const intent = {

@@ -65,6 +65,7 @@ import {
 import {
   ciFixesLeft,
   ciFixMarker,
+  isCiFixMarker,
   PRE_REVIEW_CI_BOUND_MS,
   preReviewCiFixRouteOpen,
 } from "./ci-first-policy.ts";
@@ -80,6 +81,7 @@ import {
   headAcceptedByReview,
   headAwaitsPreReviewCiFix,
 } from "./loop-review-records.ts";
+import { existingHeadContinuationShape } from "./loop-eligibility.ts";
 import { legacyCutoff } from "./loop-review-round-cap.ts";
 import { persistWork } from "./loop-state.ts";
 import type {
@@ -216,7 +218,13 @@ function routeCandidateFailure(
       marked,
       preReviewCiFixRouteOpen(deps),
       legacyCutoff(context),
-    )
+    ) ||
+    // The existing-published-head continuation authorizes this exact shape:
+    // its head is re-proved live and its failure re-derived before any
+    // charge, so the unchanged fix marker is the durable admission of its
+    // next wave. This is the SEPARATE continuation predicate, never the
+    // shared `ciPublicationShape` the delivery gate and launcher also read.
+    (existingHeadContinuationShape(record) && isCiFixMarker(marked.wait))
   ) return persistWork(deps, context, marked);
   return persistWork(
     deps,

@@ -58,6 +58,7 @@ export const MATRIX_PLAN_NOT_READY_REASONS: readonly string[] = [
   "target.branch=null",
   "config.sessionBound=null",
   "target.head-not-null",
+  "existing_head_continuation_live",
   "config=null",
   "conflictResolutionCap",
   "other",
