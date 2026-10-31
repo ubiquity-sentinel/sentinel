@@ -1,7 +1,10 @@
 /** Repair loop internals: a pull request merged outside Sentinel's own path. */
 import type { GitSha } from "../contracts/brands.ts";
 import type { BudgetReservationV1 } from "../contracts/budget-reservation.ts";
-import type { GitHubPullRequestV1 } from "../contracts/ports.ts";
+import type {
+  GitHubPullRequestV1,
+  MergeOutcomeV1,
+} from "../contracts/ports.ts";
 import type { EvidenceRefV1 } from "../contracts/shared.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { settleReviewCharge } from "./loop-accounting.ts";
@@ -15,10 +18,23 @@ import type {
   RepairCycleDepsV1,
   StepResultV1,
 } from "./loop-types.ts";
-import { mergedOffTipMessage, observedMergeLanding } from "./merge-off-tip.ts";
+import {
+  mergedOffTipMessage,
+  observedMergeLanding,
+  queueMayHaveMerged,
+} from "./merge-off-tip.ts";
 import { latestCompletedReview } from "./review-round-cap.ts";
 import { authorizingReceipt } from "./review-gate.ts";
 import { clearIntent, markBlocked, setWait } from "./transitions.ts";
+
+/**
+ * The runtime's retired park for a merged pull request whose head had moved
+ * past the reviewed head (owner rule 2026-10-30: a human merge is a completed
+ * delivery, so this park is no longer written; the maintenance pass re-admits
+ * the records it already parked).
+ */
+export const HUMAN_MERGE_HEAD_MISMATCH_BLOCKER =
+  "observed merged head identity mismatch";
 
 /**
  * Delivery provenance for a pull request merged outside Sentinel's own merge
@@ -107,6 +123,46 @@ function reservedReviewAdmission(
 }
 
 /**
+ * Landing proof for a human merge whose pull request head moved on after the
+ * reviewed head. Only the record's own base is checked: a merge commit (or a
+ * squash/rebase landing, whose sole parent is the base) that sits on
+ * `record.target.base` merged this pull request into this record's base
+ * branch, while any other base is an off-tip landing and stays refused. A
+ * merge commit that cannot be read is never booked. The booked outcome keeps
+ * the reviewed head so the ordinary delivery bookkeeping, which revalidates
+ * the record's own reviewed head, is unchanged.
+ */
+async function humanMergeOnRecordBase(
+  deps: RepairCycleDepsV1,
+  record: WorkRecordV1,
+  mergedHead: GitSha,
+  mergeSha: GitSha,
+): Promise<MergeOutcomeV1 | "unavailable"> {
+  const booked: MergeOutcomeV1 = {
+    outcome: "merged",
+    head: record.target.head!,
+    mergeSha,
+  };
+  const read = deps.github.readCommitParents;
+  if (read === undefined || queueMayHaveMerged(record.repository)) {
+    return booked;
+  }
+  let parents;
+  try {
+    parents = await read.call(deps.github, mergeSha);
+  } catch {
+    return "unavailable";
+  }
+  if (!parents.ok || parents.value === null) return "unavailable";
+  return parents.value[0] === record.target.base ? booked : {
+    outcome: "merged_off_tip",
+    head: mergedHead,
+    mergeSha,
+    parents: parents.value,
+  };
+}
+
+/**
  * A pull request merged by a human (or any non-Sentinel actor) is a completed
  * delivery by whoever GitHub reports merged it. The exact outstanding review
  * admission is settled as ambiguous before anything moves; the observed merge
@@ -167,7 +223,13 @@ export async function completeHumanMerge(
   }
   const pr = current.target.pr!;
   const head = current.target.head!;
-  const landed = await observedMergeLanding(deps, current, head, mergeSha);
+  // A head the review never covered is a completed human delivery too: its
+  // merge is booked on the record's own base and carries no authorizing
+  // receipt. The exact reviewed head keeps the strict [base, head] landing.
+  const diverged = pull.head !== head;
+  const landed = diverged
+    ? await humanMergeOnRecordBase(deps, current, pull.head, mergeSha)
+    : await observedMergeLanding(deps, current, head, mergeSha);
   if (landed === "unavailable") {
     const now = deps.clock.now();
     return persistWork(
@@ -201,7 +263,7 @@ export async function completeHumanMerge(
   }
   const provenance = humanMergeProvenanceRef(
     pr,
-    head,
+    pull.head,
     mergeSha,
     observedMergedBy(pull),
   );
@@ -221,7 +283,11 @@ export async function completeHumanMerge(
       detail: "human merge source issue unavailable",
     };
   }
-  const latest = latestCompletedReview(fresh.snapshot, withProvenance);
+  // The review did not cover the observed head, so no receipt is bound to it:
+  // the completed delivery rests on the human-merge provenance alone.
+  const latest = diverged
+    ? null
+    : latestCompletedReview(fresh.snapshot, withProvenance);
   const receipt = latest === null ? null : authorizingReceipt(
     [latest],
     withProvenance,
@@ -237,7 +303,7 @@ export async function completeHumanMerge(
     {
       outsideMerge: {
         requestId: receipt?.requestId ?? admission?.id ?? namedAdmission ??
-          humanMergeRequestId(pr, head, mergeSha),
+          humanMergeRequestId(pr, pull.head, mergeSha),
         complete: true,
       },
     },

@@ -35,7 +35,6 @@ import {
   clearIntent,
   clearWait,
   countReviewRound,
-  markTerminalBlocked,
   setWait,
 } from "./transitions.ts";
 
@@ -173,18 +172,9 @@ export async function observeReview(
           detail: "merged pull request observation has no merge SHA",
         };
       }
-      if (pull.value.head !== head) {
-        return persistWork(
-          deps,
-          context,
-          markTerminalBlocked(
-            record,
-            "other",
-            "observed merged head identity mismatch",
-            now,
-          ),
-        );
-      }
+      // The merged head need not be the reviewed head: a human merge is a
+      // completed delivery of this record (owner rule 2026-10-30), booked on
+      // the record's own base by the completion step below.
       return await completeHumanMerge(
         deps,
         context,
