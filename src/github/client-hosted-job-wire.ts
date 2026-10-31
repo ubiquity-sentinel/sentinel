@@ -24,6 +24,7 @@ import {
   expectIsoMs,
   type HostedAttemptV1,
   type HostedJobsV1,
+  type HostedRepairJobV1,
   type HostedRuntimeStepV1,
 } from "./client-hosted-revision-wire.ts";
 import {
@@ -314,17 +315,11 @@ export function parseHostedJobs(
       `${stepPath}.completed_at`,
       expectIsoMs,
     );
-    // Only an actual non-skipped run needs full start/finish evidence.
-    if (
-      stepStatus === "completed" && stepConclusion !== "skipped" &&
-      (stepStartedAt === null || stepCompletedAt === null)
-    ) {
-      fail(
-        `${stepPath}.completed_at`,
-        "invalid_lifecycle",
-        "a completed non-skipped runtime step requires its timestamps",
-      );
-    }
+    // A completed step can briefly appear before GitHub attaches its instants
+    // (the same eventual consistency that hides the step itself). That is
+    // lagging metadata for the settlement reader to re-read, not contradiction;
+    // the reader still refuses without a settleable proof once its bounded
+    // window is spent, so no null timestamp can ever pass as health.
     if (
       stepStartedAt !== null && stepCompletedAt !== null &&
       stepStartedAt > stepCompletedAt
@@ -346,4 +341,30 @@ export function parseHostedJobs(
     repair: { id, status, conclusion, startedAt, completedAt, runtimeStep },
     allCompleted,
   };
+}
+
+/**
+ * A completed repair job whose runtime step is not yet fully materialized.
+ * Legitimate skip/cancellation/timeout settlement is never re-read, and a
+ * present but unexpected non-null value is contradictory, not incomplete.
+ */
+export function hostedRuntimeMetadataIncomplete(
+  repair: HostedRepairJobV1,
+): boolean {
+  if (repair.status !== "completed" || repair.completedAt === null) {
+    return false;
+  }
+  if (
+    repair.conclusion === "skipped" || repair.conclusion === "cancelled" ||
+    repair.conclusion === "timed_out"
+  ) return false;
+  const step = repair.runtimeStep;
+  if (
+    step !== null && step.status === "completed" &&
+    step.conclusion === "skipped"
+  ) return false;
+  if (repair.conclusion === null || repair.startedAt === null) return true;
+  if (step === null) return true;
+  if (step.status !== "completed" || step.conclusion === null) return true;
+  return step.startedAt === null || step.completedAt === null;
 }
