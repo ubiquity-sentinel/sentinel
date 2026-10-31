@@ -118,7 +118,8 @@ Deno.test("protected merge: a pull request touching a protected path never merge
     ],
     ["renamed from a protected path", [
       "docs/x.md",
-      "ops/hosted-autonomy-queue-pass.ts",
+      // The surface lists a rename's previous path too; this one is protected.
+      "src/host/supervisor-dispatch.ts",
     ], "protected_path"],
     ["unreadable listing", null, "protected_path_unverified"],
   ];
