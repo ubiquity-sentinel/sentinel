@@ -135,10 +135,21 @@ Deno.test("hosted authority: reduced authority files stay forbidden and unpublis
   }
 });
 
+Deno.test("hosted authority: the Passport deploy-check selector is protected", () => {
+  assert.equal(
+    touchesProtected(
+      createLocalRepositoryConfig().protectedPaths,
+      "src/repair/merge-gate-checks.ts",
+    ),
+    true,
+  );
+});
+
 Deno.test("hosted authority: a protected merge-gate dependency edit is refused", async (t) => {
-  // `port-merge.ts` imports `loop-checks.ts`, which imports `ci-rejection.ts`;
-  // `port-merge-policy.ts` also imports `ci-rejection.ts`. Editing only a
-  // dependency must not weaken the exact-head check verdict.
+  // `port-merge.ts` imports `loop-checks.ts`, which imports the protected
+  // Passport selector and `ci-rejection.ts`; `port-merge-policy.ts` also
+  // imports `ci-rejection.ts`. Editing only a dependency must not weaken the
+  // exact-head check verdict.
   for (
     const path of [
       "src/repair/loop-checks.ts",

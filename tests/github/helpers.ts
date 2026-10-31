@@ -446,6 +446,8 @@ export interface StructuredReviewFixtureV1 {
 }
 
 export interface StructuredReviewFixtureOptionsV1 {
+  /** Exact repository identity; defaults to the suite's canonical REPO. */
+  repository?: RepositoryIdentityV1;
   head?: GitSha;
   base?: GitSha;
   result?: ReviewResultV1;
@@ -466,13 +468,14 @@ export async function structuredCompletedFixture(
   options: StructuredReviewFixtureOptionsV1 = {},
 ): Promise<StructuredReviewFixtureV1> {
   const result = options.result ?? STRUCTURED_CLEAN_RESULT;
+  const repository = options.repository ?? REPO;
   const reviewId = options.reviewId ?? 100;
   const operationKey = options.operationKey ?? "review:work-1";
   const requestId = options.requestId ?? "req-1";
   const targetDigest = await canonicalStringifySha256({
     type: "custom",
     instructions: JSON.stringify({
-      repository: REPO,
+      repository,
       prNumber: 1,
       head: options.head ?? SHA1,
       base: options.base ?? SHA2,
@@ -483,7 +486,7 @@ export async function structuredCompletedFixture(
   const journal: ReviewJournalReadyV1 = {
     version: "v1",
     phase: "ready",
-    repository: { owner: REPO.owner, name: REPO.name },
+    repository: { owner: repository.owner, name: repository.name },
     prNumber: 1,
     expectedHead: options.head ?? SHA1,
     expectedBase: options.base ?? SHA2,
@@ -536,6 +539,7 @@ export async function structuredCompletedFixture(
       commit_id: options.head ?? SHA1,
     }),
     service: completedServiceRead({
+      repository,
       resultDigest: journal.resultDigest,
       completedAt: journal.completedAt,
       summary: result.summary,

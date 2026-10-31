@@ -28,8 +28,10 @@ const authorityPaths = [
   "src/github/port-merge.ts",
   // Gate dependencies: a candidate that edits only one of these must still be
   // refused; `port-merge-policy.ts` imports `ci-rejection.ts`, and
-  // `port-merge.ts` imports `loop-checks.ts`, which imports `ci-rejection.ts`.
+  // `port-merge.ts` imports `loop-checks.ts`, which imports both the
+  // protected Passport selector and `ci-rejection.ts`.
   "src/repair/loop-checks.ts",
+  "src/repair/merge-gate-checks.ts",
   "src/repair/ci-rejection.ts",
   "src/host/hosted-app-credentials.ts",
   ".github/actions/sentinel-app-token/action.yml",

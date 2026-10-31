@@ -36,6 +36,7 @@ import {
 } from "./ci-rejection.ts";
 import { ciFixesLeft, RED_BASE_RECHECK_MS } from "./ci-first-policy.ts";
 import { CHECK_POLL_MS } from "./loop-bounds.ts";
+import { selectMergeGateChecksV1 } from "./merge-gate-checks.ts";
 import {
   headAcceptedByReview,
   headTaskAcceptanceMissing,
@@ -103,7 +104,12 @@ export async function observeHeadFailure(
   if (head === null) return { kind: "clean" };
   const observed = await readCiChecks(deps.github, head);
   if (!observed.ok) return null;
-  const failed = failedChecks(observed.value.checks);
+  const failed = failedChecks(
+    selectMergeGateChecksV1(
+      record.repository,
+      observed.value.checks,
+    ).checks,
+  );
   if (failed.length === 0) return { kind: "clean" };
   return attributeAgainstBase(deps, record, failed);
 }

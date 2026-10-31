@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createLocalRepositoryConfig } from "../../src/host/local-config.ts";
+import { isPassportDeployCheck } from "../../src/repair/merge-gate-checks.ts";
 import {
   createDefaultBranchResolver,
   createTargetConfigV1,
@@ -485,4 +486,28 @@ Deno.test("Passport dependencies: host preparation precedes the actual model cli
   } finally {
     await rig.cleanup();
   }
+});
+
+Deno.test("Passport policy: deployment workflows are evidence, not merge-gate checks", () => {
+  for (
+    const name of [
+      "deploy-production",
+      "deploy-standby",
+      "Workers Standby Deploy",
+      "Deno Deploy",
+      "Cloudflare Pages: passport",
+      "Workers Builds: passport",
+      "pages-build-deployment",
+    ]
+  ) assert(isPassportDeployCheck(TARGET, name), name);
+  for (const name of ["deno", "CodeRabbit", "verify-artifact"]) {
+    assert(!isPassportDeployCheck(TARGET, name), name);
+  }
+  assert(
+    !isPassportDeployCheck(
+      { owner: "ubiquity", name: "ai.ubq.fi" },
+      "deploy-standby",
+    ),
+    "another target keeps its ordinary check semantics",
+  );
 });

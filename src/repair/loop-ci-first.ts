@@ -70,6 +70,7 @@ import {
 } from "./ci-first-policy.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
 import { absentExpectedChecks, decideCiGate } from "./loop-checks.ts";
+import { selectMergeGateChecksV1 } from "./merge-gate-checks.ts";
 import {
   observeHeadFailure,
   RED_BASE_RECHECK_MS,
@@ -254,12 +255,13 @@ export async function gateReviewOnCi(
   const observed = await readCiChecks(deps.github, head);
   if (!observed.ok) return UNAVAILABLE;
   const checks = observed.value.checks;
-  const decision = decideCiGate(checks);
+  const gating = selectMergeGateChecksV1(record.repository, checks).checks;
+  const decision = decideCiGate(gating);
   if (decision === "proceed") {
     // Every existing run is green; the jobs GitHub has not created yet are
     // awaited like running ones (bounded, uncharged, the same park prefix),
     // and so is a base whose runs cannot be read (no evidence either way).
-    const absent = await absentExpectedChecks(deps, record, checks);
+    const absent = await absentExpectedChecks(deps, record, gating);
     if (absent !== null && absent.length === 0) return null;
     return awaitChecks(
       deps,
@@ -275,11 +277,11 @@ export async function gateReviewOnCi(
       deps,
       context,
       record,
-      latestChecks(checks).filter(checkPending),
+      latestChecks(gating).filter(checkPending),
       now,
     );
   }
-  const failed = failedChecks(checks);
+  const failed = failedChecks(gating);
   // Only the failed names are attributed, so only they are read on the base:
   // an unrelated base run over the strict bounds (the self `development`
   // tip's `matrix_cell (<cellId>)` runs) cannot defer a red head forever.
