@@ -56,7 +56,9 @@ Deno.test("real queue authority permits queued booking after a direct merge in t
   const queued = rig.record;
   const task = rig.facts.task;
   assert.ok(task !== "unavailable");
-  const other = foreignRecord();
+  // The delivery order is oldest first: this direct merge is the older
+  // candidate so it lands before the queue record's booking write.
+  const other = foreignRecord({ createdAt: T0 - 1 });
   rig.replace(
     parseRepairStateSnapshotV1({
       ...rig.snapshot,

@@ -46,9 +46,12 @@ import { r80Available, withR80Parsers } from "./r80-contracts.ts";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import {
   BASE as OTHER_BASE,
+  FOREIGN_RECEIPT_2,
+  FOREIGN_TASK_2,
   foreignPullFacts,
   foreignReceipt,
   foreignRecord,
+  foreignRecord2,
   repositoryTask,
 } from "./hosted-autonomy-fixtures.ts";
 
@@ -622,19 +625,23 @@ Deno.test("queue carried delivery: original receipt is booked but cannot claim V
   }
 });
 
-Deno.test("queue bookkeeping remains eligible after the pass spends its one direct merge", async () => {
+Deno.test("queue bookkeeping remains eligible after the pass performs direct merges", async () => {
   const f = await fixture(true, (facts) => {
     facts.record = { ...facts.record, id: "z-queue" as typeof facts.record.id };
   });
-  const other = foreignRecord();
+  // Two direct merges in one foreign repository, both older than the queue
+  // record so the deterministic oldest-first order delivers them in this pass.
+  const first = foreignRecord({ createdAt: T0 - 2 });
+  const second = foreignRecord({ ...foreignRecord2(), createdAt: T0 - 1 });
   const { rig, github } = await makeRig("queue-after-direct-effect", {
-    repair: repairSnapshot([other, f.facts.record], [
+    repair: repairSnapshot([first, second, f.facts.record], [
       foreignReceipt(),
+      FOREIGN_RECEIPT_2,
       f.facts.receipt,
     ]),
   });
   try {
-    let directMerged = false;
+    const merged = new Set<number>();
     let merges = 0;
     const queueSurface = f.context.deps.githubFor(f.facts.record.repository)!;
     rig.githubFor = (repository) =>
@@ -643,21 +650,28 @@ Deno.test("queue bookkeeping remains eligible after the pass spends its one dire
         readDefaultBranch: () => Promise.resolve("main"),
         readBaseTip: () => Promise.resolve(OTHER_BASE),
         readIssueTask: (issue) =>
-          Promise.resolve(repositoryTask(repository, issue)),
-        readPull: () =>
           Promise.resolve(
-            directMerged ? foreignPullFacts() : foreignPullFacts({
-              state: "open",
-              merged: false,
-              mergeCommitSha: null,
-            }),
+            issue === FOREIGN_TASK_2.issueNumber
+              ? FOREIGN_TASK_2
+              : repositoryTask(repository, issue),
           ),
-        merge: () => {
+        readPull: (number) =>
+          Promise.resolve(
+            merged.has(number)
+              ? foreignPullFacts({ number })
+              : foreignPullFacts({
+                number,
+                state: "open",
+                merged: false,
+                mergeCommitSha: null,
+              }),
+          ),
+        merge: (number) => {
           merges++;
-          directMerged = true;
+          merged.add(number);
           return Promise.resolve({
             merged: true,
-            sha: foreignPullFacts().mergeCommitSha,
+            sha: foreignPullFacts({ number }).mergeCommitSha,
           });
         },
       };
@@ -677,10 +691,11 @@ Deno.test("queue bookkeeping remains eligible after the pass spends its one dire
       ...createHostedAutonomyScopes(deps),
     };
     const result = await runHostedDeliveryPass(context);
-    assert.equal(merges, 1, context.actions.join(" "));
+    assert.equal(merges, 2, context.actions.join(" "));
     assert.equal(result?.status, "applied", context.actions.join(" "));
     const after = await rig.state.readRepair();
     assert.ok(after.ok && after.value.status === "found");
+    // Both direct merges landed and the queue record still booked afterwards.
     assert.equal(after.value.snapshot.releaseRequests.length, 1);
     assert.equal(after.value.snapshot.releaseRequests[0].source.pullRequest, 7);
   } finally {
