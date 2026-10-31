@@ -32,7 +32,10 @@ import {
   settleFailedImplementation,
 } from "./loop-implementation-result.ts";
 import { prepareImplementationStart } from "./loop-implementation.ts";
-import { existingHeadContinuationShape } from "./loop-eligibility.ts";
+import {
+  existingHeadContinuationShape,
+  unpublishedLocalCandidateShape,
+} from "./loop-eligibility.ts";
 import { executeMerge, reconcileMergeIntent } from "./loop-merge.ts";
 import { executeCandidatePreservation } from "./loop-preservation.ts";
 import { executePublishStep } from "./loop-publication.ts";
@@ -135,7 +138,15 @@ export async function executeWorkStep(
   // pending preservation intent handled above) must stop safely: it is never
   // regenerated, never published and never reviewed from an unverified head.
   const candidateState = record.target.candidateState;
-  if (candidateState !== undefined && candidateState.preserved === null) {
+  // A dead worker-local candidate (preserved-null with no PR, no published head
+  // and no pending intent) owns no publishable artifact: there is nothing to
+  // preserve, publish or review, so it is released to the fresh base start
+  // below instead of being refused forever on its placeholder descriptor.
+  const localOnlyCandidate = unpublishedLocalCandidateShape(record);
+  if (
+    candidateState !== undefined && candidateState.preserved === null &&
+    !localOnlyCandidate
+  ) {
     // A custody_ready takeover needs its live custody proof; the
     // existing-published-head continuation (exact published head, no
     // descriptor) instead re-proves that exact PR head in the review
@@ -253,6 +264,7 @@ export async function executeWorkStep(
 
   if (
     record.target.head === null ||
+    localOnlyCandidate ||
     headNeedsCorrection(
       context.snapshot,
       record,
