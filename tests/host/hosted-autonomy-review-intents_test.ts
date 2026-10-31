@@ -100,9 +100,10 @@ Deno.test(
       planHostedRetries(snapshot, now, ATTEMPT_RUNTIME, selfTips(BASE)).length,
       0,
     );
-    // A newer base no longer buys a refreshed head a fourth round either:
-    // the hard review-round ceiling (owner decision 2026-10-16) counts the
-    // three settled charges, whatever the reset counter says.
+    // A newer base buys no fourth round on this head either: it already
+    // holds its completed accepted review, so the delivery pass owns the
+    // record's receipt whatever the reset counter says (owner directive
+    // 2026-10-30: a spent count is accounting, never a gate).
     const newerBase = SHA1;
     const denied: string[] = [];
     const plans = planHostedRetries(
@@ -114,7 +115,7 @@ Deno.test(
       (denial) => denied.push(denial.reason),
     );
     assert.deepEqual(plans, []);
-    assert.deepEqual(denied, ["review_rounds_spent"]);
+    assert.deepEqual(denied, ["review_terminal_left_to_delivery"]);
     // Charged history is untouched: nothing is applied for the record.
     const next = applyHostedRetries(snapshot, SHA1, plans, now);
     assert.deepEqual(next.reservations, snapshot.reservations);
@@ -170,12 +171,10 @@ Deno.test(
       outcome: "ambiguous",
       settledAt: T0 + 2000,
     });
-    const snapshot = repairSnapshot(
-      [record],
-      [authorizingReceipt()],
-      [],
-      [charge],
-    );
+    // No completed review binds this head: the review round the mechanics
+    // below restore is genuinely needed (a reviewed head would be left to the
+    // delivery pass instead).
+    const snapshot = repairSnapshot([record], [], [], [charge]);
     const now = T0 + 5000;
     const plans = planHostedRetries(
       snapshot,
@@ -251,12 +250,7 @@ Deno.test(
       branch?: string,
     ): number =>
       planHostedRetries(
-        repairSnapshot(
-          [record(intent, branch)],
-          [authorizingReceipt()],
-          [],
-          charges,
-        ),
+        repairSnapshot([record(intent, branch)], [], [], charges),
         T0 + 5000,
         ATTEMPT_RUNTIME,
         selfTips(BASE),

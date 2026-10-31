@@ -74,19 +74,18 @@ export function hostedDeliveryKey(
  * Coarse delivery eligibility, used for the CI-run approval and the self tip
  * read. The ordinary path is the runtime's own `review` and `delivery` steps.
  * A record parked in `work` or `blocked` is also a candidate once it has
- * spent every review round (owner decision 2026-10-16: three rounds, hard).
- * The runtime itself already advances a review with only P2/P3 findings to
- * `delivery` (only P0/P1 block), so a parked spent record is one whose rounds
- * ran out on P0/P1 corrections or on its CI. Whether such a record actually
- * merges is decided by `spentDeliveryAdmissible` and the latest-review rule
- * in `hosted-autonomy-spent-delivery.ts`; no other parked step is delivered.
+ * spent every historical review round (the last owner-set ceiling; review
+ * rounds are accounting only since 2026-10-30). The runtime itself advances a
+ * review with no unresolved P0 to `delivery`, so a parked record is one whose
+ * rounds ran out on P0 corrections or on its CI under the retired rule.
+ * Whether such a record actually merges is decided by
+ * `spentDeliveryAdmissible` and the latest-review rule in
+ * `hosted-autonomy-spent-delivery.ts`; no other parked step is delivered.
  * "Spent" is the runtime's own count over the durable ledger
  * (`ordinaryReviewRoundsSpent`): a counter lagging its charges still counts
- * them, a proven refund frees its round, and a legacy record's one
- * final round (for a CI-fixed head) is extra. Of the runtime's ceiling parks
- * only REVIEWED and BASE_MOVED are ever delivered; a park with no completed
- * review, an unresolved P0/P1 or no task acceptance never reaches a merge
- * gate.
+ * them, and a proven refund frees its round. Historical REVIEWED and
+ * BASE_MOVED parks remain deliverable; a park with no completed review, an
+ * unresolved P0 or no task acceptance never reaches a merge gate.
  */
 export function deliveryEligible(
   record: HostedAutonomyRecordV1,
@@ -142,13 +141,10 @@ export const HOSTED_AUTONOMY_MAX_RETRIES = 200;
 export const HOSTED_AUTONOMY_MAX_IMPLEMENTATION_ATTEMPTS = 4;
 
 /**
- * The runtime's own hard review-round ceiling (`MAX_REVIEW_ROUNDS`, owner
- * decision 2026-10-16). A record that has spent every review round can never
- * turn another correction into a reviewed verdict, so the only remaining
- * delivery path is the receipt it already holds. The runtime's CI correction
- * ceiling (`CI_CORRECTION_REVIEW_ROUNDS`) is pinned equal by test. A record's
- * own allowance (the durable ledger and the one-time legacy round) comes from
- * `reviewRoundsLeft`.
+ * Retired review-round ceiling (`MAX_REVIEW_ROUNDS`, last owner-set value 5).
+ * Owner directive 2026-10-30 removed it as an admission limit; retained for
+ * exported API compatibility and historical accounting. A record no longer
+ * parks or refuses a review at this count.
  */
 export const HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS = MAX_REVIEW_ROUNDS;
 

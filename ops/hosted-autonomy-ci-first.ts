@@ -27,14 +27,13 @@
  *   is open (`HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES`, generation 81+), once
  *   its re-run can no longer act, with a CI fix and a review round left;
  * - legacy (E): the existing CI correction re-admission of a record whose
- *   rounds are spent (the one-time legacy final review) runs only under an
- *   exact allowlisted CI-first runtime (`HOSTED_AUTONOMY_CI_FIRST_RUNTIMES`):
- *   under R79 the refreshed head would be reviewed while still red;
+ *   rounds are spent runs under an exact allowlisted CI-first runtime
+ *   (`HOSTED_AUTONOMY_CI_FIRST_RUNTIMES`), which reviews only green heads;
  * - no fix and no moved-base refresh ever matches the exhausted park (L4:
  *   the runtime's own `ciCorrectable` counts the CI fixes);
- * - a legacy record's one final review round is handed to the
- *   runtime by NO re-admission except under a proven CI-first runtime
- *   (`legacyFinalRoundAdmissible`).
+ * - the retired `legacy_round_requires_ci_first` denial is gone: a spent
+ *   count is accounting, never a re-admission gate (owner directive
+ *   2026-10-30).
  */
 import type { HostedRuntimeRecordV1 } from "../src/contracts/hosted-supervisor.ts";
 import type {
@@ -50,7 +49,6 @@ import {
 import { headReviewCompleted } from "../src/repair/loop-review-records.ts";
 import { ciPublicationShape } from "../src/repair/ci-rejection.ts";
 import { releaseRequestMatchesDelivery } from "../src/repair/loop-records.ts";
-import { ordinaryReviewRoundsSpent } from "../src/repair/review-round-cap.ts";
 import { ciCorrectionRuntimeProven } from "./hosted-autonomy-ci-retries.ts";
 import { legacyReviewCutoffForRuntime } from "../src/host/legacy-review-cutoff-env.ts";
 import { HOSTED_RUNTIME_ROLLOUT } from "../src/host/hosted-runtime-rollout.ts";
@@ -175,32 +173,6 @@ export function ciFirstFixRuntimeProven(
     runtime.generation >= HOSTED_AUTONOMY_CI_FIRST_FIX_MIN_GENERATION &&
     ciFirstRuntimeProven(runtime, fixAllowlist) &&
     ciFirstRuntimeProven(runtime, ciFirstAllowlist);
-}
-
-/** Denial reason of a legacy final round withheld from a non-CI-first runtime. */
-export const LEGACY_ROUND_REQUIRES_CI_FIRST = "legacy_round_requires_ci_first";
-
-/**
- * Whether a re-admission may hand the runtime a record whose next review
- * would be a legacy record's one final round (every ordinary round
- * spent, `ordinaryReviewRoundsSpent`; the ceiling's pin + 1 leaves exactly one
- * more, `reviewRoundsLeft`). Owner decision 2026-10-16: that review is
- * exactly ONE, current-head and on the green head, and only a proven CI-first
- * runtime (`ciFirstRuntimeProven`) reviews a head only once its CI is green;
- * R79, the rollback target, reviews before CI, so under it the round would be
- * spent on a red head. Every re-admission that can lead to that review asks
- * this first: the retry table's work, review and conflict re-pend grants, the
- * pre-review CI-first returns, the CI correction's legacy rule, the
- * base-refresh, conflict and refresh re-arm re-admissions. A record with an
- * ordinary round left always passes; one with no round at all is refused
- * earlier by `reviewRoundsLeft`.
- */
-export function legacyFinalRoundAdmissible(
-  snapshot: Pick<RepairStateSnapshotV1, "reservations">,
-  record: WorkRow,
-  ciFirst: boolean,
-): boolean {
-  return ciFirst || !ordinaryReviewRoundsSpent(snapshot, record);
 }
 
 /** The record's exact published, unreleased head (any task or review). */

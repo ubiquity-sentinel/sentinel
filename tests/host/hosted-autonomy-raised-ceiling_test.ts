@@ -1,8 +1,8 @@
 /**
- * Owner decision 2026-10-24 ("you can have up to five reviews"): a
- * CI-first-era record parked by the runtime's ceiling gate at three rounds
- * returns to `work` uncharged while its durable ledger leaves a round; a
- * pre-era record, a record at five and a closed issue stay parked.
+ * Owner directive 2026-10-30 retired the review-round ceiling: every record
+ * parked by the old runtime ceiling gate returns to `work` uncharged,
+ * whatever its era or spent count. A closed issue and a reviewed head are
+ * different blockers and stay with their own paths.
  */
 import assert from "node:assert/strict";
 import type { BudgetReservationV1 } from "../../src/contracts/budget-reservation.ts";
@@ -94,20 +94,22 @@ Deno.test("raised ceiling: an era record parked at three returns to work uncharg
   }
 });
 
-Deno.test("raised ceiling: five spent rounds, a pre-era record, a closed issue and a reviewed head stay parked", () => {
-  assert.deepEqual(
-    plan(parked(REVIEW_ROUND_CEILING_UNREVIEWED, 5), charges(5)).plans,
-    [],
-    "five rounds spent",
-  );
-  assert.deepEqual(
-    plan(
-      parked(REVIEW_ROUND_CEILING_UNREVIEWED, 3, ERA - 1),
-      charges(3, ERA - 10_000),
-    ).plans,
-    [],
-    "pre-era record keeps three",
-  );
+Deno.test("raised ceiling: spent counts and pre-era records re-admit; a closed issue and a reviewed head stay parked", () => {
+  for (
+    const [record, ledger] of [
+      [parked(REVIEW_ROUND_CEILING_UNREVIEWED, 5), charges(5)],
+      [
+        parked(REVIEW_ROUND_CEILING_UNREVIEWED, 3, ERA - 1),
+        charges(3, ERA - 10_000),
+      ],
+    ] as const
+  ) {
+    const { plans } = plan(record, ledger);
+    assert.equal(plans.length, 1);
+    assert.equal(plans[0].nextStep, "work");
+    assert.equal(plans[0].grant, 0);
+    assert.equal(plans[0].detail, `other${RAISED_CEILING_DETAIL_SUFFIX}`);
+  }
   const record = parked(REVIEW_ROUND_CEILING_UNREVIEWED, 3);
   assert.deepEqual(
     plan(

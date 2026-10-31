@@ -18,6 +18,7 @@ import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import type * as Eligibility from "../../src/repair/loop-eligibility.ts";
 import type * as ReviewRecords from "../../src/repair/loop-review-records.ts";
+import { isCiFixMarker } from "../../src/repair/ci-first-policy.ts";
 import { SHA1, SHA2, SHA3, T0 } from "../state/helpers.ts";
 import { assertGen79Parses } from "../state/gen77-contracts.ts";
 import {
@@ -135,11 +136,14 @@ const SCENARIOS: ScenarioV1[] = [
     },
   },
   {
-    name: "hosted exhausted CI fixes",
+    name: "hosted past the retired CI fix cap",
     options: { hosted: true, retries: 3, attempts: 4, checks: RED },
     expect: (record) => {
-      assert.equal(record.nextStep, "blocked");
-      assert.match(record.blocker?.message ?? "", /^CI fix attempts exhausted/);
+      // Owner directive 2026-10-30: the spent count no longer parks; the
+      // hosted run carries the existing zero-length CI fix marker, which R79
+      // parses and plans no model start for.
+      assert.equal(record.nextStep, "work");
+      assert.ok(isCiFixMarker(record.wait), JSON.stringify(record.wait));
     },
   },
   {

@@ -1,5 +1,37 @@
 # Sentinel decisions
 
+## Review-round ceiling and CI-fix cap retired (2026-10-30/31)
+
+Owner directive: the review-round ceiling and the CI-fix attempt cap are
+retired. Review rounds and CI-fix attempts are accounting only: they are
+counted, never reset and never refunded, but a spent count never parks a record
+and never withholds a re-admission, a correction, a conflict resolution, a
+refresh or a review. A record keeps iterating (review -> fix -> review) until
+its current head has a completed native review with no unresolved P0, or a
+different blocker applies; only an unresolved P0 blocks a merge. The exact
+fresh-head CI, native-review, task-acceptance, custody, durable accounting,
+ownership and exclusive-promotion gates are unchanged.
+
+`reviewRoundsLeft` therefore never returns zero, and no consumer may read it as
+"no round available". The two facts that were wrongly carried by a zero are
+separate predicates: `currentHeadReviewTerminal` (the current head already holds
+the completed accepted review delivery needs) and `reviewedHeadCarried` (the
+reviewed head is delivered by a carried refresh, its historical count spent).
+`reviewRoundsSpentOut` keeps its historical meaning ("this head already holds
+its accepted clean review; carry it") and still selects the carried-delivery
+path. The `legacy_round_requires_ci_first` denial, the `review_rounds_spent`
+denials and the `review_round_ceiling_reached` parks are retired;
+`REVIEW_ROUND_CEILING_*` messages remain only to recognize historical parks and
+the carried-delivery timeout/stall parks that share the prefix. If spend must be
+bounded, use a bounded wait the record leaves on its own, never a permanent
+state. The owner corrects the already-parked records by editing the state branch
+directly.
+
+This supersedes the ceiling statements in the 2026-10-29 merge-policy
+clarification below and the "Current runtime task ceilings" paragraph; the dated
+2026-10-16/17, 24 and 29 mechanics remain historical evidence, not current
+authority.
+
 ## Passport work trial (2026-10-30)
 
 The owner explicitly authorized the independent stability controller's
@@ -99,8 +131,9 @@ threshold in this document and contradictory task instructions. Dated earlier
 thresholds below remain historical evidence, not current authority. Current-head
 CI, completed native review, positive task acceptance, custody, durable
 accounting and all other existing gates remain unchanged. Lower-severity
-findings alone do not authorize another correction round, and existing review
-ceilings remain intact.
+findings alone do not authorize another correction round. Existing review
+ceilings remained intact at this date; the owner retired them on 2026-10-30/31
+(see the entry at the top of this document).
 
 Resume the original production-throughput goal and canonical module identities
 with serial `gpt-6.1-sol/max` implementation, preserving the separate AI Rust
@@ -1398,13 +1431,15 @@ Positive task acceptance and every independent gate remain required; changed
 candidate bytes need matching evidence. The separate development-review
 preference above does not satisfy this runtime gate.
 
-Current runtime task ceilings are selected by `reviewRoundCeilingFor`: five for
-eligible CI-first-era records, three for legacy or unknown-era records;
-historical legacy exceptions remain as implemented. This production-throughput
-development loop has consumed its three rounds and has no fourth. The dated
-mechanics below preserve their original source; their severity thresholds,
-universal-three-round claims and branch-protection-existence requirements are
-superseded by the 2026-10-24/29 decisions.
+Historical: runtime task ceilings were selected by `reviewRoundCeilingFor` (five
+for eligible CI-first-era records, three for legacy or unknown-era records). The
+owner retired the review-round ceiling and the CI-fix cap on 2026-10-30/31 (see
+the entry at the top of this document); `reviewRoundCeilingFor` is retained only
+as accounting history (`ordinaryReviewRoundsSpent`), and no count gates a
+review, a fix or a merge. The dated mechanics below preserve their original
+source; their severity thresholds, universal-three-round claims and
+branch-protection-existence requirements are superseded by the 2026-10-24/29
+decisions.
 
 ### Historical 2026-10-16–17 review and carried-delivery record
 

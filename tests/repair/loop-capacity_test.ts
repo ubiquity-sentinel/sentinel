@@ -218,7 +218,7 @@ Deno.test(
 );
 
 Deno.test(
-  "hard round ceiling: two P0 corrections run, a P0 in round three parks with every gate retained",
+  "review rounds are accounting: three P0 corrections run, the fourth reviewed head delivers",
   async () => {
     const heads = [
       SHA3,
@@ -318,13 +318,12 @@ Deno.test(
         );
         assert.equal(state.releaseRequests.length, 0);
       }
-      // Round three rejects its head too. No round is left for a corrected
-      // candidate (owner decision 2026-10-16: three rounds, hard), so the
-      // record parks with the rejecting receipt kept: no third correction,
-      // no fourth review, no merge.
+      // Round three rejects its head too. Owner directive 2026-10-30
+      // retired the review-round ceiling: the record corrects once more and
+      // reviews that head instead of parking. No P0 verdict ever merges.
       rig.clock.advance(15 * 60_000 + 1);
       rig.github.completeReview([{
-        id: "finding-capped-3",
+        id: "finding-uncapped-3",
         severity: "P0",
         path: "src/app.ts",
         message: "required correction 3",
@@ -333,64 +332,57 @@ Deno.test(
         resolutionEvidence: null,
       }], rig.clock.now());
       assert.equal((await rig.entry()).status, "idle");
-      const parked = await rig.snapshot();
-      const work = parked.work[0]!;
-      assert.equal(work.nextStep, "blocked");
-      assert.equal(work.blocker?.kind, "other");
-      // The park text is a fixed exact-match constant
-      // (REVIEW_ROUND_CEILING_REJECTED); historical parks carry this wording
-      // although only an unresolved P0 selects it since 2026-10-24.
-      assert.equal(
-        work.blocker?.message,
-        "review round ceiling reached: unresolved P0/P1 findings remain",
-      );
-      assert.equal(work.target.head, heads[2]);
+      const corrected = await rig.snapshot();
+      const work = corrected.work[0]!;
+      assert.equal(work.nextStep, "review");
+      assert.equal(work.wait?.reason, "review_pending");
+      assert.equal(work.blocker, null);
+      assert.equal(work.target.head, heads[3]);
       assert.equal(work.target.pr, 7, "the pull request is kept");
       assert.deepEqual(work.counters, {
-        attempts: 3,
+        attempts: 4,
         retries: 0,
-        reviewRounds: 3,
+        reviewRounds: 4,
       });
       assert.deepEqual(
         rig.github.pushes.map((push) => push.sha),
-        heads.slice(0, 3),
+        heads.slice(0, 4),
       );
-      assert.equal(rig.github.preservationRequests.length, 3);
+      assert.equal(rig.github.preservationRequests.length, 4);
       assert.deepEqual(
         rig.github.reviewRequestIdentities.map((request) =>
           request.expectedHead
         ),
-        heads.slice(0, 3),
+        heads.slice(0, 4),
       );
       assert.equal(
         rig.github.calls.filter((call) => call === "createPr").length,
         1,
       );
-      const submitted = parked.reservations.filter((charge) =>
-        charge.outcome === "submitted"
-      );
-      assert.equal(submitted.length, 6, "every charge stays submitted");
       assert.equal(
-        submitted.filter((charge) => charge.purpose === "review_request")
-          .length,
-        3,
-      );
-      assert.deepEqual(
-        parked.reviews.filter((review) =>
+        corrected.reviews.filter((review) =>
           review.outcome === "completed" &&
           review.unresolvedSeverities.includes("P0")
-        ).map((review) => review.pullRequest.head),
-        heads.slice(0, 3),
+        ).length,
+        3,
       );
-      assert.equal(rig.model.requests.length, 3, "no third correction");
+      assert.equal(rig.model.requests.length, 4, "a fourth correction runs");
       assert.equal(rig.github.calls.includes("merge"), false);
-      assert.equal(parked.releaseRequests.length, 0);
+      assert.equal(corrected.releaseRequests.length, 0);
 
-      // Parked is final for the runtime: a later run changes nothing.
+      // The fourth review is clean on its current head: the record delivers
+      // with every gate retained, proving a spent count never parks it.
       rig.clock.advance(15 * 60_000 + 1);
+      rig.github.completeReview([], rig.clock.now());
       assert.equal((await rig.entry()).status, "idle");
-      assert.deepEqual(await rig.snapshot(), parked);
-      assert.equal(rig.model.requests.length, 3);
+      const delivered = await rig.snapshot();
+      assert.equal(delivered.work[0]!.nextStep, "delivery");
+      assert.equal(
+        rig.github.calls.filter((call) => call === "merge").length,
+        1,
+      );
+      assert.equal(delivered.releaseRequests.length, 1);
+      assert.equal(rig.model.requests.length, 4);
     }
   },
 );

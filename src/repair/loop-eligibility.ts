@@ -14,17 +14,10 @@ import {
 } from "./conflict-resolution.ts";
 import { OPERATION_MARGIN_MS } from "./loop-bounds.ts";
 import { configFor } from "./loop-records.ts";
-import {
-  headAwaitsCiCorrection,
-  headNeedsCorrection,
-} from "./loop-review-records.ts";
+import { headNeedsCorrection } from "./loop-review-records.ts";
 import { legacyCutoff } from "./loop-review-round-cap.ts";
 import type { LoopContextV1, RepairCycleDepsV1 } from "./loop-types.ts";
-import {
-  type LegacyCutoff,
-  legacyFinalRoundOpen,
-  reviewRoundsLeft,
-} from "./review-round-cap.ts";
+import type { LegacyCutoff } from "./review-round-cap.ts";
 
 /**
  * The existing-published-head continuation shape (owner throughput, 2026-10-30):
@@ -54,20 +47,17 @@ export function existingHeadContinuationShape(record: WorkRecordV1): boolean {
 
 /**
  * A review round is left for the candidate a model start of `record` would
- * produce: an ordinary round, or the one CI fix an open legacy final round
- * admits (a reviewed red head awaiting its CI correction; that fix arms the
- * round for the fixed head's review). A P0/P1 correction or a conflict
- * resolution never spends a legacy record's final round.
+ * produce. Owner directive 2026-10-30 retired the review-round ceiling: rounds
+ * are accounting, never an admission limit, so every candidate start has its
+ * review round.
  */
 export function roundLeftForStart(
-  snapshot: RepairStateSnapshotV1,
-  record: WorkRecordV1,
-  ciRouteOpen: boolean,
-  cutoff: LegacyCutoff,
+  _snapshot: RepairStateSnapshotV1,
+  _record: WorkRecordV1,
+  _ciRouteOpen: boolean,
+  _cutoff: LegacyCutoff,
 ): boolean {
-  if (reviewRoundsLeft(snapshot, record, cutoff) > 0) return true;
-  return legacyFinalRoundOpen(snapshot, record, cutoff) &&
-    headAwaitsCiCorrection(snapshot, record, ciRouteOpen, cutoff);
+  return true;
 }
 
 /**

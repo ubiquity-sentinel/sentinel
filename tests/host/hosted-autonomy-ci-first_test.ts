@@ -12,8 +12,8 @@
  *   to `work` for the runtime's deterministic, uncharged refresh (its CI is
  *   then gated before any review); a red one returns with the CI fix marker
  *   only under an allowlisted fix runtime (generation 81+, none pinned yet);
- * - L4: the launcher never re-admits a fix for a record whose three CI fixes
- *   are spent, and never refreshes its red head on a moved base.
+ * - L4: the launcher never refreshes a red head on a moved base (the
+ *   CI-fix attempt cap itself is retired; counters remain accounting).
  */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -27,8 +27,6 @@ import {
   ciCorrectable,
 } from "../../src/repair/ci-rejection.ts";
 import {
-  CI_FIRST_REVIEW_ROUNDS,
-  CI_FIX_ATTEMPTS,
   HOSTED_PRE_REVIEW_CI_FIXES,
   preReviewCiFixRouteOpen,
 } from "../../src/repair/ci-first-policy.ts";
@@ -274,9 +272,9 @@ Deno.test("CI first L3: under a proven CI-first runtime a pre-review park on a m
       assert.deepEqual(work.target, snapshot.work[0].target);
       if (GEN80) await assertGen80Parses(next);
     }
-    // Not under a runtime that is not proven CI-first, and not without a
-    // review round left (the runtime's ceiling gate would park it before
-    // any refresh).
+    // Not under a runtime that is not proven CI-first. A spent review-round
+    // count is accounting only (owner directive 2026-10-30), so it no longer
+    // withholds the refresh.
     assert.deepEqual(plan(snapshot, { tip: SHA1 }), []);
     assert.deepEqual(plan(snapshot, { tip: SHA1, green: true }), []);
     const spent = repairSnapshot([
@@ -285,7 +283,10 @@ Deno.test("CI first L3: under a proven CI-first runtime a pre-review park on a m
         counters: { attempts: 1, retries: 0, reviewRounds: 3 },
       }),
     ], []);
-    assert.deepEqual(plan(spent, { r80: true, tip: SHA1 }), []);
+    const spentPlans = plan(spent, { r80: true, tip: SHA1 });
+    assert.equal(spentPlans.length, 1, message);
+    assert.equal(spentPlans[0].nextStep, "work");
+    assert.match(spentPlans[0].detail, /:base-moved$/);
     // An unknown tip is not a moved base.
     assert.deepEqual(
       planHostedRetries(
@@ -331,7 +332,9 @@ Deno.test("CI first L3: a red pre-review park returns with the fix marker only u
   assert.deepEqual(work.counters, snapshot.work[0].counters, "nothing charged");
   if (GEN79) await assertGen79Parses(next);
   if (GEN80) await assertGen80Parses(next);
-  // No fix is re-admitted once three are spent or no review round is left.
+  // Owner directive 2026-10-30 removed the CI-fix attempt cap and the
+  // review-round ceiling as admission gates: three retries and a spent round
+  // count both keep the fix route open, with the counters unchanged.
   for (
     const counters of [
       { attempts: 4, retries: 3, reviewRounds: 0 },
@@ -339,11 +342,12 @@ Deno.test("CI first L3: a red pre-review park returns with the fix marker only u
     ]
   ) {
     const spent = repairSnapshot([preReview({ counters })], []);
-    assert.deepEqual(
-      plan(spent, { settled: true, fixRuntime: true }),
-      [],
-      JSON.stringify(counters),
-    );
+    const plans = plan(spent, { settled: true, fixRuntime: true });
+    assert.equal(plans.length, 1, JSON.stringify(counters));
+    assert.equal(plans[0].nextStep, "work");
+    assert.equal(plans[0].ciFixMarker, true);
+    const next = applyHostedRetries(spent, SHA1, plans, T0 + 9000);
+    assert.deepEqual(next.work[0].counters, counters, "nothing charged");
   }
 });
 
@@ -381,14 +385,22 @@ Deno.test("CI first L3/L4: the pre-review exhausted park gets the green rule, ne
     assert.deepEqual(next.work[0].counters, exhausted.work[0].counters);
     if (GEN80) await assertGen80Parses(next);
   }
-  // ...and only with a review round left.
+  // ...even when the old review-round count is spent: rounds are accounting
+  // only (owner directive 2026-10-30), so the green rule still returns it.
   const spent = repairSnapshot([
     preReview({
       blocker: { kind: "other", message: EXHAUSTED_PARK, since: T0 + 3000 },
       counters: { attempts: 4, retries: 3, reviewRounds: 3 },
     }),
   ], []);
-  assert.deepEqual(plan(spent, { green: true, r80: true }), []);
+  const spentPlans = plan(spent, { green: true, r80: true });
+  assert.equal(spentPlans.length, 1);
+  assert.equal(spentPlans[0].nextStep, "work");
+  assert.equal(spentPlans[0].ciFixMarker, undefined);
+  assert.match(
+    spentPlans[0].detail,
+    /^other:CI fix attempts exhausted.*:green$/,
+  );
   // The merge gate writes the same message for a REVIEWED head (a completed
   // review binds it): green, it belongs to delivery, not to another review,
   // so that park keeps generation 80's terms and nothing re-admits it.
@@ -415,11 +427,12 @@ Deno.test("CI first L3/L4: the pre-review exhausted park gets the green rule, ne
       `no retry-table prefix matches ${message}`,
     );
   }
-  // L4: the runtime's own correctability counts the CI fixes.
+  // L4: the runtime's correctability no longer counts the CI fixes or the
+  // review rounds as a gate (owner directive 2026-10-30).
   const reviewed = deliveryRecord({
     counters: { attempts: 4, retries: 3, reviewRounds: 1 },
   });
-  assert.equal(ciCorrectable(reviewed, { reservations: [] }), false);
+  assert.equal(ciCorrectable(reviewed, { reservations: [] }), true);
   assert.equal(
     ciCorrectable({
       ...reviewed,
@@ -629,14 +642,10 @@ Deno.test("CI first: a healthy self-installed runtime is proven without a histor
 });
 
 Deno.test("CI first: generation 81 opens the hosted pre-review fix route; its fix allowlist waits for the pin", () => {
-  assert.equal(CI_FIX_ATTEMPTS, 3);
-  assert.equal(
-    CI_FIRST_REVIEW_ROUNDS,
-    5,
-    "owner decisions: 3 rounds (2026-10-16), raised to 5 (2026-10-24)",
-  );
-  assert.equal(CI_CORRECTION_REVIEW_ROUNDS, CI_FIRST_REVIEW_ROUNDS);
-  assert.equal(HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS, CI_FIRST_REVIEW_ROUNDS);
+  // Historical accounting values only: owner directive 2026-10-30 removed
+  // the CI-fix and review-round caps as admission limits.
+  assert.equal(CI_CORRECTION_REVIEW_ROUNDS, 5);
+  assert.equal(HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS, 5);
   assert.equal(HOSTED_PRE_REVIEW_CI_FIXES, true, "R80 isolates the cell");
   assert.equal(preReviewCiFixRouteOpen({}), true, "open in process");
   assert.equal(

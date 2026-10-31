@@ -19,8 +19,8 @@ import {
 } from "./hosted-autonomy-policy.ts";
 import { evidenceExpired } from "./hosted-autonomy-evidence-expiry.ts";
 import {
+  currentHeadReviewTerminal,
   ordinaryReviewRoundsSpent,
-  reviewRoundsLeft,
 } from "../src/repair/review-round-cap.ts";
 import { planRaisedCeilingReadmission } from "./hosted-autonomy-raised-ceiling.ts";
 import type { HostedRuntimeRecordV1 } from "../src/contracts/hosted-supervisor.ts";
@@ -38,8 +38,6 @@ import {
   HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
   HOSTED_AUTONOMY_CI_FIRST_RUNTIMES,
   launcherLegacyCutoff,
-  LEGACY_ROUND_REQUIRES_CI_FIRST,
-  legacyFinalRoundAdmissible,
   preReviewCiParked,
   preReviewFixEligible,
   preReviewGateParked,
@@ -333,6 +331,15 @@ const CI_BASE_MOVED_DETAIL_SUFFIX = ":base-moved";
 export const GREEN_SPENT_LEFT_TO_DELIVERY = "green_spent_left_to_delivery";
 
 /**
+ * Denial of a review re-pend for a current head that already holds its
+ * completed accepted review: no new review is needed (owner directive
+ * 2026-10-30: only an unresolved P0 blocks a merge), and the delivery pass
+ * owns the record's receipt.
+ */
+export const REVIEW_TERMINAL_LEFT_TO_DELIVERY =
+  "review_terminal_left_to_delivery";
+
+/**
  * True for a CI correction re-admission: a delivery-returning plan whose
  * head is not green again. Only these count against
  * `HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS`, which the retry pass applies
@@ -362,13 +369,10 @@ export function ciCorrectionPlan(plan: RetryPlanV1): boolean {
  *   only a CI fix can open the record's round: a legacy final round).
  *
  * The green and moved-base returns lead straight to a review request (or to
- * the refresh before it), so they need a review round left by the ceiling's
- * own count (`reviewRoundsLeft`; the runtime's ceiling gate would park the
- * record before any refresh otherwise, and an open legacy final round is a CI
- * fix's to arm); a fix needs one available (`reviewRoundAvailable`). A record
- * whose next review is a legacy final round under a runtime not proven
- * CI-first (`legacyFinalRoundAdmissible`) stays parked: R79 would review it
- * past the cap, or before its CI. Null when no CI-first rule applies.
+ * the refresh before it). Review rounds are accounting, never an admission
+ * limit (owner directive 2026-10-30), so every return has its round; a fix
+ * needs one available (`reviewRoundAvailable`). Null when no CI-first rule
+ * applies.
  */
 function planCiFirstReadmission(
   snapshot: RepairStateSnapshotV1,
@@ -385,16 +389,13 @@ function planCiFirstReadmission(
   if (
     blocker === null || head === null ||
     !preReviewGateParked(snapshot, record) ||
-    !reviewRoundAvailable(snapshot, record, cutoff) ||
-    !legacyFinalRoundAdmissible(snapshot, record, ciFirst)
+    !reviewRoundAvailable(snapshot, record, cutoff)
   ) return null;
   const key = ciGreenHeadKey(record.repository, head);
   const tip = baseTips.get(hostedRepositoryKey(record.repository)) ?? null;
-  const roundLeft = reviewRoundsLeft(snapshot, record, cutoff) > 0;
-  const green = tip === record.target.base && ciGreenHeads.has(key) &&
-    roundLeft;
+  const green = tip === record.target.base && ciGreenHeads.has(key);
   const moved = !green && ciFirst && tip !== null &&
-    tip !== record.target.base && roundLeft &&
+    tip !== record.target.base &&
     preReviewCiParked(snapshot, record);
   const fix = !green && !moved && ciFixRuntime && ciRerunSettled.has(key) &&
     preReviewFixEligible(snapshot, record, cutoff);
@@ -615,26 +616,9 @@ export function planHostedRetries(
             rule.minBlockedMs,
           )
         ) continue;
-        // A resolved merge needs a review round of its own, counted as the
-        // runtime's conflict shape counts it (`reviewRoundsLeft`); a legacy
-        // record's final round (armed by its CI fix) only under a CI-first
-        // runtime.
-        if (reviewRoundsLeft(snapshot, record, cutoff) === 0) {
-          onDenied?.({
-            id: record.id,
-            repository: record.repository,
-            reason: "conflict_resolution_rounds_spent",
-          });
-          continue;
-        }
-        if (!legacyFinalRoundAdmissible(snapshot, record, ciFirst)) {
-          onDenied?.({
-            id: record.id,
-            repository: record.repository,
-            reason: LEGACY_ROUND_REQUIRES_CI_FIRST,
-          });
-          continue;
-        }
+        // A resolved merge needs a review round of its own; review rounds
+        // are accounting, never an admission limit (owner directive
+        // 2026-10-30), so the resolution is never refused for a spent count.
         if (
           !Number.isSafeInteger(
             implementationAttemptFloor(snapshot, record) + 1,
@@ -727,8 +711,7 @@ export function planHostedRetries(
       const corrected = !green && !headGreen && ciCorrection &&
         key !== null && ciRerunSettled.has(key) &&
         (!spent || ciReadHeads.has(key)) &&
-        ciRedeliveryEligible(snapshot, record, cutoff) &&
-        legacyFinalRoundAdmissible(snapshot, record, ciFirst);
+        ciRedeliveryEligible(snapshot, record, cutoff);
       if (!corrected && !green) continue;
       plans.push({
         id: record.id,
@@ -744,36 +727,9 @@ export function planHostedRetries(
       });
       continue;
     }
-    // A work-returning grant only exists to buy another implementation run.
-    // Once every review round is spent (counted from the durable ledger as
-    // well as the counter, `reviewRoundsLeft`), that run cannot become a
-    // reviewed verdict, so the grant is provably futile and is refused: the
-    // delivery pass owns the record's receipt instead. A review-returning
-    // grant has its own gate below.
-    if (
-      rule.nextStep === "work" &&
-      reviewRoundsLeft(snapshot, record, cutoff) === 0
-    ) {
-      onDenied?.({
-        id: record.id,
-        repository: record.repository,
-        reason: "review_rounds_spent",
-      });
-      continue;
-    }
-    // A legacy record's one final round is spent only on a green head, so a
-    // work grant that leads to it waits for a proven CI-first runtime.
-    if (
-      rule.nextStep === "work" &&
-      !legacyFinalRoundAdmissible(snapshot, record, ciFirst)
-    ) {
-      onDenied?.({
-        id: record.id,
-        repository: record.repository,
-        reason: LEGACY_ROUND_REQUIRES_CI_FIRST,
-      });
-      continue;
-    }
+    // A work-returning grant buys another implementation run. Review rounds
+    // are accounting (owner directive 2026-10-30), so a spent count never
+    // refuses it.
     const base = record.target.base;
     if (base === null) continue;
     const baseTip = baseTips.get(hostedRepositoryKey(record.repository)) ??
@@ -820,12 +776,9 @@ export function planHostedRetries(
     // A review-returning grant has its OWN identity space: the runtime admits
     // a review with attempt = reviewRounds + 1 at the record's current head, so
     // the grant must persist the floor its durable charges prove, an identity
-    // nothing has charged. Once the task's hard round allowance is spent
-    // (`reviewRoundsLeft`, owner decision 2026-10-16) the grant is refused
-    // outright: a base advance would only buy a refreshed head that needs one
-    // more round, the churn that took ai.ubq.fi 684 / PR 1059 to 50 rounds.
-    // Within the allowance (below three, or a legacy record's one
-    // final round) the review is of the record's current head.
+    // nothing has charged. Owner directive 2026-10-30 retired the round
+    // ceiling: a spent count is accounting and never refuses the grant, and
+    // the review is of the record's current head.
     if (rule.nextStep === "review") {
       const head = record.target.head;
       const pr = record.target.pr;
@@ -834,30 +787,18 @@ export function planHostedRetries(
       // without it there is nothing the runtime could rehydrate or review, so
       // nothing is planned rather than clearing the blocker into a state error.
       if (head === null || pr === null || branch === null) continue;
+      // A current head that already holds its completed accepted review needs
+      // no new review: the delivery pass owns the record's receipt.
+      if (currentHeadReviewTerminal(snapshot, record)) {
+        onDenied?.({
+          id: record.id,
+          repository: record.repository,
+          reason: REVIEW_TERMINAL_LEFT_TO_DELIVERY,
+        });
+        continue;
+      }
       const settled = settledReviewAttempts(snapshot, record);
       const rounds = plannedReviewRounds(record, settled);
-      // The raised floor never counts fewer rounds than the record's own.
-      const planned = {
-        ...record,
-        counters: { ...record.counters, reviewRounds: rounds },
-      };
-      if (reviewRoundsLeft(snapshot, planned, cutoff) === 0) {
-        onDenied?.({
-          id: record.id,
-          repository: record.repository,
-          reason: "review_rounds_spent",
-        });
-        continue;
-      }
-      // Under R79 the legacy final review would judge the head before CI.
-      if (!legacyFinalRoundAdmissible(snapshot, planned, ciFirst)) {
-        onDenied?.({
-          id: record.id,
-          repository: record.repository,
-          reason: LEGACY_ROUND_REQUIRES_CI_FIRST,
-        });
-        continue;
-      }
       plans.push({
         id: record.id,
         repository: record.repository,

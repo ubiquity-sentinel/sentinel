@@ -255,6 +255,8 @@ Deno.test("ci correctability matches the launcher: an undescribed candidate is n
     ),
     false,
   );
+  // Review rounds are accounting only (owner directive 2026-10-30): a spent
+  // counter never withholds a correction.
   assert.equal(
     ciCorrectable(
       reviewed({
@@ -263,7 +265,7 @@ Deno.test("ci correctability matches the launcher: an undescribed candidate is n
       }),
       NO_LEDGER,
     ),
-    false,
+    true,
   );
   assert.equal(
     ciCorrectable(
@@ -435,12 +437,15 @@ Deno.test("a reviewed head back at work awaits its live CI correction only in th
       );
     },
   );
-  await t.step("spent review rounds keep the head out of correction", () => {
-    const spent = reviewed({
-      counters: { attempts: 1, retries: 0, reviewRounds: 3 },
-    });
-    assert.equal(headAwaitsCiCorrection(snapshotFor(spent), spent), false);
-  });
+  await t.step(
+    "spent review rounds are accounting: the head still awaits its correction",
+    () => {
+      const spent = reviewed({
+        counters: { attempts: 1, retries: 0, reviewRounds: 3 },
+      });
+      assert.equal(headAwaitsCiCorrection(snapshotFor(spent), spent), true);
+    },
+  );
   await t.step("the head must hold its own clean review on this base", () => {
     assert.equal(
       headAwaitsCiCorrection(snapshotFor(record, []), record),

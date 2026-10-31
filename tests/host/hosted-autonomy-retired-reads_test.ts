@@ -212,7 +212,6 @@ Deno.test("maintenance: no rule's verdict on a retired record depends on its iss
         RUNTIME,
         closed,
         (denial) => denied.push(denial),
-        true,
       ),
       denied,
     };

@@ -10,11 +10,6 @@ export const A = {
     "src/host/matrix-planner.ts",
     "isMatrixImplementationReadyV1",
   ),
-  ceilingWork: anchor(
-    "p.ceilingWork",
-    "src/repair/loop-work.ts",
-    "return parkAtReviewRoundCeiling(deps, context, record);",
-  ),
   manual: anchor(
     "p.manual",
     "src/repair/loop-implementation.ts",
@@ -69,11 +64,6 @@ export const A = {
     "p.releaseDeferred",
     "src/repair/loop-release.ts",
     "return deferRelease(deps, context, record, now);",
-  ),
-  rejectedPark: anchor(
-    "p.rejectedPark",
-    "src/repair/loop-review-result.ts",
-    "if (unresolved && reviewRoundsSpentOut(context, record)) {",
   ),
   deliveryCiPending: anchor(
     "p.deliveryCiPending",

@@ -195,7 +195,7 @@ Deno.test("delivery line: a red-base hold on the tip releases the line only for 
       refreshedAt(contender(1, 1), TIP, RED_BASE),
     ],
     [
-      "carried refreshed head at work, spent",
+      "carried refreshed head at work, old count spent",
       "landing",
       refreshedAt(contender(2, spent), TIP, RED_BASE),
     ],
@@ -227,18 +227,20 @@ Deno.test("delivery line: a red-base hold on the tip releases the line only for 
       before,
       `${label}, no wait`,
     );
-    // A round-left record behind a head with a round left is not held
-    // while the hold runs; a spent or delivering head holds it.
+    // A deliverable record is held by a `landing` contender only. A
+    // `re_review` head (even one whose old count was spent) holds nobody.
     const behind = contender(30, 1);
     const snapshot = line([held, behind]);
+    const holds = before === "landing";
     assert.equal(
       deliveryQueueAhead(snapshot, behind, TIP, NOW, null)?.id ?? null,
-      released ? null : held.id,
+      holds ? held.id : null,
       label,
     );
     assert.equal(
-      deliveryQueueAhead(snapshot, behind, TIP, RED_BASE.until!, null)?.id,
-      held.id,
+      deliveryQueueAhead(snapshot, behind, TIP, RED_BASE.until!, null)?.id ??
+        null,
+      holds ? held.id : null,
       `${label}, due`,
     );
   }
@@ -296,9 +298,8 @@ Deno.test("delivery line: running CI, the CI fix marker, the carried-merge marke
 });
 
 Deno.test("delivery line: spent deliverable records stay behind a spent carried head under the red-base hold", () => {
-  // The review's scenario: S1 refreshed onto the red tip and holds its
-  // red-base backoff; S2..S4 (spent, clean, reviewed heads on a moved base)
-  // would each refresh onto the red tip and park there after six hours.
+  // S1 refreshed onto the red tip with its accepted historical round count
+  // holds its red-base backoff as `landing`; S2..S4 wait behind it.
   const holder = refreshedAt(contender(40, MAX_REVIEW_ROUNDS), TIP, RED_BASE);
   const spentBehind = [41, 42, 43].map((issue) =>
     contender(issue, MAX_REVIEW_ROUNDS)

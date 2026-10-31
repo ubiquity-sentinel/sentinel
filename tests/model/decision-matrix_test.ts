@@ -324,18 +324,18 @@ Deno.test("decision matrix: a lost review submission expires without refunding i
   assert.ok(!KNOWN_JAMS.includes("J1:wait:review.intent_unbound"));
 });
 
-Deno.test("decision matrix: integrated recovery and acceptance routes retain the round ceiling", async () => {
+Deno.test("decision matrix: recovery and acceptance routes never park on a spent round count", async () => {
   const { graph } = await checker();
   for (const [id, state] of graph.states) {
     assert.ok(state.rounds >= 0 && state.rounds <= 3, id);
     for (const edge of graph.edges.get(id) ?? []) {
       if (edge.event !== "review_not_fulfilled") continue;
-      assert.equal(
-        edge.to.phase,
-        state.rounds === 3 ? "blocked:rev.acceptance_owner" : "work.fresh",
-        id,
-      );
+      assert.equal(edge.to.phase, "work.fresh", id);
       assert.equal(edge.to.pr, state.pr, "acceptance correction keeps its PR");
+    }
+    for (const edge of graph.edges.get(id) ?? []) {
+      if (edge.event !== "expired_intent_recovered") continue;
+      assert.equal(edge.to.phase, "work.published", id);
     }
   }
 });
@@ -355,8 +355,9 @@ Deno.test("decision matrix: identical failures park while changing signatures re
   );
   assert.ok(cycles.length > 0, "the changing-signature residual stays visible");
   assert.ok(
-    cycles.every((cycle) =>
+    cycles.some((cycle) =>
       cycle.cycle.some((step) => step.edge.event.endsWith("_changed_signature"))
     ),
+    "the changed-signature cycle is still modeled",
   );
 });
