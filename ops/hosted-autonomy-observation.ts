@@ -66,15 +66,15 @@ export async function runSelfObservationPass(input: {
       actions.push(`self-observation:skipped:run=${run.id}:jobs_unavailable`);
       continue;
     }
-    // A cancelled sibling can precede the job that actually failed (for
-    // example under fail-fast). Prefer the cause, keeping cancellation as a
-    // fallback when no failed job is present.
+    // Cancellation can be intentional (paused admission or a superseded run)
+    // or a fail-fast side effect. Prefer the actual failure and never treat
+    // cancellation alone as a repairable defect.
     const job = jobs.find((entry) =>
       entry.conclusion === "failure" || entry.conclusion === "timed_out" ||
       entry.conclusion === "startup_failure"
     ) ?? jobs.find((entry) =>
       entry.conclusion !== null && entry.conclusion !== "success" &&
-      entry.conclusion !== "skipped"
+      entry.conclusion !== "skipped" && entry.conclusion !== "cancelled"
     );
     if (job === undefined) {
       continue;
