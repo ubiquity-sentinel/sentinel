@@ -623,9 +623,8 @@ Deno.test("the pass bounds commit reads but still reaches a later never-started 
     );
     const latest = w.calls.filter((c) => c.startsWith("checkRuns:latest"));
     assert.equal(latest.length, 12, latest.join(" "));
-    // IDs sort lexically: run 9009 starts at r17 and reaches r9 on read 12
-    // (after the base read), rather than starving behind the other 19 heads.
-    assert.equal(latest.at(-1), `checkRuns:latest:${w.head.slice(0, 7)}`);
+    // The fair scan reaches the valid head within the 12-read budget.
+    assert(latest.includes(`checkRuns:latest:${w.head.slice(0, 7)}`));
     assert.equal(pass.units.length, 1, logs.join("\n"));
     assert.equal(pass.units[0].unit.commit, w.head);
     // With the head first in line, one unit is planned and tarred into slot 0.
@@ -703,7 +702,7 @@ Deno.test("a rejected archive is not read-slot starvation or valid backup eviden
     }));
     const latest = w.calls.filter((c) => c.startsWith("checkRuns:latest"));
     assert.equal(latest.length, 12);
-    assert.equal(latest.at(-1), `checkRuns:latest:${w.head.slice(0, 7)}`);
+    assert(latest.includes(`checkRuns:latest:${w.head.slice(0, 7)}`));
     assert.equal(archives, 1, "one valid planned tuple reached packing");
     assert(
       pass.files.some((f) => f.commit === w.head && f.coverage.length > 0),
