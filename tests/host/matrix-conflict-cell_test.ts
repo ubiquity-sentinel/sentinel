@@ -685,10 +685,13 @@ Deno.test("matrix consumer: a bound conflict cell passes the wave gate; a foreig
           createActionsMatrixArtifactTransport,
         );
         if (accepted) {
-          // Past the gate: only the authenticated runtime mismatch remains.
-          assert.ok(
-            outcome instanceof MatrixHistoricalRuntimeMismatch,
-            String(outcome),
+          // Past the gate: the plan-bound wave is ingested even though the
+          // consumer's installed runtime has since advanced.
+          assert.ok(Array.isArray(outcome), String(outcome));
+          assert.equal(outcome.length, 1);
+          assert.equal(
+            outcome[0].planDigest,
+            await matrixDigestV1(rig.plan),
           );
         } else {
           assert.ok(outcome instanceof Error, String(outcome));

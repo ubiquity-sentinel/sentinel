@@ -60,6 +60,7 @@ import {
 } from "./hosted-autonomy-ci-first.ts";
 import type { HostedAutonomyResultV1 } from "./hosted-autonomy-types.ts";
 import { runHostedMismatchDispositionPass } from "./hosted-autonomy-mismatch-pass.ts";
+import { runHostedMatrixRuntimeReadmissionPass } from "./hosted-autonomy-matrix-runtime-readmission.ts";
 import { runHostedPreservationDispositionPass } from "./hosted-autonomy-preservation-disposition.ts";
 import { runHostedRefreshRearmPass } from "./hosted-autonomy-refresh-rearm.ts";
 import { runHostedOriginalCandidateRecoveryPass } from "./hosted-autonomy-original-candidate-pass.ts";
@@ -309,6 +310,13 @@ export async function runHostedRetryPass(
       revisions,
     };
   }
+
+  // A runtime advance after a wave was planned is not a permanent park when
+  // the result still binds its own plan. Return those records to work with
+  // their original charge and intent, before the mismatch disposition would
+  // turn the same park into a fresh retry.
+  const matrixRuntime = await runHostedMatrixRuntimeReadmissionPass(context);
+  if (matrixRuntime !== null) return matrixRuntime;
 
   const disposition = await runHostedMismatchDispositionPass(
     context,

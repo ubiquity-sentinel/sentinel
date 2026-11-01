@@ -196,7 +196,7 @@ async function consume(c: ConsumerV1, rig: Rig): Promise<unknown> {
   }
 }
 
-type Verdict = "mismatch" | "generic";
+type Verdict = "mismatch" | "generic" | "ingest";
 interface CaseV1 {
   name: string;
   reviews: (c: ConsumerV1) => unknown[];
@@ -276,6 +276,12 @@ async function verdicts(
             "reserved",
             "the charge stays reserved: never refunded",
           );
+        } else if (expected === "ingest") {
+          // The plan-bound historical wave is ingested after the installed
+          // runtime moved; its own recorded runtime still matches its plan.
+          assert.ok(Array.isArray(outcome), String(outcome));
+          assert.equal(outcome.length, 1);
+          assert.equal(outcome[0].planDigest, rig.plannerMarker.planDigest);
         } else {
           assert.ok(outcome instanceof Error, String(outcome));
           assert.ok(!(outcome instanceof c.Mismatch), String(outcome));
@@ -333,12 +339,12 @@ Deno.test({
   },
 });
 
-Deno.test("this tree's consumer isolates the pre-review CI fix cell it plans in hosted runs", async (t) => {
+Deno.test("this tree's consumer ingests the plan-bound CI fix cell it plans in hosted runs", async (t) => {
   await verdicts(thisTree(), t, [
-    [PRE_REVIEW, "mismatch"],
-    [REFRESHED, "mismatch"],
-    [LEGACY_CLEAN, "mismatch"],
-    [LEGACY_P2, "mismatch"],
+    [PRE_REVIEW, "ingest"],
+    [REFRESHED, "ingest"],
+    [LEGACY_CLEAN, "ingest"],
+    [LEGACY_P2, "ingest"],
     // Shapes no planner grants keep the generic refusal.
     [UNCHARGED, "generic"],
     [OTHER_BASE, "generic"],

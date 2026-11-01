@@ -22,6 +22,7 @@ import {
   type FollowExecution,
   readFollowState,
 } from "./hosted-runtime-follow-state.ts";
+import { matrixWaveOpen } from "./hosted-runtime-follow-matrix.ts";
 
 export interface HostedRuntimeFollowJournal {
   observedDevelopmentSha: string | null;
@@ -53,6 +54,8 @@ export interface HostedRuntimeFollowDeps {
   maxDepth?: number;
   deadlineMs?: number;
   maxPages?: number;
+  /** Injected clock for the matrix-wave age bound; defaults to Date.now. */
+  clock?: { now(): number };
 }
 
 /** The follow step has no state writer, App identity, model or promotion port. */
@@ -105,6 +108,13 @@ export async function runHostedRuntimeFollow(
         runAttempt: state.execution.runAttempt,
       };
     }
+    if (
+      await matrixWaveOpen(
+        api,
+        state.installedRevision,
+        (deps.clock ?? { now: () => Date.now() }).now(),
+      )
+    ) throw new FollowError("matrix_wave_in_flight");
     if (state.installationUnresolved) {
       throw new FollowError("installation_unresolved");
     }

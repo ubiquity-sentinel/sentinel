@@ -6,12 +6,15 @@ import {
   FollowFake,
   installation,
   L,
+  matrixWaveIndex,
+  matrixWaveReservation,
   OLDER,
   P,
   response,
   retriedInstallation,
   supervisorRun,
 } from "./hosted-runtime-follow-fixtures.ts";
+import { FOLLOW_MATRIX_WAVE_DEADLINE_MS } from "../../src/host/hosted-runtime-follow-matrix.ts";
 
 Deno.test("follow selects the ancestry-maximal green SHA despite reversed CI ordering", async () => {
   const api = new FollowFake();
@@ -468,4 +471,68 @@ Deno.test("follow applies installation and supervisor gates after a stale execut
   ];
   assert.equal((await active.follow()).journal.reason, "supervisor_in_flight");
   assert.equal(active.mutations, 0);
+});
+
+Deno.test("follow holds while the installed runtime's matrix wave is unsettled and proceeds once it settles", async () => {
+  const api = new FollowFake();
+  const reservations = Array.from(
+    { length: 33 },
+    (_, index) => (index + 1).toString(16).padStart(64, "0"),
+  );
+  api.matrixIndex = matrixWaveIndex(
+    executionIntent(41319256619, {
+      revision: P,
+      launcherSha: L,
+      createdAt: api.now - 60_000,
+    }),
+    reservations,
+  );
+  for (const id of reservations) {
+    api.repairReservations.set(
+      id,
+      matrixWaveReservation(id, api.now - 60_000, "reserved"),
+    );
+  }
+  const held = await api.follow();
+  assert.equal(held.journal.decision, "deferred");
+  assert.equal(held.journal.reason, "matrix_wave_in_flight");
+  assert.equal(api.mutations, 0);
+  assert.equal(api.launcher, L);
+  for (const id of reservations) {
+    api.repairReservations.set(
+      id,
+      matrixWaveReservation(id, api.now - 60_000, "submitted"),
+    );
+  }
+  const advanced = await api.follow();
+  assert.equal(advanced.journal.decision, "advanced");
+  assert.equal(advanced.journal.reason, "ci_green_descendant");
+  assert.equal(api.mutations, 1);
+  assert.equal(api.launcher, OLDER);
+});
+
+Deno.test("follow proceeds past a matrix wave older than its deadline", async () => {
+  const api = new FollowFake();
+  const reservations = ["c".repeat(64)];
+  api.matrixIndex = matrixWaveIndex(
+    executionIntent(41319256619, {
+      revision: P,
+      launcherSha: L,
+      createdAt: api.now - FOLLOW_MATRIX_WAVE_DEADLINE_MS - 1,
+    }),
+    reservations,
+  );
+  for (const id of reservations) {
+    api.repairReservations.set(
+      id,
+      matrixWaveReservation(
+        id,
+        api.now - FOLLOW_MATRIX_WAVE_DEADLINE_MS - 1,
+        "reserved",
+      ),
+    );
+  }
+  const advanced = await api.follow();
+  assert.equal(advanced.journal.decision, "advanced");
+  assert.equal(api.mutations, 1);
 });
