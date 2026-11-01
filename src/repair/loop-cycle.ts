@@ -5,7 +5,10 @@ import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { createRunBounds, DEFAULT_STEP_LIMIT } from "./loop-bounds.ts";
 import { resumeBaseSatisfaction } from "./loop-base-satisfaction.ts";
-import { declaredOperationFits } from "./loop-eligibility.ts";
+import {
+  declaredOperationFits,
+  matrixOwnsFreshImplementation,
+} from "./loop-eligibility.ts";
 import { pollIntake } from "./loop-intake.ts";
 import { bridgeLegacyLoss } from "./loop-legacy-loss.ts";
 import { createPostDrainContinuation } from "./loop-post-drain.ts";
@@ -392,6 +395,10 @@ export async function* advanceRepairCycle(
       if (record === undefined) {
         return { status: "state_error", detail: "selected record missing" };
       }
+      if (
+        deps.externalImplementations === true &&
+        matrixOwnsFreshImplementation(record)
+      ) continue;
       if (
         declaredOperationFits(deps, context, record)
       ) {
