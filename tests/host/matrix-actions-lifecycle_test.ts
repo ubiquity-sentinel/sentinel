@@ -15,5 +15,7 @@ Deno.test("matrix actions: the maxWaitMs-zero single scan consumer performs exac
   freshMatrixArtifacts(false, false, "single"));
 Deno.test("matrix actions: a consumer window shorter than one scan budget never rescans after consuming a cell", () =>
   freshMatrixArtifacts(false, false, "short"));
-Deno.test("matrix actions: authenticated historical runtime mismatch isolates one wave and advances unrelated work", () =>
-  freshMatrixArtifacts(false, false, "none", true));
+Deno.test("matrix actions: a plan-bound wave from an older runtime is ingested and unrelated work still advances", () =>
+  freshMatrixArtifacts(false, false, "none", "accept"));
+Deno.test("matrix actions: a wave whose plan binding disagrees with itself is refused and unrelated work still advances", () =>
+  freshMatrixArtifacts(false, false, "none", "mismatch"));

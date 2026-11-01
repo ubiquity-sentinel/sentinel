@@ -7,9 +7,13 @@ import {
   HOSTED_SUPERVISOR_WORKFLOW_ID,
   HOSTED_SUPERVISOR_WORKFLOW_PATH,
 } from "../../src/contracts/hosted-supervisor.ts";
-import type { MatrixCellResultV1 } from "../../src/contracts/matrix.ts";
+import type {
+  MatrixCellPlanV1,
+  MatrixCellResultV1,
+  MatrixPlanV1,
+} from "../../src/contracts/matrix.ts";
 import { matrixCellIdV1, matrixDigestV1 } from "../../src/contracts/matrix.ts";
-import type { rig } from "./matrix-actions-fixtures.ts";
+import { checked, type rig } from "./matrix-actions-fixtures.ts";
 import type { MatrixPlanReportV1 } from "../../src/host/matrix.ts";
 
 export async function createFreshMatrixArchives(
@@ -43,6 +47,13 @@ export async function createFreshMatrixArchives(
     return await writer.close();
   };
   const archives = new Map<number, Uint8Array>();
+  let historical:
+    | {
+      oldPlan: MatrixPlanV1;
+      oldCell: MatrixCellPlanV1;
+      oldResult: MatrixCellResultV1;
+    }
+    | null = null;
   const artifactRows: Record<string, unknown>[] = [];
   const provenance = {
     id: 71,
@@ -147,8 +158,9 @@ export async function createFreshMatrixArchives(
     );
   }
   // Minimal sanitized replay of ai#908's captured boundary: its admission
-  // predates the manifest, native planner/cell agree on an older runtime,
-  // and a later consumer must isolate that wave without importing its result.
+  // predates the manifest and native planner/cell agree on an older runtime.
+  // The plan-bound result may now be ingested after the installed runtime
+  // moved; a self-inconsistent binding must still be refused.
   if (historicalRuntimeIsolation) {
     const oldRuntime = "e".repeat(40) as GitSha;
     const oldRun = { ...planner.plan.run, runId: 69 };
@@ -166,8 +178,34 @@ export async function createFreshMatrixArchives(
     const oldResult = structuredClone(
       results.find((cell) => cell.cellId === originalCellId)!,
     );
-    const oldBundle = await Deno.readFile(
-      archive + "/" + oldResult.bundle!.file,
+    // The captured bundle exports its ref under the original cell id. The
+    // sanitized replay re-homes the same Git objects under the recomputed
+    // cell id, so the bundle's exported ref is rewritten (never fabricated)
+    // by fetching the real object and re-bundling it against the same base.
+    const originalBundleFile = oldResult.bundle!.file;
+    const originalBundleRef = originalBundleFile.slice(0, -7);
+    const rewriteDir = r.root + "/old-wave-bundle";
+    await Deno.mkdir(rewriteDir, { recursive: true });
+    await checked(rewriteDir, ["init", "-q", "-b", "rewrite"], r.env);
+    await checked(
+      rewriteDir,
+      [
+        "fetch",
+        "-q",
+        r.root + "/foreign",
+        oldCell.expectedBase + ":refs/heads/base",
+      ],
+      r.env,
+    );
+    await checked(
+      rewriteDir,
+      [
+        "fetch",
+        "-q",
+        archive + "/" + originalBundleFile,
+        "refs/sentinel-matrix/" + originalBundleRef + ":refs/heads/original",
+      ],
+      r.env,
     );
     Object.assign(oldResult, {
       run: oldRun,
@@ -176,12 +214,38 @@ export async function createFreshMatrixArchives(
       runtimeSha: oldRuntime,
     });
     oldResult.bundle!.file = oldCell.cellId + ".bundle";
+    await checked(
+      rewriteDir,
+      [
+        "update-ref",
+        "refs/sentinel-matrix/" + oldCell.cellId,
+        "refs/heads/original",
+      ],
+      r.env,
+    );
+    const rewrittenBundle = rewriteDir + "/" + oldResult.bundle!.file;
+    await checked(
+      rewriteDir,
+      [
+        "bundle",
+        "create",
+        rewrittenBundle,
+        "refs/sentinel-matrix/" + oldCell.cellId,
+        "^" + oldCell.expectedBase,
+      ],
+      r.env,
+    );
+    const oldBundle = await Deno.readFile(rewrittenBundle);
+    // Re-bundling rewrites the container bytes, so the replayed result binds
+    // the new real digest instead of the captured one.
+    oldResult.bundle!.digest = await byteDigest(oldBundle);
     const oldPlan = {
       ...planner.plan,
       run: oldRun,
       waveId: oldWave,
       cells: [oldCell],
     };
+    historical = { oldPlan, oldCell, oldResult };
     const currentPlan = {
       ...planner.plan,
       cells: planner.plan.cells.filter((cell) =>
@@ -377,6 +441,7 @@ export async function createFreshMatrixArchives(
   };
 
   return {
+    historical,
     artifactCalls,
     encode,
     byteDigest,

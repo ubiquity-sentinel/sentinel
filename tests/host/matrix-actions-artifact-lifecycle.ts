@@ -1,7 +1,7 @@
 /** Connected archive recovery, progressive ingestion and fresh aggregate assertions; no test registrations. */
 import assert from "node:assert/strict";
 import type { WorkItemId } from "../../src/contracts/brands.ts";
-import { portError, portOk } from "../../src/contracts/ports.ts";
+import { portError } from "../../src/contracts/ports.ts";
 import { matrixDigestV1 } from "../../src/contracts/matrix.ts";
 import { parseRepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import {
@@ -20,7 +20,7 @@ export async function freshMatrixArtifacts(
   noStart17 = false,
   nativeScopedOnly = false,
   progressive: "none" | "settle" | "missing" | "single" | "short" = "none",
-  historicalRuntimeIsolation = false,
+  historicalWave: false | "accept" | "mismatch" = false,
 ) {
   const r = await rig(true, "ordinary", noStart17);
   try {
@@ -51,13 +51,14 @@ export async function freshMatrixArtifacts(
       artifactHttp,
       iso,
       plannerMarker,
+      historical,
     } = await createFreshMatrixArchives(
       r,
       planner,
       results,
       archive,
       noStart17,
-      historicalRuntimeIsolation,
+      historicalWave !== false,
       nativeScopedOnly,
     );
     const originalPreservers = [...r.github.values()].map((port) =>
@@ -75,7 +76,6 @@ export async function freshMatrixArtifacts(
         );
       };
     }
-    let isolationWriteFailure: "conflict" | "ambiguous" | null = null;
     const aggregate = async function (
       name: string,
       available: boolean | (() => boolean),
@@ -132,20 +132,6 @@ export async function freshMatrixArtifacts(
               {
                 ...input,
                 modelStartsEnabled: false,
-                ...(isolationWriteFailure === null ? {} : {
-                  state: {
-                    ...input.state,
-                    readRepair: () => input.state.readRepair(),
-                    readRelease: () => input.state.readRelease(),
-                    writeRepair: () =>
-                      Promise.resolve(
-                        portOk({
-                          status: isolationWriteFailure!,
-                          currentHead: beforeHead,
-                        }),
-                      ),
-                  },
-                }),
               },
               undefined,
               carrier,
@@ -157,7 +143,11 @@ export async function freshMatrixArtifacts(
       }
       return result;
     };
-    if (historicalRuntimeIsolation) {
+    if (historicalWave !== false) {
+      assert.ok(
+        historical,
+        "the historical replay supplies its own bound wave",
+      );
       const custody = structuredClone(before.value.snapshot);
       const oldWork = custody.work.find((row) =>
         row.repository.name === "ai.ubq.fi"
@@ -166,34 +156,112 @@ export async function freshMatrixArtifacts(
         row.id === oldWork.intent!.requestId
       )!;
       assert.ok(oldCharge.createdAt <= planner.plan.plannedAt);
-      const originalArchives = [...archives].map((
-        [id, value],
-      ) => [id, value.slice()]);
+      const originalArchives = [...archives].map(([id, value]) => [id, value]);
+      // A real authenticated candidate object lets a plan-bound wave from an
+      // older runtime publish through the genuine aggregate lifecycle.
       [...r.github.values()].forEach((port, index) => {
         port.preserveCandidate = originalPreservers[index]!;
       });
-      for (const failure of ["conflict", "ambiguous"] as const) {
-        isolationWriteFailure = failure;
+      const aiPort = r.github.get("ubiquity/ai.ubq.fi")!;
+      const sentinelPort = r.github.get("ubiquity-sentinel/sentinel")!;
+      const planRow = artifactRows.find((row) => Number(row.id) === 503)!;
+      if (historicalWave === "mismatch") {
+        // Only a wave whose binding disagrees with its OWN plan is refused.
+        // A wrong plan digest and a forged producer are both isolated before
+        // any custody write; the refusal never imports or publishes either
+        // wave, and the unrelated authenticated wave still advances below.
+        const planBytes = archives.get(503)!;
+        const tampered = await zip([{
+          name: "plan.json",
+          content: encode({
+            ...historical.oldPlan,
+            plannedAt: historical.oldPlan.plannedAt + 1,
+          }),
+        }]);
+        archives.set(503, tampered);
+        planRow.size_in_bytes = tampered.length;
+        planRow.digest = "sha256:" + await byteDigest(tampered);
         await assert.rejects(
-          aggregate("isolation-" + failure, true),
-          /isolation CAS incomplete/,
+          aggregate("binding-plan-digest", true),
+          /provenance unavailable or conflicting/,
         );
         assert.deepEqual(
           await r.store.readRepair(),
           before,
-          "CAS failure cannot change either wave's custody or publish a sibling",
+          "a wave whose plan digest disagrees with its planner leaves both waves' custody untouched",
         );
+        archives.set(503, planBytes);
+        planRow.size_in_bytes = planBytes.length;
+        planRow.digest = "sha256:" + await byteDigest(planBytes);
+        const provenance = planRow.workflow_run as Record<string, unknown>;
+        planRow.workflow_run = { ...provenance, id: 999 };
+        await assert.rejects(
+          aggregate("binding-producer", true),
+          /provenance unavailable or conflicting/,
+        );
+        assert.deepEqual(
+          await r.store.readRepair(),
+          before,
+          "a wave whose producer does not match its own plan leaves both waves' custody untouched",
+        );
+        planRow.workflow_run = provenance;
+        assert.ok(
+          [...r.github.values()].every((port) =>
+            !port.calls.some((call) => call.startsWith("push:"))
+          ),
+          "a refused wave never imports or publishes",
+        );
+        // The refused wave stays isolated (never selected or written) while
+        // the unrelated authenticated wave advances on the next scan.
+        await aggregate(
+          "binding-isolated",
+          true,
+          undefined,
+          { maxWaitMs: 0 },
+          (row) => Number(row.id) !== 503 && Number(row.id) !== 504,
+        );
+        const after = await r.store.readRepair();
+        assert.ok(after.ok && after.value.status === "found");
+        if (!after.ok || after.value.status !== "found") {
+          throw new Error("repair state unreadable");
+        }
+        const isolated = after.value.snapshot.work.find((row) =>
+          row.id === oldWork.id
+        )!;
+        assert.deepEqual(
+          isolated,
+          oldWork,
+          "the refused wave's admission stays byte-identical",
+        );
+        assert.deepEqual(
+          after.value.snapshot.reservations.find((row) =>
+            row.id === oldCharge.id
+          ),
+          oldCharge,
+          "the refused wave's charge is never settled or refunded",
+        );
+        const sibling = after.value.snapshot.work.find((row) =>
+          row.repository.name === "sentinel"
+        )!;
+        assert.ok(
+          sibling.target.head !== null && sibling.target.pr !== null,
+          "unrelated authenticated work publishes through the real aggregate lifecycle",
+        );
+        assert.ok(
+          sentinelPort.calls.some((call) => call.startsWith("push:")),
+        );
+        assert.ok(
+          !aiPort.calls.some((call) => call.startsWith("push:")),
+          "the refused result must never be imported or published",
+        );
+        assert.deepEqual(
+          [...archives],
+          originalArchives,
+          "forensic archives are never rewritten by a refusal",
+        );
+        assert.equal(cellRun.modelCalls, 2, "a refusal adds no model start");
+        return;
       }
-      isolationWriteFailure = null;
-      const oldArtifact = artifactRows.find((row) => row.id === 504)!;
-      const provenance = oldArtifact.workflow_run;
-      oldArtifact.workflow_run = { id: 999 };
-      await assert.rejects(
-        aggregate("isolation-forged-native", true),
-        /provenance unavailable or conflicting/,
-      );
-      assert.deepEqual(await r.store.readRepair(), before);
-      oldArtifact.workflow_run = provenance;
       // The parser permits a blocked historical row to retain a stale request
       // ID. It is not the admitted work and its blocker must stay untouched.
       const unrelated = markBlocked(
@@ -217,28 +285,49 @@ export async function freshMatrixArtifacts(
         beforeHead,
       );
       assert.ok(seeded.ok && seeded.value.status === "applied");
-      await aggregate("historical-runtime-isolation", true);
+      // 706a2270: the producer run, plan digest and recorded producer runtime
+      // of an isolated wave bind to the plan that scheduled it. The installed
+      // runtime moved on, so the older plan-bound result is ingested normally.
+      await aggregate("plan-bound-old-runtime", true);
       const after = await r.store.readRepair();
       assert.ok(after.ok && after.value.status === "found");
-      const isolated = after.value.snapshot.work.find((row) =>
+      if (!after.ok || after.value.status !== "found") {
+        throw new Error("repair state unreadable");
+      }
+      const advanced = after.value.snapshot.work.find((row) =>
         row.id === oldWork.id
       )!;
+      assert.equal(advanced.blocker, null);
+      assert.equal(advanced.nextStep, "work");
+      assert.equal(
+        advanced.target.head,
+        historical.oldResult.receipt!.candidate!.head,
+        "the older runtime's authenticated candidate head is preserved",
+      );
+      assert.notEqual(advanced.target.pr, null);
+      assert.deepEqual(advanced.evidence, oldWork.evidence);
+      assert.deepEqual(
+        {
+          attempts: advanced.counters.attempts,
+          retries: advanced.counters.retries,
+          reviewRounds: advanced.counters.reviewRounds,
+        },
+        {
+          attempts: oldWork.counters.attempts,
+          retries: oldWork.counters.retries,
+          reviewRounds: oldWork.counters.reviewRounds,
+        },
+        "ingestion preserves attempt/retry/review accounting",
+      );
+      const settledOld = after.value.snapshot.reservations.find((row) =>
+        row.id === oldCharge.id
+      )!;
+      assert.equal(settledOld.outcome, "submitted");
+      assert.notEqual(settledOld.settledAt, null);
       assert.deepEqual(
         after.value.snapshot.work.find((row) => row.id === unrelated.id),
         unrelated,
         "an unrelated blocked row sharing the stale request ID is byte-identical",
-      );
-      assert.equal(isolated.nextStep, "blocked");
-      assert.match(isolated.blocker!.message, /historical.*runtime mismatch/);
-      assert.deepEqual(isolated.intent, oldWork.intent);
-      assert.deepEqual(isolated.target, oldWork.target);
-      assert.deepEqual(isolated.evidence, oldWork.evidence);
-      assert.deepEqual(isolated.counters, oldWork.counters);
-      assert.deepEqual(
-        after.value.snapshot.reservations.find((row) =>
-          row.id === oldCharge.id
-        ),
-        oldCharge,
       );
       const sibling = after.value.snapshot.work.find((row) =>
         row.repository.name === "sentinel"
@@ -248,15 +337,11 @@ export async function freshMatrixArtifacts(
         "unrelated authenticated wave publishes through the real aggregate lifecycle",
       );
       assert.ok(
-        r.github.get("ubiquity-sentinel/sentinel")!.calls.some((call) =>
-          call.startsWith("push:")
-        ),
+        sentinelPort.calls.some((call) => call.startsWith("push:")),
       );
       assert.ok(
-        !r.github.get("ubiquity/ai.ubq.fi")!.calls.some((call) =>
-          call.startsWith("push:")
-        ),
-        "rejected result must never be imported or published",
+        aiPort.calls.some((call) => call.startsWith("push:")),
+        "the plan-bound older runtime result is published, not isolated",
       );
       assert.deepEqual(
         [...archives],
@@ -266,7 +351,7 @@ export async function freshMatrixArtifacts(
       assert.equal(
         cellRun.modelCalls,
         2,
-        "isolation adds no model start or refund",
+        "acceptance adds no model start or refund",
       );
       return;
     }
