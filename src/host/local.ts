@@ -23,8 +23,6 @@ import {
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import {
   createDefaultBranchResolver,
-  createGatedTargetReadTransport,
-  createTargetTreeFactsResolver,
   loadTargetConfigsV1,
   STATIC_TARGETS_EMPTY,
   STATIC_TARGETS_UNSUPPORTED,
@@ -241,20 +239,10 @@ export async function runLocalRepairHost(
     // the setting must name it: an empty or foreign setting refuses the run
     // instead of repairing a repository the owner never listed.
     const localTemplate = createLocalRepositoryConfig();
-    // Tree-fact reads share the run's durable cooldown gate.
-    const targetFactsHttp = createGatedTargetReadTransport({
-      http,
-      gate,
-      installationId: localTemplate.repository.installationId,
-    });
     const localTargets = await loadTargetConfigsV1({
       template: localTemplate,
       resolveDefaultBranch: createDefaultBranchResolver({
         http,
-        token: input.githubToken,
-      }),
-      resolveTreeFacts: createTargetTreeFactsResolver({
-        http: targetFactsHttp,
         token: input.githubToken,
       }),
       root: sourcePath,

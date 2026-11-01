@@ -4,10 +4,6 @@ import { parseCommandRegistryV1 } from "../contracts/command-registry.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import { isPassportWorkTrial } from "../repair/passport-work-trial.ts";
-import {
-  createGenericTargetPolicyV1,
-  type TargetTreeFactsV1,
-} from "./target-policy-generic.ts";
 
 type TargetPolicyV1 = Pick<
   RepositoryConfigV1,
@@ -119,47 +115,14 @@ export function premergeCiPolicyV1(
 }
 
 /**
- * Whether this exact identity takes the generic target policy. Only the
- * Sentinel repository itself, Passport and the Gateway have named policies;
- * a foreign identity that merely reuses one of their names stays generic.
- */
-export function isGenericTargetRepositoryV1(
-  repository: Pick<RepositoryIdentityV1, "owner" | "name">,
-): boolean {
-  if (isPassportTarget(repository)) return false;
-  const owner = repository.owner.toLowerCase();
-  const name = repository.name.toLowerCase();
-  if (owner === "ubiquity" && name === "ai.ubq.fi") return false;
-  if (owner === "ubiquity-sentinel" && name === "sentinel") return false;
-  return true;
-}
-
-/**
- * Facts for a trusted caller without a target checkout: no toolchain marker, no
- * local verify, and the target's own pull-request CI expected as merge
- * evidence. It never claims a green result; it keeps the generic credential
- * boundary and the family predicate in place.
- */
-const FACTS_LESS_GENERIC_TARGET_V1: TargetTreeFactsV1 = Object.freeze({
-  files: Object.freeze([]),
-  hasCiWorkflow: true,
-});
-
-/**
- * Select only a host-authored policy for the exact repository identity.
- * Passport and the Gateway keep their named policies, and the Sentinel
- * repository itself keeps the named template. Every other repository is
- * generic: with target-tree facts the policy is derived from the checkout, and
- * without facts it still gets the generic protected paths and family predicate
- * with no local verify and CI-only merge evidence. The template is never the
- * fallback for a generic repository. Issue text, the target file and model
- * output are never policy inputs. Installation scope and default branch remain
- * caller-owned.
+ * Select only a host-authored policy for the exact repository identity. The
+ * existing trusted deployment template remains authoritative for Sentinel and
+ * other repositories; issue text, the target file and model output are never
+ * policy inputs. Installation scope and default branch remain caller-owned.
  */
 export function selectTrustedTargetPolicyV1(
   template: RepositoryConfigV1,
   repository: Pick<RepositoryIdentityV1, "owner" | "name">,
-  facts?: TargetTreeFactsV1,
 ): TargetPolicyV1 {
   if (isPassportTarget(repository)) {
     // The named native gate includes isolated Deno fixtures, Bun and Worker
@@ -184,38 +147,15 @@ export function selectTrustedTargetPolicyV1(
       protectedPaths: [...PASSPORT_PROTECTED_PATHS],
     };
   }
-  const isGateway = repository.owner.toLowerCase() === "ubiquity" &&
-    repository.name.toLowerCase() === "ai.ubq.fi";
-  if (!isGateway) {
-    // Only the Sentinel repository itself keeps the named template exactly:
-    // its commands and protected custody boundary (the protected-path
-    // predicate and promotion files) must never be replaced by a target-tree
-    // policy.
-    if (
-      repository.owner.toLowerCase() === "ubiquity-sentinel" &&
-      repository.name.toLowerCase() === "sentinel"
-    ) {
-      return {
-        adapter: template.adapter,
-        commands: template.commands,
-        commandRegistry: template.commandRegistry,
-        protectedPaths: template.protectedPaths,
-      };
-    }
-    // Every other repository is generic, even without checkout facts. A
-    // facts-less caller keeps the generic credential boundary and the family
-    // predicate; it never inherits the Sentinel template's command ids or
-    // custody list. With no facts there is no local verify and the target's
-    // own CI stays the only expected merge evidence (the CI-first gate still
-    // reads the actual check runs, so this can never claim a green result).
-    const generic = createGenericTargetPolicyV1(
-      facts ?? FACTS_LESS_GENERIC_TARGET_V1,
-    );
+  if (
+    repository.owner.toLowerCase() !== "ubiquity" ||
+    repository.name.toLowerCase() !== "ai.ubq.fi"
+  ) {
     return {
-      adapter: generic.adapter,
-      commands: generic.commands,
-      commandRegistry: generic.commandRegistry,
-      protectedPaths: generic.protectedPaths,
+      adapter: template.adapter,
+      commands: template.commands,
+      commandRegistry: template.commandRegistry,
+      protectedPaths: template.protectedPaths,
     };
   }
   // Actual target AGENTS.md requires the full verify gate, which includes all

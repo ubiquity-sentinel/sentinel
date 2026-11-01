@@ -406,12 +406,6 @@ Deno.test("hosted runtime: the real host hands its origin-anchored deadline to t
           return Promise.resolve(checkoutSha);
         },
         resolveDefaultBranch: () => Promise.resolve("development"),
-        resolveTreeFacts: () =>
-          Promise.resolve({
-            files: ["deno.json"],
-            scripts: ["test"],
-            hasCiWorkflow: true,
-          }),
         preflight: (route) => {
           setup.push("preflight");
           observedRoute = `${route.provider}:${route.model}:${route.baseUrl}`;

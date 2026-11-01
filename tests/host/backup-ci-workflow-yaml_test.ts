@@ -19,7 +19,6 @@ import {
   backupCiRunnerId,
   parseBackupCiPins,
 } from "../../ops/backup-ci-act.ts";
-import { parseTargetSlugsV1 } from "../../src/host/targets.ts";
 
 type Obj = Record<string, unknown>;
 
@@ -182,11 +181,9 @@ Deno.test("the backup targets are committed targets with ids, never the self tar
   const targets = parseBackupCiTargets(
     JSON.parse(await Deno.readTextFile("sentinel.backup-ci-targets.json")),
   );
-  // Parse through the committed-setting validator: the 2026-11-01 expanded
-  // set (30 targets) must still be a valid bounded slug array.
-  const committed = parseTargetSlugsV1(
-    JSON.parse(await Deno.readTextFile("sentinel.targets.json")),
-  ).map((entry) => entry.slug);
+  const committed: string[] = JSON.parse(
+    await Deno.readTextFile("sentinel.targets.json"),
+  );
   for (const target of targets) {
     assert(committed.includes(target.repository), target.repository);
     assert.notEqual(target.repository, "ubiquity-sentinel/sentinel");

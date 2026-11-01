@@ -20,21 +20,7 @@
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { HttpTransportV1 } from "../github/http.ts";
-import type { GitHubCooldownGateV1 } from "../contracts/ports.ts";
-import {
-  isGenericTargetRepositoryV1,
-  selectTrustedTargetPolicyV1,
-} from "./target-policy.ts";
-import type { TargetTreeFactsV1 } from "./target-policy-generic.ts";
-import {
-  createTargetTreeFactsResolver,
-  TargetTreeFactsRefusedV1,
-} from "./target-tree-facts.ts";
-export type { TargetTreeFactsV1 } from "./target-policy-generic.ts";
-export {
-  createTargetTreeFactsResolver,
-  TargetTreeFactsRefusedV1,
-} from "./target-tree-facts.ts";
+import { selectTrustedTargetPolicyV1 } from "./target-policy.ts";
 
 /** Exact committed setting file name, relative to the runtime checkout root. */
 export const TARGETS_FILE_NAME = "sentinel.targets.json";
@@ -169,67 +155,6 @@ export function createDefaultBranchResolver(options: {
 }
 
 /**
- * Put every target branch/fact read behind the same durable cooldown gate the
- * loader's other GitHub reads use. A refused gate makes the read fail closed
- * (the resolver returns `null` and the target is skipped), never a raw request.
- */
-export function createGatedTargetReadTransport(options: {
-  readonly http: HttpTransportV1;
-  readonly gate: Pick<GitHubCooldownGateV1, "beforeRequest">;
-  readonly installationId: number;
-}): HttpTransportV1 {
-  return async (request) => {
-    const allowed = await options.gate.beforeRequest(options.installationId);
-    if (!allowed.ok) throw new Error("target read refused by durable cooldown");
-    return options.http(request);
-  };
-}
-
-/** The two trusted GitHub reads one target configuration needs. */
-export interface GitHubTargetResolversV1 {
-  readonly resolveDefaultBranch: (
-    target: TargetSlugV1,
-  ) => Promise<string | null>;
-  readonly resolveTreeFacts: (
-    target: TargetSlugV1,
-    defaultBranch: string,
-  ) => Promise<TargetTreeFactsV1 | null>;
-}
-
-/**
- * Build both trusted resolvers for one credential. An injected resolver wins;
- * every omitted read uses the trusted GitHub transport.
- */
-export function createGitHubTargetResolvers(options: {
-  readonly http: HttpTransportV1;
-  readonly token: string;
-  readonly apiBaseUrl?: string;
-  readonly readGate?: Pick<GitHubCooldownGateV1, "beforeRequest">;
-  readonly installationId?: number;
-  readonly resolveDefaultBranch?: GitHubTargetResolversV1[
-    "resolveDefaultBranch"
-  ];
-  readonly resolveTreeFacts?: GitHubTargetResolversV1["resolveTreeFacts"];
-}): GitHubTargetResolversV1 {
-  // Tree-fact reads are the new contents calls this loader adds: put them
-  // behind the run's durable cooldown gate. Default-branch reads keep their
-  // existing transport.
-  const factsHttp = options.readGate === undefined
-    ? options.http
-    : createGatedTargetReadTransport({
-      http: options.http,
-      gate: options.readGate,
-      installationId: options.installationId ?? 0,
-    });
-  return {
-    resolveDefaultBranch: options.resolveDefaultBranch ??
-      createDefaultBranchResolver(options),
-    resolveTreeFacts: options.resolveTreeFacts ??
-      createTargetTreeFactsResolver({ ...options, http: factsHttp }),
-  };
-}
-
-/**
  * Build one target from the deployment template and fixed host-authored
  * repository policy. A slug carries only identity: it can never introduce a
  * command, protected-path list or limit of its own.
@@ -238,7 +163,6 @@ export function createTargetConfigV1(
   template: RepositoryConfigV1,
   target: TargetSlugV1,
   defaultBranch: string,
-  facts?: TargetTreeFactsV1,
 ): RepositoryConfigV1 {
   const repository: RepositoryIdentityV1 = {
     owner: target.owner,
@@ -247,7 +171,7 @@ export function createTargetConfigV1(
   };
   return {
     ...template,
-    ...selectTrustedTargetPolicyV1(template, repository, facts),
+    ...selectTrustedTargetPolicyV1(template, repository),
     repository,
     baseBranch: defaultBranch,
   };
@@ -258,34 +182,18 @@ export interface LoadTargetConfigsResultV1 {
   readonly configs: readonly RepositoryConfigV1[];
   /** Slug of every target skipped because its default branch was unavailable. */
   readonly skipped: readonly string[];
-  /** Slug of every target skipped because its tree facts were unavailable. */
-  readonly factsUnavailable: readonly string[];
 }
 
 /**
  * Load the committed target setting into exact configuration objects. A target
  * whose default branch cannot be read is skipped (never defaulted); an empty
  * or invalid setting yields no configs at all.
- *
- * Tree facts are resolved only for generic targets. A caller without a
- * contents read (a restricted facade or maintenance publication) omits the
- * resolver, and a generic target then gets the facts-less generic policy
- * (generic credential boundary and family predicate, no local verify, CI-only
- * merge evidence). With a resolver, an unreadable answer or an unusable
- * `sentinel.protected` list skips the target exactly like an unreadable default
- * branch: it is never rebuilt without evidence it declared. Sentinel, Passport
- * and the Gateway keep their named policies and never spend a facts read.
  */
 export async function loadTargetConfigsV1(options: {
   readonly template: RepositoryConfigV1;
   readonly resolveDefaultBranch: (
     target: TargetSlugV1,
   ) => Promise<string | null>;
-  /** Exact tree facts for the resolved default branch; omitted means none. */
-  readonly resolveTreeFacts?: (
-    target: TargetSlugV1,
-    defaultBranch: string,
-  ) => Promise<TargetTreeFactsV1 | null>;
   readonly root?: string;
   readonly readFile?: (path: string) => Promise<string>;
 }): Promise<LoadTargetConfigsResultV1> {
@@ -295,46 +203,13 @@ export async function loadTargetConfigsV1(options: {
   });
   const configs: RepositoryConfigV1[] = [];
   const skipped: string[] = [];
-  const factsUnavailable: string[] = [];
   for (const target of targets) {
     const branch = await options.resolveDefaultBranch(target);
     if (branch === null) {
       skipped.push(target.slug);
       continue;
     }
-    const repository: RepositoryIdentityV1 = {
-      owner: target.owner,
-      name: target.name,
-      installationId: options.template.repository.installationId,
-    };
-    let facts: TargetTreeFactsV1 | undefined;
-    // Named policies (Sentinel, Passport, Gateway) ignore tree facts: never
-    // spend a contents read (or its rate limit) on them. A generic target
-    // skips when its facts cannot be read or its declared protection is
-    // unusable; a facts-less generic policy is used only when no resolver was
-    // supplied at all (a restricted facade without a contents read).
-    if (
-      isGenericTargetRepositoryV1(repository) &&
-      options.resolveTreeFacts !== undefined
-    ) {
-      try {
-        const resolved = await options.resolveTreeFacts(target, branch);
-        if (resolved === null) {
-          skipped.push(target.slug);
-          factsUnavailable.push(target.slug);
-          continue;
-        }
-        facts = resolved;
-      } catch (error) {
-        if (!(error instanceof TargetTreeFactsRefusedV1)) throw error;
-        skipped.push(target.slug);
-        factsUnavailable.push(target.slug);
-        continue;
-      }
-    }
-    configs.push(
-      createTargetConfigV1(options.template, target, branch, facts),
-    );
+    configs.push(createTargetConfigV1(options.template, target, branch));
   }
-  return { targets, configs, skipped, factsUnavailable };
+  return { targets, configs, skipped };
 }

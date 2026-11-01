@@ -162,12 +162,6 @@ async function runWiring(extraEnv: Record<string, string>): Promise<WiringV1> {
           return Promise.resolve(checkoutSha);
         },
         resolveDefaultBranch: () => Promise.resolve("development"),
-        resolveTreeFacts: () =>
-          Promise.resolve({
-            files: ["deno.json"],
-            scripts: ["test"],
-            hasCiWorkflow: true,
-          }),
         preflight: () => {
           wiring.setup.push("preflight");
           return Promise.resolve();

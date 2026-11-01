@@ -85,8 +85,6 @@ export interface CiFirstRigOptions {
   legacyReviewCutoff?: number;
   /** The record's severity (default: the helper's own). */
   severity?: WorkRecordV1["classification"]["severity"];
-  /** Trusted configuration overrides (for example a target's evidence state). */
-  configOverrides?: Record<string, unknown>;
   /** Repository, task identity and issue of the record (legacy shapes). */
   identity?: {
     repository: RepositoryIdentityV1;
@@ -110,14 +108,15 @@ export async function ciFirstRig(prefix: string, options: CiFirstRigOptions) {
     ...(options.legacyReviewCutoff === undefined
       ? {}
       : { legacyReviewCutoff: options.legacyReviewCutoff }),
-    configOverrides: {
-      ...(identity === undefined ? {} : { repository: identity.repository }),
-      // The sentinel self scope (installation 0) is no gateway target.
-      ...(identity !== undefined && identity.repository.installationId === 0
-        ? { adapter: { kind: "github" } }
-        : {}),
-      ...(options.configOverrides ?? {}),
-    },
+    ...(identity === undefined ? {} : {
+      configOverrides: {
+        repository: identity.repository,
+        // The sentinel self scope (installation 0) is no gateway target.
+        ...(identity.repository.installationId === 0
+          ? { adapter: { kind: "github" } }
+          : {}),
+      },
+    }),
     model: { heads: options.heads ?? [SHA4] },
     github: {
       openIssues: [],
