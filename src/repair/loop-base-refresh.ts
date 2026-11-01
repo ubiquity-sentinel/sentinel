@@ -24,6 +24,7 @@ import {
   pendingConflictRecord,
   resolvedConflictResolution,
 } from "./conflict-resolution.ts";
+import { completeHumanMerge } from "./human-merge.ts";
 import { candidatePreservationRef } from "./keys.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
 import {
@@ -47,10 +48,8 @@ import type {
   RepairCycleDepsV1,
   StepResultV1,
 } from "./loop-types.ts";
-import { RETIRED_MERGED_MESSAGE } from "./selection.ts";
 import {
   clearIntent,
-  markBlocked,
   markTerminalBlocked,
   setIntent,
   setWait,
@@ -634,10 +633,18 @@ export async function reconcileRefreshPublication(
   }
   const at = deps.clock.now();
   if (pull.value.state === "merged") {
-    return persistWork(
+    if (pull.value.mergeSha === null) {
+      return {
+        kind: "deferred",
+        detail: "merged pull request observation has no merge SHA",
+      };
+    }
+    return await completeHumanMerge(
       deps,
       context,
-      clearIntent(markBlocked(record, "other", RETIRED_MERGED_MESSAGE, at), at),
+      record,
+      pull.value,
+      pull.value.mergeSha,
     );
   }
   if (pull.value.state !== "closed" || pull.value.mergeSha !== null) {
