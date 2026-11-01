@@ -18,7 +18,9 @@ import {
 } from "../contracts/maintenance-index.ts";
 import { parseBudgetReservationV1 } from "../contracts/budget-reservation.ts";
 import { sha256Hex } from "../state/state-records.ts";
+import { nextLinkUrl } from "../github/client-response.ts";
 import {
+  FOLLOW_REPO_PATH,
   FollowError,
   type HostedRuntimeFollowApi,
   record,
@@ -30,7 +32,8 @@ export const FOLLOW_REPAIR_REF = "refs/heads/sentinel-state/repair";
 /** A wave younger than this may still be delivering; older waves never hold. */
 export const FOLLOW_MATRIX_WAVE_DEADLINE_MS = 6 * 60 * 60_000;
 
-const REPAIR_RESERVATION = /^reservations\/[0-9a-f]{64}\.json$/;
+const REPAIR_RESERVATION =
+  /^(?:reservations|reservationArchive)\/[0-9a-f]{64}\.json$/;
 
 async function readBlob(
   api: HostedRuntimeFollowApi,
@@ -76,10 +79,31 @@ async function treeOf(
 async function readMaintenanceIndex(api: HostedRuntimeFollowApi) {
   let head: string;
   try {
-    head = await api.ref(MAINTENANCE_INDEX_REF);
+    // A successful empty lookup proves absence; a ref-read error cannot
+    // distinguish a legacy branch without an index from an API outage.
+    const response = await api.request(
+      `${FOLLOW_REPO_PATH}/git/matching-refs/${MAINTENANCE_INDEX_REF.slice(5)}`,
+    );
+    if (!Array.isArray(response.value) || nextLinkUrl(response.headers)) {
+      throw new FollowError("matrix_wave_unreadable");
+    }
+    const refs = response.value.map(record);
+    if (
+      refs.some((row) =>
+        typeof row.ref !== "string" ||
+        !row.ref.startsWith(MAINTENANCE_INDEX_REF)
+      )
+    ) throw new FollowError("matrix_wave_unreadable");
+    const matches = refs.filter((row) => row.ref === MAINTENANCE_INDEX_REF);
+    if (matches.length === 0) return null;
+    if (matches.length !== 1) throw new FollowError("matrix_wave_unreadable");
+    const object = record(matches[0].object);
+    if (object.type !== "commit") {
+      throw new FollowError("matrix_wave_unreadable");
+    }
+    head = sha(object.sha);
   } catch {
-    // No index (or an unreadable lookup) proves no recorded plan wave.
-    return null;
+    throw new FollowError("matrix_wave_unreadable");
   }
   const entries = await treeOf(api, head);
   const manifest = entries.find((entry) =>
@@ -126,25 +150,40 @@ export async function matrixWaveOpen(
     throw new FollowError("matrix_wave_unreadable");
   }
   const entries = await treeOf(api, repairHead);
-  const byPath = new Map(
-    entries.filter((entry) =>
-      typeof entry.path === "string" && REPAIR_RESERVATION.test(entry.path)
-    ).map((entry) => [entry.path as string, sha(entry.sha)]),
-  );
-  const blobs: string[] = [];
-  for (const plan of plans) {
-    for (const reservationId of plan.plan!.reservationIds) {
-      const blob = byPath.get(
-        `reservations/${await sha256Hex(reservationId)}.json`,
-      );
-      if (blob !== undefined && !blobs.includes(blob)) blobs.push(blob);
+  const byPath = new Map<string, string>();
+  for (const entry of entries) {
+    if (
+      typeof entry.path !== "string" || !REPAIR_RESERVATION.test(entry.path)
+    ) {
+      continue;
     }
+    if (
+      entry.type !== "blob" || entry.mode !== "100644" || byPath.has(entry.path)
+    ) throw new FollowError("matrix_wave_unreadable");
+    byPath.set(entry.path, sha(entry.sha));
+  }
+  const blobs: { id: string; blob: string }[] = [];
+  const reservationIds = new Set(
+    plans.flatMap((plan) => plan.plan!.reservationIds),
+  );
+  for (const id of reservationIds) {
+    const hash = await sha256Hex(id);
+    const matches = [
+      byPath.get(`reservations/${hash}.json`),
+      byPath.get(`reservationArchive/${hash}.json`),
+    ].filter((blob) => blob !== undefined);
+    // Missing or ambiguous accounting cannot prove the cell settled. Settled
+    // rows may move to the archive, but must still bind the exact plan member.
+    if (matches.length !== 1) throw new FollowError("matrix_wave_unreadable");
+    blobs.push({ id, blob: matches[0] });
   }
   for (let offset = 0; offset < blobs.length; offset += 16) {
     const rows = await Promise.all(
-      blobs.slice(offset, offset + 16).map(async (blob) => {
+      blobs.slice(offset, offset + 16).map(async ({ id, blob }) => {
         try {
-          return parseBudgetReservationV1(await readBlob(api, blob));
+          const row = parseBudgetReservationV1(await readBlob(api, blob));
+          if (row.id !== id) throw new FollowError("matrix_wave_unreadable");
+          return row;
         } catch {
           throw new FollowError("matrix_wave_unreadable");
         }

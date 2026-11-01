@@ -278,6 +278,7 @@ export class FollowFake {
   execution: unknown = null;
   matrixIndex: unknown = null;
   repairReservations = new Map<string, Record<string, unknown>>();
+  archivedReservations = new Set<string>();
   now = NOW + 60_000;
   parents = new Map<string, string[]>([[D, [OLDER]], [OLDER, [L]], [L, [P]], [
     P,
@@ -374,6 +375,14 @@ export class FollowFake {
       throw new Error(`unexpected fake mutation ${path}`);
     }
     if (path === "") return response(repository);
+    if (path === "/git/matching-refs/heads/sentinel-state/maintenance-index") {
+      return response(
+        this.matrixIndex === null ? [] : [{
+          ref: "refs/heads/sentinel-state/maintenance-index",
+          object: { type: "commit", sha: INDEX_COMMIT },
+        }],
+      );
+    }
     if (path.startsWith("/git/ref/")) {
       const name = path.slice("/git/ref/".length);
       const value = name === "heads/development"
@@ -448,7 +457,11 @@ export class FollowFake {
         truncated: false,
         tree: await Promise.all(
           [...this.repairReservations.keys()].map(async (id) => ({
-            path: `reservations/${await sha256Hex(id)}.json`,
+            path: `${
+              this.archivedReservations.has(id)
+                ? "reservationArchive"
+                : "reservations"
+            }/${await sha256Hex(id)}.json`,
             sha: await reservationBlob(id),
             type: "blob",
             mode: "100644",
