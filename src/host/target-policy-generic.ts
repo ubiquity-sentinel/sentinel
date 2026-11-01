@@ -50,13 +50,15 @@ export interface TargetManifestScriptsV1 {
 
 /**
  * Facts from the checked-out target tree. Detection reads only top-level
- * markers. `manifestScripts` keeps each manifest's names separate so verify
- * never charges a script the repository does not have in that toolchain.
+ * markers and the root package manifest. `manifestScripts` keeps names separate
+ * so verify never charges a script the repository lacks in that toolchain.
  */
 export interface TargetTreeFactsV1 {
   readonly files: readonly string[];
   /** True when `.github/workflows/` holds a workflow with a pull_request trigger. */
   readonly hasCiWorkflow: boolean;
+  /** The root `package.json` declaration, ahead of lockfile/config markers. */
+  readonly packageManager?: string;
   /**
    * Names of one manifest, for hand-built facts only. A loader must supply
    * `manifestScripts`; when it does, this field is ignored.
@@ -112,23 +114,31 @@ const NO_LOCAL_VERIFY_COMMAND: CommandSpecV1 = Object.freeze({
 
 const ROOT_MARKERS:
   readonly (readonly [TargetToolchainV1, readonly string[]])[] = Object.freeze([
-    ["deno", ["deno.json", "deno.jsonc"]],
     ["bun", ["bun.lockb", "bun.lock"]],
     ["npm", ["package-lock.json"]],
     ["yarn", ["yarn.lock"]],
     ["pnpm", ["pnpm-lock.yaml"]],
+    ["deno", ["deno.json", "deno.jsonc"]],
     ["forge", ["foundry.toml"]],
   ]);
 
-/** Detect the toolchain from top-level marker files, in the declared order. */
+/** Prefer the root packageManager, then package lockfiles, then other markers. */
 export function detectTargetToolchainV1(
   files: readonly string[],
+  packageManager?: string,
 ): TargetToolchainV1 {
   const roots = new Set<string>();
   for (const file of files) {
     const name = topLevelName(file);
     if (name !== null) roots.add(name);
   }
+  const declared = roots.has("package.json")
+    ? packageManager?.match(/^(bun|npm|yarn|pnpm)@\S+$/)?.[1]
+    : undefined;
+  if (
+    declared === "bun" || declared === "npm" || declared === "yarn" ||
+    declared === "pnpm"
+  ) return declared;
   for (const [toolchain, markers] of ROOT_MARKERS) {
     if (markers.some((marker) => roots.has(marker))) return toolchain;
   }
@@ -260,12 +270,13 @@ export interface GenericTargetPolicyV1 {
  * `no_ci_and_no_local_verify` blocker instead of merging on review alone, even
  * when a local verify command exists. Nothing runs that command as merge
  * evidence today, so claiming it here (or admitting the review with zero checks)
- * would be a false green. Local-only verify is a separate future decision.
+ * would be a false green. Local-only verify is a separate future decision; any
+ * future executor must run the toolchain's frozen install inside the cell first.
  */
 export function createGenericTargetPolicyV1(
   facts: TargetTreeFactsV1,
 ): GenericTargetPolicyV1 {
-  const toolchain = detectTargetToolchainV1(facts.files);
+  const toolchain = detectTargetToolchainV1(facts.files, facts.packageManager);
   const verify = verifyCommandFor(toolchain, facts);
   const localVerify = verify !== null;
   const mergeEvidence: GenericTargetMergeEvidenceV1 = facts.hasCiWorkflow

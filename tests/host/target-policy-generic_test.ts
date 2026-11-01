@@ -58,6 +58,84 @@ Deno.test("generic policy: detection reads top-level toolchain markers", () => {
   assert.equal(detectTargetToolchainV1(["packages/a/deno.json"]), "none");
 });
 
+Deno.test("generic policy: toolchain precedence favors lockfiles over Deno", () => {
+  const locks = [
+    ["bun.lock", "bun"],
+    ["bun.lockb", "bun"],
+    ["package-lock.json", "npm"],
+    ["yarn.lock", "yarn"],
+    ["pnpm-lock.yaml", "pnpm"],
+  ] as const;
+  for (const deno of ["deno.json", "deno.jsonc"]) {
+    for (const [lock, toolchain] of locks) {
+      const policy = createGenericTargetPolicyV1(facts({
+        files: [deno, "package.json", lock],
+        manifestScripts: { deno: ["test"], package: ["check"] },
+      }));
+      assert.equal(policy.toolchain, toolchain, `${deno} + ${lock}`);
+      const spec = policy.commandRegistry.commands[policy.commands.test];
+      assert.equal(spec.executable, toolchain);
+      assert.deepEqual(
+        spec.args,
+        toolchain === "bun"
+          ? ["--no-env-file", "run", "check"]
+          : ["run", "check"],
+      );
+      assert.equal(policy.mergeEvidence, "target_ci");
+    }
+  }
+});
+
+Deno.test("generic policy: toolchain precedence favors packageManager over locks", () => {
+  for (const toolchain of ["bun", "npm", "yarn", "pnpm"]) {
+    for (
+      const locks of [[], [
+        "bun.lock",
+        "package-lock.json",
+        "yarn.lock",
+        "pnpm-lock.yaml",
+      ]]
+    ) {
+      const tree = {
+        files: ["package.json", "deno.json", ...locks],
+        packageManager: `${toolchain}@1.3.3`,
+        manifestScripts: { deno: ["test"], package: ["check"] },
+        hasCiWorkflow: true,
+      };
+      const policy = createGenericTargetPolicyV1(tree);
+      assert.equal(policy.toolchain, toolchain, tree.packageManager);
+      const spec = policy.commandRegistry.commands[policy.commands.test];
+      assert.equal(spec.executable, toolchain);
+      assert.deepEqual(
+        spec.args,
+        toolchain === "bun"
+          ? ["--no-env-file", "run", "check"]
+          : ["run", "check"],
+      );
+    }
+  }
+  assert.equal(
+    detectTargetToolchainV1(["deno.json", "nested/package.json"], "bun@1.3.3"),
+    "deno",
+    "a package manager must come from the root package manifest",
+  );
+  for (
+    const packageManager of [
+      "unknown@1.0.0",
+      "bun",
+      "bun@",
+      "bun@1.0.0 run test",
+    ]
+  ) {
+    const tree = {
+      files: ["package.json", "deno.json", "pnpm-lock.yaml"],
+      packageManager,
+      hasCiWorkflow: true,
+    };
+    assert.equal(createGenericTargetPolicyV1(tree).toolchain, "pnpm");
+  }
+});
+
 Deno.test("generic policy: each toolchain builds a bounded verify command", () => {
   const cases: [
     string[],
