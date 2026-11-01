@@ -1,5 +1,32 @@
 # Sentinel decisions
 
+## Human merges complete the record; the self-merge owner park is retired (2026-10-30/31)
+
+Owner directive (2026-10-30): a pull request merged by a human is a completed
+delivery. The record completes as `done` with human-merge provenance carrying
+the merged head, even when the merged head is newer than the reviewed one (no
+review receipt is bound and no release request is created from the unreviewed
+head) and even when the base branch moved after review (a merge into the
+record's own base branch is accepted; a merge into a different branch is still
+refused). A human merge never held a Sentinel queue receipt, so the
+queue-delivery hold does not apply to it; Sentinel's own trusted merge keeps the
+exact-tip rule and the queue guard. The owner-gated `self_merge_requires_owner`
+park and the "observed merged head identity mismatch" / "merge landed off its
+reviewed base" parks are retired for human merges; the launcher re-admits
+records parked that way once the retained pull is verified merged into the
+record's base by a readable non-Sentinel actor. Commits `3e646eb0`, `be886969`,
+`644b8d3f`. This supersedes the takeover custody park wording for
+`self_merge_requires_owner` in the 2026-10-23 entry.
+
+## Passport deployment check is not a merge gate; CI polling is two minutes (2026-10-30)
+
+Owner directive (2026-10-30): the Passport deployment check (the Cloudflare
+dry-run / deploy status) is excluded from the current-head CI aggregate that
+gates an autonomous merge. The named native gate (`bun run check`), generated
+types and the remaining CI jobs stay required; a deployment check that is
+pending, skipped or failed does not block a merge. `CHECK_POLL_MS` is two
+minutes (was five). Commit lane t2/t7 of the 2026-10-30/31 throughput work.
+
 ## Review-round ceiling and CI-fix cap retired (2026-10-30/31)
 
 Owner directive: the review-round ceiling and the CI-fix attempt cap are
