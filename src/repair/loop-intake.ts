@@ -3,6 +3,7 @@ import { reconcileExistingPrs } from "./loop-existing-pr.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import { RecordParseError } from "../contracts/validation.ts";
 import type {
   IssueSourceErrorContextV1,
   SkippedIssueV1,
@@ -372,7 +373,6 @@ export async function pollIntake(
         error = issueSourceFailureDetail({ ...issues.error, issueSource });
         reportIssues();
       } else {
-        reportIssues();
         const seenIssues = new Set<string>();
         const baseByRepository = new Map<string, GitSha | null>();
         for (const issue of issues.value) {
@@ -426,6 +426,7 @@ export async function pollIntake(
               context.bounds,
             );
             if (baseCooled.kind === "state_error") {
+              reportIssues();
               return intakeFault(baseCooled.detail);
             }
             if (baseCooled.kind === "deferred") {
@@ -438,19 +439,31 @@ export async function pollIntake(
             error = `base unavailable for ${issueRepository.name}`;
             continue;
           }
-          newWork.push(createIssueWork({
-            number: issue.number,
-            title: issue.title,
-            labels: issue.labels,
-            createdAt: issue.createdAt,
-          }, {
-            controllerSha: deps.controllerSha,
-            repository: issueRepository,
-            observedBase: base,
-            now,
-          }));
+          try {
+            newWork.push(createIssueWork({
+              number: issue.number,
+              title: issue.title,
+              labels: issue.labels,
+              createdAt: issue.createdAt,
+            }, {
+              controllerSha: deps.controllerSha,
+              repository: issueRepository,
+              observedBase: base,
+              now,
+            }));
+          } catch (error) {
+            if (!(error instanceof RecordParseError)) throw error;
+            // Quarantine only this issue; never expose raw source/error text.
+            issueListing.skippedIssues?.push({
+              number: issue.number,
+              code: "record_parse_error",
+              reason: error.issues[0]?.code ?? "invalid_value",
+            });
+            continue;
+          }
           changed = true;
         }
+        reportIssues();
       }
     }
   }

@@ -156,7 +156,7 @@ export function sanitizeIssueSourceContext(
   return context;
 }
 
-/** Rebuild a skipped issue from the same field allowlist used for failures. */
+/** Rebuild a skipped issue from bounded fields and allowlisted reason codes. */
 export function sanitizeSkippedIssue(
   value: unknown,
   repository: string,
@@ -165,6 +165,18 @@ export function sanitizeSkippedIssue(
     return null;
   }
   const row = value as Record<string, unknown>;
+  if (row.code === "record_parse_error") {
+    if (
+      !positiveCount(row.number) || typeof row.reason !== "string" ||
+      !/^(?:unknown_key|missing_field|wrong_type|invalid_enum|invalid_version|invalid_sha|invalid_digest|invalid_pattern|bound_exceeded|invalid_number|invalid_timestamp|invalid_count|invalid_boolean|invalid_nullability|invalid_base64|invalid_lifecycle|invalid_array|invalid_value)$/
+        .test(row.reason)
+    ) return null;
+    return {
+      number: row.number as number,
+      code: "record_parse_error",
+      reason: row.reason as ParseIssue["code"],
+    };
+  }
   const context = sanitizeIssueSourceContext({
     target: repository,
     method: "GET",
