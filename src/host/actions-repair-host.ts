@@ -53,7 +53,7 @@ import { createActionsCandidateRestorer } from "./actions-candidates.ts";
 import type { ActionsCandidateRestorerV1 } from "./actions-candidates.ts";
 import type { ReleaseRequestV1 } from "../contracts/release.ts";
 import {
-  createDefaultBranchResolver,
+  createGitHubTargetResolvers,
   loadTargetConfigsV1,
   STATIC_TARGETS_EMPTY,
 } from "./targets.ts";
@@ -116,7 +116,6 @@ import {
   requireEnv,
   resolveExecutable,
 } from "./actions-host-io.ts";
-
 /** Run one hosted repair pass through the actual production entrypoint. */
 export async function runActionsRepairHost(
   deps: ActionsRepairHostDepsV1 = {},
@@ -410,9 +409,7 @@ export async function runActionsRepairHost(
   });
   const { isSelfTarget, tokenFor, loginFor, selfContext } = bindings;
   const takeoverContext = bindings.targetContext;
-
   const gitExecutable = await resolveExecutable("git", trustedPath);
-
   // The committed setting is the only target source; the local template only
   // supplies trusted per-repository defaults and the self identity.
   const templateConfig = createLocalRepositoryConfig();
@@ -420,11 +417,14 @@ export async function runActionsRepairHost(
     template: templateConfig,
     // The setting lives in this run's own checkout, exactly as before.
     root: sourceDir,
-    resolveDefaultBranch: deps.resolveDefaultBranch ??
-      createDefaultBranchResolver({
-        http,
-        token: writeToken, // private targets need the App token for branch reads
-      }),
+    // Private targets need the App token; reads share the cooldown gate.
+    ...createGitHubTargetResolvers({
+      ...deps,
+      http,
+      token: writeToken,
+      readGate: gate,
+      installationId: targetInstallationId ?? DEFAULT_APP_INSTALLATION_ID,
+    }),
   });
   if (targets.configs.length === 0) throw new Error(STATIC_TARGETS_EMPTY);
   const selfRepository = templateConfig.repository;
