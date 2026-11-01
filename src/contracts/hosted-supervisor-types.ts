@@ -27,6 +27,12 @@ export const RETIRED_HOSTED_SUPERVISOR_REPOSITORY = "ubiquity/sentinel";
  * direction without being a contradiction.
  */
 export const HOSTED_ACTIONS_CLOCK_TOLERANCE_MS = 999;
+/**
+ * Native Actions timestamps can lead the observer/runner clock by an hour
+ * across DST changes. This allowance does not relax native ordering or the
+ * runner's own terminal/log observation bounds.
+ */
+export const HOSTED_ACTIONS_POSITIVE_SKEW_MS = 3_600_000;
 
 export type HostedExecutionPurposeV1 =
   | "bootstrap"

@@ -16,6 +16,7 @@ import {
 } from "../contracts/validation.ts";
 import {
   HOSTED_ACTIONS_CLOCK_TOLERANCE_MS,
+  HOSTED_ACTIONS_POSITIVE_SKEW_MS,
   HOSTED_SUPERVISOR_WORKFLOW_ID,
   HOSTED_SUPERVISOR_WORKFLOW_PATH,
 } from "../contracts/hosted-supervisor.ts";
@@ -92,12 +93,13 @@ export function parseHostedAttempt(
   );
   if (
     completedAt !== null &&
-    completedAt > observedAt + HOSTED_ACTIONS_CLOCK_TOLERANCE_MS
+    completedAt > observedAt + HOSTED_ACTIONS_CLOCK_TOLERANCE_MS +
+        HOSTED_ACTIONS_POSITIVE_SKEW_MS
   ) {
     fail(
       "$.updated_at",
       "invalid_lifecycle",
-      "attempt update is after the observation time",
+      "attempt update exceeds the bounded positive clock skew",
     );
   }
   if (
