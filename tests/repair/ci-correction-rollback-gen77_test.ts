@@ -57,6 +57,9 @@ async function loadRig77() {
     candidateStateFor: loaded.modules[1]
       .candidateStateFor as typeof candidateStateFor,
     hostedCiCorrections: loaded.modules[2].HOSTED_CI_CORRECTIONS as boolean,
+    ciCorrectionShape: loaded.modules[2].ciCorrectionShape as (
+      record: RepairStateSnapshotV1["work"][number],
+    ) => boolean,
     dispose: loaded.dispose,
   };
 }
@@ -126,8 +129,14 @@ Deno.test({
               assert.equal(added[0].head, SHA3);
               assert.ok(!checkReads.includes(SHA1), "no base attribution");
               assert.equal(refreshes.length, 0, "no base refresh");
-              // A record at two rounds spends its last correctable round here.
-              assert.equal(ciCorrectionShape(work, after), rounds + 1 < 3);
+              // R77 retains its historical ceiling; only its own predicate
+              // may interpret these counted rounds as exhausting a correction.
+              assert.equal(gen77.ciCorrectionShape(work), rounds + 1 < 3);
+              assert.equal(
+                ciCorrectionShape(work, after),
+                true,
+                "the current runtime treats these rounds as accounting only",
+              );
             } finally {
               await rig.ctx.cleanup();
             }
