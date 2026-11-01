@@ -58,6 +58,7 @@ export const MATRIX_PLAN_NOT_READY_REASONS: readonly string[] = [
   "candidateState.preserved=null",
   "target.branch=null",
   "config.sessionBound=null",
+  "no_ci_and_no_local_verify",
   "target.head-not-null",
   "existing_head_continuation_live",
   "config=null",
