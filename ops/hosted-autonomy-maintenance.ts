@@ -100,21 +100,24 @@ export async function runHostedMatrixMaintenance(
         console.log(
           JSON.stringify({ kind: "sentinel_closed_c_recovery", ...recovered }),
         );
-        return {
-          kind: "hosted_autonomy",
-          status: recovered.repairHead === read.value.head
-            ? "skipped"
-            : "applied",
-          reason: recovered.repairHead === read.value.head
-            ? "no_change"
-            : "applied",
-          beforeHead: read.value.head,
-          appliedHead: recovered.repairHead,
-          actions: [
-            "closed-c-matrix:ingested:" + recovered.dispositions.length,
-          ],
-          revisions: [],
-        };
+        // A typed skip is reported above; keep later matrix recovery reachable.
+        if (!("skipped" in recovered)) {
+          return {
+            kind: "hosted_autonomy",
+            status: recovered.repairHead === read.value.head
+              ? "skipped"
+              : "applied",
+            reason: recovered.repairHead === read.value.head
+              ? "no_change"
+              : "applied",
+            beforeHead: read.value.head,
+            appliedHead: recovered.repairHead,
+            actions: [
+              "closed-c-matrix:ingested:" + recovered.dispositions.length,
+            ],
+            revisions: [],
+          };
+        }
       }
     }
   } finally {

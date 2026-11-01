@@ -162,3 +162,63 @@ Deno.test("closed C recovery: an unresolvable charge is a typed skip", async () 
   assert.deepEqual(skipped.reports, []);
   assert.equal(skipped.repairHead, SHA2);
 });
+
+for (const archived of [false, true]) {
+  Deno.test(
+    `closed C recovery: ${
+      archived ? "archived and absent" : "all-absent"
+    } charges produce a typed skip`,
+    async () => {
+      const snapshot = { ...wave(archived), reservations: [] };
+      const missing = archived ? [LIVE] : [ARCHIVED, LIVE];
+      assert.equal(
+        closedCWaveNeedsRecovery(snapshot, binding),
+        true,
+        "missing charges remain reportable even without any live charges",
+      );
+      await assert.rejects(
+        () => recoverClosedCWave(depsFor(snapshot)),
+        (error: unknown) => {
+          assert.ok(error instanceof ClosedCWaveUnrecoverableSkipV1);
+          assert.deepEqual(error.reservationIds, missing);
+          return true;
+        },
+      );
+      assert.deepEqual(await ingestClosedCWave(depsFor(snapshot)), {
+        producer: binding.run,
+        repairHead: SHA2,
+        releaseHead: SHA2,
+        dispositions: [],
+        reports: [],
+        skipped: {
+          reason: "missing_reservation",
+          reservationIds: missing,
+        },
+      });
+    },
+  );
+}
+
+Deno.test("closed C recovery: fully archived charges remain a no-op", async () => {
+  const original = wave(true);
+  const snapshot = parseRepairStateSnapshotV1({
+    ...original,
+    reservations: [],
+    reservationArchive: [
+      ...original.reservationArchive ?? [],
+      {
+        ...original.reservations[0],
+        outcome: "submitted",
+        settledAt: T0 + 1000,
+      },
+    ],
+  });
+  assert.equal(closedCWaveNeedsRecovery(snapshot, binding), false);
+  assert.deepEqual(await ingestClosedCWave(depsFor(snapshot)), {
+    producer: binding.run,
+    repairHead: SHA2,
+    releaseHead: SHA2,
+    dispositions: [],
+    reports: [],
+  });
+});
