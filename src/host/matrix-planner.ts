@@ -27,6 +27,7 @@ import {
   type RepairCycleDepsV1,
 } from "../repair/loop.ts";
 import { attemptEquivalenceRefusalForRecordV1 } from "../repair/attempt-policy.ts";
+import { planDeferredKey } from "./matrix-plan-diagnostic.ts";
 import { ciCorrectionRouteOpen } from "../repair/ci-rejection.ts";
 import { preReviewCiFixRouteOpen } from "../repair/ci-first-policy.ts";
 import {
@@ -108,6 +109,12 @@ export interface MatrixPlanDiagnosticV1 {
   notReadyByReason: Record<string, number>;
   /** Sample record IDs for each not-ready reason (max 3 per reason). */
   notReadySamples: Record<string, string[]>;
+  /** Records whose preparation was attempted on the last iteration. */
+  attempted?: number;
+  /** Attempted records whose preparation returned a step instead of a cell. */
+  deferred?: number;
+  /** Closed per-reason histogram of those preparation outcomes. */
+  deferredByReason?: Record<string, number>;
   /**
    * Present when the conflict-resolution cap was full on the last read, so
    * every pending resolution was held back (`notReadyByReason` counts them as
@@ -357,6 +364,7 @@ export async function planMatrixWave(
   let attempted = 0;
   let deferred = 0;
   let notReady = 0;
+  const deferredByReason: Record<string, number> = {};
   // Diagnostic: captured from the last planner iteration for zero-cell runs.
   let lastDiagnostic: MatrixPlanDiagnosticV1 | null = null;
   let memoryRefused = 0;
@@ -560,6 +568,11 @@ export async function planMatrixWave(
     );
     if (outcome.kind !== "prepared") {
       deferred++;
+      const waitReason = context.snapshot.work.find((entry) =>
+        entry.id === record.id
+      )?.wait?.reason;
+      const reason = planDeferredKey(outcome, waitReason);
+      deferredByReason[reason] = (deferredByReason[reason] ?? 0) + 1;
       // An ordinary fresh-base refresh is progress, not a failed admission.
       // Reconsider that same task against its persisted current base.
       if (outcome.kind === "progress") {
@@ -604,7 +617,20 @@ export async function planMatrixWave(
     deferred,
     // Include the diagnostic when no cells were prepared; it explains why.
     ...(cells.length === 0 && lastDiagnostic !== null
-      ? { diagnostic: lastDiagnostic }
+      ? {
+        diagnostic: memoryRefused === 0
+          ? { ...lastDiagnostic, attempted, deferred, deferredByReason }
+          : {
+            ...lastDiagnostic,
+            attempted,
+            deferred,
+            deferredByReason: {
+              ...deferredByReason,
+              memory_refused: (deferredByReason.memory_refused ?? 0) +
+                memoryRefused,
+            },
+          },
+      }
       : {}),
     memoryRefused,
   };

@@ -2,7 +2,10 @@ import { type GitSha, isGitSha } from "../contracts/brands.ts";
 import type { RepairStateWriter, StateReadView } from "../contracts/ports.ts";
 import type { BudgetReservationV1 } from "../contracts/budget-reservation.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
-import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
+import {
+  allReservationsV1,
+  type RepairStateSnapshotV1,
+} from "../contracts/state-snapshots.ts";
 import { MaxText } from "../contracts/validation.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import {
@@ -247,7 +250,9 @@ function projectStatusSnapshot(
   identity: LocalStatusIdentityV1,
 ): Record<string, unknown> {
   const work = snapshot.work;
-  const reservations = snapshot.reservations;
+  // A full ledger archives its oldest terminal rows; status totals and the
+  // seven-day accounting window still include them.
+  const reservations = allReservationsV1(snapshot);
   if (!Array.isArray(work) || !Array.isArray(reservations)) {
     return unavailableStatus(identity);
   }

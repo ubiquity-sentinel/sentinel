@@ -1,5 +1,6 @@
 /** Exact cell binding and trusted timeout settlement transitions. */
 import { canonicalStringify } from "../contracts/canonical.ts";
+import { findReservationV1 } from "../contracts/state-snapshots.ts";
 import type {
   MatrixCellPlanV1,
   MatrixCellResultV1,
@@ -90,9 +91,7 @@ export async function resetCellTimeouts(
   const context = await loadRepairContext(deps, bounds);
   if (context === null) return false;
   const record = context.snapshot.work.find((work) => work.id === cell.taskId);
-  const reservation = context.snapshot.reservations.find((row) =>
-    row.id === cell.reservationId
-  );
+  const reservation = findReservationV1(context.snapshot, cell.reservationId);
   if (
     record === undefined || reservation === undefined ||
     !sameRepository(record.repository, cell.repository) ||
@@ -152,8 +151,9 @@ export async function resetCellTimeouts(
   const verifiedWork = verified.value.snapshot.work.find((work) =>
     work.id === cell.taskId
   );
-  const verifiedReservation = verified.value.snapshot.reservations.find((row) =>
-    row.id === cell.reservationId
+  const verifiedReservation = findReservationV1(
+    verified.value.snapshot,
+    cell.reservationId,
   );
   return verifiedWork !== undefined && verifiedReservation !== undefined &&
     canonicalStringify(verifiedWork) === canonicalStringify(cleared) &&
