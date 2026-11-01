@@ -39,8 +39,15 @@ export {
 /** Exact committed setting file name, relative to the runtime checkout root. */
 export const TARGETS_FILE_NAME = "sentinel.targets.json";
 
-/** Bounded target count: one exclusive writer, no unbounded fan-out. */
-export const TARGETS_MAX = 32;
+/**
+ * Finite configuration/fan-out guard, not a worker-admission limit. Doubling to
+ * 64 leaves headroom beyond the 30-target rollout while bounding per-target
+ * setup and coordination. More targets do not add authoritative state writers:
+ * one coordinator still serializes authoritative operations; only native
+ * session settlement overlaps. The shared absolute deadline and existing
+ * admission/session safeguards remain unchanged.
+ */
+export const TARGETS_MAX = 64;
 
 /** Static settings failure shared by every rejection path. */
 export const STATIC_TARGETS_INVALID =
