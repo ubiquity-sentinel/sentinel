@@ -35,7 +35,7 @@ import {
   preserveConflictMerge,
 } from "./loop-conflict-resolution.ts";
 import { verifiedPublishedHead } from "./loop-preservation.ts";
-import { touchesProtected } from "./loop-records.ts";
+import { targetTouchesProtectedV1 } from "../host/target-policy-generic.ts";
 import {
   loadSnapshot,
   persistTransition,
@@ -246,7 +246,7 @@ export async function handleModelReceipt(
     );
   }
   const protectedHit = candidate!.changedPaths.some((path) =>
-    touchesProtected(config.protectedPaths, path)
+    targetTouchesProtectedV1(config, path)
   );
   // The verified prior published head: retained from existing V1 candidate
   // state, or proved by an ACTUAL owned-branch observation of the exact prior
