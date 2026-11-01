@@ -5,7 +5,10 @@ import type { GitSha } from "../../src/contracts/brands.ts";
 import type { ImplementationPort } from "../../src/contracts/ports.ts";
 import { portOk } from "../../src/contracts/ports.ts";
 import type { MatrixCellResultV1 } from "../../src/contracts/matrix.ts";
-import { parseReleaseStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
+import {
+  parseReleaseStateSnapshotV1,
+  parseRepairStateSnapshotV1,
+} from "../../src/contracts/state-snapshots.ts";
 import { runActionsMatrixHost } from "../../src/host/matrix-actions.ts";
 import { runActionsRepairHost } from "../../src/host/actions.ts";
 import type { ActionsTargetCyclesInputV1 } from "../../src/host/actions.ts";
@@ -569,6 +572,44 @@ Deno.test("closed C recovery: real mixed ingestion preserves charges and rehydra
         .target.base,
       newBase,
     );
+    // Capacity compaction moves terminal, unreferenced charges out of the
+    // live ledger. The wave's remaining live charge must still recover, so an
+    // archived sibling can never make its admission scope unavailable.
+    const progressedSnapshot = progressed.value.snapshot;
+    const compactable = progressedSnapshot.reservations.filter((row) =>
+      row.outcome === "submitted" &&
+      binding.cells.some((cell) => cell.reservationId === row.id) &&
+      progressedSnapshot.work.every((work) => work.intent?.requestId !== row.id)
+    );
+    assert.ok(
+      compactable.length >= 1,
+      "a consumed C charge is archiveable",
+    );
+    const archiveIds = new Set(compactable.map((row) => row.id));
+    const archived = await r.store.writeRepair(
+      parseRepairStateSnapshotV1({
+        ...progressedSnapshot,
+        stateHead: progressed.value.head,
+        sequence: progressedSnapshot.sequence + 1,
+        updatedAt: r.clock.now(),
+        reservations: progressedSnapshot.reservations.filter((row) =>
+          !archiveIds.has(row.id)
+        ),
+        reservationArchive: compactable,
+      }),
+      progressed.value.head,
+    );
+    assert.ok(
+      archived.ok && archived.value.status === "applied",
+      JSON.stringify(archived),
+    );
+    const compacted = await r.store.readRepair();
+    assert.ok(compacted.ok && compacted.value.status === "found");
+    assert.equal(
+      closedCWaveNeedsRecovery(compacted.value.snapshot, binding),
+      true,
+      "an archived sibling does not retire the wave's live prerequisite",
+    );
     const activeRecovery = await ingestClosedCWave(deps);
     assert.equal(
       activeRecovery.dispositions.length,
@@ -577,7 +618,7 @@ Deno.test("closed C recovery: real mixed ingestion preserves charges and rehydra
     );
     assert.equal(
       activeRecovery.repairHead,
-      progressed.value.head,
+      compacted.value.head,
       "base-refreshed sibling remains unchanged while another candidate hydrates",
     );
     const foreign = input.configs.find((config) =>

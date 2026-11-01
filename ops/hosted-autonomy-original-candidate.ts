@@ -2,7 +2,10 @@
 import { canonicalStringify } from "../src/contracts/canonical.ts";
 import type { GitSha } from "../src/contracts/brands.ts";
 import type { StateReadView } from "../src/contracts/ports.ts";
-import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
+import {
+  findReservationV1,
+  type RepairStateSnapshotV1,
+} from "../src/contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
 import { blockedImplementationBinding } from "../src/host/matrix-blocked-candidate.ts";
 import {
@@ -88,16 +91,16 @@ async function matchTransition(
       )
   ) return false;
   const originalId = preserved.operationKey.slice("impl:".length);
-  const rejectedCharge = snapshot.reservations.find((r) =>
-    r.id === intent.requestId
-  );
-  const originalCharge = snapshot.reservations.find((r) => r.id === originalId);
+  // Both predecessor charges are terminal settled rows no live intent names,
+  // so the trusted writer may have compacted either into the durable archive.
+  const rejectedCharge = findReservationV1(snapshot, intent.requestId);
+  const originalCharge = findReservationV1(snapshot, originalId);
   return [originalCharge, rejectedCharge].every((charge) =>
     charge !== undefined &&
     charge.taskId === current.id &&
     same(charge.repository, current.repository) &&
     charge.head === current.target.base && charge.outcome === "submitted" &&
-    same(historical.reservations.find((r) => r.id === charge.id), charge)
+    same(findReservationV1(historical, charge.id), charge)
   ) &&
     rejectedCharge!.purpose === "retry" &&
     rejectedCharge!.attempt === current.counters.attempts &&
