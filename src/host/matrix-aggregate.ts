@@ -195,6 +195,10 @@ export async function runActionsMatrixAggregateCycles(
   carrier?: MatrixNativeCarrierV1,
   options: MatrixAggregateOptionsV1 = {},
 ): Promise<ActionsTargetCyclesResultV1> {
+  // A model-disabled bootstrap execution is a maintenance/compatibility/health
+  // pass (issue #297).
+  const bootstrap = input.bootstrap === true ||
+    input.host?.execution.purpose === "bootstrap";
   const host = hostOf(input);
   let read = await input.state.readRepair();
   if (!read.ok || read.value.status !== "found") {
@@ -203,7 +207,7 @@ export async function runActionsMatrixAggregateCycles(
   // #183: progress comments compare against the state before this job's
   // ingestion, so a park or publication made while consuming cells reports.
   const progressBaseline = read.value.snapshot.work;
-  if (closedCWaveNeedsRecovery(read.value.snapshot)) {
+  if (!bootstrap && closedCWaveNeedsRecovery(read.value.snapshot)) {
     if (!host.readExecution) {
       throw new Error("C recovery native proof reader unavailable");
     }
@@ -233,6 +237,45 @@ export async function runActionsMatrixAggregateCycles(
     }
   }
   const transport = await transportFor(input, injectedTransport);
+  if (bootstrap) {
+    // A bootstrap still runs the initial authenticated artifact scan (custody
+    // and provenance verified; artifacts stay charged for the ordinary run,
+    // never ingested or prepared), then intake, maintenance, compatibility,
+    // health and preservation reconciliation; not the work-record walk.
+    const { charged } = matrixConsumerProducersV1(
+      read.value.snapshot,
+      host.execution.createdAt,
+    );
+    if (charged.length > 0) {
+      try {
+        await recoverWithHistoricalIsolation(input, transport, {
+          requests: charged,
+          runtimeSha: input.controllerSha,
+          launcherSha: host.run.launcherSha,
+          consumerRun: host.run,
+          deadline: Math.min(
+            input.deadline,
+            input.clock.now() + MATRIX_ARTIFACT_RECOVERY_MAX_MS,
+          ),
+        });
+      } catch (error) {
+        if (!(error instanceof MatrixArtifactUnavailableError)) throw error;
+        console.log(JSON.stringify({
+          kind: "sentinel_matrix_artifacts_unavailable",
+          scan: "initial",
+          requests: charged.length,
+        }));
+      }
+    }
+    const flow = createActionsTargetFlow({
+      ...input,
+      bootstrap: true,
+      externalImplementations: true,
+      progressComments: undefined,
+    });
+    while (await flow.advance()) { /* maintenance and health only */ }
+    return await flow.finish();
+  }
   const pollWait = options.pollWait ??
     ((ms: number, signal?: AbortSignal) =>
       new Promise<void>((resolve) => {
