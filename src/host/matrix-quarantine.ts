@@ -1,3 +1,7 @@
+import {
+  allReservationsV1,
+  findReservationV1,
+} from "../contracts/state-snapshots.ts";
 /** Authenticated historical matrix quarantine coordinator. */
 import { canonicalStringify } from "../contracts/canonical.ts";
 import { matrixDigestV1 } from "../contracts/matrix.ts";
@@ -61,8 +65,9 @@ export async function runHistoricalMatrixQuarantine(
       }, deadlineAt);
     }
     for (const work of selected) {
-      const reservation = repair.value.snapshot.reservations.find((row) =>
-        row.id === work.intent?.requestId
+      const reservation = findReservationV1(
+        repair.value.snapshot,
+        work.intent?.requestId ?? "",
       );
       if (
         ((!revalidate || !isHistoricalQuarantineBlocked(work)) &&
@@ -235,8 +240,8 @@ export async function runHistoricalMatrixQuarantine(
         !afterRepair.ok || afterRepair.value.status !== "found" ||
         canonicalStringify(afterRepair.value.snapshot.work) !==
           canonicalStringify(repair.value.snapshot.work) ||
-        canonicalStringify(afterRepair.value.snapshot.reservations) !==
-          canonicalStringify(repair.value.snapshot.reservations)
+        canonicalStringify(allReservationsV1(afterRepair.value.snapshot)) !==
+          canonicalStringify(allReservationsV1(repair.value.snapshot))
       ) {
         throw new Error("historical matrix verification observation changed");
       }
@@ -302,8 +307,8 @@ export async function runHistoricalMatrixQuarantine(
       !await proofInCustody(deps, proof, current, historical) ||
       canonicalStringify(fresh.value.snapshot.work) !==
         canonicalStringify(repair.value.snapshot.work) ||
-      canonicalStringify(fresh.value.snapshot.reservations) !==
-        canonicalStringify(repair.value.snapshot.reservations)
+      canonicalStringify(allReservationsV1(fresh.value.snapshot)) !==
+        canonicalStringify(allReservationsV1(repair.value.snapshot))
     ) throw new Error("historical matrix applicability changed");
   }
   let count = 0;

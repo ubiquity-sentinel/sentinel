@@ -1,3 +1,4 @@
+import { findReservationV1 } from "../contracts/state-snapshots.ts";
 /** Historical matrix quarantine identity, custody and accounting transitions. */
 import { canonicalStringify } from "../contracts/canonical.ts";
 import { matrixDigestV1 } from "../contracts/matrix.ts";
@@ -228,8 +229,9 @@ export async function quarantineRow(
     canonicalStringify(row.repository) ===
       canonicalStringify(captured.work.repository)
   );
-  const reservation = read.value.snapshot.reservations.find((row) =>
-    row.id === captured.reservation.id
+  const reservation = findReservationV1(
+    read.value.snapshot,
+    captured.reservation.id,
   );
   if (
     !work || !reservation ||
@@ -298,9 +300,7 @@ export async function quarantineRow(
     row.id === work.id &&
     canonicalStringify(row.repository) === canonicalStringify(work.repository)
   );
-  const charged = fresh.value.snapshot.reservations.find((row) =>
-    row.id === reservation.id
-  );
+  const charged = findReservationV1(fresh.value.snapshot, reservation.id);
   if (
     !current || await matrixDigestV1(current) !== captured.workDigest ||
     !charged ||
@@ -349,9 +349,7 @@ export async function quarantineRow(
         ),
       ) !== canonicalStringify(blocked) ||
     canonicalStringify(
-        verified.value.snapshot.reservations.find((row) =>
-          row.id === reservation.id
-        ),
+        findReservationV1(verified.value.snapshot, reservation.id),
       ) !== canonicalStringify(charged)
   ) {
     throw new Error("historical matrix block readback incomplete");

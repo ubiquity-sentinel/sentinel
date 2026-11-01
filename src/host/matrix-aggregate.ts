@@ -1,3 +1,4 @@
+import { allReservationsV1 } from "../contracts/state-snapshots.ts";
 /** Bounded authenticated matrix recovery interleaved with serial delivery. */
 import { createActionsTargetFlow } from "./actions-target-flow.ts";
 import { matrixDigestV1 } from "../contracts/matrix.ts";
@@ -169,7 +170,7 @@ export function matrixConsumerProducersV1(
     }];
   });
   const reservedAt = new Map(
-    snapshot.reservations
+    allReservationsV1(snapshot)
       .filter((row) => row.outcome === "reserved")
       .map((row) => [row.id, row.createdAt]),
   );

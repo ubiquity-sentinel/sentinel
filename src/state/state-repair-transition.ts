@@ -1,5 +1,8 @@
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
-import { findReservationV1 } from "../contracts/state-snapshots.ts";
+import {
+  allReservationsV1,
+  findReservationV1,
+} from "../contracts/state-snapshots.ts";
 import { MaxItems } from "../contracts/validation.ts";
 import { ownerSuccessorReviewTransition } from "../contracts/owner-successor-review.ts";
 import {
@@ -366,7 +369,7 @@ export function validateRepairTransition(
       !(prior.ownerSuccessorReviews ?? []).some((r) => r.id === operation.id) &&
       (operation.phase !== "intent" ||
         operation.binding.expectedRepairHead !== next.stateHead ||
-        !prior.reservations.some((r) =>
+        !allReservationsV1(prior).some((r) =>
           r.outcome === "reserved" && sameCanonical(r, operation.reservation)
         ))
     ) {
@@ -374,7 +377,7 @@ export function validateRepairTransition(
     }
     if (
       (operation.phase === "completed" || operation.phase === "failed") &&
-      ![...next.reservations, ...(next.reservationArchive ?? [])].some((r) =>
+      !allReservationsV1(next).some((r) =>
         sameCanonical(r, operation.reservation)
       )
     ) {

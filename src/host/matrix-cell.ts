@@ -1,3 +1,4 @@
+import { findReservationV1 } from "../contracts/state-snapshots.ts";
 /** One isolated already-admitted matrix implementation cell. */
 import {
   MATRIX_CELL_RESULT_VERSION,
@@ -224,8 +225,9 @@ export async function runMatrixCell(
   if (record.target.base !== cell.expectedBase) {
     return refuse("not_started", "planned base is no longer current");
   }
-  const reservation = stateRead.value.snapshot.reservations.find((entry) =>
-    entry.id === cell.reservationId
+  const reservation = findReservationV1(
+    stateRead.value.snapshot,
+    cell.reservationId,
   );
   if (
     reservation === undefined || reservation.outcome !== "reserved" ||

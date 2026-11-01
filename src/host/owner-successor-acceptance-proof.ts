@@ -10,7 +10,10 @@ import {
 } from "../contracts/owner-successor-review.ts";
 import { parseHostedRunProofV1 } from "../contracts/hosted-supervisor.ts";
 import type { HostedReleaseRecordV1 } from "../contracts/hosted-supervisor.ts";
-import { findReservationV1 } from "../contracts/state-snapshots.ts";
+import {
+  allReservationsV1,
+  findReservationV1,
+} from "../contracts/state-snapshots.ts";
 import { portError, portOk } from "../contracts/ports.ts";
 import { GitHubApiClient } from "../github/client.ts";
 import { fetchHttpTransport } from "../github/http.ts";
@@ -229,7 +232,7 @@ export async function readOwnerSuccessorAcceptanceAuthority(
         witness.value.snapshot.hostedRuntimes[0]?.execution,
         b.nativeOwner,
       ) ||
-      !reserved.value.snapshot.reservations.some((r) =>
+      !allReservationsV1(reserved.value.snapshot).some((r) =>
         r.id === reservation!.id && r.outcome === "reserved" &&
         same({
           ...r,
