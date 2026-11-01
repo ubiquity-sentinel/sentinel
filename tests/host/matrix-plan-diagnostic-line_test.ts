@@ -359,3 +359,73 @@ Deno.test("plan diagnostic: the native planner prints one carrier and one diagno
     await r.cleanup();
   }
 });
+
+Deno.test("plan diagnostic: an expired capacity wait reports the current GitHub cooldown", async () => {
+  const clock = new FakeClock(T0);
+  const state = new MemoryState();
+  const configs = repairConfigs({
+    adapter: { kind: "github" },
+    sessionBound: { maxDurationMs: 240_000, maxOutputChars: 200_000 },
+  });
+  const wait = {
+    reason: "ledger_capacity" as const,
+    since: T0,
+    until: T0 + 60_000,
+  };
+  state.repair = seededSnapshot([workRecord("issue-281", {
+    wait,
+    target: {
+      base: SHA1,
+      branch: "sentinel/repair/issue-281",
+      checkpoint: null,
+      head: null,
+      pr: null,
+    },
+  })]);
+  state.repairHead = SHA1;
+  clock.advance(60_001);
+  const githubCooldown = new DurableGitHubCooldownGate({ state, clock });
+  assert.equal(
+    (await githubCooldown.recordRateLimit(7, {
+      kind: "secondary",
+      observedAt: clock.now(),
+      retryNotBefore: clock.now() + 60_000,
+      observationId: "a".repeat(64),
+      fallback: true,
+    })).ok,
+    true,
+  );
+  const report = await planMatrixWave({
+    clock,
+    state,
+    configs,
+    controllerSha: SHA1,
+    github: new FakeGithub({ baseSha: SHA1 }),
+    githubCooldown,
+    incidents: new FakeIncidents({ summaries: [], evidence: null }),
+    replay: new FakeReplay(),
+    model: new FakeModel({ head: SHA2, changedPaths: [] }),
+    budget: new RollingStartBudget({ clock, state, configs }),
+  }, {
+    waveId: "w-expired-capacity",
+    run: { runId: 1, runAttempt: 1, launcherSha: SHA1 },
+    runtimeSha: SHA1,
+    generation: 82,
+    plannedAt: clock.now(),
+    deadline: clock.now() + 3_600_000,
+  });
+  assert.equal(report.prepared, 0);
+  assert.equal(report.diagnostic?.attempted, 1);
+  assert.equal(report.diagnostic?.deferred, 1);
+  assert.deepEqual(report.diagnostic?.deferredByReason, { cooldown: 1 });
+  assert.deepEqual(
+    matrixPlanDiagnosticLineOf({
+      waveId: "w-expired-capacity",
+      prepared: report.prepared,
+      cause: "planner",
+      diagnostic: report.diagnostic,
+    }).deferredByReason,
+    { cooldown: 1 },
+  );
+  assert.deepEqual(state.repair.work[0].wait, wait);
+});
