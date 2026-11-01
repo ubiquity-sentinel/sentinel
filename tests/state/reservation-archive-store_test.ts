@@ -330,6 +330,69 @@ Deno.test("state: archive retirement never drops a referenced terminal row", () 
   );
 });
 
+Deno.test("state: a full archive retires retained history, not the row just moved from live", async () => {
+  const oldest = settled("r:oldest-live");
+  const live = [
+    oldest,
+    ...Array.from(
+      { length: MaxItems.snapshotRecords - 1 },
+      (_, index) => reserved(`r:live-${index}`),
+    ),
+  ];
+  const archive = Array.from(
+    { length: MaxItems.reservationArchiveRecords },
+    (_, index) => ({
+      ...settled(`r:archive-${String(index).padStart(5, "0")}`),
+      settledAt: oldest.settledAt! + 1_000 + index,
+    }),
+  );
+  const prior = repairSnapshot({
+    reservations: live,
+    reservationArchive: archive,
+  });
+  const overflow = {
+    ...prior,
+    sequence: prior.sequence + 1,
+    updatedAt: prior.updatedAt + 1_000,
+    reservations: [...live, reserved("r:overflow")],
+  };
+  const next = compactReservationLedgerV1(overflow);
+
+  assert.equal(next.reservations.length, MaxItems.snapshotRecords);
+  assert.equal(
+    next.reservationArchive?.length,
+    MaxItems.reservationArchiveRecords,
+  );
+  assert.deepEqual(findReservationV1(next, oldest.id), oldest);
+  assert.equal(findReservationV1(next, archive[0].id), undefined);
+  assert.equal(validateRepairTransition(prior, next), null);
+
+  // Exercise the trusted writer's compaction, transition validation and
+  // durable archive reader together, not only the compaction helper.
+  const ctx = await makeCtx("archive-full");
+  try {
+    const store = storeAt(ctx, "a", "repair");
+    const head = appliedHead(await store.writeRepair(prior, null));
+    appliedHead(
+      await store.writeRepair({ ...overflow, stateHead: head }, head),
+    );
+    const read = await store.readRepair();
+    assert.ok(read.ok && read.value.status === "found");
+    if (!read.ok || read.value.status !== "found") return;
+    assert.deepEqual(findReservationV1(read.value.snapshot, oldest.id), oldest);
+    assert.equal(
+      findReservationV1(read.value.snapshot, archive[0].id),
+      undefined,
+    );
+    assert.deepEqual(
+      findReservationV1(read.value.snapshot, "r:overflow"),
+      reserved("r:overflow"),
+    );
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
 Deno.test("state: archived reservations are immutable and never return live", () => {
   const archived = settled("r:archived");
   const prior = repairSnapshot({
