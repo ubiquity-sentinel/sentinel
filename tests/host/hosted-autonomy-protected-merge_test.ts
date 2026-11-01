@@ -81,9 +81,16 @@ Deno.test("protected merge: a malformed, unreadable or capped listing is unprove
   }
 });
 
-async function deliverable() {
-  // A parked self head whose review authorizes delivery (P2 only).
+async function deliverable(
+  repository = {
+    owner: "ubiquity-sentinel",
+    name: "sentinel",
+    installationId: 0,
+  },
+) {
+  // A parked head whose review authorizes delivery (P2 only).
   const record = blockedRecord({
+    repository,
     blocker: {
       kind: "review_quota",
       message: "review rounds exhausted without an accepted verdict (P2)",
@@ -99,11 +106,13 @@ async function deliverable() {
     },
   });
   const receipt = authorizingReceipt({
+    repository,
     findings: [finding("P2")],
     unresolvedSeverities: ["P2"],
   });
   return await makeRig("autonomy-protected-merge", {
     repair: repairSnapshot([record], [receipt]),
+    defaultBranch: "development",
     pull: pullFacts({ state: "open", merged: false, mergeCommitSha: null }),
     afterMerge: pullFacts(),
   });
@@ -156,5 +165,40 @@ Deno.test("protected merge: a pull request outside the protected paths still mer
     assert.equal(result.status, "applied");
   } finally {
     await Deno.remove(rig.tmp, { recursive: true });
+  }
+});
+
+Deno.test("protected merge: generic targets refuse env files at every depth", async (t) => {
+  const cases: Array<[string, number]> = [
+    [".env.local", 0],
+    [".env.preview", 0],
+    ["apps/web/.env.local", 0],
+    ["packages/api/.env.production", 0],
+    ["nested/dir/.envrc", 0],
+    ["apps/web/env.example", 1],
+  ];
+  for (const [path, expectedMerges] of cases) {
+    await t.step(path, async () => {
+      const { rig, github } = await deliverable({
+        owner: "ubiquity",
+        name: "generic-target",
+        installationId: 7,
+      });
+      try {
+        github.listPullFiles = () => Promise.resolve([path]);
+        const result = await run(rig, github);
+        assert.equal(rig.merges, expectedMerges);
+        if (expectedMerges === 0) {
+          assert.ok(
+            result.actions.some((action) => action.endsWith(":protected_path")),
+            JSON.stringify(result.actions),
+          );
+        } else {
+          assert.equal(result.status, "applied");
+        }
+      } finally {
+        await Deno.remove(rig.tmp, { recursive: true });
+      }
+    });
   }
 });
