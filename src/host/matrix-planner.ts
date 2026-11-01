@@ -50,6 +50,10 @@ import {
   isDecompositionChildId,
 } from "../repair/transitions.ts";
 import { configForRepository } from "./matrix-identity.ts";
+import {
+  isNoTestEvidenceTargetV1,
+  NO_CI_AND_NO_LOCAL_VERIFY_BLOCKER,
+} from "./target-policy-generic.ts";
 
 export interface MatrixPlanOptionsV1 {
   waveId: string;
@@ -230,6 +234,9 @@ export function explainMatrixNotReady(
   }
   if (record.nextStep !== "work") {
     return `nextStep=${record.nextStep}`;
+  }
+  if (isNoTestEvidenceTargetV1(config)) {
+    return NO_CI_AND_NO_LOCAL_VERIFY_BLOCKER;
   }
   if (!roundLeftForStart(snapshot, record, ciRouteOpen, cutoff)) {
     return "review_rounds_spent";

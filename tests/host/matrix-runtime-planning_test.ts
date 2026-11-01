@@ -7,12 +7,17 @@ import {
 } from "../../src/contracts/matrix.ts";
 import { portOk } from "../../src/contracts/ports.ts";
 import { parseRepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
+import { expectCommandId } from "../../src/contracts/validation.ts";
 import { runRepairCycle } from "../../src/repair/loop.ts";
 import {
   ingestMatrixResults,
   planMatrixWave,
   runMatrixCell,
 } from "../../src/host/matrix.ts";
+import {
+  NO_CI_AND_NO_LOCAL_VERIFY_BLOCKER,
+  NO_TEST_EVIDENCE_COMMAND_ID,
+} from "../../src/host/target-policy-generic.ts";
 import { gitRun, T0 } from "../state/helpers.ts";
 import {
   ACTUAL,
@@ -356,6 +361,59 @@ Deno.test(
           ?.disposition,
         "duplicate",
       );
+    } finally {
+      await rig.cleanup();
+    }
+  },
+);
+
+Deno.test(
+  "matrix runtime: no-test-evidence targets receive no cell or reservation",
+  async () => {
+    const rig = await makeRig([304], 1);
+    try {
+      const initial = seedSnapshot([freshIssue(304, rig.base)]);
+      const written = await rig.store.writeRepair(initial, null);
+      assert.ok(written.ok && written.value.status === "applied");
+      const configs = rig.deps.configs;
+      rig.deps = {
+        ...rig.deps,
+        configs: configs.map((config) => ({
+          ...config,
+          commands: {
+            ...config.commands,
+            test: expectCommandId(NO_TEST_EVIDENCE_COMMAND_ID, "test"),
+          },
+        })),
+      };
+
+      const report = await planMatrixWave(rig.deps, rig.planOptions());
+      assert.equal(report.plan.cells.length, 0);
+      assert.equal(report.prepared, 0);
+      assert.equal(
+        report.attempted,
+        0,
+        "do not enter admission for a parked target",
+      );
+      assert.equal(
+        report.diagnostic?.notReadyByReason[NO_CI_AND_NO_LOCAL_VERIFY_BLOCKER],
+        1,
+      );
+      assert.deepEqual(
+        await snapshot(rig),
+        initial,
+        "no admission or state change",
+      );
+      assert.equal(rig.model.requests.length, 0);
+
+      rig.deps = { ...rig.deps, configs };
+      const ready = await planMatrixWave(rig.deps, rig.planOptions());
+      assert.equal(
+        ready.plan.cells.length,
+        1,
+        "targets with test evidence still plan",
+      );
+      assert.equal((await snapshot(rig)).reservations.length, 1);
     } finally {
       await rig.cleanup();
     }

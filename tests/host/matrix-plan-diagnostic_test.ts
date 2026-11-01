@@ -12,9 +12,13 @@ import {
   scanPlanDiagnostic,
 } from "../../src/host/matrix-plan-diagnostic.ts";
 import { explainMatrixNotReady } from "../../src/host/matrix-planner.ts";
+import {
+  NO_CI_AND_NO_LOCAL_VERIFY_BLOCKER,
+  NO_TEST_EVIDENCE_COMMAND_ID,
+} from "../../src/host/target-policy-generic.ts";
 import { isMatrixImplementationReadyV1 } from "../../src/repair/loop.ts";
 import { reviewRoundCeilingFor } from "../../src/repair/review-round-cap.ts";
-import { MaxItems } from "../../src/contracts/validation.ts";
+import { expectCommandId, MaxItems } from "../../src/contracts/validation.ts";
 import { T0, workRecord } from "../state/helpers.ts";
 import { seededSnapshot } from "../repair/loop-rig.ts";
 
@@ -22,6 +26,7 @@ import { seededSnapshot } from "../repair/loop-rig.ts";
 const CEILING = reviewRoundCeilingFor({ reservations: [] }, record(0));
 
 const CONFIG = {
+  commands: { test: "test" },
   sessionBound: { maxDurationMs: 240_000, maxOutputChars: 200_000 },
 } as unknown as RepositoryConfigV1;
 
@@ -175,4 +180,30 @@ Deno.test("plan diagnostic: a ledger-capacity wait keeps its admission_capacity 
     planDeferredKey({ kind: "progress" }, "ledger_capacity"),
     "admission_capacity",
   );
+});
+
+Deno.test("plan diagnostic: no-test-evidence targets are not matrix ready", () => {
+  const fresh = record(0);
+  const snapshot = seededSnapshot([fresh]);
+  for (
+    const test of [
+      NO_TEST_EVIDENCE_COMMAND_ID,
+      "no_local_verify",
+      "generic_verify",
+    ]
+  ) {
+    const config = {
+      ...CONFIG,
+      commands: { ...CONFIG.commands, test: expectCommandId(test, "test") },
+    };
+    const ready = test !== NO_TEST_EVIDENCE_COMMAND_ID;
+    assert.equal(
+      isMatrixImplementationReadyV1(fresh, snapshot, config, T0),
+      ready,
+    );
+    assert.equal(
+      explainMatrixNotReady(fresh, config, snapshot, true, null),
+      ready ? null : NO_CI_AND_NO_LOCAL_VERIFY_BLOCKER,
+    );
+  }
 });

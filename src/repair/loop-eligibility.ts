@@ -1,5 +1,6 @@
 /** Repair loop internals: eligibility. */
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
+import { isNoTestEvidenceTargetV1 } from "../host/target-policy-generic.ts";
 import { hasTakeoverCustody } from "../github/existing-pr-takeover-provenance.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type {
@@ -139,6 +140,8 @@ export function isMatrixImplementationReadyV1(
 ): boolean {
   if (record.source.kind !== "issue") return false;
   if (record.nextStep !== "work") return false;
+  // Admission parks these targets before producing a matrix result carrier.
+  if (isNoTestEvidenceTargetV1(config)) return false;
   // No implementation, correction or resolution cell is charged for a record
   // with no review round left: its candidate could never be reviewed.
   if (!roundLeftForStart(snapshot, record, ciRouteOpen, cutoff)) return false;
