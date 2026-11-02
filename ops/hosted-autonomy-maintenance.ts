@@ -100,8 +100,11 @@ export async function runHostedMatrixMaintenance(
         console.log(
           JSON.stringify({ kind: "sentinel_closed_c_recovery", ...recovered }),
         );
-        // A typed skip is reported above; keep later matrix recovery reachable.
-        if (!("skipped" in recovered)) {
+        // An unchanged typed skip leaves later recovery reachable; a head
+        // advanced by another writer still reports the observed application.
+        if (
+          !("skipped" in recovered) || recovered.repairHead !== read.value.head
+        ) {
           return {
             kind: "hosted_autonomy",
             status: recovered.repairHead === read.value.head

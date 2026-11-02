@@ -45,7 +45,10 @@ async function plan(r: Rig, name: string) {
  * boundaries are fake: no completed artifact ever appears, the poll wait
  * advances the injected clock, and each target cycle records when it starts.
  */
-async function runLaterWave(ownProducer: boolean) {
+async function runLaterWave(
+  ownProducer: boolean,
+  withoutClosedCReader = false,
+) {
   const r = await rig();
   try {
     const earlier = await plan(r, "earlier-plan");
@@ -101,6 +104,9 @@ async function runLaterWave(ownProducer: boolean) {
         runActionsMatrixAggregateCycles(
           {
             ...input,
+            host: withoutClosedCReader
+              ? { ...input.host!, readExecution: undefined }
+              : input.host,
             runCycle: (cycleDeps) => {
               const repository = cycleDeps.configs[0]!.repository;
               cycles.push({
@@ -147,6 +153,17 @@ async function runLaterWave(ownProducer: boolean) {
     await r.cleanup();
   }
 }
+
+Deno.test("matrix consumer: an all-absent closed wave skips without a native reader and ordinary work continues", async () => {
+  const run = await runLaterWave(false, true);
+  assert.deepEqual(run.cycles.map((cycle) => cycle.slug), [
+    "ubiquity-sentinel/sentinel",
+    "ubiquity/ai.ubq.fi",
+  ]);
+  assert.deepEqual(run.waits, []);
+  assert.deepEqual(run.after.reservations, run.before.reservations);
+  assert.deepEqual(run.after.work, run.before.work);
+});
 
 Deno.test("matrix consumer: an earlier wave's still-reserved producer holds no poll wait", async () => {
   // Live: 24 implementation intents from an earlier wave kept their

@@ -204,9 +204,6 @@ export async function runActionsMatrixAggregateCycles(
   // ingestion, so a park or publication made while consuming cells reports.
   const progressBaseline = read.value.snapshot.work;
   if (closedCWaveNeedsRecovery(read.value.snapshot)) {
-    if (!host.readExecution) {
-      throw new Error("C recovery native proof reader unavailable");
-    }
     const recovered = await ingestClosedCWave({
       state: input.state,
       clock: input.clock,
@@ -221,7 +218,12 @@ export async function runActionsMatrixAggregateCycles(
           bundlesDir,
         }),
       transportFor: (state) => host.createArtifactTransport(state),
-      readExecution: host.readExecution,
+      readExecution: (execution) => {
+        if (!host.readExecution) {
+          throw new Error("C recovery native proof reader unavailable");
+        }
+        return host.readExecution(execution);
+      },
       failoverModel: host.failoverModel,
     }, false);
     console.log(
