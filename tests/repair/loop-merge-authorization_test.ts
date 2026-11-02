@@ -222,19 +222,21 @@ Deno.test("delivery matches an existing release request by source PR/head and re
   }
 });
 
-Deno.test("base refresh preserves merged own PR identity for guarded maintenance", async () => {
+Deno.test("base refresh completes a human merge with durable provenance and preserved PR identity", async () => {
   const record = deliveryRecord(SHA3);
+  const merged = {
+    ...exactOpenPr(7, SHA3, record.target.branch!),
+    state: "merged" as const,
+    mergeSha: SHA4,
+    mergedBy: "maintainer",
+  };
   const rig = await makeRig("merged-refresh-identity", {
     summaries: false,
     github: {
       baseSha: SHA2,
       candidateLifecycle: {
         refs: { "refs/heads/sentinel/repair/issue-1": SHA3 },
-        pullRequests: [{
-          ...exactOpenPr(7, SHA3, record.target.branch!),
-          state: "merged",
-          mergeSha: SHA4,
-        }],
+        pullRequests: [merged],
         prepareBaseRefresh: () => {
           throw new Error("an observed merge must never be refreshed");
         },
@@ -256,23 +258,39 @@ Deno.test("base refresh preserves merged own PR identity for guarded maintenance
     const result = await rig.entry();
     assert.equal(result.status, "idle", JSON.stringify(result));
     const state = await rig.snapshot();
-    assert.equal(state.work[0].nextStep, "blocked");
-    assert.equal(
-      state.work[0].blocker?.message,
-      "pull request was merged outside the trusted review path",
-    );
+    assert.equal(state.work[0].nextStep, "done");
+    assert.equal(state.work[0].blocker, null);
+    assert.equal(state.work[0].wait, null);
     assert.deepEqual(
       state.work[0].target,
       record.target,
-      "observing a merge preserves its PR identity without accepting it",
+      "completing a human merge retains the reviewed PR identity",
     );
     assert.equal(state.work[0].intent, null);
     assert.deepEqual(state.work[0].counters, record.counters);
     assert.deepEqual(state.work[0].source, record.source);
-    assert.deepEqual(state.work[0].evidence, record.evidence);
+    assert.deepEqual(state.work[0].evidence, [...record.evidence, {
+      kind: "review_receipt",
+      ref:
+        `artifact:review-receipt/human-merge-v1/7/${SHA3}/${SHA4}/maintainer`,
+    }]);
     assert.deepEqual(state.reviews, [receipt]);
     assert.deepEqual(state.reservations, [charge]);
-    assert.deepEqual(state.releaseRequests, []);
+    assert.equal(state.releaseRequests.length, 1);
+    assert.equal(state.releaseRequests[0].revision, SHA4);
+    assert.deepEqual(state.releaseRequests[0].source, {
+      pullRequest: 7,
+      head: SHA3,
+      base: SHA1,
+      reviewRequestId: receipt.requestId,
+      reviewReceiptId: receipt.id,
+    });
+    const repeated = await rig.entry();
+    assert.equal(repeated.status, "idle", JSON.stringify(repeated));
+    const after = await rig.snapshot();
+    assert.deepEqual(after.work, state.work);
+    assert.deepEqual(after.reservations, [charge]);
+    assert.deepEqual(after.releaseRequests, state.releaseRequests);
     assert.equal(rig.model.requests.length, 0);
     assert.equal(rig.github.calls.filter((call) => call === "merge").length, 0);
     assert.equal(
