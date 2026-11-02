@@ -397,7 +397,9 @@ export async function* advanceRepairCycle(
       }
       if (
         deps.externalImplementations === true &&
-        matrixOwnsFreshImplementation(record)
+        matrixOwnsFreshImplementation(record) &&
+        (record.target.branch !== null ||
+          options.matrixIntakeOwnsBranches === true)
       ) continue;
       if (
         declaredOperationFits(deps, context, record)

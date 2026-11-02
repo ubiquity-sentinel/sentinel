@@ -235,3 +235,16 @@ Deno.test("matrix serial pass: bootstrap rejects incompatible state before touch
   assert.equal(test.github.calls.length, 0);
   assert.equal(test.model.requests.length, 0);
 });
+
+Deno.test("matrix serial pass: native bootstrap retains its initial scan and mandatory drain", async () => {
+  const test = rig(1, 1, "bootstrap");
+  const before = structuredClone(test.state.repair);
+  const measured = await measure(test.input, true);
+  assert.equal(test.transports(), 1);
+  assert.equal(test.preparations(), 1);
+  assert.equal(test.github.drains.length, 1);
+  assert.equal(measured.steps, 0);
+  assert.deepEqual(test.state.repair, before);
+  assert.deepEqual(measured.result.failed, []);
+  assert.equal(test.model.requests.length, 0);
+});

@@ -207,9 +207,14 @@ export async function runActionsMatrixAggregateCycles(
   if (!read.ok || read.value.status !== "found") {
     throw new Error("matrix aggregate cannot read authoritative state");
   }
-  // Bootstrap proves startup/state compatibility, not issue delivery. No source,
-  // artifact, target preparation or lifecycle walk belongs to this health pass.
-  if (host.execution.purpose === "bootstrap") {
+  // A backlog without pending effects needs only a compatibility check.
+  // Native carriers and pending effects still require their scan and drain.
+  if (
+    host.execution.purpose === "bootstrap" && carrier === undefined &&
+    !read.value.snapshot.work.some((record) =>
+      record.intent !== null || record.wait?.reason === "review_pending"
+    )
+  ) {
     parseRepairStateSnapshotV1(read.value.snapshot);
     const result: ActionsTargetCyclesResultV1 = {
       outcome: { status: "idle", detail: "bootstrap repair state compatible" },
@@ -293,13 +298,14 @@ export async function runActionsMatrixAggregateCycles(
       await input.prepareTarget?.(config);
       prepared.add(key);
     },
-  });
-  // The pre-planner repair pass shares ONE finite work budget across targets.
-  // Count every advance (including deferred steps), not just persisted changes.
-  // Native result consumers retain their existing delivery/drain behavior.
+  }, { matrixIntakeOwnsBranches: true });
+  // Bound ordinary observations across targets, but retain one reconciliation
+  // slot per pending durable intent. Native consumers keep their full drain.
+  const advanceLimit = DEFAULT_STEP_LIMIT +
+    read.value.snapshot.work.filter((record) => record.intent !== null).length;
   let advances = 0;
   const advance = async () => {
-    if (carrier === undefined && advances >= DEFAULT_STEP_LIMIT) return false;
+    if (carrier === undefined && advances >= advanceLimit) return false;
     if (!await flow.advance()) return false;
     advances++;
     return true;
