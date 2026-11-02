@@ -231,7 +231,7 @@ export abstract class GitHubClientChecks extends GitHubClientIssues {
     };
   }
 
-  /** Host-authored base-review jobs; unrelated supervisor jobs are not task CI. */
+  /** Every check-run page of exactly one commit, raw, item bound applied. */
   protected collectCheckRuns(sha: GitSha): Promise<PortResultV1<unknown[]>> {
     return this.collectPages(
       `/repos/${repoPath(this.repository)}/commits/${sha}/check-runs`,
