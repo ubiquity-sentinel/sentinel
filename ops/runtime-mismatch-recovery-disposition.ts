@@ -33,7 +33,10 @@ import type {
   StateReadView,
   StateWriteResultV1,
 } from "../src/contracts/ports.ts";
-import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
+import {
+  findReservationV1,
+  type RepairStateSnapshotV1,
+} from "../src/contracts/state-snapshots.ts";
 import { parseRepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
 import {
@@ -142,9 +145,7 @@ export async function collectMismatchDispositionCandidatesV1(input: {
       continue;
     }
     const reservationId = intent.key.slice("impl:".length);
-    const reservation = input.snapshot.reservations.find((row) =>
-      row.id === reservationId
-    );
+    const reservation = findReservationV1(input.snapshot, reservationId);
     if (reservation === undefined) {
       retain("missing reservation");
       continue;

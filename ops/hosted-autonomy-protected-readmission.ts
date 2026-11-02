@@ -30,6 +30,7 @@
  */
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import {
+  allReservationsV1,
   parseRepairStateSnapshotV1,
   type RepairStateSnapshotV1,
 } from "../src/contracts/state-snapshots.ts";
@@ -91,7 +92,7 @@ export function planProtectedReadmissions(
     if (skip(record.id) || !protectedReadmissionShape(record)) continue;
     if (
       isPassportWorkTrial(record.repository) &&
-      !passportTrialCanReconsider(record, snapshot.reservations)
+      !passportTrialCanReconsider(record, allReservationsV1(snapshot))
     ) continue;
     const issueNumber = record.related.issueNumber!;
     if (closedIssues.has(hostedIssueKey(record.repository, issueNumber))) {

@@ -1,4 +1,6 @@
 import {
+  allReservationsV1,
+  findReservationV1,
   parseRepairStateSnapshotV1,
   type RepairStateSnapshotV1,
 } from "../src/contracts/state-snapshots.ts";
@@ -65,7 +67,7 @@ export function taskReservationCount(
   taskId: string,
 ): number {
   let count = 0;
-  for (const reservation of snapshot.reservations) {
+  for (const reservation of allReservationsV1(snapshot)) {
     if (reservation.taskId === taskId) count++;
   }
   return count;
@@ -79,7 +81,7 @@ export function usedAttempts(
   purpose: string,
 ): Set<number> {
   const used = new Set<number>();
-  for (const reservation of snapshot.reservations) {
+  for (const reservation of allReservationsV1(snapshot)) {
     if (reservation.taskId !== taskId) continue;
     if (reservation.head !== base) continue;
     if (reservation.purpose !== purpose) continue;
@@ -161,7 +163,7 @@ export function settledReviewAttempts(
   const settled = new Set<number>();
   const head = record.target.head;
   if (head === null) return settled;
-  for (const reservation of snapshot.reservations) {
+  for (const reservation of allReservationsV1(snapshot)) {
     if (reservation.taskId !== record.id) continue;
     if (reservation.purpose !== "review_request") continue;
     if (reservation.head !== head) continue;
@@ -197,7 +199,7 @@ function implementationAttemptFloor(
   record: RepairStateSnapshotV1["work"][number],
 ): number {
   let floor = record.counters.attempts;
-  for (const reservation of snapshot.reservations) {
+  for (const reservation of allReservationsV1(snapshot)) {
     if (
       reservation.taskId !== record.id ||
       !sameRepository(reservation.repository, record.repository)
@@ -251,7 +253,7 @@ export function conflictMarkerVerdict(
   if (intent === null || requestId === null || requestId === "") {
     return { kind: "class" };
   }
-  const charge = snapshot.reservations.find((row) => row.id === requestId);
+  const charge = findReservationV1(snapshot, requestId);
   if (charge === undefined || charge.outcome === "reserved") {
     return { kind: "class" };
   }
@@ -611,7 +613,7 @@ export function planHostedRetries(
           rule.minBlockedMs !== undefined &&
           !evidenceExpired(
             record,
-            snapshot.reservations,
+            allReservationsV1(snapshot),
             now,
             rule.minBlockedMs,
           )
@@ -658,9 +660,14 @@ export function planHostedRetries(
     }
     if (
       rule.minBlockedMs !== undefined &&
-      !evidenceExpired(record, snapshot.reservations, now, rule.minBlockedMs)
+      !evidenceExpired(
+        record,
+        allReservationsV1(snapshot),
+        now,
+        rule.minBlockedMs,
+      )
     ) continue;
-    if (!intentClosable(record, snapshot.reservations)) continue;
+    if (!intentClosable(record, allReservationsV1(snapshot))) continue;
     // A delivery-returning grant re-gates the exact reviewed head under the
     // installed runtime's CI attribution: no charge, no base advance and no
     // counter movement here; the runtime decides correction or deferral.

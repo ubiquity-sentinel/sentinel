@@ -2,7 +2,10 @@ import type { TakeoverPublicationProof } from "../src/contracts/existing-pr-take
 import { hasBlockingSeverity } from "../src/contracts/review-receipt.ts";
 import { hasTakeoverCustody } from "../src/github/existing-pr-takeover-provenance.ts";
 import { takeoverPublicationMatches } from "../src/github/existing-pr-publication-proof.ts";
-import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
+import {
+  allReservationsV1,
+  type RepairStateSnapshotV1,
+} from "../src/contracts/state-snapshots.ts";
 import { isGatewayVpsRepository } from "../src/repair/vps-delivery.ts";
 import { QUEUE_PROOF_ACTIVATED } from "../src/github/queue-runtime-policy.ts";
 import {
@@ -139,7 +142,7 @@ export async function historicalMergedPublication(
     record.target.branch !== candidateBranch(record.id) ||
     preserved.head !== head || preserved.base !== base ||
     record.target.candidateState?.publishedHead !== head ||
-    !intentClosable(record, snapshot.reservations)
+    !intentClosable(record, allReservationsV1(snapshot))
   ) return null;
   if (
     preserved.ref !== await candidatePreservationRef(

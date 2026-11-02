@@ -32,7 +32,10 @@
  */
 import type { HostedRuntimeRecordV1 } from "../src/contracts/hosted-supervisor.ts";
 import type { GitSha } from "../src/contracts/brands.ts";
-import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
+import {
+  allReservationsV1,
+  type RepairStateSnapshotV1,
+} from "../src/contracts/state-snapshots.ts";
 import { HOSTED_RUNTIME_ROLLOUT } from "../src/host/hosted-runtime-rollout.ts";
 import { TASK_ACCEPTANCE_OWNER_GATE_DETAIL } from "../src/repair/acceptance-correction.ts";
 import { releaseRequestMatchesDelivery } from "../src/repair/loop-records.ts";
@@ -175,7 +178,8 @@ export function planAcceptanceReadmissions(
         (trial &&
           [TASK_ACCEPTANCE_OWNER_GATE_DETAIL, TASK_ACCEPTANCE_UNCERTAIN_DETAIL]
             .some((message) => blockedOn(record, message)))) ||
-      (trial && !passportTrialCanReconsider(record, snapshot.reservations)) ||
+      (trial &&
+        !passportTrialCanReconsider(record, allReservationsV1(snapshot))) ||
       record.counters.reviewRounds < 1 ||
       closedIssues.has(
         hostedIssueKey(record.repository, record.related.issueNumber!),

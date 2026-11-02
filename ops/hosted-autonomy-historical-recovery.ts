@@ -1,3 +1,7 @@
+import {
+  allReservationsV1,
+  findReservationV1,
+} from "../src/contracts/state-snapshots.ts";
 import type {
   IncidentAdapter,
   RepairStateWriter,
@@ -40,15 +44,15 @@ export async function recoverHostedHistoricalC63(
   if (
     !HISTORICAL_C63.rows.some((binding) =>
       before.snapshot.work.some((row) => row.id === binding.id) ||
-      before.snapshot.reservations.some((row) => row.id === binding.reservation)
+      allReservationsV1(before.snapshot).some((row) =>
+        row.id === binding.reservation
+      )
     )
   ) return { ingested: 0, deferred: false };
   const captured = HISTORICAL_C63.rows.flatMap((binding) => {
     if (deps.protectedRecordIds?.has(binding.id)) return [];
     const record = before.snapshot.work.find((row) => row.id === binding.id);
-    const reservation = before.snapshot.reservations.find((row) =>
-      row.id === binding.reservation
-    );
+    const reservation = findReservationV1(before.snapshot, binding.reservation);
     // Only a row absent from BOTH repair halves is treated as already
     // removed. A half-present binding is incomplete custody and fails closed:
     // durable settlement never removes one side alone.
@@ -363,7 +367,7 @@ export async function recoverHostedHistoricalC63(
   const after = readback.value.snapshot;
   for (const { record, reservation } of pending) {
     const changed = after.work.find((row) => row.id === record.id);
-    const charge = after.reservations.find((row) => row.id === reservation.id);
+    const charge = findReservationV1(after, reservation.id);
     if (
       !changed || !charge || changed.nextStep !== "blocked" ||
       changed.blocker?.kind !== "other" || charge.outcome !== "ambiguous" ||

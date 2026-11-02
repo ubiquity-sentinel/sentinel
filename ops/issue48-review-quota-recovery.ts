@@ -57,6 +57,7 @@ import type {
   StateWriteResultV1,
 } from "../src/contracts/ports.ts";
 import {
+  allReservationsV1,
   parseReleaseStateSnapshotV1,
   parseRepairStateSnapshotV1,
 } from "../src/contracts/state-snapshots.ts";
@@ -379,6 +380,9 @@ export function buildNextQuotaSnapshot(
     evidence: prior.evidence,
     work,
     reservations: prior.reservations,
+    ...(prior.reservationArchive === undefined ? {} : {
+      reservationArchive: prior.reservationArchive,
+    }),
     reviews: prior.reviews,
     replays: prior.replays,
     releaseRequests: prior.releaseRequests,
@@ -482,7 +486,7 @@ export async function runIssue48QuotaRecovery(
 
   const target = snapshot.work.find((record) => record.id === binding.targetId);
   if (target === undefined) return failed("target_missing", observedHead);
-  if (!targetPreconditionHolds(target, binding, snapshot.reservations)) {
+  if (!targetPreconditionHolds(target, binding, allReservationsV1(snapshot))) {
     // A record that already moved on (the runtime re-armed it, another actor
     // advanced it, or the counters/identity drifted) is an ordinary zero-write
     // skip, never a failure this one-shot may push through.

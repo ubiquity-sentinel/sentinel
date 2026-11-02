@@ -290,6 +290,9 @@ function buildNextSnapshot(
     evidence: prior.evidence,
     work,
     reservations: prior.reservations,
+    ...(prior.reservationArchive === undefined ? {} : {
+      reservationArchive: prior.reservationArchive,
+    }),
     reviews: prior.reviews,
     replays: prior.replays,
     releaseRequests: prior.releaseRequests,

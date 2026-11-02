@@ -9,7 +9,10 @@ import { portError, portOk } from "../src/contracts/ports.ts";
 import type { ExistingPrTakeoverPort } from "../src/contracts/existing-pr-takeover.ts";
 import { hasTakeoverCustody } from "../src/github/existing-pr-takeover-provenance.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
-import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
+import {
+  allReservationsV1,
+  type RepairStateSnapshotV1,
+} from "../src/contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
 import type { GitHubQueueDeliveryClient } from "../src/github/client-queue-delivery.ts";
 import { createDeadline } from "../src/github/http.ts";
@@ -803,7 +806,7 @@ export function createHostedQueueAuthority(
             ) ||
           request.queue.queueId !== null ||
           request.queue.entries.length !== 0 ||
-          snapshot.reservations.some((entry) =>
+          allReservationsV1(snapshot).some((entry) =>
             entry.taskId === record.id &&
             (entry.outcome === "reserved" || entry.outcome === "ambiguous" ||
               entry.settledAt === null)
@@ -840,7 +843,7 @@ export function createHostedQueueAuthority(
         if (
           !(await resolveCandidatePreservationBinding(
             record,
-            snapshot.reservations,
+            allReservationsV1(snapshot),
             candidate,
             record.target.head,
           )).ok

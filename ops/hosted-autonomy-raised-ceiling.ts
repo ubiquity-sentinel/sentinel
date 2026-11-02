@@ -4,7 +4,10 @@
  * trusted way to return an already-parked record to its runtime step while
  * preserving every counter, charge and reservation.
  */
-import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
+import {
+  allReservationsV1,
+  type RepairStateSnapshotV1,
+} from "../src/contracts/state-snapshots.ts";
 import {
   REVIEW_ROUND_CEILING_BASE_MOVED,
   REVIEW_ROUND_CEILING_REJECTED,
@@ -48,14 +51,14 @@ export function planRaisedCeilingReadmission(
   const trial = isPassportWorkTrial(record.repository);
   if (
     trial &&
-    !passportTrialCanReconsider(record, snapshot.reservations)
+    !passportTrialCanReconsider(record, allReservationsV1(snapshot))
   ) return null;
   if (
     blocker === null || blocker.kind !== "other" ||
     (!RAISED_CEILING_PARKS.includes(blocker.message) &&
       !(trial && blocker.message === REVIEW_ROUND_CEILING_REVIEWED)) ||
     record.target.head === null || record.target.pr === null ||
-    !intentClosable(record, snapshot.reservations)
+    !intentClosable(record, allReservationsV1(snapshot))
   ) return null;
   return {
     id: record.id,

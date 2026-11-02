@@ -5,7 +5,10 @@ import {
   type RepairStateWriter,
   type StateReadView,
 } from "../src/contracts/ports.ts";
-import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
+import {
+  allReservationsV1,
+  type RepairStateSnapshotV1,
+} from "../src/contracts/state-snapshots.ts";
 import type { HostedQueueCustodyContext } from "./hosted-autonomy-queue-context.ts";
 import { queueProtectedIds } from "./hosted-autonomy-queue-context.ts";
 
@@ -21,7 +24,9 @@ function protectedProjection(
   );
   return canonicalStringify({
     work: records,
-    reservations: snapshot.reservations.filter((row) => ids.has(row.taskId)),
+    reservations: allReservationsV1(snapshot).filter((row) =>
+      ids.has(row.taskId)
+    ),
     reviews: snapshot.reviews.filter((row) =>
       pulls.has(
         `${row.repository.installationId}:${row.repository.owner}/${row.repository.name}:${row.pullRequest.number}`,

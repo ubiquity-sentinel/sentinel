@@ -1,4 +1,5 @@
 /** Maintenance exposes only exact candidate and conflict-merge preservation and its ref read. */
+import { allReservationsV1 } from "../src/contracts/state-snapshots.ts";
 import type {
   Clock,
   GitHubCooldownGateV1,
@@ -132,7 +133,7 @@ export function createHostedCandidateRecoveryPort(input: {
       if (await inflightConflictMergeRef(row) === ref) return true;
       const resolved = await resolvedConflictCandidate(
         row,
-        read.value.snapshot.reservations,
+        allReservationsV1(read.value.snapshot),
       );
       if (resolved?.candidate.ref === ref) return true;
     }
