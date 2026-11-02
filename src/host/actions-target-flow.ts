@@ -13,9 +13,9 @@ import type {
 
 export function createActionsTargetFlow(input: ActionsTargetCyclesInputV1) {
   const origin = input.runOrigin ?? input.clock.now();
-  // A model-disabled bootstrap execution is a health/compatibility pass: it
-  // never prepares a target (a full mirror/branch fetch per target) and never
-  // dispatches pre-merge CI, so its bound is spent on source intake only.
+  // A model-disabled bootstrap execution still prepares every target (the
+  // bootstrap contract's source intake) and dispatches pre-merge CI; only the
+  // work-record walk is skipped (issue #297).
   const bootstrap = input.bootstrap === true ||
     input.host?.execution.purpose === "bootstrap";
   const addressed: string[] = [];
@@ -88,7 +88,7 @@ export function createActionsTargetFlow(input: ActionsTargetCyclesInputV1) {
         }
         if (slot.status === "new") {
           try {
-            if (!bootstrap) await input.prepareTarget?.(config);
+            await input.prepareTarget?.(config);
           } catch (error) {
             failed.push(
               slug(config) + ": " +
@@ -106,7 +106,7 @@ export function createActionsTargetFlow(input: ActionsTargetCyclesInputV1) {
           }
           addressed.push(slug(config));
           try {
-            if (!bootstrap) await input.premergeCi?.(config);
+            await input.premergeCi?.(config);
           } catch (error) {
             console.log(
               JSON.stringify({

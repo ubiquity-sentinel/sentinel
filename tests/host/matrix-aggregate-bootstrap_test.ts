@@ -1,10 +1,12 @@
 /**
  * Bootstrap aggregate pass (owner throughput, 2026-11-01, issue #297; review
- * t22c). A model-disabled bootstrap never runs closed-wave recovery, ingests or
- * prepares a target, but it still runs the initial authenticated artifact scan
- * (a no-op here because no producer is charged) and the cycle's maintenance,
- * health and preservation work. The state here needs closed-wave recovery, so
- * any recovery attempt would show up as a line and a state write.
+ * t22c). A model-disabled bootstrap never runs closed-wave recovery and never
+ * walks the work queue, but it keeps the ordinary source intake: every target
+ * is prepared, pre-merge CI is dispatched, and the initial authenticated
+ * artifact scan still ingests what it recovers (a no-op here because no
+ * producer is charged). The cycle's maintenance, health and preservation work
+ * run as usual. The state here needs closed-wave recovery, so any recovery
+ * attempt would show up as a line and a state write.
  */
 import assert from "node:assert/strict";
 
@@ -55,7 +57,7 @@ function seeded(): RepairStateSnapshotV1 {
   };
 }
 
-Deno.test("matrix aggregate bootstrap: recovery/preparation skipped; intake and initial scan only", async () => {
+Deno.test("matrix aggregate bootstrap: closed-wave recovery and the work walk skipped; intake and initial scan only", async () => {
   const clock = new FakeClock(T0);
   const state = new MemoryState();
   state.repair = seeded();
@@ -125,8 +127,8 @@ Deno.test("matrix aggregate bootstrap: recovery/preparation skipped; intake and 
   }
   assert.ok(result.outcome !== null, JSON.stringify(result));
   assert.equal(result.outcome.status, "idle", JSON.stringify(result));
-  assert.equal(prepared, 0, "bootstrap never prepares a target");
-  assert.equal(premerged, 0, "bootstrap never dispatches pre-merge CI");
+  assert.equal(prepared, 1, "bootstrap still prepares every target");
+  assert.equal(premerged, 1, "bootstrap still dispatches pre-merge CI");
   assert.equal(transports, 1, "the initial scan transport is created once");
   assert.ok(github.calls.includes("listOpenIssues"));
   assert.deepEqual(

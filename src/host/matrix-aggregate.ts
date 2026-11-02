@@ -237,45 +237,6 @@ export async function runActionsMatrixAggregateCycles(
     }
   }
   const transport = await transportFor(input, injectedTransport);
-  if (bootstrap) {
-    // A bootstrap still runs the initial authenticated artifact scan (custody
-    // and provenance verified; artifacts stay charged for the ordinary run,
-    // never ingested or prepared), then intake, maintenance, compatibility,
-    // health and preservation reconciliation; not the work-record walk.
-    const { charged } = matrixConsumerProducersV1(
-      read.value.snapshot,
-      host.execution.createdAt,
-    );
-    if (charged.length > 0) {
-      try {
-        await recoverWithHistoricalIsolation(input, transport, {
-          requests: charged,
-          runtimeSha: input.controllerSha,
-          launcherSha: host.run.launcherSha,
-          consumerRun: host.run,
-          deadline: Math.min(
-            input.deadline,
-            input.clock.now() + MATRIX_ARTIFACT_RECOVERY_MAX_MS,
-          ),
-        });
-      } catch (error) {
-        if (!(error instanceof MatrixArtifactUnavailableError)) throw error;
-        console.log(JSON.stringify({
-          kind: "sentinel_matrix_artifacts_unavailable",
-          scan: "initial",
-          requests: charged.length,
-        }));
-      }
-    }
-    const flow = createActionsTargetFlow({
-      ...input,
-      bootstrap: true,
-      externalImplementations: true,
-      progressComments: undefined,
-    });
-    while (await flow.advance()) { /* maintenance and health only */ }
-    return await flow.finish();
-  }
   const pollWait = options.pollWait ??
     ((ms: number, signal?: AbortSignal) =>
       new Promise<void>((resolve) => {
@@ -293,10 +254,16 @@ export async function runActionsMatrixAggregateCycles(
   const lifecycleModelStarts = carrier === undefined
     ? false
     : input.modelStartsEnabled;
+  // A model-disabled bootstrap keeps the ordinary authenticated consumption:
+  // its initial scan still authenticates and ingests every charged producer
+  // (a successor bootstrap must overwrite the proof it supersedes), and the
+  // cycle still runs intake, maintenance, compatibility, health and
+  // preservation reconciliation. It never waits for a later producer and
+  // never walks the work queue (issue #297).
   const consumer = matrixConsumerWindowV1({
     now: input.clock.now(),
     deadline: input.deadline,
-    maxWaitMs: options.maxWaitMs ?? MATRIX_CONSUMER_MAX_WAIT_MS,
+    maxWaitMs: bootstrap ? 0 : options.maxWaitMs ?? MATRIX_CONSUMER_MAX_WAIT_MS,
     targets: input.configs.length,
     reviewsMayStart: lifecycleModelStarts,
   });
@@ -306,6 +273,9 @@ export async function runActionsMatrixAggregateCycles(
     ...input,
     modelStartsEnabled: lifecycleModelStarts,
     externalImplementations: true,
+    // The trusted host alone posts progress comments; a model-disabled
+    // bootstrap is not a delivery pass and posts none.
+    progressComments: bootstrap ? undefined : input.progressComments,
     progressBaseline: input.progressBaseline ?? progressBaseline,
     prepareTarget: async (config) => {
       const key = config.repository.owner + "/" + config.repository.name;
