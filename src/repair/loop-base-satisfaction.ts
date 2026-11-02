@@ -1,5 +1,9 @@
 /** Trusted pre-ranking exact-base task review and issue-only closure. */
 import { canonicalStringify } from "../contracts/canonical.ts";
+import {
+  allReservationsV1,
+  findReservationV1,
+} from "../contracts/state-snapshots.ts";
 import { type GitHubPort, portError } from "../contracts/ports.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import {
@@ -76,9 +80,7 @@ export async function resumeBaseSatisfaction(
         ),
       );
     }
-    const charge = context.snapshot.reservations.find((row) =>
-      row.id === admission
-    );
+    const charge = findReservationV1(context.snapshot, admission);
     if (charge?.outcome === "reserved") {
       // A prior host may have started native work. Absence of output never refunds it.
       const settled = await settleReviewCharge(
@@ -159,7 +161,7 @@ export async function resumeBaseSatisfaction(
   }
   const round = Math.max(
     record.counters.reviewRounds,
-    ...context.snapshot.reservations.filter((row) =>
+    ...allReservationsV1(context.snapshot).filter((row) =>
       row.taskId === record.id && row.purpose === "review_request"
     ).map((row) => row.attempt),
   ) + 1;

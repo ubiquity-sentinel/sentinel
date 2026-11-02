@@ -120,6 +120,12 @@ export const RECORD_COLLECTIONS: Record<StateKind, RecordCollection[]> = {
       rows: [],
     },
     {
+      directory: "reservationArchive",
+      kind: "reservation_archive",
+      parse: parseBudgetReservationV1,
+      rows: [],
+    },
+    {
       directory: "reviews",
       kind: "review_receipt",
       parse: parseReviewReceiptV1,

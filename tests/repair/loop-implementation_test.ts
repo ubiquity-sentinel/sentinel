@@ -2,9 +2,10 @@
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
 import { portOk } from "../../src/contracts/ports.ts";
-import { asWorkItemId } from "../../src/contracts/brands.ts";
+import { asCommandId, asWorkItemId } from "../../src/contracts/brands.ts";
 import { DurableGitHubCooldownGate } from "../../src/repair/github-cooldown.ts";
 import { prepareImplementationStart } from "../../src/repair/loop-implementation.ts";
+import { NO_TEST_EVIDENCE_COMMAND_ID } from "../../src/host/target-policy-generic.ts";
 import type {
   LoopContextV1,
   RepairCycleDepsV1,
@@ -15,6 +16,7 @@ import {
   implementationIntentKey,
 } from "../../src/repair/keys.ts";
 import { conflictMarker } from "../../src/repair/conflict-resolution.ts";
+import { CHECK_POLL_MS } from "../../src/repair/loop-bounds.ts";
 import { RETIRED_TARGET_MESSAGE } from "../../src/repair/selection.ts";
 import {
   reservation,
@@ -651,4 +653,130 @@ Deno.test("closed-source conflict marker retires before the conflict-resolution 
   } finally {
     await rig.ctx.cleanup();
   }
+});
+
+Deno.test("no-CI generic targets park at admission, before any reservation", async () => {
+  const record = workRecord("issue-noci");
+  const state = new MemoryState();
+  state.repair = seededSnapshot([record]);
+  state.repairHead = SHA1;
+  const clock = new FakeClock(T0);
+  const configs = repairConfigs({
+    sessionBound: { maxDurationMs: 240_000, maxOutputChars: 200_000 },
+  });
+  const config = {
+    ...configs[0]!,
+    commands: {
+      ...configs[0]!.commands,
+      test: asCommandId(NO_TEST_EVIDENCE_COMMAND_ID),
+    },
+  };
+  const deps: RepairCycleDepsV1 = {
+    clock,
+    state,
+    configs,
+    controllerSha: SHA1,
+    github: new FakeGithub(),
+    githubCooldown: new DurableGitHubCooldownGate({ state, clock }),
+    incidents: new FakeIncidents({ summaries: [] }),
+    replay: new FakeReplay(),
+    model: new FakeModel(),
+    budget: new RollingStartBudget({ clock, state, configs }),
+  };
+  const context: LoopContextV1 = {
+    snapshot: state.repair,
+    head: state.repairHead,
+    executionBaseline: record,
+    bounds: {
+      runDeadline: clock.now() + 60 * 60_000,
+      modelCutoff: clock.now() + 60 * 60_000,
+    },
+  };
+
+  const result = await prepareImplementationStart(
+    deps,
+    context,
+    record,
+    config,
+  );
+  assert.equal(result.kind, "progress", JSON.stringify(result));
+  const after = await state.readRepair();
+  assert.ok(after.ok && after.value.status === "found");
+  if (!after.ok || after.value.status !== "found") return;
+  const parked = after.value.snapshot.work.find((row) => row.id === record.id);
+  assert.equal(parked?.nextStep, "blocked");
+  assert.equal(parked?.blocker?.kind, "missing_evidence");
+  assert.match(parked?.blocker?.message ?? "", /no pull_request CI/);
+  assert.equal(
+    after.value.snapshot.reservations.length,
+    0,
+    "the park charges nothing",
+  );
+});
+
+Deno.test("a capacity-refused admission waits bounded with a precise retry reason", async () => {
+  const record = workRecord("issue-refused");
+  const state = new MemoryState();
+  state.repair = seededSnapshot([record]);
+  state.repairHead = SHA1;
+  const clock = new FakeClock(T0);
+  const configs = repairConfigs({
+    sessionBound: { maxDurationMs: 240_000, maxOutputChars: 200_000 },
+  });
+  const deps: RepairCycleDepsV1 = {
+    clock,
+    state,
+    configs,
+    controllerSha: SHA1,
+    github: new FakeGithub(),
+    githubCooldown: new DurableGitHubCooldownGate({ state, clock }),
+    incidents: new FakeIncidents({ summaries: [] }),
+    replay: new FakeReplay(),
+    model: new FakeModel(),
+    budget: {
+      reserveModelStart: () =>
+        Promise.resolve({
+          status: "rejected" as const,
+          reason: "state_snapshot_refused" as const,
+          detail: "synthetic capacity refusal",
+        }),
+      settleModelStart: () => {
+        throw new Error("no settlement in this case");
+      },
+    },
+  };
+  const context: LoopContextV1 = {
+    snapshot: state.repair,
+    head: state.repairHead,
+    executionBaseline: record,
+    bounds: {
+      runDeadline: clock.now() + 60 * 60_000,
+      modelCutoff: clock.now() + 60 * 60_000,
+    },
+  };
+
+  const result = await prepareImplementationStart(
+    deps,
+    context,
+    record,
+    configs[0]!,
+  );
+  assert.equal(result.kind, "progress", JSON.stringify(result));
+  const after = await state.readRepair();
+  assert.ok(after.ok && after.value.status === "found");
+  if (!after.ok || after.value.status !== "found") return;
+  const waiting = after.value.snapshot.work.find((row) => row.id === record.id);
+  assert.equal(
+    waiting?.nextStep,
+    "work",
+    "a capacity refusal is never terminal",
+  );
+  assert.equal(waiting?.blocker, null);
+  assert.equal(
+    waiting?.wait?.reason,
+    "ledger_capacity",
+    "the precise capacity reason stays visible",
+  );
+  assert.equal(waiting?.wait?.until, T0 + CHECK_POLL_MS);
+  assert.equal(after.value.snapshot.reservations.length, 0);
 });

@@ -1,5 +1,8 @@
 /** R80-compatible hold for the trusted no-change disposition; never selectable by R80. */
-import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
+import {
+  findReservationV1,
+  type RepairStateSnapshotV1,
+} from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { ATTEMPT_DETAIL_NO_CHANGE } from "./attempt-policy.ts";
 import { candidateBranch } from "./keys.ts";
@@ -69,7 +72,7 @@ export function baseReviewOrigin(
     /^base-review:[0-9a-f]{64}:[0-9a-f]{64}$/.test(intent.key)
   ) origin = intent.key.split(":")[1];
   if (origin === null) return null;
-  const charge = snapshot.reservations.find((row) => row.id === origin);
+  const charge = findReservationV1(snapshot, origin);
   return charge && charge.taskId === record.id &&
       charge.repository.owner === record.repository.owner &&
       charge.repository.name === record.repository.name &&

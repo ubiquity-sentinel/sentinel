@@ -262,6 +262,26 @@ export async function requestReviewFor(
       ),
     );
   }
+  if (reservation.status === "rejected") {
+    // A ledger-capacity refusal is TEMPORARY and time-dependent: the trusted
+    // writer compacts terminal rows once their retention window advances, so
+    // the same admission succeeds on a later cycle. Keep the publication
+    // binding and retry after one bounded poll; never park terminally
+    // (`blocked` is skipped forever by ranking).
+    return persistWork(
+      deps,
+      context,
+      setWait(
+        record,
+        {
+          reason: "ledger_capacity",
+          since: now,
+          until: now + REVIEW_POLL_MS,
+        },
+        now,
+      ),
+    );
+  }
   if (reservation.status === "disabled" || reservation.status === "invalid") {
     return persistWork(
       deps,

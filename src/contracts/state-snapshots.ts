@@ -68,6 +68,15 @@ export interface RepairStateSnapshotV1 {
   evidence: IncidentEvidenceV1[];
   work: WorkRecordV1[];
   reservations: BudgetReservationV1[];
+  /**
+   * Durable retention index for settled reservations the trusted writer moved
+   * out of the live ledger when it reached `MaxItems.snapshotRecords`. Never
+   * holds an unsettled reservation; every row is also immutable (settled)
+   * because archived rows keep their exact settlement. Accounting and
+   * duplicate-detection readers consult it whenever a reservation id is not
+   * live, so moving a row here never loses a charge or a proof.
+   */
+  reservationArchive?: BudgetReservationV1[];
   reviews: ReviewReceiptV1[];
   /** Present only after the first distinct owner-successor review admission. */
   ownerSuccessorReviews?: OwnerSuccessorReviewV1[];
@@ -151,9 +160,12 @@ export function parseRepairStateSnapshotV1(
   const obj = expectRecord(input, "$");
   expectExactKeys(
     obj,
-    Object.hasOwn(obj, "ownerSuccessorReviews")
-      ? [...REPAIR_KEYS, "ownerSuccessorReviews"]
-      : REPAIR_KEYS,
+    [
+      ...REPAIR_KEYS,
+      ...["ownerSuccessorReviews", "reservationArchive"].filter((key) =>
+        Object.hasOwn(obj, key)
+      ),
+    ],
     "$",
   );
   expectVersion(obj.version, "$.version");
@@ -187,6 +199,51 @@ export function parseRepairStateSnapshotV1(
     MaxItems.snapshotRecords,
     parseBudgetReservationV1,
   );
+  const reservationArchive = Object.hasOwn(obj, "reservationArchive")
+    ? expectArray(
+      obj.reservationArchive,
+      "$.reservationArchive",
+      MaxItems.reservationArchiveRecords,
+      parseBudgetReservationV1,
+    )
+    : undefined;
+  if (reservationArchive !== undefined) {
+    if (reservationArchive.length === 0) {
+      fail(
+        "$.reservationArchive",
+        "invalid_lifecycle",
+        "an archive collection must retain its first record",
+      );
+    }
+    expectUniqueIds(reservationArchive, "$.reservationArchive");
+    const liveIds = new Set(reservations.map((record) => record.id));
+    for (const [index, record] of reservationArchive.entries()) {
+      if (liveIds.has(record.id)) {
+        fail(
+          `$.reservationArchive[${index}].id`,
+          "invalid_lifecycle",
+          "an archived reservation cannot also be live",
+        );
+      }
+      if (record.settledAt === null) {
+        fail(
+          `$.reservationArchive[${index}].settledAt`,
+          "invalid_lifecycle",
+          "an unsettled reservation cannot be archived",
+        );
+      }
+      if (
+        record.outcome !== "submitted" &&
+        record.outcome !== "confirmed_not_submitted"
+      ) {
+        fail(
+          `$.reservationArchive[${index}].outcome`,
+          "invalid_lifecycle",
+          "only a terminal reservation may be archived",
+        );
+      }
+    }
+  }
   const reviews = expectArray(
     obj.reviews,
     "$.reviews",
@@ -266,6 +323,7 @@ export function parseRepairStateSnapshotV1(
     evidence,
     work,
     reservations,
+    ...(reservationArchive === undefined ? {} : { reservationArchive }),
     reviews,
     ...(ownerSuccessorReviews === undefined ? {} : { ownerSuccessorReviews }),
     replays,
@@ -402,4 +460,24 @@ function expectUniqueInstallationIds(
     }
     seen.add(record.installationId);
   }
+}
+
+/** Every reservation a reader must consider: live first, then archived. */
+export function allReservationsV1(snapshot: {
+  reservations: readonly BudgetReservationV1[];
+  reservationArchive?: readonly BudgetReservationV1[];
+}): BudgetReservationV1[] {
+  return [
+    ...snapshot.reservations,
+    ...(snapshot.reservationArchive ?? []),
+  ];
+}
+
+/** Find one reservation by id, consulting the archive when it is not live. */
+export function findReservationV1(snapshot: {
+  reservations: readonly BudgetReservationV1[];
+  reservationArchive?: readonly BudgetReservationV1[];
+}, id: string): BudgetReservationV1 | undefined {
+  return snapshot.reservations.find((record) => record.id === id) ??
+    snapshot.reservationArchive?.find((record) => record.id === id);
 }
