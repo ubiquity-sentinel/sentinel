@@ -6,7 +6,7 @@ import {
   parseHostedRunProofV1,
 } from "../contracts/hosted-supervisor.ts";
 import type { HostedRunProofV1 } from "../contracts/hosted-supervisor.ts";
-import { portError, portOk } from "../contracts/ports.ts";
+import { portError, portOk, SystemClock } from "../contracts/ports.ts";
 import type { StateReadView } from "../contracts/ports.ts";
 import type { ReleaseStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import {
@@ -516,7 +516,7 @@ export async function readOwnerFutureRecoveryAuthority(
         authorizationHeader: () =>
           Promise.resolve(portOk(`Bearer ${input.token}`)),
       },
-      clock: { now: () => Date.now() },
+      clock: new SystemClock(),
       cooldownGate: {
         beforeRequest: async (scope) =>
           scope === 0 && await headsUnchanged()
