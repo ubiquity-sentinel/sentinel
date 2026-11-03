@@ -25,6 +25,7 @@ import {
   type WedgeReportV0,
   wedgeSentence,
 } from "./run-summary-wedges.ts";
+import { TARGETS_MAX } from "./targets.ts";
 
 /** The fields of one child's `hosted_runtime_summary` this summary reads. */
 export interface ChildRuntimeSummaryV1 {
@@ -89,7 +90,6 @@ export const RUN_SUMMARY_STATE_READ_MS = 60_000;
 
 const SUMMARY_KIND = '"kind":"hosted_runtime_summary"';
 const MAX_JOBS = 300;
-const MAX_TARGETS = 50;
 const MAX_PRS = 200;
 
 const record = (value: unknown): value is Record<string, unknown> =>
@@ -113,7 +113,7 @@ export function parseChildRuntimeSummary(
     runtimeSha: text(value.runtimeSha, 40),
     generation: count(value.generation),
     purpose: text(value.purpose, 40),
-    targets: targets.slice(0, MAX_TARGETS).flatMap((row) => {
+    targets: targets.slice(0, TARGETS_MAX).flatMap((row) => {
       if (!record(row)) return [];
       const repository = text(row.repository);
       if (repository === null) return [];
