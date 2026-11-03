@@ -100,6 +100,32 @@ function setup(
   };
 }
 
+Deno.test("closed publication requires a retained PR or a durable replacement intent", async (t) => {
+  for (const branchRefSha of [SHA2, null]) {
+    await t.step(
+      branchRefSha === null ? "deleted branch" : "live branch",
+      async () => {
+        const r = setup({ branchRefSha });
+        const record = {
+          ...r.record,
+          target: { ...r.record.target, pr: null },
+        };
+        r.state.repair = seededSnapshot([record]);
+        const step = await executeWorkStep(r.deps, r.context(), record);
+        assert.ok(
+          !r.github.calls.includes("createPr"),
+          "no replacement authority",
+        );
+        assert.equal(step.kind, "deferred", JSON.stringify(step));
+        assert.deepEqual(r.state.repair!.work[0], record);
+        assert.deepEqual(r.state.repair!.reservations, []);
+        assert.equal(r.model.requests.length, 0);
+        assert.ok(!r.github.calls.includes("push"));
+      },
+    );
+  }
+});
+
 Deno.test("ai.ubq.fi: a closed unmerged preserved-null PR opens a fresh PR and reviews the same head", async () => {
   const r = setup();
   const step = await executeWorkStep(r.deps, r.context(), r.record);

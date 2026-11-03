@@ -116,6 +116,9 @@ export async function recoverClosedExistingHead(
     head === record.target.base ||
     branch !== candidateBranch(record.id) ||
     candidateState?.preserved !== null ||
+    // A published head alone proves no closed-unmerged PR. Only a retained
+    // PR or a durable replacement intent authorizes this recovery lane.
+    (pr === null && record.intent === null) ||
     (pr === null && candidateState.publishedHead !== head)
   ) return null;
   const config = configFor(deps, record.repository);
