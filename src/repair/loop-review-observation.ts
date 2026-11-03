@@ -163,10 +163,18 @@ export async function observeReview(
       // Without a preserved descriptor, the closed PR number is the durable
       // replacement authority. Keep it until work re-verifies the closed PR
       // and its branch; clearing it would strand the published head forever.
-      const retired = existingHeadContinuationShape(record)
-        ? { ...record, nextStep: "work" as const, updatedAt: now }
-        : retireClosedPublication(record, now, "work");
-      return persistWork(deps, context, clearIntent(retired, now));
+      if (existingHeadContinuationShape(record)) {
+        return persistWork(
+          deps,
+          context,
+          clearIntent({ ...record, nextStep: "work", updatedAt: now }, now),
+        );
+      }
+      return persistWork(
+        deps,
+        context,
+        clearIntent(retireClosedPublication(record, now, "work"), now),
+      );
     }
     if (pull.value.state === "merged") {
       if (pull.value.mergeSha === null) {
