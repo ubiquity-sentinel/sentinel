@@ -178,6 +178,7 @@ export async function recoverClosedExistingHead(
       ...clearWait(record, now),
       target: {
         ...record.target,
+        checkpoint: null,
         head: null,
         pr: null,
         candidateState: { preserved: null, publishedHead: null },
