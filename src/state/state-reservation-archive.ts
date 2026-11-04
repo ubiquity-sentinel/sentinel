@@ -171,7 +171,10 @@ export function compactReservationLedgerV1(
     let excess = archive.length - MaxItems.reservationArchiveRecords;
     const retained = referencedReservationIdsV1(snapshot, true);
     const retired = new Set<string>();
-    for (const record of [...archive].sort(olderFirst)) {
+    // Only retire rows already held in the archive. A row moved from live
+    // must survive this transition unchanged; retiring it here would make
+    // validateRepairTransition reject an otherwise recoverable admission.
+    for (const record of [...existing].sort(olderFirst)) {
       if (excess === 0) break;
       if (retained.has(record.id)) continue;
       if (!isTerminalReservationV1(record)) continue;

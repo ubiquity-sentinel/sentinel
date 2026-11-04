@@ -368,7 +368,7 @@ Deno.test(
 );
 
 Deno.test(
-  "matrix runtime: no-test-evidence targets receive no cell or reservation",
+  "matrix runtime: no-test-evidence targets park without a cell or reservation",
   async () => {
     const rig = await makeRig([304], 1);
     try {
@@ -392,28 +392,44 @@ Deno.test(
       assert.equal(report.prepared, 0);
       assert.equal(
         report.attempted,
-        0,
-        "do not enter admission for a parked target",
+        1,
+        "the planner parks the target before admission",
       );
       assert.equal(
         report.diagnostic?.notReadyByReason[NO_CI_AND_NO_LOCAL_VERIFY_BLOCKER],
         1,
       );
-      assert.deepEqual(
-        await snapshot(rig),
-        initial,
-        "no admission or state change",
+      const parked = await snapshot(rig);
+      assert.equal(parked.work[0]!.nextStep, "blocked");
+      assert.ok(
+        parked.work[0]!.blocker?.message.startsWith(
+          NO_CI_AND_NO_LOCAL_VERIFY_BLOCKER,
+        ),
       );
+      assert.equal(parked.work[0]!.intent, null);
+      assert.deepEqual(parked.reservations, initial.reservations);
       assert.equal(rig.model.requests.length, 0);
 
-      rig.deps = { ...rig.deps, configs };
-      const ready = await planMatrixWave(rig.deps, rig.planOptions());
-      assert.equal(
-        ready.plan.cells.length,
-        1,
-        "targets with test evidence still plan",
-      );
-      assert.equal((await snapshot(rig)).reservations.length, 1);
+      const evidenced = await makeRig([305], 1);
+      try {
+        const seeded = await evidenced.store.writeRepair(
+          seedSnapshot([freshIssue(305, evidenced.base)]),
+          null,
+        );
+        assert.ok(seeded.ok && seeded.value.status === "applied");
+        const ready = await planMatrixWave(
+          evidenced.deps,
+          evidenced.planOptions(),
+        );
+        assert.equal(
+          ready.plan.cells.length,
+          1,
+          "targets with test evidence still plan",
+        );
+        assert.equal((await snapshot(evidenced)).reservations.length, 1);
+      } finally {
+        await evidenced.cleanup();
+      }
     } finally {
       await rig.cleanup();
     }
