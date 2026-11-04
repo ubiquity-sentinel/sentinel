@@ -21,6 +21,14 @@ import {
 } from "./matrix-runtime-fixtures.ts";
 
 const cases = [
+  // The ordinary failed receipt from the 429 regression must also expose its
+  // cause on current cells, without becoming a provider-throttled outcome.
+  {
+    kind: "failed",
+    outcome: "failed",
+    origin: "runtime",
+    error: "boom",
+  },
   {
     kind: "failed",
     outcome: "failed",
