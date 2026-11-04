@@ -197,9 +197,10 @@ Deno.test("rollback latch: stops only its own failed candidate; a new CI-green l
       },
     );
 
+    // Retain the bootstrap identity after the reinstall probe settles it.
+    const bootstrap = (await rig.snapshot()).hostedRuntimes[0].execution;
     await t.step("the failed candidate still cannot reinstall", async () => {
       // Settle the fresh install so no in-flight record masks the candidate bar.
-      const bootstrap = (await rig.snapshot()).hostedRuntimes[0].execution;
       assert.ok(bootstrap);
       await settle(rig, bootstrap, "healthy");
       const before = await rig.snapshot();
@@ -207,6 +208,8 @@ Deno.test("rollback latch: stops only its own failed candidate; a new CI-green l
       assert.equal(before.hostedRuntimes[0].execution, null);
       // Refuse before CI checks, not via duplicate-record validation.
       let ciChecks = 0;
+      const verifyMatrixOrdinaryRevision =
+        rig.evidence.verifyMatrixOrdinaryRevision;
       Object.assign(rig.evidence, {
         // Keep ordinary work unavailable during this installation-only probe.
         verifyMatrixOrdinaryRevision: undefined,
@@ -215,7 +218,10 @@ Deno.test("rollback latch: stops only its own failed candidate; a new CI-green l
           return Promise.resolve(portOk({ revision, checkRunId: 91 }));
         },
       });
-      const outcome = await rig.prepare(launcherRun(7));
+      const outcome = await rig.prepare(launcherRun(7)).finally(() => {
+        rig.evidence.verifyMatrixOrdinaryRevision =
+          verifyMatrixOrdinaryRevision;
+      });
       assert.equal(outcome.status, "pending");
       assert.equal(ciChecks, 0);
       const after = await rig.snapshot();
@@ -238,13 +244,12 @@ Deno.test("rollback latch: stops only its own failed candidate; a new CI-green l
     });
 
     await t.step(
-      "the followed repair settles and ordinary work resumes",
+      "the followed repair resumes ordinary work",
       async () => {
         const before = await rig.snapshot();
-        const boot = before.hostedRuntimes[0].execution;
+        const boot = bootstrap;
         assert.ok(boot);
         rig.evidence.revisions.add(ROLLBACK_FIX);
-        await settle(rig, boot, "healthy");
         const accepted = await rig.snapshot();
         assert.equal(accepted.hostedInstallations?.[1].phase, "accepted");
         assert.equal(
