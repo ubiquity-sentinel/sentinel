@@ -11,11 +11,13 @@ import {
 } from "../repair/loop-rig.ts";
 import { httpRespond, makePort } from "../github/helpers.ts";
 import {
+  gitRun,
   REPO,
   reservation,
   SHA1,
   SHA2,
   T0,
+  testGitEnv,
   workRecord,
 } from "../state/helpers.ts";
 import {
@@ -86,6 +88,27 @@ function printed(result: HostedRuntimeLauncherResultV1): {
   );
   return { exit, lines, summary: summaries[0] as HostedRuntimeSummaryV1 };
 }
+
+Deno.test("hosted runtime summary: fixture commit identities use the fixed clock", async () => {
+  const rig = await makeRig();
+  try {
+    for (const dir of [rig.launcherDir, rig.runtimeDir]) {
+      const commit = await gitRun(
+        dir,
+        ["show", "-s", "--format=%at%n%ct", "HEAD"],
+        testGitEnv(dir),
+      );
+      assert.ok(commit.ok, commit.stderr);
+      assert.deepEqual(
+        commit.stdout.trim().split("\n").map(Number),
+        [T0 / 1000, T0 / 1000],
+        "author and committer dates must not vary with the wall clock",
+      );
+    }
+  } finally {
+    await rig.cleanup();
+  }
+});
 
 Deno.test("hosted runtime summary: counts come from durable admission/publication deltas, not child claims", async () => {
   const rig = await makeRig({
