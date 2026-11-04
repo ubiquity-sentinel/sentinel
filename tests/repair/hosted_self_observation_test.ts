@@ -49,6 +49,7 @@ function fakeSurface(input: {
 }
 
 import assert from "node:assert/strict";
+import { matrixCellIdV1 } from "../../src/contracts/matrix.ts";
 
 const FAILED_RUNS = [
   {
@@ -329,4 +330,55 @@ Deno.test("self observation: current CI errors file sanitized reports and dedupl
   });
   assert.equal(second.filed.length, 0);
   assert.deepEqual(nextActions, ["self-observation:no_change"]);
+});
+
+Deno.test("self observation: supervisor cell failures are sanitized and deduplicated across cells", async () => {
+  const cellIds = await Promise.all([
+    matrixCellIdV1("synthetic-wave", "issue-example-1", "a".repeat(64)),
+    matrixCellIdV1("synthetic-wave", "issue-example-2", "b".repeat(64)),
+  ]);
+  const run = { ...FAILED_RUNS[0]!, name: "sentinel-supervisor" };
+  const log =
+    "SYNTHETIC_PRIVATE_DIAGNOSTIC\nProcess completed with exit code 1.\n";
+  const now = Date.parse("2026-09-23T19:00:00Z");
+  const first = fakeSurface({
+    runs: [run],
+    jobs: [{
+      id: 11,
+      name: `matrix_cell (${cellIds[0]})`,
+      conclusion: "failure",
+    }],
+    logs: { 11: log },
+    bodies: [],
+  });
+  assert.deepEqual(
+    await runSelfObservationPass({ github: first.surface, now }),
+    ["self-observation:filed:901:1x"],
+  );
+  assert.equal(first.filed.length, 1);
+  const issue = first.filed[0]!;
+  assert.ok(
+    issue.body.startsWith(
+      "<!-- sentinel:self-observation:sentinel-supervisor:matrix_cell:exit:1 -->",
+    ),
+  );
+  assert.ok(issue.body.includes("- job: `matrix_cell`"));
+  assert.ok(!JSON.stringify(issue).includes(cellIds[0]!));
+  assert.ok(!JSON.stringify(issue).includes("SYNTHETIC_PRIVATE_DIAGNOSTIC"));
+
+  const second = fakeSurface({
+    runs: [{ ...run, id: 2 }],
+    jobs: [{
+      id: 12,
+      name: `matrix_cell (${cellIds[1]})`,
+      conclusion: "failure",
+    }],
+    logs: { 12: log },
+    bodies: [issue.body],
+  });
+  assert.deepEqual(
+    await runSelfObservationPass({ github: second.surface, now }),
+    ["self-observation:no_change"],
+  );
+  assert.equal(second.filed.length, 0);
 });
