@@ -356,7 +356,9 @@ Deno.test("targets: a bun target with CI gets the bun verify policy", async () =
 });
 
 Deno.test("targets: prospector mixed manifests select the declared package manager", async () => {
-  for (const toolchain of ["bun", "npm", "yarn", "pnpm"]) {
+  for (const [index, toolchain] of ["bun", "npm", "yarn", "pnpm"].entries()) {
+    // Each manifest graph has its own commit, including across cached reads.
+    const revision = (index + 1).toString(16).padStart(40, "0");
     const packageManager = `${toolchain}@1.3.3`;
     const manifests: Record<string, string> = {
       "/package.json": JSON.stringify({
@@ -373,7 +375,12 @@ Deno.test("targets: prospector mixed manifests select the declared package manag
       token: "token-value",
       http: (request) => {
         const url = new URL(request.url);
-        assert.equal(url.searchParams.get("ref"), "main");
+        if (url.pathname === "/repos/ubiquity/prospector/commits/main") {
+          return Promise.resolve(
+            response(200, JSON.stringify({ sha: revision })),
+          );
+        }
+        assert.equal(url.searchParams.get("ref"), revision);
         const path = url.pathname.split("/contents")[1];
         let body: unknown;
         if (path === "") {
