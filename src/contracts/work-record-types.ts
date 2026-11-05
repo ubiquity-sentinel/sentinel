@@ -229,6 +229,23 @@ export interface WorkCountersV1 {
   timeouts?: number;
 }
 
+/**
+ * Input fingerprint of the last serial step that settled this record (issue
+ * #326): the step deferred, or yielded after its own write, on these exact
+ * inputs. `digest` is the SHA-256 of the record's own content (without this
+ * field and `updatedAt`), its live GitHub inputs (issue state, PR
+ * state/head/base, check rollup, latest review, base tip), its own snapshot
+ * rows and its repository siblings' lifecycle shape. `deadline` is the next
+ * wait/backoff deadline at which the record is stepped again even when the
+ * digest still matches. Written only by the trusted repair writer inside an
+ * expected-head state write; ABSENT on every record written before it existed
+ * and never defaulted, so legacy bytes round-trip exactly.
+ */
+export interface StepInputsStampV1 {
+  digest: string;
+  deadline: number;
+}
+
 export interface WorkRecordV1 {
   version: "v1";
   kind: "work";
@@ -262,4 +279,6 @@ export interface WorkRecordV1 {
   firstSeenAt: number | null;
   createdAt: number;
   updatedAt: number;
+  /** Optional last settled step fingerprint; absent on legacy records. */
+  stepInputs?: StepInputsStampV1;
 }

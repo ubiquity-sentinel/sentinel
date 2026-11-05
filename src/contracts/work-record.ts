@@ -33,6 +33,7 @@ import {
 import { parseWorkWaitCauseV1 } from "./work-wait-cause.ts";
 import type {
   SelectionUrgencyV1,
+  StepInputsStampV1,
   WorkBlockerV1,
   WorkCountersV1,
   WorkRecordV1,
@@ -100,10 +101,13 @@ const BLOCKER_KEYS = ["kind", "message", "since"] as const;
 const COUNTERS_KEYS = ["attempts", "retries", "reviewRounds"] as const;
 /** Additive counter keys absent from rows written before they existed. */
 const COUNTERS_OPTIONAL_KEYS = ["stalled", "timeouts"] as const;
+/** Additive record keys absent from rows written before they existed. */
+const OPTIONAL_KEYS = ["stepInputs"] as const;
+const STEP_INPUTS_KEYS = ["digest", "deadline"] as const;
 
 export function parseWorkRecordV1(input: unknown): WorkRecordV1 {
   const obj = expectRecord(input, "$");
-  expectExactKeys(obj, KEYS, "$");
+  expectExactKeysWithOptional(obj, KEYS, OPTIONAL_KEYS, "$");
   expectVersion(obj.version, "$.version");
   expectEnum(obj.kind, ["work"], "$.kind");
 
@@ -391,6 +395,18 @@ export function parseWorkRecordV1(input: unknown): WorkRecordV1 {
     firstSeenAt,
     createdAt,
     updatedAt,
+    ...(obj.stepInputs === undefined
+      ? {}
+      : { stepInputs: parseStepInputs(obj.stepInputs, "$.stepInputs") }),
+  };
+}
+
+function parseStepInputs(input: unknown, path: string): StepInputsStampV1 {
+  const obj = expectRecord(input, path);
+  expectExactKeys(obj, STEP_INPUTS_KEYS, path);
+  return {
+    digest: expectSha256Hex(obj.digest, `${path}.digest`),
+    deadline: expectTimestamp(obj.deadline, `${path}.deadline`),
   };
 }
 
@@ -505,6 +521,7 @@ export type {
   NextStepV1,
   OperationFailureV1,
   SelectionUrgencyV1,
+  StepInputsStampV1,
   TaskSourceKindV1,
   WorkBlockerV1,
   WorkCountersV1,
