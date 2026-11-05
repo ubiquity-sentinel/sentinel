@@ -252,12 +252,28 @@ export interface StepInputsStampV1 {
  * (the record was retired because its source issue closed): `closed` when
  * Sentinel commented on and closed its own still-open, unmerged pull request;
  * `merged`, `closed_elsewhere` and `not_own` when there was nothing for
- * Sentinel to close. Additive and ABSENT on every record written before it
- * existed; an absent value means the pull request was not yet settled.
+ * Sentinel to close; `reopened` when the source issue read open again, so the
+ * pull request was left open and the record returned to `work` (a later
+ * retirement of the same pull request is unsettled again). Additive and
+ * ABSENT on every record written before it existed; an absent value means the
+ * pull request was not yet settled.
  */
 export interface RetiredPullClosureV1 {
   pr: number;
-  outcome: "closed" | "merged" | "closed_elsewhere" | "not_own";
+  outcome: "closed" | "merged" | "closed_elsewhere" | "not_own" | "reopened";
+  at: number;
+}
+
+/**
+ * Backoff stamp of a launcher maintenance read of the record's bound pull
+ * request `pr` that settled nothing (the retired-pull pass, the stale-step
+ * human-merge re-admission): `at` is when it was read. Those passes skip the
+ * record for the same `pr` until their backoff elapsed and read the least
+ * recently stamped first. Additive and ABSENT on every record written before
+ * it existed; bookkeeping only, never a lifecycle fact.
+ */
+export interface PullProbeV1 {
+  pr: number;
   at: number;
 }
 
@@ -298,6 +314,8 @@ export interface WorkRecordV1 {
   stepInputs?: StepInputsStampV1;
   /** Optional settlement of a retired record's own pull request. */
   retiredPullClosure?: RetiredPullClosureV1;
+  /** Optional backoff stamp of an unsettled maintenance pull read. */
+  pullProbe?: PullProbeV1;
   /**
    * Optional owner-landing flag: the published candidate changes a protected
    * path, so Sentinel never merges it (see `OwnerLandingV1`). Absent on

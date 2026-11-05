@@ -73,6 +73,18 @@ export const ATTEMPT_DETAIL_ARTIFACT_ONLY =
  */
 export const ATTEMPT_DETAIL_UNAPPLIED_PATCH =
   "model candidate committed an unapplied patch file instead of the fix; apply the change to the real file in place (even a protected path) and remove the patch file" as const;
+/**
+ * A charged conflict-resolution cell settled LOST (its run completed, or its
+ * evidence expired, without an uploaded artifact; `conflict-lost-cell.ts`).
+ * It is recorded in the attempt-memory family of the conflict's merge base,
+ * so the lost cells of one (task, merge base) are counted durably. It starts
+ * with the launcher's retryable `model run ended without a trusted receipt`
+ * prefix, so a parked loss returns only through the conflict marker's
+ * moved-tip rule, and identical losses across bases feed the repeat-failure
+ * streak (its normal park and re-arms).
+ */
+export const ATTEMPT_DETAIL_LOST_CELL =
+  "model run ended without a trusted receipt: conflict resolution cell lost before upload" as const;
 export const ATTEMPT_DETAIL_UNCERTAIN =
   "implementation outcome uncertain; awaiting authoritative disposition" as const;
 /**
@@ -140,6 +152,10 @@ const DETAIL_CLASSIFICATION: readonly (readonly [
   [
     ATTEMPT_DETAIL_NO_TRUSTED_RECEIPT,
     { stage: "model", failureClass: "transient_infrastructure" },
+  ],
+  [
+    ATTEMPT_DETAIL_LOST_CELL,
+    { stage: "reservation", failureClass: "transient_infrastructure" },
   ],
   [
     ATTEMPT_DETAIL_INCOMPLETE,
@@ -598,9 +614,14 @@ export async function attemptMemorySettlementMutationV1(input: {
     stage: AttemptStageV1;
     failureClass: AttemptFailureClassV1;
   };
+  /**
+   * The family's base when it is not the record's target base: a lost
+   * conflict cell is recorded at the conflict's merge base.
+   */
+  base?: GitSha;
 }): Promise<(draft: RepairStateSnapshotV1) => void> {
   const purpose: AttemptPurposeV1 = "implementation";
-  const base = input.record.target.base;
+  const base = input.base ?? input.record.target.base;
   const controllerSha = requireAttemptRuntime(input.runtimeSha);
   const classification = input.classification ??
     classifyAttemptDetailV1(input.detail);

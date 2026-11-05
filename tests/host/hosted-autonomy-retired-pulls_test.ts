@@ -11,6 +11,7 @@ import {
   runHostedRetiredPullPass,
 } from "../../ops/hosted-autonomy-retired-pulls.ts";
 import { HOSTED_AUTONOMY_RETIRED } from "../../ops/hosted-autonomy-policy.ts";
+import { PULL_PROBE_BACKOFF_MS } from "../../ops/hosted-autonomy-pull-probe.ts";
 import type {
   HostedAutonomyDepsV1,
   HostedAutonomyGitHubV1,
@@ -197,16 +198,105 @@ for (
   });
 }
 
-Deno.test("retired pull: a reopened issue keeps its pull open and settles nothing", async () => {
+Deno.test("retired pull: a reopened issue keeps its pull open, settles `reopened` and returns the record to work", async () => {
   const fake = new FakeSurface(ownPull());
   fake.issueOpen = true;
-  const { state, deps, record0 } = await rig(retiredRecord(), fake);
+  const retired = retiredRecord();
+  const { state, deps, record0 } = await rig(retired, fake);
   const writes = state.repairWrites;
   const actions = await runHostedRetiredPullPass(deps);
   assert.deepEqual(fake.calls, [`list:${BRANCH}`, `issue:${ISSUE}`]);
-  assert.deepEqual(actions, [`retired-pull:${ID}:pr=${PR}:issue_open`]);
-  assert.equal(state.repairWrites, writes);
-  assert.equal((await record0()).retiredPullClosure, undefined);
+  assert.deepEqual(actions, [
+    `retired-pull:${ID}:pr=${PR}:reopened`,
+    "retired-pull:recorded=1",
+  ]);
+  assert.equal(state.repairWrites, writes + 1);
+  const record = await record0();
+  assert.equal(record.retiredPullClosure?.outcome, "reopened");
+  assert.equal(record.retiredPullClosure?.pr, PR);
+  assert.equal(record.nextStep, "work");
+  assert.equal(record.blocker, null);
+  assert.deepEqual(record.target, retired.target, "pull request kept");
+  assert.deepEqual(record.counters, retired.counters);
+  assert.equal(fake.comments.length, 0);
+  // Settled: the next pass reads nothing.
+  fake.calls = [];
+  assert.deepEqual(await runHostedRetiredPullPass(deps), []);
+  assert.deepEqual(fake.calls, []);
+});
+
+Deno.test("retired pull: an unsettleable record backs off and the others get their turn", async () => {
+  const fake = new FakeSurface(ownPull());
+  const ids = Array.from(
+    { length: 11 },
+    (_, index) => `issue-ubiquity-ai.ubq.fi-${2000 + index}` as WorkItemId,
+  );
+  // Eleven pending records ahead of the settleable one; each is on another
+  // repository the pass cannot reach (`surface_unreadable`).
+  const blocked = ids.map((id) =>
+    retiredRecord({
+      id,
+      repository: { ...retiredRecord().repository, name: "unreachable" },
+      target: { ...retiredRecord().target, branch: `sentinel/repair/${id}` },
+    })
+  );
+  const state = new MemoryState();
+  const seeded = await state.writeRepair(
+    repairSnapshot([...blocked, retiredRecord()], []),
+    null,
+  );
+  assert.ok(seeded.ok && seeded.value.status === "applied");
+  let now = T0 + 10_000;
+  const deps = {
+    state,
+    clock: { now: () => now },
+    githubFor: (repository: { name: string }) =>
+      repository.name === FOREIGN_REPO.name ? fake.surface() : null,
+  } as unknown as HostedAutonomyDepsV1;
+  const snapshot = async () => {
+    const read = await state.readRepair();
+    assert.ok(read.ok && read.value.status === "found");
+    return read.value.snapshot;
+  };
+  // Pass 1: the first ten are attempted once and stamped.
+  const first = await runHostedRetiredPullPass(deps);
+  assert.equal(
+    first.filter((line) => line.endsWith(":surface_unreadable")).length,
+    10,
+  );
+  assert.ok(first.includes("retired-pull:backoff=10"));
+  let work = (await snapshot()).work;
+  assert.deepEqual(
+    work.filter((row) => row.pullProbe !== undefined).map((row) => row.id),
+    ids.slice(0, 10),
+  );
+  assert.equal(work[0].pullProbe?.at, now);
+  assert.equal(work[0].nextStep, "blocked", "only the stamp changed");
+  assert.equal(work[0].updatedAt, blocked[0].updatedAt);
+  // Pass 2 (five minutes later): the stamped ten are skipped; the eleventh
+  // and the settleable record get their turn.
+  now += 5 * 60_000;
+  const second = await runHostedRetiredPullPass(deps);
+  assert.ok(second.includes(`retired-pull:${ids[10]}:surface_unreadable`));
+  assert.ok(second.includes(`retired-pull:${ID}:pr=${PR}:closed`));
+  assert.ok(!second.some((line) => line.includes(ids[0])));
+  work = (await snapshot()).work;
+  assert.equal(
+    work.find((row) => row.id === ID)?.retiredPullClosure?.outcome,
+    "closed",
+  );
+  // Pass 3 (inside every backoff): nothing is read.
+  now += 5 * 60_000;
+  fake.calls = [];
+  assert.deepEqual(await runHostedRetiredPullPass(deps), []);
+  // Past the backoff: the least recently probed are read first again.
+  now += PULL_PROBE_BACKOFF_MS;
+  const fourth = await runHostedRetiredPullPass(deps);
+  assert.equal(
+    fourth.filter((line) => line.endsWith(":surface_unreadable")).length,
+    10,
+  );
+  assert.ok(!fourth.some((line) => line.includes(ids[10])));
 });
 
 Deno.test("retired pull: a record retired for any other reason is never read", async () => {

@@ -21,6 +21,11 @@ import {
   verifyHumanMergeHeadReadmissions,
 } from "../../ops/hosted-autonomy-human-merge-readmission.ts";
 import { hostedIssueKey } from "../../ops/hosted-autonomy-policy.ts";
+import {
+  applyPullProbes,
+  PULL_PROBE_BACKOFF_MS,
+  type PullProbeStampV1,
+} from "../../ops/hosted-autonomy-pull-probe.ts";
 import type { HostedAutonomyScopeV1 } from "../../ops/hosted-autonomy-scopes.ts";
 import type {
   HostedAutonomyGitHubV1,
@@ -269,5 +274,73 @@ Deno.test("stale human merge: a retired record is completed only once its pull i
   assert.equal(
     retiredPullKeepsHot(retired({ pr: 51, outcome: "closed", at: NOW })),
     false,
+  );
+});
+
+Deno.test("stale human merge: an open pull is read once and skipped within its probe backoff", async () => {
+  let snapshot = repairSnapshot([staleWork()], [], [], [reserved()]);
+  const calls: string[] = [];
+  const read = async (at: number) => {
+    const probes: PullProbeStampV1[] = [];
+    await verifyHumanMergeHeadReadmissions(
+      planHumanMergeHeadReadmissions(snapshot, CLOSED, at),
+      scope(pull({ state: "open", merged: false }), calls),
+      [],
+      (probe) => probes.push(probe),
+    );
+    snapshot = applyPullProbes(snapshot, probes, at);
+  };
+  await read(NOW);
+  assert.deepEqual(calls, [`list:${BRANCH}`]);
+  assert.deepEqual(snapshot.work[0]!.pullProbe, { pr: 51, at: NOW });
+  assert.equal(snapshot.work[0]!.nextStep, "work", "only the stamp changed");
+  // Every pass inside the backoff reads nothing.
+  for (
+    let at = NOW + 5 * 60_000;
+    at < NOW + PULL_PROBE_BACKOFF_MS;
+    at += 60 * 60_000
+  ) {
+    await read(at);
+  }
+  assert.deepEqual(calls, [`list:${BRANCH}`]);
+  // Past the backoff it is read again (and stamped again).
+  await read(NOW + PULL_PROBE_BACKOFF_MS);
+  assert.deepEqual(calls, [`list:${BRANCH}`, `list:${BRANCH}`]);
+  assert.equal(snapshot.work[0]!.pullProbe?.at, NOW + PULL_PROBE_BACKOFF_MS);
+});
+
+Deno.test("stale human merge: a pull the retired-pull pass settled, or a closed-before-merge park, is never read", () => {
+  const settled = (outcome: string) =>
+    parseWorkRecordV1({
+      ...staleWork({ intent: null }),
+      retiredPullClosure: { pr: 51, outcome, at: NOW },
+    });
+  for (const outcome of ["closed", "closed_elsewhere", "not_own"]) {
+    assert.deepEqual(
+      planHumanMergeHeadReadmissions(
+        repairSnapshot([settled(outcome)]),
+        CLOSED,
+        NOW,
+      ),
+      [],
+      outcome,
+    );
+  }
+  const closedBeforeMerge = staleWork({
+    nextStep: "blocked",
+    intent: null,
+    blocker: {
+      kind: "other",
+      message: "pull request closed before merge",
+      since: T0 + 3000,
+    },
+  });
+  assert.deepEqual(
+    planHumanMergeHeadReadmissions(
+      repairSnapshot([closedBeforeMerge]),
+      CLOSED,
+      NOW,
+    ),
+    [],
   );
 });

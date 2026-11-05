@@ -16,14 +16,20 @@ import {
   conflictMarker,
   conflictMarkerBase,
   conflictResolutionAdmissible,
+  conflictResolutionInFlight,
   pendingConflictResolution,
 } from "../../src/repair/conflict-resolution.ts";
 import {
   LOST_CONFLICT_CELL_EXPIRY_MS,
   lostCellLine,
   lostConflictCellBinding,
+  lostConflictCellCount,
   repentLostConflictCell,
 } from "../../src/repair/conflict-lost-cell.ts";
+import type { GitSha } from "../../src/contracts/brands.ts";
+import { ATTEMPT_DETAIL_LOST_CELL } from "../../src/repair/attempt-policy.ts";
+import { HOSTED_AUTONOMY_RETRYABLE } from "../../ops/hosted-autonomy-policy.ts";
+import { conflictMarkerVerdict } from "../../ops/hosted-autonomy-retries.ts";
 import {
   baseRefreshIntentKey,
   implementationIntentKey,
@@ -238,3 +244,131 @@ Deno.test("lost cell: only the exact charged marked resolution binds", async () 
     await ctx.cleanup();
   }
 });
+
+/** The planner's re-admission of `record`'s pending resolution at `mergeBase`. */
+async function readmitted(
+  record: WorkRecordV1,
+  at: number,
+  mergeBase: GitSha,
+) {
+  const attempt = record.counters.attempts + 1;
+  const id = await deriveReservationId({
+    repository: REPO,
+    taskId: TASK,
+    head: record.target.base,
+    attempt,
+    purpose: "retry",
+  });
+  const work: WorkRecordV1 = {
+    ...record,
+    nextStep: "work",
+    blocker: null,
+    wait: null,
+    counters: { ...record.counters, attempts: attempt },
+    intent: {
+      kind: "implementation",
+      key: implementationIntentKey(id),
+      startedAt: at,
+      branch: BRANCH,
+      expectedHead: null,
+      observedBase: record.target.base,
+      pr: null,
+      requestId: id,
+      resultId: null,
+      failure: conflictMarker(mergeBase, at),
+    },
+    updatedAt: at,
+  };
+  const charge: BudgetReservationV1 = {
+    version: "v1",
+    kind: "budget_reservation",
+    repository: REPO,
+    id,
+    taskId: TASK,
+    attempt,
+    head: record.target.base,
+    purpose: "retry",
+    createdAt: at,
+    outcome: "reserved",
+    settledAt: null,
+    proofRef: null,
+  };
+  return { work, charge };
+}
+
+Deno.test(
+  "lost cell: the second loss on one merge base blocks like a spent resolution; a loss on a new base re-pends",
+  async () => {
+    const ctx = await makeConflictGit();
+    try {
+      const { rig, work, charge, plannable } = await hostedRig(ctx);
+      const readmit = async (mergeBase: GitSha) => {
+        const state = await rig.snapshot();
+        const next = await readmitted(
+          state.work[0],
+          rig.clock.now(),
+          mergeBase,
+        );
+        const wrote = await rig.state.writeRepair({
+          ...state,
+          sequence: state.sequence + 1,
+          updatedAt: rig.clock.now(),
+          work: [next.work],
+          reservations: [...state.reservations, next.charge],
+        }, rig.state.repairHead);
+        assert.ok(wrote.ok && wrote.value.status === "applied");
+        return next;
+      };
+      // First loss: recorded, the pending resolution returns.
+      rig.clock.advance(LOST_CONFLICT_CELL_EXPIRY_MS);
+      assert.notEqual((await rig.run(1)).status, "state_error");
+      let state = await rig.snapshot();
+      assert.equal(lostConflictCellCount(state, work, ctx.base), 1);
+      assert.equal(pendingConflictResolution(state.work[0].intent), ctx.base);
+      // Second loss on the same merge base: blocked, nothing re-pended.
+      const second = await readmit(ctx.base);
+      rig.clock.advance(LOST_CONFLICT_CELL_EXPIRY_MS);
+      assert.notEqual((await rig.run(1)).status, "state_error");
+      state = await rig.snapshot();
+      const parked = state.work[0];
+      assert.equal(lostConflictCellCount(state, work, ctx.base), 2);
+      assert.equal(parked.nextStep, "blocked");
+      assert.equal(parked.blocker?.message, ATTEMPT_DETAIL_LOST_CELL);
+      assert.deepEqual(parked.intent, second.work.intent, "marked intent kept");
+      assert.equal(conflictResolutionInFlight(parked.intent), ctx.base);
+      assert.deepEqual(
+        state.reservations.map((row) => [row.id, row.outcome]),
+        [[charge.id, "ambiguous"], [second.charge.id, "ambiguous"]],
+        "both charged, never refunded",
+      );
+      assert.equal(conflictResolutionAdmissible(true, state, parked), null);
+      assert.ok(!await plannable(), "no third charge");
+      // The launcher's retry table: a retryable class, spent at this tip and
+      // re-pended only at a moved tip.
+      assert.ok(
+        HOSTED_AUTONOMY_RETRYABLE.some((rule) =>
+          ATTEMPT_DETAIL_LOST_CELL.startsWith(rule.prefix)
+        ),
+      );
+      assert.deepEqual(
+        conflictMarkerVerdict(state, parked, ctx.base, ctx.base),
+        { kind: "deny", reason: "conflict_resolution_spent" },
+      );
+      const moved = "c".repeat(40) as GitSha;
+      assert.deepEqual(
+        conflictMarkerVerdict(state, parked, ctx.base, moved),
+        { kind: "rebase", observedBase: moved },
+      );
+      // A loss on a new merge base is a first loss there: re-pended.
+      await readmit(moved);
+      rig.clock.advance(LOST_CONFLICT_CELL_EXPIRY_MS);
+      assert.notEqual((await rig.run(1)).status, "state_error");
+      state = await rig.snapshot();
+      assert.equal(lostConflictCellCount(state, work, moved), 1);
+      assert.equal(state.work[0].nextStep, "work");
+      assert.equal(pendingConflictResolution(state.work[0].intent), moved);
+    } finally {
+      await ctx.cleanup();
+    }
+  },
+);

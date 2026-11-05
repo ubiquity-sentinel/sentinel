@@ -32,11 +32,30 @@
  * charge per (task, base tip)" rule for a FAILED resolution does not apply.
  * Nothing else on the record changes (head, PR, preserved descriptor,
  * counters), so the exact-head and custody rules of the admission still hold.
+ *
+ * Bound: every lost cell is recorded in the same state commit as one
+ * `ATTEMPT_DETAIL_LOST_CELL` attempt-memory outcome in the family of its
+ * merge base. The `LOST_CONFLICT_CELL_PARK_THRESHOLD`-th loss on the same
+ * (task, merge base) does not return the record to its pending resolution:
+ * it blocks exactly like a failed resolution (marked implementation intent
+ * and its `ambiguous` charge retained, blocker the lost-cell detail), so the
+ * launcher's existing one-charge-per-(task, base tip) rule
+ * (`conflictMarkerVerdict`) withholds every further charge while the tip is
+ * the marked one and re-pends a plain refresh only once the base moved. A
+ * cell that always dies before upload therefore costs at most two charges
+ * per base tip, and identical losses across tips feed the repeat-failure
+ * streak (`ops/hosted-autonomy-repeat-failure.ts`), whose normal park and
+ * issue/route/prompt re-arms then apply.
  */
 import type { GitSha } from "../contracts/brands.ts";
 import { canonicalStringify } from "../contracts/canonical.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import {
+  ATTEMPT_DETAIL_LOST_CELL,
+  attemptMemorySettlementMutationV1,
+} from "./attempt-policy.ts";
+import { markBlocked } from "./transitions.ts";
 import {
   CONFLICT_CELL_EVIDENCE_EXPIRY_MS,
   conflictMarker,
@@ -57,6 +76,35 @@ import type {
 
 /** Admission age past which a conflict cell's evidence provably expired. */
 export const LOST_CONFLICT_CELL_EXPIRY_MS = CONFLICT_CELL_EVIDENCE_EXPIRY_MS;
+
+/** Lost cells on one (task, merge base) after which the record blocks. */
+export const LOST_CONFLICT_CELL_PARK_THRESHOLD = 2;
+
+/**
+ * Lost cells already recorded for `record` at `mergeBase`: the summed counts
+ * of its `ATTEMPT_DETAIL_LOST_CELL` outcomes in that merge base's family,
+ * across runtime revisions.
+ */
+export function lostConflictCellCount(
+  snapshot: Pick<RepairStateSnapshotV1, "attemptMemory">,
+  record: WorkRecordV1,
+  mergeBase: GitSha,
+): number {
+  let count = 0;
+  for (const memory of snapshot.attemptMemory) {
+    if (
+      memory.taskId !== record.id || memory.base !== mergeBase ||
+      memory.purpose !== "implementation" ||
+      memory.repository.owner !== record.repository.owner ||
+      memory.repository.name !== record.repository.name ||
+      memory.repository.installationId !== record.repository.installationId
+    ) continue;
+    for (const entry of memory.entries) {
+      if (entry.detail === ATTEMPT_DETAIL_LOST_CELL) count += entry.count;
+    }
+  }
+  return count;
+}
 
 /** The exact charged in-flight resolution a lost cell settles. */
 export interface LostConflictCellV1 {
@@ -194,13 +242,25 @@ export async function settleLostConflictCell(
     canonicalStringify(current) !== canonicalStringify(record)
   ) return { kind: "state_error", detail: "lost cell record changed" };
   const now = deps.clock.now();
-  const step = await persistTransition(
-    deps,
-    fresh,
-    replaceWorkMutation(
-      repentLostConflictCell(record, binding.mergeBase, now),
-    ),
-  );
+  // The loss is recorded in the merge base's family in the SAME commit as
+  // the record's move; the bound's loss parks instead of re-pending.
+  const memory = await attemptMemorySettlementMutationV1({
+    record,
+    detail: ATTEMPT_DETAIL_LOST_CELL,
+    now,
+    runtimeSha: deps.controllerSha,
+    base: binding.mergeBase,
+  });
+  const parked =
+    lostConflictCellCount(fresh.snapshot, record, binding.mergeBase) + 1 >=
+      LOST_CONFLICT_CELL_PARK_THRESHOLD;
+  const next = parked
+    ? markBlocked(record, "other", ATTEMPT_DETAIL_LOST_CELL, now)
+    : repentLostConflictCell(record, binding.mergeBase, now);
+  const step = await persistTransition(deps, fresh, (draft) => {
+    replaceWorkMutation(next)(draft);
+    memory(draft);
+  });
   if (step.kind === "progress") {
     console.log(lostCellLine(record.id, binding.reservationId, proof));
   }
