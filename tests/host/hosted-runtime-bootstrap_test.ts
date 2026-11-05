@@ -338,7 +338,13 @@ assert.ok(!passportGithub.calls.includes("listOpenIssues"));
 assert.deepEqual(preparedTargets, []);
 assert.equal(gatewayTransport.requests.length, 0);
 gatewayTransport.assertNoWriteEndpoints();
-assert.deepEqual(await Array.fromAsync(Deno.readDir(gatewayRoot + "/retained/entries")), []);
+// The health pass never composes the gateway, so its retention directory may
+// not exist at all; when it does, it must still hold no entry.
+const retained = await Array.fromAsync(Deno.readDir(gatewayRoot + "/retained/entries")).catch((error) => {
+  if (error instanceof Deno.errors.NotFound) return [];
+  throw error;
+});
+assert.deepEqual(retained, []);
 console.log(JSON.stringify({ kind: "bootstrap_fixture", result, modelCalls, httpCalls, queueReads, artifactHttpCalls, preflightCalls }));
 `,
     { mode: 0o600 },
