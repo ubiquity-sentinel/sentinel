@@ -1,5 +1,6 @@
 /** Exact bounded runtime implementer prompt. */
 import type { ModelRunRequestV1 } from "../contracts/ports.ts";
+import { IDENTICAL_ATTEMPT_FACT_PREFIX } from "../contracts/attempt-input.ts";
 import {
   CI_EVIDENCE_FIX_INSTRUCTION,
   CI_SELF_CHECK_INSTRUCTION,
@@ -131,7 +132,27 @@ export function buildPrompt(
         "merge: the trusted host commits it with exactly these two parents.",
     );
   }
-  if (request.priorAttempts !== undefined && request.priorAttempts.length > 0) {
+  const refusals = (request.priorAttempts ?? []).filter((fact) =>
+    fact.detail.startsWith(IDENTICAL_ATTEMPT_FACT_PREFIX)
+  );
+  const priorFacts = (request.priorAttempts ?? []).filter((fact) =>
+    !fact.detail.startsWith(IDENTICAL_ATTEMPT_FACT_PREFIX)
+  );
+  if (refusals.length > 0) {
+    // #334: the trusted admission refused an identical replay of this task
+    // (same base tip, candidate patch, review findings and runtime). This
+    // attempt was admitted because at least one input changed; the fact names
+    // the refused prior attempt and which inputs it shared with this one.
+    parts.push(
+      "IDENTICAL ATTEMPT REFUSED — VERIFIED FACT: the trusted loop breaker " +
+        "refused re-running an earlier attempt of this task with identical " +
+        "inputs, because it could only reproduce the same result. Do not " +
+        "reproduce that attempt's change; address the review findings with a " +
+        "different change:\n" +
+        refusals.map((fact) => `- ${fact.detail}`).join("\n"),
+    );
+  }
+  if (priorFacts.length > 0) {
     // Bounded VERIFIED facts from durable attempt memory. An unchanged replay
     // of any listed approach has already been refused upstream by the trusted
     // loop breaker; this is evidence, never permission to change budgets,
@@ -142,7 +163,7 @@ export function buildPrompt(
         "runtime revision (unchanged replays have been refused by the trusted " +
         "loop breaker; do not repeat these, and make the change that produces " +
         "new evidence the listed failures did not):\n" +
-        request.priorAttempts
+        priorFacts
           .map((fact) =>
             `- ${fact.detail} (stage ${fact.stage}, ${fact.failureClass}, ${fact.count} recorded outcome${
               fact.count === 1 ? "" : "s"

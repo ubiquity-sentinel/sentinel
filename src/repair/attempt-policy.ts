@@ -49,6 +49,10 @@ import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import { isPassportWorkTrial } from "./passport-work-trial.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { CANDIDATE_COMMIT_REFUSAL_DETAILS } from "./model-port-checkout.ts";
+import {
+  attemptOutcomeRecordsInputs,
+  recordAttemptInputs,
+} from "./identical-attempt.ts";
 
 /**
  * Closed settlement details the implementation path already produces. These
@@ -517,10 +521,14 @@ export async function attemptMemorySuccessMutationV1(input: {
         entries: [],
       }
       : draft.attemptMemory[index];
-    const next = recordAttemptSuccessV1(
-      existing,
-      input.now,
+    // The accepted attempt's exact inputs are recorded with the success, so
+    // an identical replay is refused before its reservation (#334).
+    const next = recordAttemptInputs(
+      recordAttemptSuccessV1(existing, input.now, runtimeSha),
+      draft,
+      input.record,
       runtimeSha,
+      input.now,
     );
     const sorted = [...draft.attemptMemory];
     if (index === -1) {
@@ -591,7 +599,7 @@ export async function attemptMemorySettlementMutationV1(input: {
         entries: [],
       }
       : draft.attemptMemory[index];
-    const merged = mergeAttemptOutcomeV1(existing, {
+    const outcome = mergeAttemptOutcomeV1(existing, {
       fingerprint,
       stage: classification.stage,
       failureClass: classification.failureClass,
@@ -599,6 +607,18 @@ export async function attemptMemorySettlementMutationV1(input: {
       controllerSha,
       atMs: input.now,
     });
+    // Only an outcome that proves what its inputs produce is recorded as an
+    // input fingerprint (#334); transient/unknown failures keep the bounded
+    // equivalence allowance above.
+    const merged = attemptOutcomeRecordsInputs(classification.failureClass)
+      ? recordAttemptInputs(
+        outcome,
+        draft,
+        input.record,
+        controllerSha,
+        input.now,
+      )
+      : outcome;
     if (index === -1) {
       draft.attemptMemory.push(merged);
     } else {
