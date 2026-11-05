@@ -35,7 +35,8 @@ const FOREIGN_HEAD_PREFIX = "the pull request reports a foreign head ";
  *
  * Bounds: one refresh per record per base tip (the refresh intent key binds
  * PR, head and observed tip, and the target advances), serialised per
- * repository by the delivery line (`deliveryQueueAhead`), and at most
+ * repository by the delivery line (`deliveryQueueAhead`: only the head of the
+ * line refreshes, so these bounds count head-of-line refreshes), and at most
  * `CARRIED_REFRESH_LIMIT` refreshes per reviewed head, counted from git (the
  * first-parent distance from H0, so no state field and no reset by a
  * refresh); every wait (CI, proof, a pull request still reporting the

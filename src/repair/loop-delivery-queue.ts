@@ -9,9 +9,12 @@
  * (`loop-carried-delivery.ts`, which decides that and parks every other spent
  * record).
  *
- * The line is ordered by delivery readiness, then pull request number: a
- * spent record is held only by a contender landing on the tip or a
- * deliverable one ahead of it (`delivery-queue.ts`). The line writes nothing,
+ * The line is ordered by delivery readiness, then age (`createdAt`, then id):
+ * a spent record is held only by a contender landing on the tip, the head of
+ * the line in flight (its refresh, or the head it refreshed onto the tip, on
+ * its way to its CI and review, sentinel #329) or a deliverable one ahead of
+ * it (`delivery-queue.ts`), so only the head of the line ever refreshes and a
+ * waiting record keeps its reviewed head and base. The line writes nothing,
  * so it adds no state shape: generation 80, the rollback target, holds every
  * other record behind a refresh this line admitted, as it does its own.
  */

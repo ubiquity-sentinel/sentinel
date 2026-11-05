@@ -174,14 +174,16 @@ Deno.test("delivery line (live 01:25Z): 698 and 879 are not held by CI-fixed hea
   }
 });
 
-Deno.test("delivery line (live 20:36Z): red heads and heads awaiting their CI hold nobody; deliverable heads go in pull request order", () => {
+Deno.test("delivery line (live 20:36Z): red heads and heads awaiting their CI hold nobody; deliverable heads go oldest first", () => {
   const { state, snapshot, record, ahead, replace } = live(AT_2036);
   const tip = state.developmentTip;
-  // 595 (PR 1087), 698 and 879 are deliverable now; 605 (PR 1054) is the
-  // lowest deliverable head and goes first.
-  assert.equal(ahead(595), LIVE_ID(605));
-  assert.equal(ahead(698), LIVE_ID(605));
-  assert.equal(ahead(879), LIVE_ID(605));
+  // 595 (PR 1087), 698 and 879 are deliverable now; 137 (PR 1086, created
+  // first) is the oldest deliverable head and goes first (sentinel #329: the
+  // line is ordered by `createdAt`, then id, no longer by PR number, under
+  // which 605, PR 1054, went first).
+  assert.equal(ahead(595), LIVE_ID(137));
+  assert.equal(ahead(698), LIVE_ID(137));
+  assert.equal(ahead(879), LIVE_ID(137));
   const standing = (issue: number) =>
     lineStanding(snapshot, record(issue), tip, state.updatedAt, CUTOFF);
   for (const issue of [595, 698, 879]) {
@@ -201,7 +203,7 @@ Deno.test("delivery line (live 20:36Z): red heads and heads awaiting their CI ho
     ...snapshot,
     work: snapshot.work.filter((row) => row.id !== LIVE_ID(595)),
   } as Snapshot;
-  assert.equal(ahead(698, booked), LIVE_ID(605));
+  assert.equal(ahead(698, booked), LIVE_ID(137));
   const refreshed: WorkRecordV1 = {
     ...record(698),
     nextStep: "work",
@@ -244,6 +246,8 @@ function contender(
     },
     nextStep: "delivery",
     counters: { attempts: 1, retries: 0, reviewRounds: rounds },
+    // The line's order is oldest first (`createdAt`, then id): index order.
+    createdAt: T0 + index,
     ...overrides,
   });
 }
@@ -400,9 +404,11 @@ Deno.test("delivery line: a reviewed head waits for every actionable contender a
       false,
     ]]);
     const held = deliveryQueueAhead(snapshot, me, TIP, NOW, null)?.id ?? null;
-    // `me` is deliverable (current head reviewed); only landing and lower
-    // ready heads hold it.
+    // `me` is deliverable (current head reviewed); only landing heads, a
+    // head refreshed onto the tip since its review (the head of the line in
+    // flight, sentinel #329) and older ready heads hold it.
     const holds = expected === "landing" ||
+      (expected === "re_review" && refreshed) ||
       (expected === "ready" && other.target.pr! < me.target.pr!);
     assert.equal(held, holds ? other.id : null, label);
   }
@@ -425,6 +431,7 @@ Deno.test("delivery line: a head with a round left has the same reviewed-head or
     ]]);
     const held = deliveryQueueAhead(snapshot, me, TIP, NOW, null)?.id ?? null;
     const holds = expected === "landing" ||
+      (expected === "re_review" && refreshed) ||
       (expected === "ready" && other.target.pr! < me.target.pr!);
     assert.equal(held, holds ? other.id : null, label);
   }
