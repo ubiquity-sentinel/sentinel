@@ -265,6 +265,9 @@ export async function runHostedAutonomy(
           scoped,
           startedAt + HOSTED_AUTONOMY_PASS_DEADLINE_MS,
           readOnly.state,
+          // A record this pass retired is settled from the next pass, so
+          // its retirement stays the cycle's one write for it.
+          startedAt,
         ),
       ];
     } finally {

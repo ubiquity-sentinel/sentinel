@@ -31,7 +31,9 @@
  * stamped (`pullProbe`, `hosted-autonomy-pull-probe.ts`) in the same write and
  * skipped until its backoff elapsed, and the least recently probed records
  * are read first, so an unsettleable record never starves the others. A
- * protected record is not read. The pass never throws and never fails the
+ * protected record is not read, and neither is a record the same hosted pass
+ * just retired: its retirement is that cycle's one write, and the pull
+ * request is settled from the next pass. The pass never throws and never fails the
  * run; it only appends actions (no URL, body or credential).
  */
 import type { GitSha } from "../src/contracts/brands.ts";
@@ -206,11 +208,19 @@ export async function runHostedRetiredPullPass(
    * state read. The pass re-reads `deps.state` for its expected head.
    */
   discovery: StateReadView = deps.state,
+  /**
+   * The start of the hosted pass this follows. A record retired at or after
+   * it was retired by this same pass, in that pass's own write: it waits for
+   * the next pass, so one retirement is one write and its pull request is
+   * never read, settled or stamped in the cycle that retired it.
+   */
+  passStartedAt: number = Number.POSITIVE_INFINITY,
 ): Promise<string[]> {
   // A record inside its probe backoff waits for a later pass.
   const start = deps.clock.now();
   const pending = (record: WorkRecordV1) =>
     retiredPullClosurePending(record) &&
+    !(record.blocker !== null && record.blocker.since >= passStartedAt) &&
     !queueRecordProtected(record, deps.queueCustody) &&
     pullProbeDue(record, start);
   try {
