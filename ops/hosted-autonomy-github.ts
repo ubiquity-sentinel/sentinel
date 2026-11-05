@@ -9,7 +9,10 @@ import {
   missingExpectedChecks,
 } from "../src/repair/ci-coverage.ts";
 import { isGatewayVpsRepository } from "../src/repair/vps-delivery.ts";
-import { isPassportDeployCheck } from "../src/repair/merge-gate-checks.ts";
+import {
+  isPassportDeployCheck,
+  isReviewBotCheck,
+} from "../src/repair/merge-gate-checks.ts";
 import { HOSTED_AUTONOMY_REQUIRED_CHECK } from "./hosted-autonomy-policy.ts";
 import { createHostedMismatchDispositionObservations } from "./hosted-autonomy-mismatch-github.ts";
 import type {
@@ -339,6 +342,11 @@ export function createHostedAutonomyGitHub(
       // deterministic signal it can supply, so a head with no CI at all is
       // never delivered, and it is not red either (no CI ran).
       if (runs.length === 0) return null;
+      // A review bot's check alone (the gateway's lone skipped `CodeRabbit`
+      // before any `Gateway CI` run) is no CI evidence either: not green.
+      if (runs.every((run) => isReviewBotCheck(String(run["name"])))) {
+        return null;
+      }
       // A never-started run no backup result stands in for is no evidence.
       if (backupNeverStartedRemains(runs)) return null;
       // Every run on that head must be completed and green (success, or a

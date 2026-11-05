@@ -1,0 +1,64 @@
+/**
+ * The launcher's foreign green read (`hasAllChecksGreen`) never counts a
+ * review bot's check as CI evidence (live ai.ubq.fi #1348, #1353, #1354: one
+ * skipped `CodeRabbit` check and no `Gateway CI` run on the merged heads). A
+ * head with only that check is unreadable (null): neither green nor red.
+ *
+ * The read is the real `createHostedAutonomyGitHub` surface over a scripted
+ * transport; no network, credential, model or external write is used.
+ */
+import assert from "node:assert/strict";
+import { createHostedAutonomyGitHub } from "../../ops/hosted-autonomy.ts";
+import {
+  checkRun,
+  checkRunPage,
+  HEAD,
+  jsonResponse,
+} from "./hosted-autonomy-fixtures.ts";
+
+const AI = {
+  owner: "ubiquity",
+  name: "ai.ubq.fi",
+  installationId: 155687488,
+} as const;
+
+async function withHeadRuns<T>(
+  runs: readonly unknown[],
+  body: () => Promise<T>,
+): Promise<T> {
+  const original = globalThis.fetch;
+  globalThis.fetch = (() =>
+    Promise.resolve(
+      jsonResponse(checkRunPage([...runs], runs.length)),
+    )) as typeof fetch;
+  try {
+    return await body();
+  } finally {
+    globalThis.fetch = original;
+  }
+}
+
+const SKIPPED_BOT = checkRun("CodeRabbit", {
+  conclusion: "skipped",
+  check_suite: { id: 21 },
+});
+
+Deno.test("launcher green read: a lone skipped CodeRabbit check is no CI evidence", async () => {
+  const surface = createHostedAutonomyGitHub("fixture-token", AI);
+  assert.equal(
+    await withHeadRuns([SKIPPED_BOT], () => surface.hasAllChecksGreen(HEAD)),
+    null,
+  );
+});
+
+Deno.test("launcher green read: next to a green Gateway CI job the bot check changes nothing", async () => {
+  const surface = createHostedAutonomyGitHub("fixture-token", AI);
+  const validate = checkRun("validate", { check_suite: { id: 22 } });
+  assert.equal(
+    await withHeadRuns(
+      [SKIPPED_BOT, validate],
+      () => surface.hasAllChecksGreen(HEAD),
+    ),
+    true,
+  );
+});
