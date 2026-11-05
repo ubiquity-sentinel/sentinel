@@ -1,1 +1,1 @@
-{"lastCycle":{"attempt":1,"runId":42082117054},"thresholds":{"maintenance_repair_median":{"closedAtMs":null,"filedAtMs":1793894336410,"issue":359,"measuredMilli":23942}},"version":1}
+{"daily":null,"lastCycle":{"attempt":1,"runId":42082117054},"thresholds":{"maintenance_repair_median":{"closed":null,"cyclesSinceText":0,"filedAtMs":1793894336410,"issue":359,"measuredMilli":23942}},"version":2}
