@@ -399,18 +399,46 @@ Deno.test("acceptance runtime: production composition admits exact self-installe
     assert.deepEqual(after.value.snapshot.reviews, [fixture.old]);
     assert.equal(result.beforeHead, before.value.head);
     assert.equal(result.appliedHead, after.value.head);
+    // The repair-tier step first records the installed generation's
+    // retired-pull cold scan row (one tier commit: manifest + `tierScans/`
+    // row, no record moved); the retry then writes exactly one commit.
+    const gitDir = `${fixture.rig.tmp}/remote.git`;
+    const tierHead = await fixture.git([
+      "--git-dir",
+      gitDir,
+      "rev-parse",
+      `${after.value.head}^`,
+    ]);
     assert.equal(
-      await fixture.git([
-        "--git-dir",
-        `${fixture.rig.tmp}/remote.git`,
-        "rev-parse",
-        `${after.value.head}^`,
-      ]),
+      await fixture.git(["--git-dir", gitDir, "rev-parse", `${tierHead}^`]),
       before.value.head,
     );
     assert.equal(
+      await fixture.git([
+        "--git-dir",
+        gitDir,
+        "log",
+        "-1",
+        "--format=%s",
+        tierHead,
+      ]),
+      "sentinel-state repair tier write",
+    );
+    const tierPaths = (await fixture.git([
+      "--git-dir",
+      gitDir,
+      "diff",
+      "--name-only",
+      before.value.head,
+      tierHead,
+    ])).split("\n").sort();
+    assert.equal(tierPaths.length, 2, JSON.stringify(tierPaths));
+    assert.equal(tierPaths[0], "manifest.json");
+    assert.match(tierPaths[1], /^tierScans\/[0-9a-f]{64}\.json$/);
+    // One sequence step for the tier scan row, one for the retry.
+    assert.equal(
       after.value.snapshot.sequence,
-      before.value.snapshot.sequence + 1,
+      before.value.snapshot.sequence + 2,
     );
     assert.deepEqual(await fixture.release.readRelease(), releaseBefore);
     await fixture.run();
