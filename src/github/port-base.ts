@@ -3,6 +3,7 @@ import {
   type NativeQueueGuardV1,
   type QueueEffectRequest,
 } from "./native-queue-guard.ts";
+import { TARGET_DELIVERY_POLICIES } from "../contracts/target-delivery.ts";
 import type {
   ExistingPrTakeoverPort,
   TakeoverEffectAuthorization,
@@ -74,8 +75,11 @@ export abstract class GitHubPortBase {
   protected readonly resolutionVerifier: HumanResolutionVerifierV1 | null;
   protected readonly findingCap: number;
   protected readonly cooldownGate: GitHubCooldownGateV1;
+  protected readonly deliveryPolicies: Readonly<Record<string, unknown>>;
 
   constructor(options: GitHubPortOptionsV1) {
+    this.deliveryPolicies = options.deliveryPolicies ??
+      TARGET_DELIVERY_POLICIES;
     this.nativeQueue = options.nativeQueue;
     this.selfMergeEnabled = options.selfMergeEnabled === true &&
       options.repository.owner === "ubiquity-sentinel" &&
@@ -213,6 +217,10 @@ export abstract class GitHubPortBase {
 
   readCommitParents(sha: GitSha): Promise<PortResultV1<GitSha[] | null>> {
     return this.client.readCommitParents(sha);
+  }
+
+  readCommitTree(sha: GitSha): Promise<PortResultV1<GitSha | null>> {
+    return this.client.readCommitTree(sha);
   }
 
   /**

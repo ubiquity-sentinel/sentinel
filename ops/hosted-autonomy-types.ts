@@ -67,6 +67,12 @@ export interface HostedAutonomyPullV1 {
   /** Required only when recovering a historical cleared publication. */
   mergedBy?: string | null;
   parents: readonly string[];
+  /**
+   * A single-parent (squash, #331) merge's own tree and the pull head's tree;
+   * read only for that shape, absent or null when unread.
+   */
+  mergeTree?: string | null;
+  headTree?: string | null;
   revisionOnBaseBranch: boolean;
   /** The pull's own base commit is an ancestor of the merge revision. */
   baseAncestorOfRevision: boolean;

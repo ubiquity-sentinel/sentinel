@@ -868,6 +868,7 @@ export interface MakePortOptions {
   requestDeadlineMs?: number;
   /** Backup CI consumer for the port and the client (spec §11.2). */
   backupCi?: GitHubPortOptionsV1["backupCi"];
+  deliveryPolicies?: GitHubPortOptionsV1["deliveryPolicies"];
 }
 
 export function makePort(
@@ -877,7 +878,25 @@ export function makePort(
   client: GitHubApiClient;
   transport: ScriptedHttpTransport;
 } {
-  const transport = new ScriptedHttpTransport(options.script ?? []);
+  // Fallback repository merge settings (#331): squash forbidden, so a merge
+  // fixture keeps the merge-commit shape unless it scripts its own read
+  // earlier (entries answer in script order).
+  const repository = options.repository ?? REPO;
+  const transport = new ScriptedHttpTransport([
+    ...(options.script ?? []),
+    {
+      ...httpRespond(
+        "GET",
+        `/repos/${repository.owner}/${repository.name}`,
+        200,
+        {
+          allow_squash_merge: false,
+          allow_merge_commit: true,
+        },
+      ),
+      repeat: true,
+    },
+  ]);
   const portOptions: GitHubPortOptionsV1 = {
     nativeQueue: options.nativeQueue === null
       ? undefined
@@ -900,6 +919,7 @@ export function makePort(
     maxItems: options.maxItems,
     requestDeadlineMs: options.requestDeadlineMs,
     backupCi: options.backupCi,
+    deliveryPolicies: options.deliveryPolicies,
   };
   const port = new GitHubPortImpl(portOptions);
   const client = new GitHubApiClient({
