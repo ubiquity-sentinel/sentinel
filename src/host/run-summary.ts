@@ -25,6 +25,8 @@ import {
   type WedgeReportV0,
   wedgeSentence,
 } from "./run-summary-wedges.ts";
+import { scanPlanRefusalFromLog } from "./matrix-plan-diagnostic.ts";
+import type { MatrixPlanRefusalV1 } from "./matrix-plan-refusal.ts";
 
 /** The fields of one child's `hosted_runtime_summary` this summary reads. */
 export interface ChildRuntimeSummaryV1 {
@@ -43,6 +45,11 @@ export interface ChildRuntimeSummaryV1 {
   prsTouched: { repository: string; number: number; action: string }[];
   outcome: string;
   reasonCode: string;
+  /**
+   * #335: the planner job's re-emitted refusal reason and ready-unplanned
+   * count, read only by the throughput metrics record.
+   */
+  plannerRefusal?: MatrixPlanRefusalV1;
 }
 
 /** One completed job of the run attempt and its last runtime summary. */
@@ -168,6 +175,19 @@ export function lastRuntimeSummary(log: string): ChildRuntimeSummaryV1 | null {
     }
   }
   return null;
+}
+
+/**
+ * The job's last runtime summary plus its planner refusal (#335), when the
+ * log carries exactly one re-emitted plan diagnostic with one.
+ */
+export function runtimeSummaryWithPlanRefusal(
+  log: string,
+): ChildRuntimeSummaryV1 | null {
+  const summary = lastRuntimeSummary(log);
+  if (summary === null) return null;
+  const refusal = scanPlanRefusalFromLog(log);
+  return refusal === null ? summary : { ...summary, plannerRefusal: refusal };
 }
 
 /** The one value every known summary agrees on, else null. */
@@ -372,7 +392,11 @@ export async function emitRunSummary(
   const log = deps.log ?? ((line: string) => console.log(line));
   try {
     const [jobs, wedges] = await Promise.all([
-      deps.readJobs(run.runId, run.runAttempt, lastRuntimeSummary),
+      deps.readJobs(
+        run.runId,
+        run.runAttempt,
+        runtimeSummaryWithPlanRefusal,
+      ),
       readWedges(deps),
     ]);
     const summary = aggregateRunSummary(run, jobs.ok ? jobs.value : [], wedges);

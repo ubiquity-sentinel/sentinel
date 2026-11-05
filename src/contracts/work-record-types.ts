@@ -1,3 +1,4 @@
+import type { WorkWaitCauseV1 } from "./work-wait-cause.ts";
 import type {
   GitSha,
   IncidentFingerprint,
@@ -76,6 +77,11 @@ export interface WorkWaitV1 {
   since: number;
   /** Timestamp the wait ends (next retry/review arrival); null when unknown. */
   until: number | null;
+  /**
+   * Concrete closed cause the trusted writer observed (#335); absent on
+   * waits written before it existed or whose cause the writer does not know.
+   */
+  cause?: WorkWaitCauseV1;
 }
 
 export interface WorkBlockerV1 {

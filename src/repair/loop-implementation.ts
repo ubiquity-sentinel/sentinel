@@ -1,3 +1,4 @@
+import { causedWait } from "./loop-wait-cause.ts";
 import {
   isNoTestEvidenceTargetV1,
   NO_CI_AND_NO_LOCAL_VERIFY_DETAIL,
@@ -351,11 +352,11 @@ export async function prepareImplementationStart(
       context,
       setWait(
         record,
-        {
+        causedWait(deps, {
           reason: "unavailable",
           since: now,
           until: now + ISSUE_PREREQUISITE_RETRY_MS,
-        },
+        }, observation.cause),
         now,
       ),
     );
@@ -400,11 +401,11 @@ export async function prepareImplementationStart(
         context,
         setWait(
           record,
-          {
+          causedWait(deps, {
             reason: "unavailable",
             since: now,
             until: now + ISSUE_PREREQUISITE_RETRY_MS,
-          },
+          }, { port: "github", status: "unknown", code: "base_unavailable" }),
           now,
         ),
       );
@@ -658,7 +659,11 @@ export async function prepareImplementationStart(
       context,
       setWait(
         record,
-        { reason: "unavailable", since: now, until: now + CHECK_POLL_MS },
+        causedWait(
+          deps,
+          { reason: "unavailable", since: now, until: now + CHECK_POLL_MS },
+          { port: "budget", status: "none", code: reservation.status },
+        ),
         now,
       ),
     );
