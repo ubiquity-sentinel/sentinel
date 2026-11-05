@@ -70,6 +70,10 @@ export const THROUGHPUT_OPTIONAL_COUNTERS_V1 = [
   "releaseRequestsSuperseded",
   /** Throughput watchdog issues this cycle filed (absent when off). */
   "watchdogIssuesFiled",
+  /** #328: records the fan-out plan delegated to repository cells. */
+  "fanoutDelegated",
+  /** #328: live hot records the plan left with the serial pass. */
+  "serialOwned",
 ] as const;
 export type ThroughputOptionalCounterV1 =
   typeof THROUGHPUT_OPTIONAL_COUNTERS_V1[number];

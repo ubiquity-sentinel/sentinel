@@ -68,6 +68,7 @@ import type { HostedRuntimeJobV1 } from "./hosted-runtime.ts";
 import { ensurePrivateDir, githubGitAuthEnv, joinPath } from "./local.ts";
 import {
   REPAIR_PLAN_DIGEST_ENV,
+  type RepairFanoutFinalizeOutcomeV1,
   repairFanoutHook,
 } from "./repair-fanout-finalize-host.ts";
 import type {
@@ -167,9 +168,10 @@ export interface HostedSupervisorHostInputV1 {
   /**
    * Finalize only (#328): authenticate and apply the run's repository repair
    * deltas in one trusted write before the release settlement. Advisory; it
-   * never throws. Absent, the run planned no repository cell.
+   * never throws. Absent, the run planned no repository cell. Its record
+   * counts feed the cycle's metrics record.
    */
-  repairFanout?: () => Promise<unknown>;
+  repairFanout?: () => Promise<RepairFanoutFinalizeOutcomeV1>;
 }
 
 export interface HostedSupervisorHostResultV1 {
@@ -297,8 +299,9 @@ export async function runHostedSupervisorHost(
     evidence,
     ownerStartupRecoveryOnly: input.ownerStartupRecoveryOnly,
   };
+  let fanout: RepairFanoutFinalizeOutcomeV1["counts"] = null;
   if (job === "finalize" && input.repairFanout !== undefined) {
-    await input.repairFanout();
+    fanout = (await input.repairFanout()).counts;
   }
   const outcome = job === "prepare"
     ? await runHostedSupervisorPrepare(core)
@@ -362,6 +365,7 @@ export async function runHostedSupervisorHost(
         deliveryCounts: parseDeliveryCounts(input.env[DELIVERY_COUNTS_ENV]),
         tierCounts: parseTierCounts(input.env[TIER_COUNTS_ENV]),
         repair: repairRead,
+        fanout,
       });
     }
     return {

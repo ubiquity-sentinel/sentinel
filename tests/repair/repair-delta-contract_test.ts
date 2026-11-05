@@ -53,6 +53,36 @@ Deno.test("repair delta: sealed artifact bytes round trip and oversized bytes ar
     decodeRepairDeltaArtifactV1(new TextEncoder().encode("{")),
     null,
   );
+  // The advisory step summary is optional, sealed and strictly parsed.
+  const stepped = await sealRepairDeltaV1({
+    ...envelope.delta,
+    steps: [{
+      record: "issue-alpha-1",
+      kind: "work:unavailable",
+      disposition: "kept",
+      elapsedMs: 12,
+    }],
+  });
+  const reopened = await openRepairDeltaV1(
+    decodeRepairDeltaArtifactV1(encodeRepairDeltaArtifactV1(stepped)),
+    { binding: BINDING, repository: ALPHA },
+  );
+  assert.ok(reopened.ok);
+  assert.deepEqual(reopened.delta.steps, stepped.delta.steps);
+  for (
+    const step of [
+      { record: "issue-alpha-1", kind: "work:x", disposition: "kept" },
+      { record: "a/b", kind: "work:none", disposition: "kept" },
+      { record: "issue-alpha-1", kind: "work:none", disposition: "lost" },
+    ]
+  ) {
+    await assert.rejects(() =>
+      sealRepairDeltaV1({
+        ...envelope.delta,
+        steps: [{ ...step, elapsedMs: 1 }] as never,
+      })
+    );
+  }
   // A foreign record in the delta never seals.
   await assert.rejects(() =>
     sealRepairDeltaV1({
@@ -93,6 +123,12 @@ Deno.test("fan-out summary line: strict, bounded and count-only", () => {
     repositoryWallMs: [900, 400],
     applyMs: 120,
     handedBack: 2,
+    stepKinds: {
+      "review:review_pending": { steps: 2, kept: 2, deferred: 0, elapsedMs: 9 },
+      "work:unavailable": { steps: 1, kept: 0, deferred: 1, elapsedMs: 4 },
+    },
+    recordsDelegated: 5,
+    recordsSerialOwned: 7,
   });
   assert.ok(line !== null);
   const parsed = parseFanoutSummaryLine(JSON.parse(line));
@@ -112,9 +148,33 @@ Deno.test("fan-out summary line: strict, bounded and count-only", () => {
     repositoryWallMs: [900, 400],
     applyMs: 120,
     recordsHandedBack: 2,
+    recordsDelegated: 5,
+    recordsSerialOwned: 7,
+    stepKinds: {
+      "review:review_pending": { steps: 2, kept: 2, deferred: 0, elapsedMs: 9 },
+      "work:unavailable": { steps: 1, kept: 0, deferred: 1, elapsedMs: 4 },
+    },
   });
   assert.equal(line.includes("alpha"), false, "no repository name");
   const value = JSON.parse(line);
+  assert.ok(parseFanoutSummaryLine({ ...value, recordsSerialOwned: null }));
+  for (
+    const stepKinds of [
+      { "work:bogus": { steps: 1, kept: 1, deferred: 0, elapsedMs: 0 } },
+      { "work:none": { steps: 2, kept: 1, deferred: 0, elapsedMs: 0 } },
+      { "work:none": { steps: 1, kept: 1, deferred: 0 } },
+      {
+        "work:none": { steps: 1, kept: 1, deferred: 0, elapsedMs: 0 },
+        "review:none": { steps: 1, kept: 1, deferred: 0, elapsedMs: 0 },
+      },
+    ]
+  ) {
+    assert.equal(
+      parseFanoutSummaryLine({ ...value, stepKinds }),
+      null,
+      JSON.stringify(stepKinds),
+    );
+  }
   assert.equal(
     parseFanoutSummaryLine({ ...value, repositoryWallMs: [1, 2] }),
     null,

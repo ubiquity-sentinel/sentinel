@@ -23,6 +23,7 @@ import {
   type PassSummaryCountsV1,
   passSummaryLine,
 } from "./pass-summary-line.ts";
+import { rearmedObservation } from "./step-observation.ts";
 import {
   type PendingStepInputsV1,
   stepContent,
@@ -95,18 +96,24 @@ export class StepInputGate {
   }
 
   /**
-   * Settle the stepped record: a deferral, or progress that yields the record
-   * to a later invocation, stamps the record's current content with the
+   * Settle the stepped record: a deferral, progress that yields the record
+   * to a later invocation, or progress that only re-armed an observation
+   * wait of `before` (the row the step was selected as; see
+   * `step-observation.ts`) stamps the record's current content with the
    * inputs read before its step. Any other result keeps no stamp pending.
    */
   async settle(
     context: LoopContextV1,
     id: string,
     result: StepResultV1,
+    before?: WorkRecordV1,
   ): Promise<void> {
-    const settled = result.kind === "deferred" ||
-      (result.kind === "progress" && result.yield === true);
     const record = context.snapshot.work.find((row) => row.id === id);
+    const settled = result.kind === "deferred" ||
+      (result.kind === "progress" &&
+        (result.yield === true ||
+          (before !== undefined && record !== undefined &&
+            rearmedObservation(before, record, this.deps.clock.now()))));
     if (
       !settled || record === undefined || record.nextStep === "done" ||
       record.nextStep === "blocked"

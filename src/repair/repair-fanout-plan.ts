@@ -5,7 +5,11 @@
  * settled step was an observation (they carry a #326 step stamp) and whose
  * next step therefore most likely needs only reads: not done or blocked, no
  * model implementation or replay intent (those stay with the planner, cells
- * and the trusted ingest), and no dependency on another record. One
+ * and the trusted ingest), and no dependency on another record. An
+ * observation includes a step that only re-armed a running read wait of an
+ * intent-free record (`backoff`, `unavailable`, `deployment`, `ci_pending`,
+ * `review_pending`; `step-observation.ts`), so waiting records and CI and
+ * review result reads are delegated once one such step settled. One
  * repository cell steps exactly its delegated records; the trusted serial pass
  * skips them and keeps every other record (intake, new work, effects). A
  * delegated record whose step turns out to need an effect is handed back: its
