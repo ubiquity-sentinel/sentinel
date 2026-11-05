@@ -48,6 +48,8 @@ jobs:
       runtimeMigrationOnly: ${{ steps.autonomy.outputs.runtimeMigrationOnly }}
       runtimeMigrationRevision: ${{ steps.autonomy.outputs.runtimeMigrationRevision }}
       runtimeMigrationGeneration: ${{ steps.autonomy.outputs.runtimeMigrationGeneration }}
+      # #327: the closed upkeep deferral reason (or none) finalize counts.
+      upkeepDeferral: ${{ steps.autonomy.outputs.upkeepDeferral }}
     # The scoped generation-68 verification settled healthy, so the maintenance
     # writer is restored to its protected-ref condition; it performs bounded
     # self-upkeep (retries and reviewed-head delivery) before prepare.
@@ -779,7 +781,7 @@ jobs:
           src/host/hosted-runtime.ts
 
   finalize:
-    needs: [prepare, matrix_plan, matrix_cell, repair]
+    needs: [maintenance, prepare, matrix_plan, matrix_cell, repair]
     if: always() && github.ref == 'refs/heads/sentinel-supervisor'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -836,6 +838,7 @@ jobs:
           SENTINEL_SUPERVISOR_TOKEN: ${{ steps.app-token.outputs.token }}
           SENTINEL_SELF_TOKEN: ${{ steps.self-token.outputs.token }}
           SENTINEL_SELF_TOKEN_MINT_GRANT: ${{ steps.self-token.outputs.mint-grant }}
+          SENTINEL_UPKEEP_DEFERRAL: ${{ needs.maintenance.outputs.upkeepDeferral }}
         run: deno task supervisor:run
       - name: Chain the next dispatcher run
         if: always() && github.ref == 'refs/heads/sentinel-supervisor'

@@ -7,7 +7,7 @@ import {
   type UpkeepDeferralNoticeV1,
   type UpkeepDeferralStreakStoreV1,
   type UpkeepDeferralStreakV1,
-} from "../../src/host/upkeep-deferral-streak.ts";
+} from "../../src/contracts/upkeep-deferral-streak.ts";
 import { upkeepDeferralReason } from "../../ops/hosted-autonomy-queue-output.ts";
 
 /** Expected-head fake of the trusted writer; every write moves the head. */

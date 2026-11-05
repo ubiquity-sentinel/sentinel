@@ -41,6 +41,13 @@ import {
   writeFinalizeThroughputMetricsV1,
 } from "./throughput-metrics-finalize.ts";
 import { GitThroughputMetricsStore } from "../state/throughput-metrics-store.ts";
+import {
+  type FinalizeUpkeepDeferralDepsV1,
+  logUpkeepNoticePort,
+  metricsUpkeepStreakStore,
+  runFinalizeUpkeepDeferral,
+  UPKEEP_DEFERRAL_ENV,
+} from "./upkeep-deferral-finalize.ts";
 import type { MatrixArtifactTransportV1 } from "./matrix-artifact-port.ts";
 import {
   parseHostedEnvironment,
@@ -131,6 +138,11 @@ export interface HostedSupervisorHostInputV1 {
    * is written.
    */
   throughputMetrics?: FinalizeMetricsDepsV1;
+  /**
+   * Finalize only (#327): the consecutive upkeep deferral streak and its one
+   * notice. Advisory; absent, the maintenance observation is ignored.
+   */
+  upkeepDeferral?: FinalizeUpkeepDeferralDepsV1;
 }
 
 export interface HostedSupervisorHostResultV1 {
@@ -282,6 +294,16 @@ export async function runHostedSupervisorHost(
         now: () => input.clock.now(),
       }, { runId: identity.runId, runAttempt: identity.runAttempt });
     }
+    // The streak write precedes the metrics append on the same sidecar so
+    // the cycle record can count the notice it claimed.
+    let ownerNoticesSent = 0;
+    if (input.upkeepDeferral !== undefined) {
+      const settled = await runFinalizeUpkeepDeferral(input.upkeepDeferral, {
+        runId: identity.runId,
+        observation: input.env[UPKEEP_DEFERRAL_ENV],
+      });
+      if (settled.notified) ownerNoticesSent = 1;
+    }
     if (input.throughputMetrics !== undefined) {
       await writeFinalizeThroughputMetricsV1(input.throughputMetrics, {
         cycle: { runId: identity.runId, attempt: identity.runAttempt },
@@ -289,6 +311,7 @@ export async function runHostedSupervisorHost(
         nowMs: input.clock.now(),
         jobs: jobsRead,
         runSummary,
+        ownerNoticesSent,
       });
     }
     return {
@@ -374,6 +397,7 @@ export async function main(): Promise<void> {
     [SELF_TOKEN_ENV]: Deno.env.get(SELF_TOKEN_ENV),
     [OUTPUT_ENV]: Deno.env.get(OUTPUT_ENV),
     [COOLDOWN_MODE_ENV]: Deno.env.get(COOLDOWN_MODE_ENV),
+    [UPKEEP_DEFERRAL_ENV]: Deno.env.get(UPKEEP_DEFERRAL_ENV),
   };
   const job = supervisorJob(env.GITHUB_JOB);
   const identity = parseHostedEnvironment(env, job);
@@ -425,14 +449,24 @@ export async function main(): Promise<void> {
   // #338: finalize alone writes the metrics sidecar, with the same self
   // state credentials and remote as the release state.
   let throughputMetrics: FinalizeMetricsDepsV1 | undefined;
+  let upkeepDeferral: FinalizeUpkeepDeferralDepsV1 | undefined;
   if (job === "finalize") {
     const metricsScratch = joinPath(sentinelDir, "metrics-scratch");
     await ensurePrivateDir(metricsScratch);
-    throughputMetrics = {
-      port: new GitThroughputMetricsStore({
-        scratchDir: metricsScratch,
-        remoteUrl: REMOTE_URL,
-        runner: new DenoGitRunner(gitHome, githubGitAuthEnv(selfToken)),
+    const port = new GitThroughputMetricsStore({
+      scratchDir: metricsScratch,
+      remoteUrl: REMOTE_URL,
+      runner: new DenoGitRunner(gitHome, githubGitAuthEnv(selfToken)),
+    });
+    throughputMetrics = { port };
+    const summaryPath = Deno.env.get(STEP_SUMMARY_ENV);
+    upkeepDeferral = {
+      store: metricsUpkeepStreakStore(port),
+      // Log-only until an owner chooses an ntfy topic and secret.
+      notice: logUpkeepNoticePort({
+        appendSummary: summaryPath === undefined || summaryPath.length === 0
+          ? undefined
+          : (line) => Deno.writeTextFile(summaryPath, line, { append: true }),
       }),
     };
   }
@@ -449,6 +483,7 @@ export async function main(): Promise<void> {
       ? { stepSummaryPath: Deno.env.get(STEP_SUMMARY_ENV) }
       : undefined,
     throughputMetrics,
+    upkeepDeferral,
   });
   // Bounded trusted result only; no raw error or credential is ever logged.
   console.log(JSON.stringify({
