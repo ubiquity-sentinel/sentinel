@@ -370,6 +370,25 @@ export function createHostedAutonomyGitHub(
     runNeverStarted: (id: number, head: string) =>
       jobReads.runNeverStarted(id, head),
     readPull,
+    async readCommitTree(sha: string) {
+      // Sentinel #330: a delivery-train landing binds the landed tree to the
+      // exact train commit's tree, both read here.
+      if (!/^[0-9a-f]{40}$/.test(sha)) return null;
+      const commit = await request("GET", `/repos/${scope}/commits/${sha}`);
+      const inner = commit !== null && typeof commit === "object" &&
+          (commit as Record<string, unknown>)["sha"] === sha
+        ? (commit as Record<string, unknown>)["commit"]
+        : null;
+      const tree = inner !== null && typeof inner === "object"
+        ? (inner as Record<string, unknown>)["tree"]
+        : null;
+      const value = tree !== null && typeof tree === "object"
+        ? (tree as Record<string, unknown>)["sha"]
+        : null;
+      return typeof value === "string" && /^[0-9a-f]{40}$/.test(value)
+        ? value
+        : null;
+    },
     async readPullStatus(number: number) {
       if (!Number.isSafeInteger(number) || number <= 0) return null;
       const pull = await request("GET", `/repos/${scope}/pulls/${number}`);
