@@ -588,10 +588,11 @@ export async function historicalC63Scenario(
     }));
     if (!firstPass) {
       f.setFault("pending");
-      assert.equal(await f.runMain(), 1);
+      // Unavailable native settlement is a bounded upkeep deferral: no write.
+      assert.equal(await f.runMain(), 0);
       assert.deepEqual(await f.rig.state.readRepair(), before);
       f.setFault("auth");
-      assert.equal(await f.runMain(), 1);
+      assert.equal(await f.runMain(), 0);
       assert.deepEqual(await f.rig.state.readRepair(), before);
       f.setFault(null);
     }
