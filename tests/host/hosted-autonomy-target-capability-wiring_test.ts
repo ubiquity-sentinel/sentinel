@@ -39,16 +39,28 @@ const NO_CI: TargetTreeFactsV1 = {
 
 /** A fake GitHub issues API for one repository. */
 class FakeIssuesApi {
-  issues: { number: number; title: string; body: string }[] = [];
+  issues: {
+    number: number;
+    title: string;
+    body: string;
+    state?: "open" | "closed";
+  }[] = [];
   creates = 0;
   patches = 0;
   listings = 0;
-  item(issue: { number: number; title: string; body: string }) {
+  item(
+    issue: {
+      number: number;
+      title: string;
+      body: string;
+      state?: "open" | "closed";
+    },
+  ) {
     return {
       number: issue.number,
       title: issue.title,
       body: issue.body,
-      state: "open",
+      state: issue.state ?? "open",
       user: { login: HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR },
       created_at: "2026-11-05T00:00:00Z",
       repository_url: URL_BASE,
@@ -62,7 +74,7 @@ class FakeIssuesApi {
     const scope = "/repos/ubiquity/prospector-chrome-extension/issues";
     if (method === "GET" && path.startsWith(`${scope}?creator=`)) {
       this.listings++;
-      assert.match(path, /state=open/);
+      assert.match(path, /state=all/);
       return Promise.resolve(
         path.includes("page=1") ? this.issues.map((i) => this.item(i)) : [],
       );
@@ -252,4 +264,32 @@ Deno.test("capability wiring: self, named and done work is never checked", async
   const actions = await runHostedTargetCapabilityPass(deps, T0 + 60_000);
   assert.deepEqual(actions, []);
   assert.equal(api.listings + api.creates, 0);
+});
+
+Deno.test("capability wiring: configured target without any records gets one owner issue", async () => {
+  const r = await rig([]);
+  r.deps.capabilityTargets = [PROSPECTOR, PROSPECTOR];
+  await runHostedTargetCapabilityPass(r.deps);
+  await runHostedTargetCapabilityPass(r.deps);
+  assert.equal(r.api.creates, 1);
+  assert.equal(r.reads.facts.length, 1);
+  assert.equal(r.state.repair!.work.length, 0);
+  assert.equal(r.state.repair!.reservations.length, 0);
+});
+
+Deno.test("capability wiring: adopt a closed owner issue after a lost write without reopening or duplicating it", async () => {
+  const r = await rig([record()]);
+  r.state.conflictRepairNext = true;
+  await runHostedTargetCapabilityPass(r.deps);
+  assert.equal(r.api.creates, 1);
+  r.api.issues[0]!.state = "closed";
+  await runHostedTargetCapabilityPass(r.deps);
+  assert.equal(r.api.creates, 1);
+  assert.equal(r.api.issues[0]!.state, "closed");
+  assert.equal(
+    cachedTargetCapabilityV1(r.state.repair!, PROSPECTOR)!.ownerIssue,
+    100,
+  );
+  await runHostedTargetCapabilityPass(r.deps);
+  assert.equal(r.api.patches, 1, "unchanged closed issue is not edited again");
 });

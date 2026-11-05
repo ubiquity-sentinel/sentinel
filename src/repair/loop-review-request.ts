@@ -1,3 +1,4 @@
+import { targetCapabilityRefusesV1 } from "./target-capability.ts";
 import { guardQueueOperation } from "./loop-queue-guard.ts";
 /** Repair loop internals: review request. */
 import type { ReviewObservationV1 } from "../contracts/ports.ts";
@@ -58,6 +59,12 @@ export async function requestReviewFor(
    */
   concludedKey: string | null = null,
 ): Promise<StepResultV1> {
+  if (targetCapabilityRefusesV1(context.snapshot, record.repository)) {
+    return {
+      kind: "deferred",
+      detail: "target verification capability unavailable",
+    };
+  }
   const queueGuard = await guardQueueOperation(deps, context, record, "resume");
   if (queueGuard !== null) return queueGuard;
   // The retired review-round ceiling gate comes first. Owner directive

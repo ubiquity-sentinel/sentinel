@@ -1,3 +1,4 @@
+import { targetCapabilityRefusesV1 } from "./target-capability.ts";
 import { causedWait } from "./loop-wait-cause.ts";
 import {
   isNoTestEvidenceTargetV1,
@@ -121,6 +122,12 @@ export async function prepareImplementationStart(
   beforeAdmission?: (request: ModelRunRequestV1) => Promise<boolean>,
   options?: ImplementationStartOptionsV1,
 ): Promise<StepResultV1 | PreparedImplementationV1> {
+  if (targetCapabilityRefusesV1(context.snapshot, record.repository)) {
+    return {
+      kind: "deferred",
+      detail: "target verification capability unavailable",
+    };
+  }
   // The continuation is only ever the shape the caller authorized: a record
   // whose exact published PR head is its target head with no preserved
   // candidate. Anything else keeps the ordinary admission rules unchanged.

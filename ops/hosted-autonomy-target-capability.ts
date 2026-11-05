@@ -15,7 +15,7 @@
  *   cached row, in the same expected-head write as the verdict: an unchanged
  *   missing set never creates, re-opens or edits anything; a changed one
  *   edits that issue. Before creating, the pass looks the marker up in one
- *   complete listing of the App's open issues, so an issue whose recording
+ *   complete listing of the App's issues (including closed ones), so an issue whose recording
  *   write failed is adopted (and edited to the current list) instead of
  *   duplicated; an unreadable listing creates nothing. The runtime planner
  *   refuses every implementation admission of a target whose cached row is
@@ -121,19 +121,25 @@ async function settle<T>(work: () => Promise<T>): Promise<T | null> {
 }
 
 /**
- * The generic, non-self repositories of every record not yet done, in
- * repository-key order: the targets whose work the planner could admit.
+ * Configured generic targets, including those with no records yet, plus
+ * non-terminal work repositories, deduplicated in repository-key order.
  */
 export function capabilityTargetsV1(
   snapshot: Pick<RepairStateSnapshotV1, "work">,
+  configured: readonly RepositoryIdentityV1[] = [],
 ): RepositoryIdentityV1[] {
   const byKey = new Map<string, RepositoryIdentityV1>();
-  for (const record of snapshot.work) {
-    if (
-      record.nextStep === "done" || isHostedSelf(record.repository) ||
-      !isGenericTargetRepositoryV1(record.repository)
-    ) continue;
-    byKey.set(hostedRepositoryKey(record.repository), record.repository);
+  for (
+    const repository of [
+      ...configured,
+      ...snapshot.work.filter((record) => record.nextStep !== "done")
+        .map((record) => record.repository),
+    ]
+  ) {
+    if (isHostedSelf(repository) || !isGenericTargetRepositoryV1(repository)) {
+      continue;
+    }
+    byKey.set(hostedRepositoryKey(repository), repository);
   }
   return [...byKey.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
     .map(([, repository]) => repository);
@@ -236,7 +242,7 @@ export async function runTargetCapabilityPass(
         deps.generation,
       )
     ) {
-      verdict = cached;
+      verdict = { ...cached, backupCovered: backup.has(name.toLowerCase()) };
       checkedAt = cached.checkedAt;
     } else {
       const facts = await settle(() =>
@@ -383,7 +389,10 @@ export async function runHostedTargetCapabilityPass(
     if (repair === null || !repair.ok || repair.value.status !== "found") {
       return [];
     }
-    const targets = capabilityTargetsV1(repair.value.snapshot).filter(
+    const targets = capabilityTargetsV1(
+      repair.value.snapshot,
+      deps.capabilityTargets,
+    ).filter(
       (repository) => {
         try {
           const surface = deps.githubFor(repository);

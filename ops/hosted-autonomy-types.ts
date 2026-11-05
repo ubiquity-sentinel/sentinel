@@ -592,6 +592,8 @@ export interface HostedAutonomyDepsV1 {
    * (`sentinel.backup-ci-targets.json`); absent means none.
    */
   backupCiTargets?: readonly string[];
+  /** Configured targets to verify even before their first intake record. */
+  capabilityTargets?: readonly RepositoryIdentityV1[];
   clock: { now(): number };
   /**
    * Trusted post-merge delivery-check names for one repository (sentinel

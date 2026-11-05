@@ -50,6 +50,8 @@ import {
   skipped,
 } from "./hosted-autonomy-state.ts";
 import { createHostedAutonomyGitHub } from "./hosted-autonomy-github.ts";
+import { readTargetSlugsV1 } from "../src/host/targets.ts";
+import { parseAppInstallationId } from "../src/host/actions-target-cycles.ts";
 import {
   composeBackupCi,
   readBackupCiMode,
@@ -326,6 +328,14 @@ async function runHostedAutonomyMainResult(
             runner,
           }),
           githubFor,
+          capabilityTargets: (await readTargetSlugsV1({ root: Deno.cwd() }))
+            .map(({ owner, name }) => ({
+              owner,
+              name,
+              installationId: parseAppInstallationId(
+                env("SENTINEL_APP_INSTALLATION_ID") ?? undefined,
+              ),
+            })),
           backupCiTargets: (await readBackupCiTargets(Deno.cwd())).map((
             target,
           ) => target.repository),

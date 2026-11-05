@@ -15,6 +15,8 @@ import {
 } from "../github/client-response.ts";
 import { candidateBranch } from "./keys.ts";
 import { isCiOutageNotice } from "./ci-outage-notice.ts";
+import { isNoTestEvidenceTargetV1 } from "../host/target-policy-generic.ts";
+import { targetCapabilityRefusesV1 } from "./target-capability.ts";
 import {
   checkGithubCooldown,
   createRunBounds,
@@ -332,6 +334,10 @@ export async function pollIntake(
     : null;
   if (
     issueRepository !== null &&
+    // Refuse the target, not each issue: no listing, base read or new work
+    // record while the trusted capability verdict/policy cannot verify it.
+    !isNoTestEvidenceTargetV1(deps.configs[0]!) &&
+    !targetCapabilityRefusesV1(context.snapshot, issueRepository) &&
     deps.clock.now() < context.bounds.runDeadline
   ) {
     // No new issue intake read starts at/after the total deadline (the

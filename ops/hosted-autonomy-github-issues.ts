@@ -249,7 +249,7 @@ export function createHostedCapabilityIssues(
       for (let page = 1; page <= MAX_LISTING_PAGES; page++) {
         const raw = await request(
           "GET",
-          `/repos/${scope}/issues?creator=${creator}&state=open&sort=created&direction=asc&per_page=${LISTING_PAGE_SIZE}&page=${page}`,
+          `/repos/${scope}/issues?creator=${creator}&state=all&sort=created&direction=asc&per_page=${LISTING_PAGE_SIZE}&page=${page}`,
           undefined,
           MAX_COMPARE_RESPONSE_BYTES,
         );

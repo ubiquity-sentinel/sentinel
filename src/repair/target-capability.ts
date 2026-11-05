@@ -44,7 +44,7 @@ export const TARGET_CAPABILITY_ISSUE_MARKER =
 /** Launcher-only owner-action issue reads/writes in ONE target repository. */
 export interface TargetCapabilityIssuesV1 {
   /**
-   * The lowest-numbered OPEN App-created issue carrying both markers
+   * The lowest-numbered App-created issue (open or closed) carrying both markers
    * (`{number: null}` when none), from one complete listing; null when the
    * listing cannot be proven complete.
    */

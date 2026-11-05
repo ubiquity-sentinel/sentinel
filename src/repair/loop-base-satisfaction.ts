@@ -1,3 +1,4 @@
+import { targetCapabilityRefusesV1 } from "./target-capability.ts";
 /** Trusted pre-ranking exact-base task review and issue-only closure. */
 import { canonicalStringify } from "../contracts/canonical.ts";
 import {
@@ -130,6 +131,12 @@ export async function resumeBaseSatisfaction(
       // Source/base drift or invalid native evidence requires a fresh,
       // separately charged review. Review rounds are accounting only.
     }
+  }
+  if (targetCapabilityRefusesV1(context.snapshot, record.repository)) {
+    return {
+      kind: "deferred",
+      detail: "target verification capability unavailable",
+    };
   }
   const latestStartAt = Math.min(
     context.bounds.modelCutoff,
