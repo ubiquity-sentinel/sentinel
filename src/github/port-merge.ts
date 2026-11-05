@@ -252,18 +252,6 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
       return blocked("review_required", pull.value.head);
     }
     if (conditionalSelf) return native();
-    // 7c. Delivery shape (#331): the trusted per-target method, read before
-    // the base re-read below so that stays the last read before the call.
-    // The reviewed head is still the merge input under the expected-head
-    // guard; only the resulting default-branch commit shape differs.
-    const shape = await mergeShapeV1(
-      this.repository,
-      this.deliveryPolicies,
-      () => this.client.readRepositoryMergeSettings(),
-      pull.value.title,
-      closingIssue,
-    );
-    if (!shape.ok) return shape;
     // 8. Expected-head merge with a base compare-and-swap. GitHub's merge API
     // guards only the head, the pull request's reported base is not updated
     // when the base branch moves, and branch rules no longer gate a merge
@@ -280,6 +268,20 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
       takeover,
     );
     if (!custody.ok) return custody;
+    // Delivery shape (#331): the trusted per-target method, read only once
+    // every gate and custody passed, and before the base re-read below so
+    // that stays the last read before the call. The repository setting is
+    // read only for a squash policy. The reviewed head is still the merge
+    // input under the expected-head guard; only the resulting default-branch
+    // commit shape differs.
+    const shape = await mergeShapeV1(
+      this.repository,
+      this.deliveryPolicies,
+      () => this.client.readRepositoryMergeSettings(),
+      pull.value.title,
+      closingIssue,
+    );
+    if (!shape.ok) return shape;
     const tip = await this.client.readRef(`refs/heads/${pull.value.baseRef}`);
     if (!tip.ok) return tip;
     if (tip.value === null || tip.value.sha !== merge.expectedBase) {
