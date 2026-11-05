@@ -119,6 +119,8 @@ function reviewed(
     },
     nextStep: "delivery",
     counters: { attempts: 1, retries: 0, reviewRounds: 1 },
+    // The line's order is oldest first (`createdAt`, then id): index order.
+    createdAt: T0 + index,
     ...overrides,
   });
 }
@@ -166,7 +168,7 @@ Deno.test("delivery queue: a reviewed record in flight on the tip goes first", (
   assert.equal(deliveryQueueAhead(snapshotOf([me]), me, TIP, NOW), null);
 });
 
-Deno.test("delivery queue: the lowest pull request on a moved base refreshes first", () => {
+Deno.test("delivery queue: the oldest record on a moved base refreshes first", () => {
   const first = reviewed(1);
   const second = reviewed(2);
   const snapshot = snapshotOf([second, first]);
@@ -308,7 +310,7 @@ Deno.test("delivery queue: records that cannot take the tip hold nobody", () => 
     deliveryQueueAhead(snapshotOf([me, spentOnTip]), me, TIP, NOW)?.id,
     spentOnTip.id,
   );
-  // A higher pull request on a moved base waits behind this one.
+  // A younger record on a moved base waits behind this one.
   assert.equal(
     deliveryQueueAhead(snapshotOf([me, reviewed(8)]), me, TIP as GitSha, NOW),
     null,

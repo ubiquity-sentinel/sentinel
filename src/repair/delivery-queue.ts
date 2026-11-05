@@ -6,7 +6,7 @@
  * A reviewed head whose base moved before it merged needs a refreshed head.
  * When several reviewed records of one repository wait on the same tip, every
  * merge moves the base of all the others, so the queue serialises those
- * refreshes, by delivery readiness and then pull request number (JAM J3, live
+ * refreshes, by delivery readiness and then age (JAM J3, live
  * 2026-10-17/18: ordered by number alone, red heads awaiting a CI fix and
  * CI-fixed heads on the tip awaiting their CI held the line for hours ahead of
  * 698 and 879, green, reviewed and delivered). Each reviewed, published,
@@ -35,12 +35,24 @@
  *
  * Every contender takes the same order: a record that will be reviewed at
  * `work` or `review` (`re_review`), like any other, waits only while a
- * contender is `landing` or a `ready` or `reviewed` one is ahead of it (lower
- * pull request number, then record id); nothing that still needs a CI fix or
- * its CI ever holds it. A deliverable record (its head needs no new review)
- * waits only while a contender is `landing` or a `ready` one is ahead of it,
- * so it takes the line as soon as it is deliverable and nothing that still
- * needs a review holds it. A `waiting` contender holds nobody. Otherwise the
+ * contender is `landing` or a `ready` or `reviewed` one is ahead of it (oldest
+ * first by `createdAt`, then record id, `lineBefore`); nothing that still
+ * needs a CI fix or its CI ever holds it. A deliverable record (its head needs
+ * no new review) waits only while a contender is `landing` or a `ready` one is
+ * ahead of it, so it takes the line as soon as it is deliverable and nothing
+ * that still needs a review holds it.
+ *
+ * Just-in-time refresh (sentinel #329): a reviewed head keeps its reviewed
+ * base until it is the head of its repository's line. The head of the line in
+ * flight (`refreshInFlight`: its refresh intent, or the head it refreshed onto
+ * the tip since its latest review, heading for its CI and its review there)
+ * holds every other record, deliverable or not, until it merges or stops
+ * holding (stall, idle, red base): a sibling refreshed onto that tip would be
+ * stale again at its merge, so landing k records cost O(k^2) refreshes, CI
+ * runs and often reviews. A waiting record's standing is read from the
+ * snapshot alone; no refresh commit is made before it is next to land, and the
+ * carried bounds (`CARRIED_REFRESH_LIMIT`, `CARRIED_WAIT_BOUND_MS`) apply to
+ * head-of-line refreshes only. A `waiting` contender holds nobody. Otherwise the
  * step defers: nothing is written, charged, refreshed, pushed or requested,
  * and the next run asks again. Only one record lands at a time, CI runs on its
  * new head before its review or its carried merge, and it merges before the
@@ -147,14 +159,39 @@ export function holdsDeliveryLine(
   return contender(snapshot, record, now);
 }
 
-/** Line order of two records on moved bases: pull request, then id. */
+/**
+ * Line order of two records on moved bases: oldest first by `createdAt`, then
+ * the record id (sentinel #329, the delivery pass's own order of the
+ * 2026-10-31 decision), never pull request number or list position.
+ */
 export function lineBefore(
-  a: Pick<WorkRecordV1, "id" | "target">,
-  b: Pick<WorkRecordV1, "id" | "target">,
+  a: Pick<WorkRecordV1, "id" | "createdAt">,
+  b: Pick<WorkRecordV1, "id" | "createdAt">,
 ): boolean {
-  const left = a.target.pr ?? Number.MAX_SAFE_INTEGER;
-  const right = b.target.pr ?? Number.MAX_SAFE_INTEGER;
-  return left !== right ? left < right : a.id < b.id;
+  return a.createdAt !== b.createdAt ? a.createdAt < b.createdAt : a.id < b.id;
+}
+
+/**
+ * True while `other` (a contender standing `standing` against `tip`) is the
+ * head of its line in flight: a base refresh intent not yet published, or a
+ * head it refreshed onto `tip` since its latest completed review (the review
+ * judged another base), heading for its CI and its review there. Such a
+ * record moves the tip next, so every other record of the repository keeps
+ * its reviewed head and base instead of refreshing onto a tip that record's
+ * merge is about to move (sentinel #329). A head held by its red base stands
+ * `waiting` and holds nobody, as before.
+ */
+export function refreshInFlight(
+  snapshot: Pick<QueueSnapshot, "reviews">,
+  other: WorkRecordV1,
+  tip: GitSha,
+  standing: DeliveryLineStandingV1,
+): boolean {
+  if (other.intent?.kind === "base_refresh") return true;
+  if (standing !== "re_review" || other.target.base !== tip) return false;
+  const latest = latestPullReview(snapshot, other);
+  return latest !== null && latest.pullRequest.head !== other.target.head &&
+    latest.pullRequest.base !== other.target.base;
 }
 
 /** Where a contender stands in its repository's line (see the module). */
@@ -261,13 +298,15 @@ export function deliveryQueueAhead(
       !contender(snapshot, other, now)
     ) continue;
     const standing = lineStanding(snapshot, other, tip, now, cutoff);
-    const holds = standing === "landing" ||
+    const inFlight = refreshInFlight(snapshot, other, tip, standing);
+    const holds = standing === "landing" || inFlight ||
       (standing === "ready" && (!deliverable || lineBefore(other, record))) ||
       (!deliverable &&
         (standing === "re_review" ||
           (standing === "reviewed" && lineBefore(other, record))));
     if (!holds) continue;
-    const rank = HOLD_ORDER.indexOf(standing);
+    // The head of the line in flight is named first, as a landing one.
+    const rank = inFlight ? 0 : HOLD_ORDER.indexOf(standing);
     if (
       ahead === null || rank < ahead.rank ||
       (rank === ahead.rank && lineBefore(other, ahead.other))
