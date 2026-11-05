@@ -15,12 +15,23 @@
  *   the commit that closed it, when GitHub names one). The branch is kept.
  * - merged, already closed, or not Sentinel's own: nothing is written to
  *   GitHub.
+ * - Sentinel's own and open while the source issue reads OPEN again: settled
+ *   `reopened`. Nothing re-admits a retired record otherwise (intake skips an
+ *   existing record and the retirement is terminal for every retry rule), so
+ *   the retirement blocker is lifted: the record returns to `work` with its
+ *   pull request, head, counters and charges kept, an ordinary open-issue
+ *   record again, and the runtime's own gates decide what follows. Only the
+ *   exact retirement shape (no intent, no wait) is lifted; a later
+ *   retirement of the same pull request is unsettled again.
  *
  * Each settled outcome is recorded on the record (`retiredPullClosure`) in ONE
  * expected-head repair write, so a later pass never reads, comments on or
  * closes that pull request again. An unreadable listing or issue, a refused
- * close, a protected record or a missing surface capability settles nothing
- * and is retried by a later pass. The pass never throws and never fails the
+ * close or a missing surface or capability settles nothing: the record is
+ * stamped (`pullProbe`, `hosted-autonomy-pull-probe.ts`) in the same write and
+ * skipped until its backoff elapsed, and the least recently probed records
+ * are read first, so an unsettleable record never starves the others. A
+ * protected record is not read. The pass never throws and never fails the
  * run; it only appends actions (no URL, body or credential).
  */
 import type { GitSha } from "../src/contracts/brands.ts";
@@ -36,6 +47,12 @@ import type {
 import { retiredPullClosurePending } from "../src/contracts/work-record-retired-pull.ts";
 import { queueRecordProtected } from "./hosted-autonomy-queue-context.ts";
 import { HOSTED_AUTONOMY_TRUSTED_AUTHORS } from "./hosted-autonomy-policy.ts";
+import {
+  applyPullProbes,
+  pullProbedAt,
+  pullProbeDue,
+  type PullProbeStampV1,
+} from "./hosted-autonomy-pull-probe.ts";
 import { readRepairSafely } from "./hosted-autonomy-state.ts";
 import type {
   HostedAutonomyDepsV1,
@@ -119,6 +136,9 @@ async function settleRecord(
   } else {
     open = await settle(() => surface.readIssueOpen(issueNumber));
   }
+  if (open === true && record.intent === null && record.wait === null) {
+    return "reopened";
+  }
   if (open !== false) {
     actions.push(`${tag}:${open === true ? "issue_open" : "issue_unreadable"}`);
     return null;
@@ -140,27 +160,40 @@ async function settleRecord(
   return "closed";
 }
 
-/** Record the settled outcomes on their records (pure). */
+/**
+ * Record the settled outcomes on their records and stamp the unsettled
+ * probes (pure). A `reopened` record also leaves its retirement: back to
+ * `work`, blocker cleared, everything else kept.
+ */
 export function applyRetiredPullClosures(
   snapshot: RepairStateSnapshotV1,
   head: GitSha,
   outcomes: ReadonlyMap<string, Outcome>,
   now: number,
+  probes: readonly PullProbeStampV1[] = [],
 ): RepairStateSnapshotV1 {
-  return parseRepairStateSnapshotV1({
-    ...snapshot,
-    stateHead: head,
-    sequence: snapshot.sequence + 1,
-    updatedAt: now,
-    work: snapshot.work.map((record) => {
-      const outcome = outcomes.get(record.id);
-      return outcome === undefined ? record : {
-        ...record,
-        retiredPullClosure: { pr: record.target.pr!, outcome, at: now },
-        updatedAt: now,
-      };
+  return applyPullProbes(
+    parseRepairStateSnapshotV1({
+      ...snapshot,
+      stateHead: head,
+      sequence: snapshot.sequence + 1,
+      updatedAt: now,
+      work: snapshot.work.map((record) => {
+        const outcome = outcomes.get(record.id);
+        if (outcome === undefined) return record;
+        const settled = {
+          ...record,
+          retiredPullClosure: { pr: record.target.pr!, outcome, at: now },
+          updatedAt: now,
+        };
+        return outcome === "reopened"
+          ? { ...settled, nextStep: "work" as const, blocker: null }
+          : settled;
+      }),
     }),
-  });
+    probes,
+    now,
+  );
 }
 
 /** Run the pass once over the guarded maintenance deps. */
@@ -174,9 +207,12 @@ export async function runHostedRetiredPullPass(
    */
   discovery: StateReadView = deps.state,
 ): Promise<string[]> {
+  // A record inside its probe backoff waits for a later pass.
+  const start = deps.clock.now();
   const pending = (record: WorkRecordV1) =>
     retiredPullClosurePending(record) &&
-    !queueRecordProtected(record, deps.queueCustody);
+    !queueRecordProtected(record, deps.queueCustody) &&
+    pullProbeDue(record, start);
   try {
     if (discovery !== deps.state) {
       const seen = await readRepairSafely(discovery);
@@ -189,13 +225,27 @@ export async function runHostedRetiredPullPass(
     if (read === null || !read.ok || read.value.status !== "found") return [];
     const { snapshot } = read.value;
     const head = read.value.head as GitSha;
-    const candidates = snapshot.work.filter(pending).slice(
-      0,
-      RETIRED_PULLS_PER_PASS,
-    );
+    // Least recently probed first (never probed first of all, in snapshot
+    // order).
+    const candidates = snapshot.work
+      .filter(pending)
+      .map((record, index) => ({ record, index }))
+      .sort((left, right) =>
+        pullProbedAt(left.record) - pullProbedAt(right.record) ||
+        left.index - right.index
+      )
+      .map((entry) => entry.record)
+      .slice(0, RETIRED_PULLS_PER_PASS);
     if (candidates.length === 0) return [];
     const actions: string[] = [];
     const outcomes = new Map<string, Outcome>();
+    const probes: PullProbeStampV1[] = [];
+    const probe = (record: WorkRecordV1) =>
+      probes.push({
+        id: record.id,
+        repository: record.repository,
+        pr: record.target.pr!,
+      });
     for (const record of candidates) {
       const at = deps.clock.now();
       if (!Number.isSafeInteger(at) || at >= passDeadline) {
@@ -210,23 +260,27 @@ export async function runHostedRetiredPullPass(
       }
       if (surface === null) {
         actions.push(`retired-pull:${record.id}:surface_unreadable`);
+        probe(record);
         continue;
       }
       const outcome = await settleRecord(surface, record, actions);
-      if (outcome === null) continue;
+      if (outcome === null) {
+        probe(record);
+        continue;
+      }
       outcomes.set(record.id, outcome);
       actions.push(
         `retired-pull:${record.id}:pr=${record.target.pr}:${outcome}`,
       );
     }
-    if (outcomes.size === 0) return actions;
+    if (outcomes.size === 0 && probes.length === 0) return actions;
     const now = deps.clock.now();
     if (!Number.isSafeInteger(now) || now < snapshot.updatedAt) {
       return [...actions, "retired-pull:clock_invalid"];
     }
     let next: RepairStateSnapshotV1;
     try {
-      next = applyRetiredPullClosures(snapshot, head, outcomes, now);
+      next = applyRetiredPullClosures(snapshot, head, outcomes, now, probes);
     } catch {
       return [...actions, "retired-pull:snapshot_invalid"];
     }
@@ -237,7 +291,13 @@ export async function runHostedRetiredPullPass(
       const reason = write?.ok === true ? write.value.status : "unavailable";
       return [...actions, `retired-pull:write_${reason}`];
     }
-    return [...actions, `retired-pull:recorded=${outcomes.size}`];
+    return [
+      ...actions,
+      ...(outcomes.size === 0
+        ? []
+        : [`retired-pull:recorded=${outcomes.size}`]),
+      ...(probes.length === 0 ? [] : [`retired-pull:backoff=${probes.length}`]),
+    ];
   } catch {
     return ["retired-pull:unexpected_error"];
   }

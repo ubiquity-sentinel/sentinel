@@ -19,7 +19,9 @@ export const SENTINEL_REPAIR_BRANCH_PREFIX = "sentinel/repair/";
  * True for an issue record retired because its source issue closed while it
  * still binds a pull request on a Sentinel repair branch that no settlement
  * (`retiredPullClosure`) has been recorded for yet. Any other blocker, a
- * record without a pull request and a settled pull request are false.
+ * record without a pull request and a settled pull request are false. A
+ * `reopened` settlement returned the record to `work`; a later retirement of
+ * that same pull request is unsettled again.
  */
 export function retiredPullClosurePending(
   record: Pick<
@@ -36,7 +38,8 @@ export function retiredPullClosurePending(
     pr !== null &&
     branch !== null &&
     branch.startsWith(SENTINEL_REPAIR_BRANCH_PREFIX) &&
-    record.retiredPullClosure?.pr !== pr;
+    (record.retiredPullClosure?.pr !== pr ||
+      record.retiredPullClosure.outcome === "reopened");
 }
 
 /**

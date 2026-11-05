@@ -80,6 +80,10 @@ import {
   verifyHumanMergeHeadReadmissions,
 } from "./hosted-autonomy-human-merge-readmission.ts";
 import {
+  applyPullProbes,
+  type PullProbeStampV1,
+} from "./hosted-autonomy-pull-probe.ts";
+import {
   applyRepeatFailureParks,
   REPEAT_FAILURE_DEFAULT_ROUTE,
   repeatFailureLabel,
@@ -633,13 +637,16 @@ export async function runHostedRetryPass(
   // and completes the delivery. Its blocker matches none of the sets above.
   // A record an earlier write of this pass settled (queue custody included)
   // waits for the next pass.
+  // A stale-step candidate whose pull read re-admits nothing is stamped in
+  // this pass's write and skipped until its probe backoff elapsed.
+  const staleProbes: PullProbeStampV1[] = [];
   const humanMerges = await verifyHumanMergeHeadReadmissions(
     // `settled` already holds every queue-protected record of this pass.
-    planHumanMergeHeadReadmissions(snapshot, closedIssues).filter((plan) =>
-      !settled(plan.id)
-    ),
+    planHumanMergeHeadReadmissions(snapshot, closedIssues, deps.clock.now())
+      .filter((plan) => !settled(plan.id)),
     scopeFor,
     actions,
+    (probe) => staleProbes.push(probe),
   );
   // C6: an open issue's `sentinel:retry` label is the owner's exit for a
   // protected-path park. The label is removed first; only a confirmed removal
@@ -712,7 +719,7 @@ export async function runHostedRetryPass(
   }
   if (
     plans.length > 0 || readmissions.length > 0 || parks.length > 0 ||
-    humanMerges.length > 0
+    humanMerges.length > 0 || staleProbes.length > 0
   ) {
     const now = deps.clock.now();
     if (!Number.isSafeInteger(now) || now < snapshot.updatedAt) {
@@ -720,22 +727,26 @@ export async function runHostedRetryPass(
     }
     let next: RepairStateSnapshotV1;
     try {
-      next = applyHumanMergeReadmissions(
-        applyBaseRefreshReadmissions(
-          applyRepeatFailureParks(
-            applyHostedRetries(
-              dropProtectedCandidates(snapshot, protectedTaken),
-              observedHead as GitSha,
-              plans,
+      next = applyPullProbes(
+        applyHumanMergeReadmissions(
+          applyBaseRefreshReadmissions(
+            applyRepeatFailureParks(
+              applyHostedRetries(
+                dropProtectedCandidates(snapshot, protectedTaken),
+                observedHead as GitSha,
+                plans,
+                now,
+              ),
+              parks,
               now,
             ),
-            parks,
+            readmissions,
             now,
           ),
-          readmissions,
+          humanMerges,
           now,
         ),
-        humanMerges,
+        staleProbes,
         now,
       );
     } catch {

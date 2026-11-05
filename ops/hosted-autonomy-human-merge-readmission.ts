@@ -49,6 +49,10 @@ import {
   hostedIssueKey,
   sameRepository,
 } from "./hosted-autonomy-policy.ts";
+import {
+  pullProbeDue,
+  type PullProbeStampV1,
+} from "./hosted-autonomy-pull-probe.ts";
 import type { HostedAutonomyScopeV1 } from "./hosted-autonomy-scopes.ts";
 import type { HostedAutonomyHeadPullV1 } from "./hosted-autonomy-types.ts";
 
@@ -67,6 +71,11 @@ const MERGED_OFF_TIP_READMISSION_DETAIL = "human_merge_merged_off_base";
 const REVIEW_BACKOFF_READMISSION_DETAIL = "human_merge_review_backoff";
 /** Action detail of a re-admission of a `work`/`blocked` record (stale). */
 const STALE_STEP_READMISSION_DETAIL = "human_merge_stale_step";
+/**
+ * The runtime's park of a pull request closed unmerged (`loop-merge.ts`,
+ * `loop-owner-landing.ts`): the pull can never merge, so it is never read.
+ */
+const PULL_CLOSED_BEFORE_MERGE = "pull request closed before merge";
 
 /**
  * Intents a stale-step re-admission may clear: a merged pull request ends
@@ -135,12 +144,21 @@ export function planHumanMergeHeadReadmissions(
    * merged) is a stale-step candidate; the merge itself is verified remotely.
    */
   closedIssues?: ReadonlySet<string>,
+  /**
+   * The pass's clock. With it, a stale-step candidate whose pull an earlier
+   * pass read without a re-admission (`pullProbe`) is skipped until its
+   * backoff elapsed (`hosted-autonomy-pull-probe.ts`).
+   */
+  now?: number,
 ): HumanMergeCandidateV1[] {
   const candidates: HumanMergeCandidateV1[] = [];
   for (const record of snapshot.work) {
     const stale = closedIssues === undefined
       ? null
       : staleStepCandidate(record, snapshot, closedIssues);
+    if (stale !== null && now !== undefined && !pullProbeDue(record, now)) {
+      continue;
+    }
     if (stale !== null) {
       candidates.push(stale);
       continue;
@@ -194,7 +212,8 @@ function staleStepCandidate(
     if (record.wait !== null) return null;
     if (
       record.blocker?.kind === "other" &&
-      parkOf(record.blocker.message) !== null
+      (parkOf(record.blocker.message) !== null ||
+        record.blocker.message === PULL_CLOSED_BEFORE_MERGE)
     ) return null;
   }
   const intent = record.intent;
@@ -206,8 +225,10 @@ function staleStepCandidate(
   if (record.target.selfMerge !== undefined) return null;
   // The retired-pull pass owns a record retired on its closed issue: only the
   // pull it recorded merged is completed here; one it closed, found closed or
-  // found foreign is settled and never read again.
-  const settledPull = record.retiredPullClosure?.pr === pr
+  // found foreign is settled and never read again. A `reopened` settlement
+  // returned the record to an ordinary open-issue record: it is unsettled.
+  const settledPull = record.retiredPullClosure?.pr === pr &&
+      record.retiredPullClosure.outcome !== "reopened"
     ? record.retiredPullClosure.outcome
     : undefined;
   if (settledPull !== undefined && settledPull !== "merged") return null;
@@ -359,6 +380,13 @@ export async function verifyHumanMergeHeadReadmissions(
     repository: RepositoryIdentityV1,
   ) => Promise<HostedAutonomyScopeV1>,
   actions: string[],
+  /**
+   * Receives every stale-step candidate whose listing was attempted and
+   * refused (an open or closed-unmerged pull, an unreadable listing): the
+   * caller stamps it (`pullProbe`) in its write, so the record is read at
+   * most once per backoff window instead of every pass.
+   */
+  onStaleProbe?: (probe: PullProbeStampV1) => void,
 ): Promise<HumanMergeReadmissionV1[]> {
   const verified: HumanMergeReadmissionV1[] = [];
   for (const candidate of candidates) {
@@ -392,6 +420,15 @@ export async function verifyHumanMergeHeadReadmissions(
     );
     if (decision.kind === "refused") {
       actions.push(`retry:${candidate.id}:skipped:${decision.reason}`);
+      if (
+        candidate.parkedBy === "stale_step" && candidate.pullRequest !== null
+      ) {
+        onStaleProbe?.({
+          id: candidate.id,
+          repository: candidate.repository,
+          pr: candidate.pullRequest,
+        });
+      }
       continue;
     }
     verified.push(decision.readmission);
