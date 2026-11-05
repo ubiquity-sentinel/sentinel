@@ -304,7 +304,7 @@ export const PARK_CLASSES: ParkClassV1[] = [
     kind: "other",
     writer: W(
       "src/repair/loop-preservation.ts",
-      `"candidate preservation validation refused",`,
+      "preservationRefusalMessage(preserved.error.detail),",
       "w.pres.validation_refused",
     ),
     trigger: "pipeline",

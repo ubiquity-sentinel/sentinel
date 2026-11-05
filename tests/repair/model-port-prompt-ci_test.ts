@@ -6,7 +6,10 @@
 import assert from "node:assert/strict";
 import { asWorkItemId } from "../../src/contracts/brands.ts";
 import type { ModelRunRequestV1 } from "../../src/contracts/ports.ts";
-import { buildPrompt } from "../../src/repair/model-port-prompt.ts";
+import {
+  buildPrompt,
+  PUBLICATION_BOUNDS_SENTENCE,
+} from "../../src/repair/model-port-prompt.ts";
 import {
   CI_EVIDENCE_FIX_INSTRUCTION,
   CI_SELF_CHECK_INSTRUCTION,
@@ -83,12 +86,23 @@ const EVIDENCE = renderCiEvidence({
 }, NONCE);
 
 Deno.test("without evidence the local prompt matches the generation-81 baseline and the hosted one only adds the self-check", async () => {
-  assert.equal(await sha256(buildPrompt(REQUEST, true)), GOLDEN_LOCAL);
+  // The #333 publication-bounds sentence is the only addition to both.
+  const local = buildPrompt(REQUEST, true);
+  assert.ok(local.includes(PUBLICATION_BOUNDS_SENTENCE));
+  assert.equal(
+    await sha256(local.replace(PUBLICATION_BOUNDS_SENTENCE, "")),
+    GOLDEN_LOCAL,
+  );
   const hosted = buildPrompt(REQUEST, false);
   assert.ok(hosted.includes(CI_SELF_CHECK_INSTRUCTION));
   assert.ok(!hosted.includes(CI_EVIDENCE_FIX_INSTRUCTION));
   assert.equal(
-    await sha256(hosted.replace(CI_SELF_CHECK_INSTRUCTION, "")),
+    await sha256(
+      hosted.replace(CI_SELF_CHECK_INSTRUCTION, "").replace(
+        PUBLICATION_BOUNDS_SENTENCE,
+        "",
+      ),
+    ),
     GOLDEN_HOSTED_WITHOUT_SELF_CHECK,
   );
   assert.ok(!buildPrompt(REQUEST, true).includes(CI_SELF_CHECK_INSTRUCTION));
