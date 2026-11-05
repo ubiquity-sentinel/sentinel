@@ -1,4 +1,5 @@
 /** Native matrix planner and cell executable composition. */
+import { HOSTED_RECORD_WAIT_CAUSES } from "../repair/loop-wait-cause.ts";
 import { parseMatrixPlanV1 } from "../contracts/matrix.ts";
 import { QUEUE_CUSTODY_IDLE_DETAIL } from "./actions-queue-custody.ts";
 import type {
@@ -75,6 +76,8 @@ export async function runActionsMatrixHost(
           deadline,
           modelStartsEnabled: false,
           externalImplementations: true,
+          // #335: the planner's intake writes waits too (`HOSTED_RECORD_WAIT_CAUSES`).
+          recordWaitCauses: HOSTED_RECORD_WAIT_CAUSES,
           runCycle: async (deps, options) => {
             const outcome = await prepareMatrixIntakeV1(deps, {
               ...options,

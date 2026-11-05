@@ -86,6 +86,27 @@ export function isThroughputWaitCauseKeyV1(key: string): boolean {
   return WAIT_CAUSE_KEY.test(key);
 }
 
+/** Add `n` under `key`, keeping one slot for the fold key (mutates). */
+export function addWaitCauseCountV1(
+  causes: ThroughputWaitCausesV1,
+  key: string,
+  n: number,
+): void {
+  if (n === 0) return;
+  const named =
+    Object.keys(causes).filter((existing) =>
+      existing !== THROUGHPUT_WAIT_CAUSE_OTHER
+    ).length;
+  const slot = Object.hasOwn(causes, key) ||
+      key === THROUGHPUT_WAIT_CAUSE_OTHER ||
+      named < THROUGHPUT_WAIT_CAUSE_KEYS - 1
+    ? key
+    : THROUGHPUT_WAIT_CAUSE_OTHER;
+  const total = (causes[slot] ?? 0) + n;
+  if (!Number.isSafeInteger(total)) throw new Error("wait cause overflow");
+  causes[slot] = total;
+}
+
 export interface ThroughputCycleIdV1 {
   runId: number;
   attempt: number;
@@ -301,6 +322,8 @@ export interface ThroughputDailySummaryV1 {
   phaseMs: Record<ThroughputPhaseV1, ThroughputSumV1>;
   counts: Record<ThroughputCounterV1, ThroughputSumV1>;
   plannerRefusals: Record<PlannerRefusalReasonV1, number>;
+  /** Additive (#335): summed record histograms; absent until one had it. */
+  waitCauses?: ThroughputWaitCausesV1;
 }
 
 export const THROUGHPUT_DAILY_SUMMARY_MAX_BYTES = 4096;
@@ -350,7 +373,7 @@ export function parseThroughputDailySummaryV1(
 ): ThroughputDailySummaryV1 {
   scanThroughputMetricsStringsV1(input);
   const obj = expectRecord(input, "$");
-  expectExactKeys(obj, DAILY_KEYS, "$");
+  expectExactKeysWithOptional(obj, DAILY_KEYS, RECORD_OPTIONAL_KEYS, "$");
   expectVersion(obj.version, "$.version");
   if (obj.kind !== "throughput_metrics_daily") {
     fail("$.kind", "invalid_enum", 'expected kind "throughput_metrics_daily"');
@@ -394,6 +417,9 @@ export function parseThroughputDailySummaryV1(
     phaseMs: parseSums(obj.phaseMs, THROUGHPUT_PHASES_V1, records, "$.phaseMs"),
     counts: parseSums(obj.counts, THROUGHPUT_COUNTERS_V1, records, "$.counts"),
     plannerRefusals,
+    ...(obj.waitCauses === undefined ? {} : {
+      waitCauses: parseThroughputWaitCausesV1(obj.waitCauses, "$.waitCauses"),
+    }),
   };
   if (
     utf8Length(canonicalStringify(summary)) > THROUGHPUT_DAILY_SUMMARY_MAX_BYTES
@@ -433,6 +459,13 @@ export function foldThroughputRecordV1(
     plannerRefusals[reason] = (summary?.plannerRefusals[reason] ?? 0) +
       (record.plannerRefusal === reason ? 1 : 0);
   }
+  let waitCauses = summary?.waitCauses;
+  if (record.waitCauses !== undefined && record.waitCauses !== null) {
+    waitCauses = { ...waitCauses };
+    for (const [key, n] of Object.entries(record.waitCauses)) {
+      addWaitCauseCountV1(waitCauses, key, n);
+    }
+  }
   return {
     version: "v1",
     kind: "throughput_metrics_daily",
@@ -449,6 +482,7 @@ export function foldThroughputRecordV1(
     phaseMs: sums(THROUGHPUT_PHASES_V1, summary?.phaseMs, record.phaseMs),
     counts: sums(THROUGHPUT_COUNTERS_V1, summary?.counts, record.counts),
     plannerRefusals,
+    ...(waitCauses === undefined ? {} : { waitCauses }),
   };
 }
 

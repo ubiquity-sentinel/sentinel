@@ -137,6 +137,7 @@ export function createActionsTargetFlow(input: ActionsTargetCyclesInputV1) {
             model: input.model,
             budget: input.budget,
             externalImplementations: input.externalImplementations,
+            recordWaitCauses: input.recordWaitCauses,
             legacyReviewCutoff: input.legacyReviewCutoff ?? null,
           };
           const options = {

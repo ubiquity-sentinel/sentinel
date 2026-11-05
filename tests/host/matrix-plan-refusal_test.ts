@@ -9,6 +9,8 @@ import { RollingStartBudget } from "../../src/budget/mod.ts";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
 import { createMetricsCollectorV1 } from "../../src/contracts/throughput-metrics-collector.ts";
 import {
+  foldThroughputRecordV1,
+  parseThroughputDailySummaryV1,
   parseThroughputMetricsLineV1,
   THROUGHPUT_METRICS_RECORD_MAX_BYTES,
 } from "../../src/contracts/throughput-metrics.ts";
@@ -300,4 +302,35 @@ Deno.test("metrics records parse with and without the bounded waitCauses field",
       waitCauses: { "github:5xx:unavailable_and_more_x": 1 },
     }))
   );
+});
+
+Deno.test("the daily rollup sums wait causes under the same bound", () => {
+  const cut = (causes: Record<string, number> | null, at: number) => {
+    const collector = createMetricsCollectorV1();
+    for (const [key, n] of Object.entries(causes ?? {})) {
+      collector.addWaitCause(key, n);
+    }
+    const record = collector.snapshot({
+      cycle: { runId: at, attempt: 1 },
+      startedAtMs: T0 + at,
+      finishedAtMs: T0 + at + 1,
+    });
+    return causes === null ? { ...record, waitCauses: null } : record;
+  };
+  const { waitCauses: _w, ...older } = cut(null, 1);
+  let day = foldThroughputRecordV1(null, older);
+  assert.equal(Object.hasOwn(day, "waitCauses"), false);
+  day = foldThroughputRecordV1(day, cut({ "github:5xx:unavailable": 2 }, 2));
+  day = foldThroughputRecordV1(
+    day,
+    cut({ "github:5xx:unavailable": 1, "legacy:none:backoff": 3 }, 3),
+  );
+  day = foldThroughputRecordV1(day, cut(null, 4));
+  assert.deepEqual(day.waitCauses, {
+    "github:5xx:unavailable": 3,
+    "legacy:none:backoff": 3,
+  });
+  assert.deepEqual(parseThroughputDailySummaryV1(day), day);
+  const { waitCauses: _d, ...olderDay } = day;
+  assert.deepEqual(parseThroughputDailySummaryV1(olderDay), olderDay);
 });

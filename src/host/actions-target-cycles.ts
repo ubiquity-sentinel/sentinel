@@ -204,6 +204,8 @@ export interface ActionsTargetCyclesInputV1 {
   /** The model-disabled bootstrap execution: maintenance and health only. */
   bootstrap?: boolean;
   externalImplementations?: boolean;
+  /** Persist concrete wait causes (#335, `HOSTED_RECORD_WAIT_CAUSES`). */
+  recordWaitCauses?: boolean;
   /**
    * The one-time legacy review class's cutoff the launcher handed this run
    * (`SENTINEL_LEGACY_REVIEW_CUTOFF`, `review-round-cap.ts`); absent or null
