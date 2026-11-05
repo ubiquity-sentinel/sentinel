@@ -1,9 +1,9 @@
 /**
- * The repeat-failure park re-arms once per installed runtime revision. Live
+ * The repeat-failure park re-arms once per implementer prompt template. Live
  * parks (ai.ubq.fi 1210/1211/1281/1282 and others, `other|ff0e06bb0b1bfebd`,
- * "model run completed without any change to its checkout") were written
- * before a park recorded its revision, so a newly installed runtime (with a
- * changed implementer prompt) never re-admitted them. Replays the live
+ * "model run completed without any change to its checkout") were caused by
+ * the implementer prompt and written before a park recorded the prompt, so
+ * a runtime with a changed prompt never re-admitted them. Replays the live
  * ai.ubq.fi 300 rows of the repeat-failure fixture.
  */
 import assert from "node:assert/strict";
@@ -14,6 +14,8 @@ import {
 } from "../../src/contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import { attemptMemorySettlementMutationV1 } from "../../src/repair/attempt-policy.ts";
+import { implementerPromptTemplateDigest } from "../../src/repair/model-port-prompt-digest.ts";
+import { buildPrompt } from "../../src/repair/model-port-prompt.ts";
 import {
   applyHostedRetries,
   hostedRepositoryKey,
@@ -39,9 +41,11 @@ const LIVE = JSON.parse(
 
 /** The revision every live outcome ran under. */
 const R80 = "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481" as GitSha;
-/** Two later installed runtime revisions. */
+/** A later installed runtime revision. */
 const R81 = "81818181818181818181818181818181abcdef01" as GitSha;
-const R82 = "82828282828282828282828282828282abcdef02" as GitSha;
+/** Two implementer prompt template digests. */
+const P1 = "1".repeat(64);
+const P2 = "2".repeat(64);
 const AI_300 = "issue-ubiquity-ai.ubq.fi-300";
 const UNAVAILABLE = "model run failed (unavailable)";
 const NOW = Date.parse("2026-10-17T23:05:00Z");
@@ -95,18 +99,19 @@ interface PassV1 {
   denials: Map<string, string>;
 }
 
-/** One launcher planning pass under the installed `runtime` (or none). */
+/** One launcher planning pass with prompt digest `prompt` (or none). */
 function pass(
   snapshot: RepairStateSnapshotV1,
-  runtime: GitSha | undefined,
+  prompt: string | undefined,
   now = NOW,
+  runtime: GitSha = R80,
 ): PassV1 {
   const parks: RepeatFailureParkPlanV1[] = [];
   const denials = new Map<string, string>();
   const plans = planHostedRetries(
     snapshot,
     now,
-    runtime ?? R80,
+    runtime,
     ownTips(snapshot),
     new Set(),
     (denial) => denials.set(denial.id, denial.reason),
@@ -114,7 +119,7 @@ function pass(
       repeatFailure: {
         route: ROUTE,
         issueDigests: new Map([[AI_300, DIGEST_300]]),
-        ...(runtime === undefined ? {} : { runtime }),
+        ...(prompt === undefined ? {} : { prompt }),
       },
       onRepeatFailurePark: (park) => parks.push(park),
     },
@@ -122,10 +127,9 @@ function pass(
   return { plans, parks, denials };
 }
 
-/** One more identical failed implementation, settled under `runtime`. */
+/** One more identical failed implementation, settled under R80. */
 async function settleFailure(
   snapshot: RepairStateSnapshotV1,
-  runtime: GitSha,
   at: number,
 ): Promise<RepairStateSnapshotV1> {
   const record = workOf(snapshot);
@@ -140,7 +144,7 @@ async function settleFailure(
     record: moved,
     detail: UNAVAILABLE,
     now: at,
-    runtimeSha: runtime,
+    runtimeSha: R80,
   });
   const draft = structuredClone(snapshot) as RepairStateSnapshotV1;
   draft.work = draft.work.map((item) => item.id === AI_300 ? moved : item);
@@ -152,13 +156,13 @@ async function settleFailure(
   return parseRepairStateSnapshotV1(draft);
 }
 
-/** The live park as a launcher that recorded no revision wrote it. */
+/** The live park as a launcher that recorded no prompt wrote it. */
 function legacyParked(): RepairStateSnapshotV1 {
   const snapshot = liveSnapshot();
   const first = pass(snapshot, undefined);
   assert.equal(first.parks.length, 1, JSON.stringify([...first.denials]));
-  assert.equal(first.parks[0].park.revision, undefined);
-  assert.doesNotMatch(first.parks[0].message, / rev=/);
+  assert.equal(first.parks[0].park.prompt, undefined);
+  assert.doesNotMatch(first.parks[0].message, / prompt=/);
   return applyRepeatFailureParks(snapshot, first.parks, NOW);
 }
 
@@ -168,17 +172,37 @@ function rearmPlan(next: PassV1): RetryPlanV1 {
   return plan;
 }
 
-Deno.test("repeat failure runtime: a legacy park re-arms once under the installed revision", () => {
+Deno.test("repeat failure prompt: the template digest is stable and fixed prose only", () => {
+  const digest = implementerPromptTemplateDigest();
+  assert.match(digest, /^[0-9a-f]{64}$/);
+  assert.equal(implementerPromptTemplateDigest(), digest);
+  // It is rendered by the real builder: the role prose it covers is the one
+  // every implementer prompt carries.
+  const role = buildPrompt({
+    taskId: "t" as WorkRecordV1["id"],
+    repository: { owner: "o", name: "n", installationId: 1 },
+    base: R80,
+    issue: null,
+    evidence: [],
+    model: "m",
+    reasoning: "max",
+    maxDurationMs: 1,
+    maxOutputChars: 1,
+  }, false);
+  assert.match(role, /Runtime implementer role/);
+});
+
+Deno.test("repeat failure prompt: a legacy park re-arms once under the current prompt", () => {
   const parked = legacyParked();
-  // Without a runtime fact nothing changes: the park is only named.
+  // Without a prompt fact nothing changes: the park is only named.
   const bare = pass(parked, undefined, NOW + 5 * 60_000);
   assert.equal(bare.plans.length, 0);
   assert.match(bare.denials.get(AI_300) ?? "", /^repeat_failure_parked:/);
-  const next = pass(parked, R81, NOW + 10 * 60_000);
+  const next = pass(parked, P1, NOW + 10 * 60_000);
   const plan = rearmPlan(next);
   assert.equal(plan.nextStep, "work");
   assert.equal(plan.grant, 0);
-  assert.equal(plan.detail, "other:repeat_failure_rearmed:runtime_changed");
+  assert.equal(plan.detail, "other:repeat_failure_rearmed:prompt_changed");
   assert.equal(next.parks.length, 0);
   const granted = applyHostedRetries(parked, NEW_BASE, [plan], NOW);
   const record = workOf(granted);
@@ -190,25 +214,25 @@ Deno.test("repeat failure runtime: a legacy park re-arms once under the installe
   assert.deepEqual(granted.attemptMemory, parked.attemptMemory);
 });
 
-Deno.test("repeat failure runtime: the re-armed revision re-parks with its revision and never re-arms twice; a newer one does", async () => {
+Deno.test("repeat failure prompt: the re-armed prompt re-parks with its digest and never re-arms twice; a changed one does", async () => {
   const parked = legacyParked();
   const granted = applyHostedRetries(
     parked,
     NEW_BASE,
-    [rearmPlan(pass(parked, R81, NOW + 10 * 60_000))],
+    [rearmPlan(pass(parked, P1, NOW + 10 * 60_000))],
     NOW + 10 * 60_000,
   );
-  // The re-armed run fails identically under R81: the change did not alter
-  // the outcome, so the record re-parks at once, recording R81.
-  const failed = await settleFailure(granted, R81, NOW + HOUR);
-  const repark = pass(failed, R81, NOW + HOUR + 60_000);
+  // The re-armed run fails identically under P1: the prompt did not alter
+  // the outcome, so the record re-parks at once, recording P1.
+  const failed = await settleFailure(granted, NOW + HOUR);
+  const repark = pass(failed, P1, NOW + HOUR + 60_000);
   assert.equal(repark.plans.length, 0);
   assert.equal(repark.parks.length, 1);
-  assert.equal(repark.parks[0].park.revision, R81.slice(0, 12));
+  assert.equal(repark.parks[0].park.prompt, P1.slice(0, 12));
   assert.equal(repark.parks[0].park.count, 54);
   assert.match(
     repark.parks[0].message,
-    new RegExp(` rev=${R81.slice(0, 12)}: `),
+    new RegExp(` prompt=${P1.slice(0, 12)}: `),
   );
   const again = applyRepeatFailureParks(
     failed,
@@ -219,38 +243,43 @@ Deno.test("repeat failure runtime: the re-armed revision re-parks with its revis
     parseRepeatFailurePark(workOf(again).blocker),
     repark.parks[0].park,
   );
-  // The same revision, on every later pass: parked, no grant, no write.
-  for (const at of [NOW + 2 * HOUR, NOW + 48 * HOUR]) {
-    const same = pass(again, R81, at);
+  // The same prompt on every later pass, even under a newly installed
+  // runtime revision: parked, no grant, no write.
+  const later: [number, GitSha][] = [
+    [NOW + 2 * HOUR, R80],
+    [NOW + 48 * HOUR, R81],
+  ];
+  for (const [at, runtime] of later) {
+    const same = pass(again, P1, at, runtime);
     assert.equal(same.plans.length, 0);
     assert.equal(same.parks.length, 0);
     assert.match(same.denials.get(AI_300) ?? "", /^repeat_failure_parked:/);
   }
-  // A newer installed revision re-arms it once more.
-  const newer = pass(again, R82, NOW + 49 * HOUR);
+  // A changed prompt re-arms it once more.
+  const changed = pass(again, P2, NOW + 49 * HOUR);
   assert.equal(
-    rearmPlan(newer).detail,
-    "other:repeat_failure_rearmed:runtime_changed",
+    rearmPlan(changed).detail,
+    "other:repeat_failure_rearmed:prompt_changed",
   );
-  // ... and three more identical outcomes under it leave it parked under R82.
+  // ... and three more identical outcomes under it leave it parked under P2.
   let state = applyHostedRetries(
     again,
     NEW_BASE,
-    [rearmPlan(newer)],
+    [rearmPlan(changed)],
     NOW + 49 * HOUR,
   );
   let last: PassV1 | null = null;
   for (const offset of [1, 2, 3]) {
     const at = NOW + (49 + offset) * HOUR;
     if (workOf(state).nextStep !== "blocked") {
-      state = await settleFailure(state, R82, at);
+      state = await settleFailure(state, at);
     }
-    last = pass(state, R82, at + 60_000);
+    last = pass(state, P2, at + 60_000);
     state = applyRepeatFailureParks(state, last.parks, at + 60_000);
     assert.equal(last.plans.length, 0, `offset ${offset}`);
   }
   const final = parseRepeatFailurePark(workOf(state).blocker);
-  assert.equal(final?.revision, R82.slice(0, 12));
+  assert.equal(final?.prompt, P2.slice(0, 12));
   assert.equal(final?.count, 55);
   assert.equal(last!.parks.length, 0, "parked once, then only named");
 });

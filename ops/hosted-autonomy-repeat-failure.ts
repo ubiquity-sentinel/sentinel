@@ -39,12 +39,14 @@
  *   streak by construction. An identical failure after a re-arm re-parks at
  *   once: the change did not alter the outcome. Age, generation or a base
  *   move alone never re-arm.
- * - Runtime re-arm: a park records (` rev=`) the 12-hex prefix of the
- *   installed runtime revision it was written under. A pass under a
- *   different installed revision re-arms it once (`runtime_changed`); a
- *   legacy park without ` rev=` counts as an older revision. The re-armed
- *   record's next identical outcome re-parks at once under the current
- *   revision, which that revision then never re-arms again.
+ * - Prompt re-arm: a park records (` prompt=`) the 12-hex prefix of the
+ *   implementer prompt template digest it was written under
+ *   (`implementerPromptTemplateDigest`). A pass whose template digest
+ *   differs re-arms it once (`prompt_changed`); a legacy park without
+ *   ` prompt=` counts as an older prompt. The re-armed record's next
+ *   identical outcome re-parks at once under the current digest, which then
+ *   never re-arms it again; an install that leaves the prompt unchanged
+ *   never re-arms.
  *
  * Charged reservations stay charged: nothing here settles, refunds or
  * deletes a charge, and parking only withholds a new one.
@@ -81,7 +83,7 @@ const MAX_BLOCKER_MESSAGE = MaxText.message;
 const PARK_PATTERN = new RegExp(
   `^${
     REPEAT_FAILURE_PARK_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-  }(\\d{1,9})x ([a-z_]{1,32}\\|[0-9a-f]{16}) issue=([0-9a-f]{12}|none) route=([0-9a-f]{12})(?: rev=([0-9a-f]{12}))?: `,
+  }(\\d{1,9})x ([a-z_]{1,32}\\|[0-9a-f]{16}) issue=([0-9a-f]{12}|none) route=([0-9a-f]{12})(?: prompt=([0-9a-f]{12}))?: `,
 );
 
 function sha256Hex(text: string): string {
@@ -215,16 +217,16 @@ export interface RepeatFailureParkV1 {
   /** The launcher route identity at park time. */
   route: string;
   /**
-   * 12 hex of the installed runtime revision at park time; absent on a
-   * legacy park, which counts as parked under an older revision.
+   * 12 hex of the implementer prompt template digest at park time; absent on
+   * a legacy park, which counts as parked under an older prompt.
    */
-  revision?: string;
+  prompt?: string;
 }
 
-/** The park's revision identity of an exact runtime revision. */
-export function repeatFailureRevisionIdentity(runtime: string): string | null {
-  const value = runtime.toLowerCase();
-  return /^[0-9a-f]{40}$/.test(value) ? value.slice(0, 12) : null;
+/** The park's prompt identity of a 64-hex template digest. */
+export function repeatFailurePromptIdentity(digest: string): string | null {
+  const value = digest.toLowerCase();
+  return /^[0-9a-f]{64}$/.test(value) ? value.slice(0, 12) : null;
 }
 
 /** The explicit owner-gated blocker message; it keeps the original detail. */
@@ -232,8 +234,8 @@ export function repeatFailureParkMessage(
   park: RepeatFailureParkV1,
   original: string,
 ): string {
-  const revision = park.revision === undefined ? "" : ` rev=${park.revision}`;
-  return `${REPEAT_FAILURE_PARK_PREFIX}${park.count}x ${park.signature} issue=${park.issue} route=${park.route}${revision}: ${original}`
+  const prompt = park.prompt === undefined ? "" : ` prompt=${park.prompt}`;
+  return `${REPEAT_FAILURE_PARK_PREFIX}${park.count}x ${park.signature} issue=${park.issue} route=${park.route}${prompt}: ${original}`
     .slice(0, MAX_BLOCKER_MESSAGE);
 }
 
@@ -249,7 +251,7 @@ export function parseRepeatFailurePark(
     signature: match[2],
     issue: match[3],
     route: match[4],
-    ...(match[5] === undefined ? {} : { revision: match[5] }),
+    ...(match[5] === undefined ? {} : { prompt: match[5] }),
   };
 }
 
@@ -264,10 +266,10 @@ export interface RepeatFailureContextV1 {
    */
   issueDigests: ReadonlyMap<string, string | null>;
   /**
-   * The exact installed runtime revision this pass runs under. Absent, no
-   * runtime re-arm happens and a park records no revision.
+   * The implementer prompt template digest (64 hex) this pass runs with.
+   * Absent, no prompt re-arm happens and a park records no prompt.
    */
-  runtime?: string;
+  prompt?: string;
 }
 
 export type RepeatFailureVerdictV1 =
@@ -283,7 +285,7 @@ export type RepeatFailureVerdictV1 =
     trigger:
       | "issue_edited"
       | "route_changed"
-      | "runtime_changed"
+      | "prompt_changed"
       | "passport_trial";
   };
 
@@ -317,15 +319,15 @@ export function repeatFailureVerdict(
       : { kind: "parked", park: parked };
   }
   const route = context?.route ?? REPEAT_FAILURE_DEFAULT_ROUTE;
-  const revision = context?.runtime === undefined
+  const prompt = context?.prompt === undefined
     ? null
-    : repeatFailureRevisionIdentity(context.runtime);
+    : repeatFailurePromptIdentity(context.prompt);
   if (parked !== null) {
     if (context !== undefined && parked.route !== route) {
       return { kind: "rearm", park: parked, trigger: "route_changed" };
     }
-    if (revision !== null && parked.revision !== revision) {
-      return { kind: "rearm", park: parked, trigger: "runtime_changed" };
+    if (prompt !== null && parked.prompt !== prompt) {
+      return { kind: "rearm", park: parked, trigger: "prompt_changed" };
     }
     const issue = issueBaseline(record, context);
     if (
@@ -343,7 +345,7 @@ export function repeatFailureVerdict(
     signature: streak.signature,
     issue,
     route,
-    ...(revision === null ? {} : { revision }),
+    ...(prompt === null ? {} : { prompt }),
   };
   return {
     kind: "park",

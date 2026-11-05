@@ -107,6 +107,7 @@ import {
   protectedReadmissionPlan,
   takeProtectedReadmissions,
 } from "./hosted-autonomy-protected-readmission.ts";
+import { implementerPromptTemplateDigest } from "../src/repair/model-port-prompt-digest.ts";
 
 /** Legacy class drift lines reported per pass (the rest are counted). */
 export const LEGACY_DRIFT_REPORTS_PER_PASS = 12;
@@ -499,9 +500,10 @@ export async function runHostedRetryPass(
       repeatFailure: {
         route: deps.modelRoute ?? REPEAT_FAILURE_DEFAULT_ROUTE,
         issueDigests,
-        // The authenticated installed revision: a park written under an
-        // older one re-arms once under this one.
-        runtime: runtimeSha,
+        // The implementer prompt template this launcher (the installed
+        // runtime's exact revision under self-install) ships: a park written
+        // under another prompt re-arms once under this one.
+        prompt: implementerPromptTemplateDigest(),
       },
       onRepeatFailurePark: (park) => {
         if (!settled(park.id)) parks.push(park);

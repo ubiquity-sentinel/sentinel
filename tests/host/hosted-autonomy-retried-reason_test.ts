@@ -20,6 +20,7 @@ import {
   repeatFailureParkMessage,
 } from "../../ops/hosted-autonomy-repeat-failure.ts";
 import { SHA1, T0 } from "../state/helpers.ts";
+import { implementerPromptTemplateDigest } from "../../src/repair/model-port-prompt-digest.ts";
 import {
   authorizingReceipt,
   BASE,
@@ -53,8 +54,8 @@ function parkedRecord() {
           signature: "other|ba872ff9154d4db3",
           issue: "none",
           route: REPEAT_FAILURE_DEFAULT_ROUTE,
-          // Parked under the rig's installed runtime: never re-armed by it.
-          revision: SHA1.slice(0, 12),
+          // Parked under the current implementer prompt: never re-armed by it.
+          prompt: implementerPromptTemplateDigest().slice(0, 12),
         },
         "model run failed (unavailable)",
       ),
