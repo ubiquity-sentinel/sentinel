@@ -16,11 +16,13 @@ import {
   ATTEMPT_DETAIL_LOOP_STOP,
   ATTEMPT_DETAIL_NO_CHANGE,
   ATTEMPT_DETAIL_PROVIDER_THROTTLED,
+  ATTEMPT_DETAIL_UNAPPLIED_PATCH,
   ATTEMPT_DETAIL_UNCERTAIN,
   attemptMemorySettlementMutationV1,
   attemptMemorySuccessMutationV1,
 } from "./attempt-policy.ts";
 import { holdNoChange, noChangeIssue } from "./base-satisfaction-marker.ts";
+import { unappliedPatchOnly } from "./candidate-shape.ts";
 import { conflictResolutionInFlight } from "./conflict-resolution.ts";
 import { isProviderThrottledReceiptV1 } from "./model-port-retry.ts";
 import {
@@ -174,7 +176,10 @@ export async function handleModelReceipt(
     // obvious generated/cache output (build products, logs, caches, OS junk)
     // can never establish task completion — however clean a downstream
     // code-quality review is — so it is refused here, before publication.
-    !generatedArtifactOnly(candidate.changedPaths);
+    !generatedArtifactOnly(candidate.changedPaths) &&
+    // An unapplied patch/diff file plus tests leaves the real file at its
+    // base blob: refused before publication so it never spends a review.
+    (conflictBase !== null || !unappliedPatchOnly(candidate.changedPaths));
   if (!completed) {
     // A raw (serial) receipt the gateway throttled settles exactly like the
     // matrix cell's throttled refusal: transient, never no-progress. An
@@ -202,6 +207,11 @@ export async function handleModelReceipt(
     if (artifactOnly) {
       incompleteMessage =
         "model candidate changed only generated/cache artifacts";
+    } else if (
+      receipt.outcome === "completed" && candidate !== null &&
+      conflictBase === null && unappliedPatchOnly(candidate.changedPaths)
+    ) {
+      incompleteMessage = ATTEMPT_DETAIL_UNAPPLIED_PATCH;
     }
     const settled = await settleAndBlock(
       deps,
