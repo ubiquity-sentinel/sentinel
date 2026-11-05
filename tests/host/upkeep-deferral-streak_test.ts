@@ -3,7 +3,7 @@ import {
   advanceUpkeepDeferralStreak,
   parseUpkeepDeferralStreakV1,
   settleUpkeepDeferralStreak,
-  UPKEEP_DEFERRAL_NOTICE_TITLE,
+  upkeepDeferralNoticeTitle,
   type UpkeepDeferralNoticeV1,
   type UpkeepDeferralStreakStoreV1,
   type UpkeepDeferralStreakV1,
@@ -44,7 +44,7 @@ function fakeNotice() {
     sent,
     publish: (notice: UpkeepDeferralNoticeV1) => {
       sent.push(structuredClone(notice));
-      return Promise.resolve(true);
+      return Promise.resolve({ adapter: "log" as const, issueNumber: null });
     },
   };
 }
@@ -57,7 +57,7 @@ const NOV3_DEFERRED = {
   reason: "deferred_historical_quarantine",
 } as const;
 
-Deno.test("upkeep deferral streak: third consecutive deferral emits exactly one notice", async () => {
+Deno.test("upkeep deferral streak: third consecutive deferral claims a notice, then one per three more", async () => {
   const store = fakeStore();
   const notice = fakeNotice();
   const reason = upkeepDeferralReason(NOV3_DEFERRED);
@@ -73,31 +73,47 @@ Deno.test("upkeep deferral streak: third consecutive deferral emits exactly one 
     );
     if (runId === 102) assert.equal(notice.sent.length, 0);
   }
+  // The third deferral claims the notice; the next claim needs three more.
   assert.deepEqual(outcomes.map((row) => row.notified), [
     false,
     false,
     true,
     false,
     false,
-    false,
+    true,
   ]);
-  assert.deepEqual(notice.sent, [{
-    title: UPKEEP_DEFERRAL_NOTICE_TITLE,
+  assert.deepEqual(notice.sent[0], {
+    title: upkeepDeferralNoticeTitle(3),
     reason: "deferred_historical_quarantine",
     runId: 103,
-  }]);
-  // Non-sensitive: only title, closed reason code and run id.
+    count: 3,
+    reasons: ["deferred_historical_quarantine"],
+    runIds: [101, 102, 103],
+    startedAtMs: null,
+    issueNumber: null,
+  });
+  assert.equal(notice.sent[1].title, upkeepDeferralNoticeTitle(6));
+  // Non-sensitive: counts, closed reason codes, run ids and one instant.
   assert.deepEqual(Object.keys(notice.sent[0]).sort(), [
+    "count",
+    "issueNumber",
     "reason",
+    "reasons",
     "runId",
+    "runIds",
+    "startedAtMs",
     "title",
   ]);
   assert.doesNotMatch(JSON.stringify(notice.sent), /https?:|token/i);
   assert.deepEqual(store.value, {
-    version: 1,
+    version: 2,
     count: 6,
-    notified: true,
     lastRunId: 106,
+    noticeCount: 6,
+    runIds: [101, 102, 103, 104, 105, 106],
+    reasons: ["deferred_historical_quarantine"],
+    startedAtMs: null,
+    issueNumber: null,
   });
 });
 
@@ -218,8 +234,25 @@ Deno.test("upkeep deferral streak: strict bounded reader and closed reasons", ()
     upkeepDeferralReason({ status: "skipped", reason: "no_work" }),
     null,
   );
+  // A live version 1 file is lifted on read; at the bound nothing is claimed.
+  const lifted = parseUpkeepDeferralStreakV1({
+    version: 1,
+    count: 1_000,
+    notified: true,
+    lastRunId: 9,
+  });
+  assert.deepEqual(lifted, {
+    version: 2,
+    count: 1_000,
+    lastRunId: 9,
+    noticeCount: 1_000,
+    runIds: [9],
+    reasons: [],
+    startedAtMs: null,
+    issueNumber: null,
+  });
   const capped = advanceUpkeepDeferralStreak(
-    { version: 1, count: 1_000, notified: true, lastRunId: 9 },
+    lifted,
     { runId: 10, reason: "deferred_unexpected_error" },
   );
   assert.equal(capped.next.count, 1_000);

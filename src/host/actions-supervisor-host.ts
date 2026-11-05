@@ -50,9 +50,12 @@ import {
 } from "./throughput-watchdog-finalize.ts";
 import { createHostedAutonomyRequest } from "../../ops/hosted-autonomy-github-listing.ts";
 import { createHostedWatchdogIssues } from "../../ops/hosted-autonomy-watchdog-issues.ts";
+import { createHostedUpkeepIssues } from "../../ops/hosted-autonomy-upkeep-issues.ts";
 import { GitThroughputMetricsStore } from "../state/throughput-metrics-store.ts";
 import {
+  fallbackUpkeepNoticePort,
   type FinalizeUpkeepDeferralDepsV1,
+  issueUpkeepNoticePort,
   logUpkeepNoticePort,
   metricsUpkeepStreakStore,
   runFinalizeUpkeepDeferral,
@@ -339,6 +342,7 @@ export async function runHostedSupervisorHost(
       const settled = await runFinalizeUpkeepDeferral(input.upkeepDeferral, {
         runId: identity.runId,
         observation: input.env[UPKEEP_DEFERRAL_ENV],
+        nowMs: input.clock.now(),
       });
       if (settled.notified) ownerNoticesSent = 1;
     }
@@ -524,13 +528,22 @@ export async function main(): Promise<void> {
       ),
     };
     const summaryPath = Deno.env.get(STEP_SUMMARY_ENV);
+    const appendSummary = summaryPath === undefined || summaryPath.length === 0
+      ? undefined
+      : (line: string) =>
+        Deno.writeTextFile(summaryPath, line, { append: true });
     upkeepDeferral = {
       store: metricsUpkeepStreakStore(port),
-      // Log-only until an owner chooses an ntfy topic and secret.
-      notice: logUpkeepNoticePort({
-        appendSummary: summaryPath === undefined || summaryPath.length === 0
-          ? undefined
-          : (line) => Deno.writeTextFile(summaryPath, line, { append: true }),
+      // Owner decision 2026-11-05: the notice is one owner issue on the self
+      // repository through the same self App token as the watchdog issues;
+      // the log line is the fallback when the issue is not delivered.
+      notice: fallbackUpkeepNoticePort({
+        issue: issueUpkeepNoticePort(createHostedUpkeepIssues(
+          createHostedAutonomyRequest(selfToken),
+          SUPERVISOR_REPOSITORY,
+        )),
+        log: logUpkeepNoticePort({ appendSummary }),
+        appendSummary,
       }),
     };
   }
