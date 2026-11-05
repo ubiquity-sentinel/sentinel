@@ -4214,3 +4214,189 @@ a maintenance pass takes 25-55 minutes.
   refused record's sibling merging in the same pass, and
   `J3:delivery:no-merge-slot` is no longer a known jam. The moved-tip refusal is
   proved by `tests/host/hosted-autonomy-merge-per-repository_test.ts`.
+
+## 2026-11-05: throughput plan implementation (#340)
+
+Owner tracking issue #340 (2026-11-04 productivity audit) maps sixteen child
+issues. This entry records the policy each child changes; the integrated
+candidate, its local evidence and the open hosted assertions are in
+`docs/build-status.md`. Every child keeps one trusted writer per state
+surface, no model access to state, credentials or promotion, durable
+reservations and accounting, the current-head review and CI gates, and no new
+scheduled or background mechanism beyond the five-minute dispatch and the
+`workflow_run` chain.
+
+### State-shape changes and rollback (applies to every child below)
+
+The repair state and its sidecars gain new optional keys and directories:
+the `deployment` wait reason (#337), attempt-memory `inputs` (#334),
+`targetCapabilities/` (#332), `repair-archive/` (#324, #325), work-record
+`stepInputs` (#326), wait `cause` (#335), and the metrics sidecar ref
+`refs/heads/sentinel-state/metrics` (#338, #327). A runtime from before this
+revision rejects a tree that carries them. This is acceptable under the
+launcher self-install sequence: a new revision installs with a
+model-disabled bootstrap that is now a health pass writing no record (#336),
+and automatic rollback happens only when that bootstrap fails, before any
+ordinary pass has written the new shapes. A later manual rollback past this
+revision requires promoting the cold tier and removing the new rows first;
+the integration owner records that rule here rather than adding a version
+bump to every contract.
+
+### #327 deferred upkeep never fails the run
+
+`historical_quarantine_incomplete` is split. A fixed allowlist of
+missing-input refusals ("unavailable", "unproven", absent custody, raised
+before any settlement or block write) is a deferred upkeep result: the
+maintenance job reports `skipped` / `deferred_historical_quarantine`, writes
+nothing and exits 0, so prepare, planning, repair and delivery continue.
+Changed bindings or custody, an outside witness, ambiguous artifact
+provenance, redacted or unknown errors, and any refusal after a write started
+still fail closed. Maintenance publishes `upkeepDeferral`; finalize (which now
+needs `maintenance`) keeps a bounded streak on the metrics sidecar and claims
+exactly one non-sensitive notice (title, reason code, run id) on the third
+consecutive deferral, through an injected notice port whose only adapter is a
+log and step-summary line. A real ntfy adapter needs an owner topic/secret
+decision.
+
+### #338 throughput metrics and #339 report
+
+Finalize writes one strict `ThroughputMetricsRecordV1` per cycle to
+`refs/heads/sentinel-state/metrics` (`throughput/<UTC date>.jsonl`, newest
+2,000 kept; older folded into `throughput/daily.jsonl`, 400 days). Records
+are at most 1,024 bytes with 32-character strings and no URL-shaped values;
+writes are expected-head and non-force and a duplicate cycle is never written
+twice. Unobserved fields are null, never invented. `sentinel report --since
+<date> [--until <date>]` is read-only over that ref and the repair snapshot
+and prints `n/a (not recorded)` for anything the data does not carry.
+
+### #335 planner refusal and wait causes
+
+The planner records one refusal reason per pass (`deadline_margin`,
+`no_ready_records`, `reservation_denied`, `provider_unavailable`,
+`target_unavailable`) and the count of ready records it did not plan, on the
+plan diagnostic line that finalize reads. `backoff`/`unavailable` waits carry
+an optional bounded `cause` (port, status class, reason code; no bodies or
+URLs), enabled for hosted runs; the per-cycle record carries a bounded
+`waitCauses` histogram.
+
+### #326 batched live reads and changed-input stepping
+
+The step loop reads live inputs once per repository per pass through one
+read-only GraphQL request (`readLiveInputs`); a failed batch is unavailable
+and the per-record reads are used instead. Each stepped or deferred record is
+stamped with an input fingerprint (`stepInputs {digest, deadline}`) in the
+pass's existing expected-head write; a record whose fingerprint is unchanged
+before its deadline (the earlier of its wait deadline and 30 minutes) is
+skipped with no write and no charge, and the skip reason is counted on the
+`sentinel_repair_pass` line. Records woken by a completed review are always
+stepped.
+
+### #324 hot and cold repair state, #325 release-deferred disposition
+
+Cold records live under `repair-archive/<collection>/` on the same ref. The
+hot read (`readRepair`, `readRepairAt`, history views) never lists or parses
+the cold subtree; readers that need the full ledger use `readRepairTiered`.
+The trusted writer demotes whole families (work record, reservations,
+completed reviews, terminal release requests) only when the record is done
+or blocked with no intent, its issue is absent from a complete open-issue
+listing, nothing hot depends on it, every reservation is terminal and outside
+the 7-day accounting window, and no id is protected; moves re-point the same
+blob ids and the candidate is re-read before push. Demotion is budgeted and
+deferred; promotion of a reopened family is never deferred. While the release
+path is disabled, a family holding an open release request (a done record, or
+a delivery record waiting only on that request) is demoted unchanged under
+the same guards; ai.ubq.fi delivery records stay hot until the merge-accepted
+step completes them. When the release path is enabled the same writer
+promotes those families unchanged, bounded per pass and only after reading
+each target tip; a promoted open request whose revision is no longer the tip
+is recorded `cancelled` with reason "release request superseded", which the
+existing cancelled/failed path treats as terminal delivery evidence. Nothing
+is deleted, refunded or rewritten.
+
+### #333 pre-reservation checks and #334 identical-attempt refusal
+
+Deterministic admission checks run before `reserveModelStart`
+(`src/repair/pre-reservation-checks.ts`): repository and task identity, base
+SHA, source freshness, the `<!-- sentinel:skip -->` marker, candidate ref
+naming, denylist and session-bound validity, reservation collisions and the
+budget transition. A refused record is blocked as `model admission refused:
+pre-reservation <check>: <reason>` with nothing reserved or charged;
+post-inference refusals name their check. The implementer prompt carries the
+protected-path denylist and the publication bounds. Attempt memory gains an
+optional `inputs` fingerprint over base tip, candidate head identity, latest
+review findings digest and runtime revision; the second identical fingerprint
+is refused before reservation as `identical_attempt_refused: prior attempt
+<id>` and the next distinct attempt's prompt carries that fact. A refused
+record is re-granted to `work` only when its inputs have changed.
+
+### #332 target capability
+
+Targets without a named policy are verified once per default-branch tip and
+runtime generation (`targetCapabilities`). Capable means a `pull_request`
+workflow exists; a local verify command or backup-CI listing alone is
+recorded but is not capability, because backup CI only re-runs the target's
+own workflow. An incapable target admits no records and gets exactly one
+owner-action issue (first line `<!-- sentinel:skip -->`, second line
+`<!-- sentinel:target-capability -->`), created once, found again by its
+marker when the recording write was lost, and edited only when the missing
+list changes. When capability appears, no-CI parks without an intent return
+to `work` with counters and charges unchanged.
+
+### #329 just-in-time refresh, #330 delivery trains, #331 squash, #337 delivery checks
+
+A reviewed head keeps its reviewed base until it is next to land. The line is
+ordered oldest first by `createdAt`, then id; a base-refresh intent, or a
+head refreshed onto the tip since its latest review, holds every other
+record of the repository until it merges, stalls, idles or is held by its red
+base, and siblings refresh, push and request nothing. `CARRIED_REFRESH_LIMIT`
+(6) and the 6-hour carried wait bound only head-of-line refreshes. This
+supersedes the "waits only behind a landing contender or a ready one with a
+lower number" wording and the PR-number line order.
+
+For a foreign, non-Gateway target, the ready reviewed records of one
+repository land as one validated train per pass, extending the 2026-10-31
+entry: T' = tip ⊕ p1…pk is composed by the deterministic merge-tree
+executor, each member joins only when its reviewed patch is carried byte for
+byte, T' is published on `refs/heads/sentinel-trains/<op>` with intent
+persisted first, and CI runs once on it. On green the members merge in line
+order, each with its own expected-head merge, persisted intent and verified
+landing (parent = previous landing, tree = train tree); per-merge
+reservations and accounting are unchanged. On red the newest member is
+dropped with the run id and check name as its wait reason and the train
+retries once in the same pass, with no second bisect; unavailable CI is not
+red. Conflicting members leave the train and keep the single head-of-line
+refresh. While a train is open no other merge is made in that repository.
+Self and Gateway merges still write delivery state and end the delivery
+phase.
+
+Target pull requests are delivered by squash under the trusted per-target
+policy `mergeMethod: "squash" | "merge"` (`src/contracts/target-delivery.ts`,
+default squash, never in `sentinel.targets.json`), only where the repository
+reports `allow_squash_merge: true`; a target that forbids squash keeps merge
+commits, and an invalid value or unreadable setting refuses the merge and
+never falls back. The squash commit is the PR title plus its `Resolves #N`
+line; the reviewed head SHA is still the merge input and the expected-head
+guard is unchanged. The post-merge check accepts a squash commit whose single
+parent is exactly the reviewed base and whose tree equals the reviewed head's
+tree; anything else is `merged_off_tip`, and an unread tree is never booked.
+
+Per-target policy `requiredForDelivery` names checks beyond the required
+set (`src/host/target-delivery-checks.ts`, default empty). After every
+closure proof holds, the closure pass reads those checks on the merge commit:
+pending is a `deployment` wait (2 hours from the earliest check start);
+failed or overdue parks the record with check name, conclusion and id,
+reopens the issue once if GitHub closed it by that merge (a human close is
+never reopened), then posts one progress comment; passing closes as before.
+Review and merge gates are unchanged. The table stays empty until the owner
+records exact check names, so production behaviour is unchanged until then.
+
+### #336 bootstrap health pass
+
+A repair-job bootstrap reads release state, runtime pins, custody and
+contract versions, verifies compatibility and writes the same
+healthy/settled proof; it steps, prepares, polls, composes and writes no
+record. Intake, pre-ranking reconcilers, candidate-preservation stepping, the
+initial matrix artifact scan and pre-merge CI run in the next ordinary
+bounded pass. A failed health check still fails bootstrap and triggers the
+journaled restoration. The launcher summary carries `bootstrapDurationMs` and
+`bootstrapOutcome`.
