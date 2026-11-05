@@ -34,6 +34,8 @@ export interface GitTrainComposerOptionsV1 {
   ensureObjects?(shas: readonly string[]): Promise<boolean>;
   /** Optional explicit CI request for a pushed train ref. */
   triggerCi?(input: { ref: string; sha: string }): Promise<boolean>;
+  /** Optional lease-guarded deletion of an ended train ref. */
+  retire?: DeliveryTrainComposerV1["retire"];
 }
 
 export function gitDeliveryTrainComposer(
@@ -122,5 +124,6 @@ export function gitDeliveryTrainComposer(
     ...(options.triggerCi === undefined
       ? {}
       : { triggerCi: options.triggerCi }),
+    ...(options.retire === undefined ? {} : { retire: options.retire }),
   };
 }

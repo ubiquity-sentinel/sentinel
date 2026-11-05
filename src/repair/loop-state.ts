@@ -78,6 +78,22 @@ export function retiredCapNextStep(
   return null;
 }
 
+/**
+ * The open delivery trains (sentinel #330) the head-of-line refresh defers
+ * to. An absent or failed read holds nothing (fail open: a train whose member
+ * head moved stops by itself before any merge).
+ */
+async function readTrainHolds(
+  deps: RepairCycleDepsV1,
+): Promise<LoopContextV1["deliveryTrainHolds"]> {
+  try {
+    const read = await deps.state.readDeliveryTrainHolds?.();
+    return read !== undefined && read.ok ? read.value : [];
+  } catch {
+    return [];
+  }
+}
+
 export async function loadSnapshot(
   deps: RepairCycleDepsV1,
   bounds: RunBoundsV1,
@@ -90,6 +106,7 @@ export async function loadSnapshot(
     bounds,
     executionBaseline: null,
     legacyReviewCutoff: deps.legacyReviewCutoff ?? null,
+    deliveryTrainHolds: await readTrainHolds(deps),
   };
   if (
     deps.clock.now() < bounds.runDeadline &&

@@ -30,6 +30,7 @@ import type {
   HostedRuntimeRunSummaryV1,
   RunJobSummaryV1,
 } from "./run-summary.ts";
+import type { DeliveryCountsV1 } from "./delivery-counts-output.ts";
 
 /** Bound of the whole advisory metrics read/append/write. */
 export const FINALIZE_METRICS_BUDGET_MS = 60_000;
@@ -46,6 +47,11 @@ export interface FinalizeMetricsFactsV1 {
   runSummary: HostedRuntimeRunSummaryV1 | null;
   /** Owner notices this finalize claimed and published (#327). */
   ownerNoticesSent?: number;
+  /**
+   * The maintenance delivery pass's train, CI-run and merge counts (#330),
+   * from its step output; null/absent when unobserved.
+   */
+  deliveryCounts?: DeliveryCountsV1 | null;
   /**
    * The repair state the run summary's advisory read returned (#335), or
    * null/absent when it was not read; feeds the wait-cause histogram.
@@ -118,6 +124,12 @@ export function collectFinalizeMetricsV1(
       jobs.filter((job) => phaseOf(job.name) === "matrixCellTotal" && ran(job))
         .length,
     );
+  }
+  const delivery = facts.deliveryCounts ?? null;
+  if (delivery !== null) {
+    collector.addCount("trainsBuilt", delivery.trainsBuilt);
+    collector.addCount("targetCiRunsTriggered", delivery.targetCiRunsTriggered);
+    collector.addCount("mergesCompleted", delivery.mergesCompleted);
   }
   if (facts.ownerNoticesSent !== undefined && facts.ownerNoticesSent > 0) {
     collector.addCount("ownerNoticesSent", facts.ownerNoticesSent);

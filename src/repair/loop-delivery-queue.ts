@@ -20,7 +20,7 @@
  */
 import type { GitSha } from "../contracts/brands.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
-import { deliveryQueueAhead } from "./delivery-queue.ts";
+import { deliveryQueueAhead, deliveryTrainHold } from "./delivery-queue.ts";
 import { legacyCutoff } from "./loop-review-round-cap.ts";
 import type {
   LoopContextV1,
@@ -41,6 +41,18 @@ export function deliveryQueueDeferral(
   record: WorkRecordV1,
   tip: GitSha,
 ): StepResultV1 | null {
+  // An open delivery train of this repository (sentinel #330) lands its
+  // members on one CI run: no member's head is refreshed under it, and no
+  // other record refreshes onto a tip the train is about to move.
+  const train = deliveryTrainHold(context.deliveryTrainHolds ?? [], record);
+  if (train !== null) {
+    return {
+      kind: "deferred",
+      detail: `${DELIVERY_QUEUE_DEFERRED_PREFIX}train ${train.operationId} ${
+        train.members.includes(record.id) ? "lands it" : "goes first"
+      }`,
+    };
+  }
   const ahead = deliveryQueueAhead(
     context.snapshot,
     record,

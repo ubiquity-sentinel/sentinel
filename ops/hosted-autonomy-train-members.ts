@@ -123,7 +123,7 @@ export type TrainCiVerdictV1 =
   | { kind: "green" }
   | { kind: "red"; runId: number | null; check: string | null }
   | { kind: "pending" }
-  | { kind: "unavailable" };
+  | { kind: "unavailable"; cause?: "not_started" };
 
 /**
  * The train commit's CI through the existing read path (backup stand-ins and
@@ -134,6 +134,28 @@ export type TrainCiVerdictV1 =
  * listing that is neither is pending; anything unreadable is unavailable,
  * never red.
  */
+/** True when every failed completed run on `sha` never started a job. */
+async function notStarted(
+  surface: HostedAutonomyGitHubV1,
+  sha: string,
+): Promise<boolean> {
+  if (surface.runNeverStarted === undefined) return false;
+  try {
+    const failed = (await surface.listHeadRuns?.(sha) ?? []).filter((run) =>
+      run.headSha === sha && run.status === "completed" &&
+      run.conclusion !== null && run.conclusion !== "success" &&
+      run.conclusion !== "skipped" && run.conclusion !== "neutral"
+    );
+    if (failed.length === 0) return false;
+    for (const run of failed) {
+      if (await surface.runNeverStarted(run.id, sha) !== true) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function trainCiVerdict(
   surface: HostedAutonomyGitHubV1,
   sha: string,
@@ -156,7 +178,13 @@ export async function trainCiVerdict(
     failed = null;
   }
   if (failed === null) return { kind: "unavailable" };
-  if (failed.length === 0) return { kind: "pending" };
+  if (failed.length === 0) {
+    // A run whose jobs never started (the target's billing or spending
+    // stop) is no CI result: unavailable, never red and never pending.
+    return await notStarted(surface, sha)
+      ? { kind: "unavailable", cause: "not_started" }
+      : { kind: "pending" };
+  }
   let runId: number | null = null;
   try {
     const runs = await surface.listHeadRuns?.(sha) ?? null;

@@ -57,7 +57,11 @@ import {
   loadTargetConfigsV1,
   STATIC_TARGETS_EMPTY,
 } from "./targets.ts";
-import { createRepairStateStore, DenoGitRunner } from "../state/mod.ts";
+import { DenoGitRunner } from "../state/mod.ts";
+import {
+  createHostedRepairStateStore,
+  hostedCellState,
+} from "./hosted-repair-state.ts";
 import { GATEWAY_BASE_URL, resolveModelRoute } from "./model-route.ts";
 import {
   composeLocalGitHub,
@@ -230,26 +234,19 @@ export async function runActionsRepairHost(
 
   // The state store uses the same authenticated Git transport as publication,
   // but its role is fixed to repair. GitHub state never shares an index or
-  // checkout with the source repository.
-  const stateStore = deps.state ?? createRepairStateStore({
-    scratchDir: scratch,
+  // checkout with the source repository. It also reads the open delivery
+  // trains (#330) its head-of-line refresh defers to. Cells get literal read
+  // capabilities and a refusing write adapter (`hostedCellState`).
+  const stateStore = deps.state ?? createHostedRepairStateStore({
+    scratch,
     remoteUrl: deps.stateRemoteUrl ?? REMOTE_URL,
     runner: new DenoGitRunner(
       joinPath(scratch, "state-git-home"),
       githubGitAuthEnv(githubToken),
     ),
   });
-  // Cells expose literal read capabilities and a refusing internal write adapter.
-  // No helper can accidentally reach the remote repair writer in a cell job.
   const state = deps.job === "matrix_cell"
-    ? {
-      readRepair: () => stateStore.readRepair(),
-      readRelease: () => stateStore.readRelease(),
-      writeRepair: () =>
-        Promise.resolve(
-          portError("invalid", "matrix cells cannot write shared state"),
-        ),
-    }
+    ? hostedCellState(stateStore)
     : stateStore;
   // The saved supervisor pointer must bind exactly this run, attempt, launcher
   // and controller revision BEFORE any repair seed, source, model, preflight or

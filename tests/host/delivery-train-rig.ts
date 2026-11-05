@@ -1,10 +1,13 @@
 /**
  * Delivery-train rig (sentinel #330): a temporary target repository whose
  * reviewed heads each branch off the reviewed base B0, a tip that moved past
- * it, the real deterministic git executor as the train composer (pushing the
- * train ref to a temporary bare remote), an in-memory CAS train ledger and a
- * fake GitHub surface whose squash merges, trees and CI read that same
- * repository. No network, credential or model call.
+ * it, the production train composer (`createTrainComposerFor`: its own bare
+ * object store, exact-commit fetch, deterministic executor, train ref push
+ * and lease-guarded ref deletion) against a temporary bare "GitHub"
+ * repository, the train ledger (in memory, or the real git sidecar store on a
+ * temporary state remote) and a fake GitHub surface whose squash merges,
+ * trees and CI read that same bare repository. No network, credential or
+ * model call.
  */
 import type { GitSha, WorkItemId } from "../../src/contracts/brands.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
@@ -12,13 +15,13 @@ import {
   reviewTaskStatementDigest,
   type ReviewTaskStatementV1,
 } from "../../src/contracts/review-receipt.ts";
-import { DenoGitExecutor } from "../../src/github/git-executor.ts";
+import { GitDeliveryTrainStore } from "../../src/state/delivery-train-store.ts";
 import type {
   HostedAutonomyGitHubV1,
   HostedAutonomyPullV1,
 } from "../../ops/hosted-autonomy.ts";
 import type { HostedAutonomyHeadRunV1 } from "../../ops/hosted-autonomy-types.ts";
-import { gitDeliveryTrainComposer } from "../../ops/hosted-autonomy-train-compose.ts";
+import { createTrainComposerFor } from "../../ops/hosted-autonomy-train-git.ts";
 import {
   type DeliveryTrainJournalV1,
   type DeliveryTrainLedgerV1,
@@ -29,6 +32,7 @@ import {
 import {
   ENV,
   FOREIGN_BRANCH,
+  FOREIGN_REPO,
   foreignPullFacts,
   foreignReceipt,
   foreignRecord,
@@ -120,7 +124,9 @@ export interface TrainWorldV1 {
   merges: number[];
   /** Train (non-head) commits whose CI was read. */
   ciReads: Set<string>;
-  journal: ReturnType<typeof memoryJournal>;
+  journal: DeliveryTrainJournalV1;
+  /** The repository's ledger as the journal reads it now. */
+  ledger(): Promise<DeliveryTrainLedgerV1>;
   trainDeps: HostedDeliveryTrainDepsV1;
   surface: (base: HostedAutonomyGitHubV1) => HostedAutonomyGitHubV1;
   trainRefs(): Promise<string[]>;
@@ -137,6 +143,7 @@ export interface TrainWorldV1 {
 export async function makeTrainWorld(
   tmp: string,
   specs: readonly MemberSpecV1[],
+  options: { ledger?: "memory" | "git" } = {},
 ): Promise<TrainWorldV1> {
   const dir = `${tmp}/target`;
   const bare = `${tmp}/target-remote.git`;
@@ -203,19 +210,26 @@ export async function makeTrainWorld(
   await git(tmp, "init", "-q", "--bare", bare);
   await git(dir, "push", "-q", bare, "--all");
 
-  const executor = new DenoGitExecutor({
-    localDir: dir,
-    remoteUrl: `file://${bare}`,
-    gitHome: tmp,
-    gitPath: "git",
+  let journal: DeliveryTrainJournalV1 = memoryJournal();
+  if (options.ledger === "git") {
+    const stateRemote = `${tmp}/state-remote.git`;
+    await git(tmp, "init", "-q", "--bare", stateRemote);
+    journal = new GitDeliveryTrainStore({
+      scratchDir: `${tmp}/ledger-scratch`,
+      remoteUrl: stateRemote,
+    });
+  }
+  const composerFor = createTrainComposerFor({
+    scratch: `${tmp}/train-scratch`,
+    tokenFor: () => "fixture-token",
+    remoteUrlFor: () => `file://${bare}`,
   });
-  const journal = memoryJournal();
   const byPr = new Map(members.map((m) => [m.pr, m]));
   const mergedAs = new Map<number, { sha: string; parents: string[] }>();
   const ciReads = new Set<string>();
   const heads = new Set<string>(members.map((m) => m.head));
   const red = async (sha: string) =>
-    (await git(dir, "ls-tree", "--name-only", sha)).split("\n").includes(
+    (await git(bare, "ls-tree", "--name-only", sha)).split("\n").includes(
       "broken.txt",
     );
   const world: TrainWorldV1 = {
@@ -228,10 +242,8 @@ export async function makeTrainWorld(
     merges: [],
     ciReads,
     journal,
-    trainDeps: {
-      journal,
-      composerFor: () => gitDeliveryTrainComposer(executor),
-    },
+    ledger: async () => (await journal.read(FOREIGN_REPO))!.ledger,
+    trainDeps: { journal, composerFor },
     trainRefs: async () =>
       (await git(dir, "ls-remote", bare, "refs/heads/sentinel-trains/*"))
         .split("\n").filter((line) => line.length > 0),
@@ -261,7 +273,7 @@ export async function makeTrainWorld(
       },
       readCommitTree: async (sha: string) => {
         try {
-          return await git(dir, "rev-parse", `${sha}^{tree}`);
+          return await git(bare, "rev-parse", `${sha}^{tree}`);
         } catch {
           return null;
         }
@@ -298,10 +310,10 @@ export async function makeTrainWorld(
           mergedAs.has(number)
         ) return null;
         // GitHub's squash: the head merged into the current tip, one parent.
-        const tree = (await git(dir, "merge-tree", "--write-tree", tip, head))
+        const tree = (await git(bare, "merge-tree", "--write-tree", tip, head))
           .split("\n")[0];
         const sha = await git(
-          dir,
+          bare,
           "commit-tree",
           tree,
           "-p",

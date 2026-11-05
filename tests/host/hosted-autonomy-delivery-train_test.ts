@@ -16,11 +16,16 @@ import {
   type TrainWorldV1,
 } from "./delivery-train-rig.ts";
 import { T0 } from "../state/helpers.ts";
+import type { GitDeliveryTrainStore } from "../../src/state/delivery-train-store.ts";
+import { FOREIGN_REPO } from "./hosted-autonomy-fixtures.ts";
+import { DELIVERY_TRAIN_CI_WAIT_MS } from "../../src/contracts/delivery-train-ledger.ts";
 
 const FIVE: MemberSpecV1[] = [0, 1, 2, 3, 4].map((index) => ({
   file: `feature-${index}.txt`,
   content: `feature ${index}\n`,
 }));
+
+const published = (line: string) => /^train:[0-9a-f]{24}:published:/.test(line);
 
 async function trainPass(
   name: string,
@@ -28,10 +33,11 @@ async function trainPass(
   options: {
     clock?: { now(): number };
     prepare?: (world: TrainWorldV1) => void;
+    ledger?: "memory" | "git";
   } = {},
 ) {
   const tmp = await Deno.makeTempDir({ prefix: `sentinel-${name}-world-` });
-  const world = await makeTrainWorld(tmp, specs);
+  const world = await makeTrainWorld(tmp, specs, { ledger: options.ledger });
   options.prepare?.(world);
   const { rig, github } = await makeRig(name, {
     repair: repairSnapshot(
@@ -80,15 +86,23 @@ Deno.test("train: five reviewed records land on one train ref, one CI run and fi
     const { actions } = result;
     const text = JSON.stringify(actions);
     assert.deepEqual(world.merges, [500, 501, 502, 503, 504], text);
-    const refs = await world.trainRefs();
-    assert.equal(refs.length, 1, text);
+    assert.equal(actions.filter(published).length, 1, text);
     assert.equal(world.ciReads.size, 1, "one CI run on the one train commit");
     const [trainSha] = [...world.ciReads];
-    assert.ok(refs[0].startsWith(`${trainSha}\trefs/heads/sentinel-trains/`));
+    assert.ok(
+      actions.some((a) =>
+        a.includes(":built:") && a.includes(`sha=${trainSha}`)
+      ),
+      text,
+    );
+    // The landed train's ref is deleted in the same pass, after the ledger.
+    assert.ok(actions.some((a) => /^train:[0-9a-f]{24}:ref_retired$/.test(a)));
+    assert.deepEqual(await world.trainRefs(), []);
+    assert.deepEqual((await world.ledger()).stale, []);
     // The landed tip is exactly the CI-tested train tree.
     assert.equal(
-      await git(world.dir, "rev-parse", `${world.tip()}^{tree}`),
-      await git(world.dir, "rev-parse", `${trainSha}^{tree}`),
+      await git(world.bare, "rev-parse", `${world.tip()}^{tree}`),
+      await git(world.bare, "rev-parse", `${trainSha}^{tree}`),
     );
     for (const m of world.members) {
       assert.ok(
@@ -115,7 +129,7 @@ Deno.test("train: five reviewed records land on one train ref, one CI run and fi
       targetCiRunsTriggered: 1,
       mergesCompleted: 5,
     });
-    const ledger = world.journal.ledger();
+    const ledger = await world.ledger();
     assert.equal(ledger.train, null);
     assert.deepEqual(
       ledger.landings.map((l) => l.pullRequest),
@@ -146,7 +160,9 @@ Deno.test("train: a red train drops its newest member, retries once in the same 
     const { actions } = await once();
     const text = JSON.stringify(actions);
     assert.deepEqual(world.merges, [500, 501, 502, 503], text);
-    assert.equal((await world.trainRefs()).length, 2, text);
+    assert.equal(actions.filter(published).length, 2, text);
+    // Both the red train's ref and the landed retry's ref are deleted.
+    assert.deepEqual(await world.trainRefs(), []);
     assert.equal(world.ciReads.size, 2, text);
     const dropped = world.members[4];
     const line = actions.find((a) =>
@@ -163,7 +179,7 @@ Deno.test("train: a red train drops its newest member, retries once in the same 
       targetCiRunsTriggered: 2,
       mergesCompleted: 4,
     });
-    const ledger = world.journal.ledger();
+    const ledger = await world.ledger();
     assert.equal(ledger.train, null);
     assert.equal(ledger.drops.length, 1);
     assert.equal(ledger.drops[0].recordId, dropped.id);
@@ -199,7 +215,7 @@ Deno.test("train: a conflicting member leaves the train without holding it; the 
       text,
     );
     assert.deepEqual(world.merges, [500, 501, 503, 504], text);
-    assert.equal((await world.trainRefs()).length, 1);
+    assert.equal(actions.filter(published).length, 1);
     assert.deepEqual(counts(metrics), {
       trainsBuilt: 1,
       targetCiRunsTriggered: 1,
@@ -256,7 +272,7 @@ Deno.test("train: a deadline mid-train stops with every intent persisted and no 
       first.actions.includes("continuation:delivery:deferred_deadline"),
       text,
     );
-    const ledger = world.journal.ledger();
+    const ledger = await world.ledger();
     assert.equal(ledger.train?.phase, "merging");
     assert.equal(ledger.train?.pendingMerge, null);
     assert.deepEqual(
@@ -270,9 +286,14 @@ Deno.test("train: a deadline mid-train stops with every intent persisted and no 
     const second = await once();
     const text2 = JSON.stringify(second.actions);
     assert.deepEqual(world.merges, [500, 501, 502, 503, 504], text2);
-    assert.equal((await world.trainRefs()).length, 1, "the same train ref");
+    assert.equal(
+      [...first.actions, ...second.actions].filter(published).length,
+      1,
+      "the same train ref",
+    );
+    assert.deepEqual(await world.trainRefs(), []);
     assert.equal(world.ciReads.size, 1, "the one CI run is not repeated");
-    assert.equal(world.journal.ledger().train, null);
+    assert.equal((await world.ledger()).train, null);
     const after = await steps(rig);
     for (const m of world.members) assert.equal(after.get(m.id), "done", text2);
   } finally {
@@ -307,7 +328,7 @@ Deno.test("train: unavailable or pending train CI is not red; the train waits, h
         text,
       );
     }
-    assert.equal(world.journal.ledger().train?.phase, "published");
+    assert.equal((await world.ledger()).train?.phase, "published");
     verdict = "pending";
     const second = await once();
     assert.ok(
@@ -322,9 +343,100 @@ Deno.test("train: unavailable or pending train CI is not red; the train waits, h
       [500, 501, 502, 503, 504],
       JSON.stringify(third.actions),
     );
-    assert.equal((await world.trainRefs()).length, 1, "published once");
+    assert.equal(
+      [...first.actions, ...second.actions, ...third.actions].filter(
+        published,
+      ).length,
+      1,
+      "published once",
+    );
     const after = await steps(rig);
     for (const m of world.members) assert.equal(after.get(m.id), "done");
+  } finally {
+    await cleanup();
+  }
+});
+
+Deno.test("train: the git sidecar ledger carries an open train across passes, the runtime reads its hold, and the landed train leaves no ref", async () => {
+  let verdict: boolean | null = null;
+  const { rig, world, once, cleanup } = await trainPass("train-git", FIVE, {
+    ledger: "git",
+    prepare: (w) => {
+      w.ci = () => verdict;
+    },
+  });
+  try {
+    const store = world.journal as GitDeliveryTrainStore;
+    const first = await once();
+    assert.deepEqual(world.merges, [], JSON.stringify(first.actions));
+    const open = await store.readHolds();
+    assert.ok(open.ok, JSON.stringify(open));
+    assert.equal(open.value.length, 1);
+    assert.deepEqual(open.value[0].repository, FOREIGN_REPO);
+    assert.deepEqual(
+      open.value[0].members,
+      world.members.map((m) => m.id),
+    );
+    assert.equal((await world.trainRefs()).length, 1, "published train ref");
+    verdict = true;
+    const second = await once();
+    assert.deepEqual(
+      world.merges,
+      [500, 501, 502, 503, 504],
+      JSON.stringify(second.actions),
+    );
+    const closed = await store.readHolds();
+    assert.ok(closed.ok);
+    assert.deepEqual(closed.value, []);
+    const ledger = await world.ledger();
+    assert.equal(ledger.train, null);
+    assert.equal(ledger.landings.length, 5);
+    assert.deepEqual(ledger.stale, []);
+    assert.deepEqual(await world.trainRefs(), []);
+    const after = await steps(rig);
+    for (const m of world.members) assert.equal(after.get(m.id), "done");
+  } finally {
+    await cleanup();
+  }
+});
+
+Deno.test("train: CI that cannot start is unavailable, never red; after the wait bound the members fall back to the per-record path", async () => {
+  let now = T0 + 5_000_000;
+  const clock = { now: () => now };
+  const { world, once, cleanup } = await trainPass("train-not-started", FIVE, {
+    clock,
+    prepare: (w) => {
+      w.ci = () => null;
+    },
+  });
+  try {
+    const first = await once();
+    assert.ok(
+      first.actions.some((a) => /^train:[0-9a-f]{24}:ci_unavailable$/.test(a)),
+      JSON.stringify(first.actions),
+    );
+    now += DELIVERY_TRAIN_CI_WAIT_MS + 60_000;
+    const second = await once();
+    const text = JSON.stringify(second.actions);
+    assert.ok(
+      second.actions.some((a) =>
+        /^train:[0-9a-f]{24}:dissolved:ci_unavailable$/.test(a)
+      ),
+      text,
+    );
+    assert.ok(!second.actions.some((a) => a.includes(":ci_red:")), text);
+    assert.deepEqual(world.merges, []);
+    const ledger = await world.ledger();
+    assert.equal(ledger.train, null);
+    assert.deepEqual(
+      ledger.drops.map((d) => [d.recordId, d.check, d.runId]),
+      world.members.map((m) => [m.id, "ci_unavailable", null]),
+    );
+    // The members are back on the per-record path (off the moved tip).
+    for (const m of world.members) {
+      assert.ok(second.actions.includes(`delivery:${m.id}:base_moved`), text);
+    }
+    assert.deepEqual(await world.trainRefs(), [], "the ended ref is deleted");
   } finally {
     await cleanup();
   }

@@ -29,6 +29,12 @@ import {
   isHostedControllerMaintenanceIdentity,
 } from "../src/contracts/hosted-controller-deployment.ts";
 import { runHostedAutonomy } from "./hosted-autonomy-runner.ts";
+import { GitDeliveryTrainStore } from "../src/state/delivery-train-store.ts";
+import {
+  deliveryCountsFromActions,
+  writeDeliveryCountsOutput,
+} from "../src/host/delivery-counts-output.ts";
+import { createTrainComposerFor } from "./hosted-autonomy-train-git.ts";
 import { CurrentMatrixRecoveryIntegrityFailure } from "./hosted-autonomy-producer-recovery.ts";
 import { ClosedCWaveRecoveryIntegrityFailure } from "../src/host/modern-matrix-recovery.ts";
 import {
@@ -138,10 +144,16 @@ export async function runHostedAutonomyMain(
     input === undefined ? readEnv(key) : input.env[key] ?? null;
   // A missing output reads as no deferral; the result line stays authoritative.
   await writeUpkeepDeferralOutput(env("GITHUB_OUTPUT"), null);
+  await writeDeliveryCountsOutput(env("GITHUB_OUTPUT"), null);
   const result = await runHostedAutonomyMainResult(input, env);
   await writeUpkeepDeferralOutput(
     env("GITHUB_OUTPUT"),
     upkeepDeferralReason(result),
+  );
+  // #330/#338: the delivery pass's counts for finalize's metrics record.
+  await writeDeliveryCountsOutput(
+    env("GITHUB_OUTPUT"),
+    deliveryCountsFromActions(result.actions),
   );
   return report(result);
 }
@@ -325,6 +337,21 @@ async function runHostedAutonomyMainResult(
             }),
           }),
           onQueueCustodyReady,
+          // Sentinel #330: one validated train per foreign repository per
+          // pass. The ledger is the trains state sidecar (written only by the
+          // delivery pass); each target's composer is its own git store,
+          // fetch and push over the target token.
+          deliveryTrain: {
+            journal: new GitDeliveryTrainStore({
+              scratchDir: `${scratch}/delivery-trains`,
+              remoteUrl: HOSTED_CONTROLLER_REMOTE,
+              runner,
+            }),
+            composerFor: createTrainComposerFor({
+              scratch,
+              tokenFor: () => apiToken,
+            }),
+          },
           // Route selector names only, never a key: a changed model route
           // re-arms the records the repeat-failure bound parked.
           modelRoute: repeatFailureRouteIdentity({
