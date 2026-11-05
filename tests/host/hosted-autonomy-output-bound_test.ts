@@ -1335,9 +1335,11 @@ for (const [name, midPass, next, nextDispositions] of MID_PASS) {
  * review, whose newly reserved review_request charges cannot alias this
  * implementation/retry charge, plus the human-merge settlement of an
  * outstanding review admission, whose review_request charge likewise cannot),
- * the historical quarantine (dedicated charges, never requested here) and
+ * the historical quarantine (dedicated charges, never requested here),
  * the uncertainty quarantine (its fixed generation-63 charges, only while
- * generation 63 is active). A new or moved one changes this table: before
+ * generation 63 is active) and the lost conflict-cell settlement (only a
+ * marked resolution whose cell has NO result artifact, so never a cell with
+ * an authenticated output-bound receipt). A new or moved one changes this table: before
  * updating it, prove it cannot tear an output-bound cell's charge, or tag
  * that settler's first write so the re-entry can tell whose pair it is.
  */
@@ -1347,6 +1349,7 @@ const AUDITED_SETTLERS = {
   "src/host/matrix-quarantine-state.ts": 1,
   "src/host/matrix-uncertainty-maintenance.ts": 1,
   "src/host/owner-successor-acceptance.ts": 1,
+  "src/repair/conflict-lost-cell.ts": 1,
   "src/repair/human-merge.ts": 1,
   "src/repair/loop-accounting.ts": 2,
   "src/repair/loop-base-satisfaction.ts": 3,
