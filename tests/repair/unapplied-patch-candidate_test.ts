@@ -79,8 +79,9 @@ Deno.test("an ordinary source-and-test candidate still proceeds to review", asyn
   }
 });
 
-Deno.test("a real in-place protected change still parks for the owner, unreviewed", async () => {
-  // `src/handler.ts` is the rig's configured protected path.
+Deno.test("a real in-place protected change publishes for the owner to merge", async () => {
+  // `src/handler.ts` is the rig's configured protected path. Since the
+  // owner-landing policy it is pushed and reviewed, never merged by Sentinel.
   const rig = await makeRig("protectedinplace", {
     model: { changedPaths: ["src/handler.ts", "tests/handler_test.ts"] },
     github: { candidateLifecycle: positiveLifecycle() },
@@ -89,13 +90,10 @@ Deno.test("a real in-place protected change still parks for the owner, unreviewe
     const outcome = await rig.run();
     assert.equal(outcome.status, "idle", JSON.stringify(outcome));
     const state = await rig.snapshot();
-    assert.equal(state.work[0]!.nextStep, "blocked");
-    assert.equal(
-      state.work[0]!.blocker?.message,
-      "candidate touches a protected path",
-    );
-    assert.equal(rig.github.pushes.length, 0);
-    assert.equal(rig.github.calls.includes("requestReview"), false);
+    const record = state.work[0]!;
+    assert.notEqual(record.nextStep, "blocked", JSON.stringify(record));
+    assert.deepEqual(record.ownerLanding?.paths, ["src/handler.ts"]);
+    assert.equal(rig.github.pushes.length, 1);
     assert.equal(state.reservations[0]!.outcome, "submitted");
   } finally {
     await rig.ctx.cleanup();
