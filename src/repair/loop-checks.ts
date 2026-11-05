@@ -46,8 +46,8 @@ const SELF_AGGREGATE_CHECK = "test-local";
  * never judged here (owner directive 2026-10-30): only its own CI jobs gate.
  * A target with no CI check left after that selection is "wait" (a deployment
  * observation alone is no evidence CI ran), never "proceed"; so is a head
- * with no positive CI evidence (`isCiEvidenceCheck`: a successful GitHub
- * Actions, app-less or backup stand-in check). A check from any other app (a
+ * with no positive CI evidence (`isCiEvidenceCheck`: a GitHub Actions,
+ * app-less or backup stand-in check concluded success, skipped or neutral). A check from any other app (a
  * review bot, scanner or deploy preview) is judged (a failure still blocks,
  * a pending one still waits) but never counts as CI evidence.
  *

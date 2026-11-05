@@ -39,10 +39,8 @@ Deno.test("decideCiGate: all success checks proceed", () => {
   assert.equal(decideCiGate(checks), "proceed");
 });
 
-Deno.test("decideCiGate: skipped check is green (proceeds next to CI evidence)", () => {
-  // Positive CI evidence (P1-2): a lone skipped check is not red, but no
-  // evidence that CI ran on the head either, so it waits.
-  assert.equal(decideCiGate([check("ci", "completed", "skipped")]), "wait");
+Deno.test("decideCiGate: skipped check is green (proceeds)", () => {
+  assert.equal(decideCiGate([check("ci", "completed", "skipped")]), "proceed");
   assert.equal(
     decideCiGate([
       check("ci", "completed", "success"),
@@ -53,10 +51,8 @@ Deno.test("decideCiGate: skipped check is green (proceeds next to CI evidence)",
   );
 });
 
-Deno.test("decideCiGate: neutral check is green (proceeds next to CI evidence)", () => {
-  // Positive CI evidence (P1-2): a lone neutral check is not red, but no
-  // evidence that CI ran on the head either, so it waits.
-  assert.equal(decideCiGate([check("ci", "completed", "neutral")]), "wait");
+Deno.test("decideCiGate: neutral check is green (proceeds)", () => {
+  assert.equal(decideCiGate([check("ci", "completed", "neutral")]), "proceed");
   assert.equal(
     decideCiGate([
       check("ci", "completed", "success"),

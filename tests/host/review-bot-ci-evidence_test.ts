@@ -119,6 +119,32 @@ Deno.test("launcher green read: a legacy check with no app is CI evidence", asyn
   );
 });
 
+Deno.test("launcher green read: a lone skipped check from the coderabbit app is no CI evidence", async () => {
+  const surface = createHostedAutonomyGitHub("fixture-token", AI);
+  const bot = checkRun("Review", {
+    app: { slug: "coderabbit" },
+    conclusion: "skipped",
+    check_suite: { id: 28 },
+  });
+  assert.equal(
+    await withHeadRuns([bot], () => surface.hasAllChecksGreen(HEAD)),
+    null,
+  );
+});
+
+Deno.test("launcher green read: a lone job the target's own Actions CI skipped is green", async () => {
+  const surface = createHostedAutonomyGitHub("fixture-token", AI);
+  const validate = checkRun("validate", {
+    app: { slug: "github-actions" },
+    conclusion: "skipped",
+    check_suite: { id: 29 },
+  });
+  assert.equal(
+    await withHeadRuns([validate], () => surface.hasAllChecksGreen(HEAD)),
+    true,
+  );
+});
+
 Deno.test("launcher green read: an app with no readable slug never passes for Actions", async () => {
   const surface = createHostedAutonomyGitHub("fixture-token", AI);
   const odd = checkRun("validate", { app: {}, check_suite: { id: 27 } });
