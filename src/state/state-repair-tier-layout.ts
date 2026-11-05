@@ -30,6 +30,17 @@ import type { StateKind } from "./state-records.ts";
 /** Root directory of the cold repair tier on the repair state ref. */
 export const REPAIR_COLD_PREFIX = "repair-archive";
 
+/**
+ * Layout marker of the cold tier, present exactly while the tier holds a
+ * record. A runtime from before this layout refuses the whole repair tree
+ * ("unexpected collection"); this marker names the layout so that refusal is
+ * diagnosable, and a later layout version is refused here explicitly. Before
+ * rolling the runtime back past the tier revision, run one promote-all tier
+ * transition: it empties the tier and removes the marker and the subtree.
+ */
+export const REPAIR_COLD_LAYOUT_PATH = "repair-archive/LAYOUT";
+export const REPAIR_COLD_LAYOUT_TEXT = "sentinel-repair-tiers v1\n";
+
 /** The only collections a trusted demotion may move into the cold tier. */
 export const REPAIR_COLD_DIRECTORIES = [
   "work",
@@ -186,15 +197,40 @@ export async function readColdCatalog(
   if (!listRead.ok) return io.gitFailure("unavailable", "ls-tree", listRead);
   const listed = parseStateTreeListing(listRead.stdout);
   if (!listed.ok) return listed;
-  if (listed.value.length === 0) {
-    return portError("invalid", "cold repair tier is empty");
-  }
+  const entries: StateTreeEntryV1[] = [];
+  let marker: string | null = null;
   for (const entry of listed.value) {
+    if (entry.path === REPAIR_COLD_LAYOUT_PATH) {
+      marker = entry.sha;
+      continue;
+    }
     if (coldPathParts(entry.path) === null) {
       return portError("invalid", "cold repair tier has an unexpected entry");
     }
+    entries.push(entry);
   }
-  return portOk({ tree: rootMatch[1], entries: listed.value });
+  // The layout marker is checked by blob id alone (no blob read): any other
+  // or missing marker is a layout this runtime does not implement.
+  if (marker !== await repairColdLayoutBlobId()) {
+    return portError("invalid", "unsupported cold repair tier layout");
+  }
+  if (entries.length === 0) {
+    return portError("invalid", "cold repair tier is empty");
+  }
+  return portOk({ tree: rootMatch[1], entries });
+}
+
+/** Git blob id of the exact layout marker text. */
+export async function repairColdLayoutBlobId(): Promise<string> {
+  const body = new TextEncoder().encode(REPAIR_COLD_LAYOUT_TEXT);
+  const header = new TextEncoder().encode(`blob ${body.length}\0`);
+  const bytes = new Uint8Array(header.length + body.length);
+  bytes.set(header);
+  bytes.set(body, header.length);
+  const digest = await crypto.subtle.digest("SHA-1", bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 /** Reads and validates every cold record (explicit full-ledger readers only). */

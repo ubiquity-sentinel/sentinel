@@ -25,6 +25,8 @@ import {
   parseStateTreeListing,
   readColdCatalog,
   readColdTier,
+  REPAIR_COLD_LAYOUT_PATH,
+  REPAIR_COLD_LAYOUT_TEXT,
   REPAIR_COLD_PREFIX,
   validateTierDisjoint,
 } from "./state-repair-tier-layout.ts";
@@ -186,7 +188,9 @@ function preservationMessage(
   const logical = (tree: ReadonlyMap<string, string>) => {
     const out = new Map<string, string>();
     for (const [path, sha] of tree) {
-      if (path === "manifest.json") continue;
+      if (path === "manifest.json" || path === REPAIR_COLD_LAYOUT_PATH) {
+        continue;
+      }
       const key = logicalPath(path);
       if (out.has(key)) return null;
       out.set(key, sha);
@@ -240,7 +244,8 @@ export async function buildRepairTierCommit(
   // Promotion needs cold content only when an open issue names a cold family
   // (or a hot record depends on one); the common pass reads no cold blob.
   const coldNames = new Set(catalog.value.entries.map((entry) => entry.path));
-  let needsCold = false;
+  let needsCold = policy.promoteAll === true &&
+    catalog.value.entries.length > 0;
   const wanted = [
     ...policy.openIssueWorkIds,
     ...prior.work.flatMap((row) => row.dependencies),
@@ -264,12 +269,22 @@ export async function buildRepairTierCommit(
     if (resolved === null) {
       return portError("invalid", "a cold family could not be resolved");
     }
+    if (
+      policy.promoteAll === true &&
+      resolved.length !== catalog.value.entries.length
+    ) {
+      return portError("invalid", "a cold row is not bound to a family");
+    }
     promoted = resolved;
   }
 
   const families: RepairTierMoveV1[][] = [];
+  // A promote-all transition (rollback preparation) never demotes.
+  const demotable = policy.promoteAll === true
+    ? []
+    : planRepairDemotions(prior, policy);
   const resolvedFamilies = new Map<RepairTierMoveV1[], ResolvedMove[]>();
-  for (const family of planRepairDemotions(prior, policy)) {
+  for (const family of demotable) {
     const resolved = await resolveMoves(family, priorTree.value, "demote");
     if (resolved === null) continue;
     families.push(family);
@@ -308,6 +323,21 @@ export async function buildRepairTierCommit(
     `100644 ${move.sha}\t${move.to}`,
   ]);
   lines.push(`100644 ${manifestSha}\tmanifest.json`);
+  // The layout marker exists exactly while the cold tier holds a record.
+  const coldAfter = catalog.value.entries.length - promoted.length +
+    demoted.length;
+  if (catalog.value.tree === null && coldAfter > 0) {
+    const marker = await io.git(op, ["hash-object", "-w", "--stdin"], {
+      stdin: new TextEncoder().encode(REPAIR_COLD_LAYOUT_TEXT),
+    });
+    const markerSha = marker.stdout.trim();
+    if (!marker.ok || !/^[0-9a-f]{40}$/.test(markerSha)) {
+      return portError("unavailable", "could not form the tier marker");
+    }
+    lines.push(`100644 ${markerSha}\t${REPAIR_COLD_LAYOUT_PATH}`);
+  } else if (catalog.value.tree !== null && coldAfter === 0) {
+    lines.push(`0 ${zero}\t${REPAIR_COLD_LAYOUT_PATH}`);
+  }
   const readTree = await io.git(op, ["read-tree", head]);
   if (!readTree.ok) {
     return portError("unavailable", "could not form the tier index");

@@ -12,6 +12,7 @@ import {
   renderThroughputReport,
   ThroughputReportRefusal,
 } from "../src/state/throughput-report.ts";
+import { readRepairLedgerV1 } from "../src/state/state-repair-ledger.ts";
 
 export const REPORT_DEFAULT_REMOTE =
   "https://github.com/ubiquity-sentinel/sentinel.git";
@@ -71,11 +72,14 @@ export async function cmdReport(opts: Record<string, string>): Promise<void> {
       console.error(`metrics ref unreadable: ${metrics.error.kind}`);
       Deno.exit(1);
     }
-    const repair = await new GitStateStore({
-      scratchDir: `${dir}/repair`,
-      remoteUrl: remote,
-      role: "repair",
-    }).readRepair();
+    // The report covers the whole ledger, cold tier included.
+    const repair = await readRepairLedgerV1(
+      new GitStateStore({
+        scratchDir: `${dir}/repair`,
+        remoteUrl: remote,
+        role: "repair",
+      }),
+    );
     if (!repair.ok) {
       console.error(`repair snapshot unreadable: ${repair.error.kind}`);
       Deno.exit(1);

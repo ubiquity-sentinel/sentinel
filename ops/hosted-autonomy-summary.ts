@@ -6,6 +6,7 @@ import {
 import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
 import { queueRecordProtected } from "./hosted-autonomy-queue-context.ts";
 import { parseQueueIntent } from "./hosted-autonomy-queue-intent.ts";
+import { readRepairLedgerV1 } from "../src/state/state-repair-ledger.ts";
 
 /** Closed labels only: raw blocker text can contain restricted diagnostics. */
 const QUEUE_OWNER_LABELS: Readonly<Record<string, string>> = {
@@ -144,7 +145,8 @@ export async function emitHostedParkSummary(
   let summary =
     "## Sentinel parked work\n\nState unavailable; parked tasks could not be listed.\n";
   try {
-    const read = await state.readRepair();
+    // ALL blocked tasks are listed, cold (closed-issue) parks included.
+    const read = await readRepairLedgerV1(state);
     if (read.ok && read.value.status === "found") {
       summary = renderHostedParkSummary(
         parseRepairStateSnapshotV1(read.value.snapshot),

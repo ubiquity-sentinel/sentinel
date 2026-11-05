@@ -60,6 +60,7 @@ import {
   createHostedClosedMatrixRecovery,
   createHostedHistoricalMatrixQuarantine,
 } from "./hosted-autonomy-matrix-adapters.ts";
+import { createHostedOpenIssueLister } from "./hosted-autonomy-open-issues.ts";
 
 export const GIT_SHA_PATTERN = /^[0-9a-f]{40}$/;
 
@@ -321,6 +322,13 @@ async function runHostedAutonomyMainResult(
             }),
           }),
           onQueueCustodyReady,
+          // The same trusted repair writer moves rows between hot and cold.
+          repairTiers: {
+            store: state,
+            listOpenIssueNumbers: createHostedOpenIssueLister((repository) =>
+              isHostedSelf(repository) ? selfToken : apiToken
+            ),
+          },
           // Route selector names only, never a key: a changed model route
           // re-arms the records the repeat-failure bound parked.
           modelRoute: repeatFailureRouteIdentity({

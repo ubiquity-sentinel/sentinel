@@ -79,6 +79,7 @@ import { needsHostedLegacyStateView } from "./hosted-runtime-rollback-state.ts";
 import { HOSTED_RUNTIME_ROLLBACK_ENTRYPOINT } from "./hosted-runtime-rollback.ts";
 import { scanPlanDiagnostic } from "./matrix-plan-diagnostic.ts";
 import { scanStepLines } from "../repair/step-line.ts";
+import { readRepairLedgerV1 } from "../state/state-repair-ledger.ts";
 
 /**
  * Verify the launcher and runtime checkouts as clean worktrees at their exact
@@ -505,7 +506,9 @@ async function readSummaryState(
   const deadline = createDeadline(5_000);
   try {
     const read = await deadline.race(
-      Promise.resolve().then(() => state.readRepair()),
+      // Run accounting compares whole ledgers: a row demoted to the cold
+      // tier between the two reads is still retained, never "removed".
+      Promise.resolve().then(() => readRepairLedgerV1(state)),
     );
     if (!read.ok) return undefined;
     return read.value.status === "absent"

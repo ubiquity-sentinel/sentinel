@@ -535,6 +535,21 @@ export interface HostedAutonomyDepsV1 {
     import("./hosted-autonomy-queue-context.ts").HostedQueueCustodyContext;
   onQueueCustodyReady?(ready: boolean): void | Promise<void>;
   state: StateReadView & RepairStateWriter;
+  /**
+   * Trusted hot/cold repair-tier step (#324). Absent: the pass never moves a
+   * record between tiers. The store is the same trusted repair writer.
+   */
+  repairTiers?: {
+    store: import("../src/state/state-repair-tier-store.ts").RepairTierStore;
+    /** Complete open-issue numbers of one repository, or a typed failure. */
+    listOpenIssueNumbers(
+      repository: RepositoryIdentityV1,
+    ): Promise<
+      import("../src/contracts/ports.ts").PortResultV1<readonly number[]>
+    >;
+    /** Rows one pass may demote (default HOSTED_REPAIR_TIER_BUDGET). */
+    demotionBudget?: number;
+  };
   /** Trusted derived discovery only, never work/charge/settlement authority. */
   currentMatrixIndex?:
     import("../src/contracts/maintenance-index.ts").CurrentMatrixIndexPortV1;

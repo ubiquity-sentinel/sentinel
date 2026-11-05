@@ -53,6 +53,11 @@ export interface RepairTierPolicyV1 {
   protectedReservationIds?: ReadonlySet<string>;
   /** Maximum rows one pass demotes; later families are deferred. */
   demotionBudget: number;
+  /**
+   * Rollback preparation: promote EVERY cold family and demote nothing, so
+   * the tier, its marker and its subtree disappear from the ref.
+   */
+  promoteAll?: boolean;
 }
 
 /** One exact row move between the tiers (same bytes, same file name). */
@@ -250,7 +255,7 @@ export function takeDemotionBudget(
 export function planRepairPromotions(
   hot: RepairStateSnapshotV1,
   cold: RepairColdTierV1,
-  policy: Pick<RepairTierPolicyV1, "openIssueWorkIds">,
+  policy: Pick<RepairTierPolicyV1, "openIssueWorkIds" | "promoteAll">,
 ): RepairTierMoveV1[] {
   const coldWork = new Map<string, WorkRecordV1>(
     cold.work.map((row) => [row.id, row]),
@@ -263,6 +268,9 @@ export function planRepairPromotions(
     for (const dependency of record.dependencies) visit(dependency);
   };
   for (const id of policy.openIssueWorkIds) visit(id);
+  if (policy.promoteAll === true) {
+    for (const row of cold.work) visit(row.id);
+  }
   for (const work of hot.work) {
     for (const dependency of work.dependencies) visit(dependency);
   }

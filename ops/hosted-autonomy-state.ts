@@ -134,6 +134,7 @@ const MAINTENANCE_PROGRESS_PHASES = [
   "historical_c63",
   "historical_quarantine",
   "matrix_uncertainty",
+  "repair_tier",
   "context_closure_delivery",
   "closure_delivery",
   "context_retry",
