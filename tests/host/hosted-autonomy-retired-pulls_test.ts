@@ -315,6 +315,34 @@ Deno.test("retired pull: a record retired for any other reason is never read", a
   assert.deepEqual(fake.calls, []);
 });
 
+Deno.test("retired pull: a record the same pass retired waits for the next pass", async () => {
+  // The retirement is that cycle's one write for the record: its pull
+  // request is neither read, settled nor probe-stamped in the same cycle.
+  const fake = new FakeSurface(ownPull());
+  const { state, deps, record0 } = await rig(retiredRecord(), fake);
+  const writes = state.repairWrites;
+  assert.deepEqual(
+    await runHostedRetiredPullPass(
+      deps,
+      Number.POSITIVE_INFINITY,
+      deps.state,
+      T0 + 3000,
+    ),
+    [],
+  );
+  assert.deepEqual(fake.calls, []);
+  assert.equal(state.repairWrites, writes);
+  assert.equal((await record0()).pullProbe, undefined);
+  // The next pass, started after the retirement, settles it.
+  const next = await runHostedRetiredPullPass(
+    deps,
+    Number.POSITIVE_INFINITY,
+    deps.state,
+    T0 + 3001,
+  );
+  assert.ok(next.includes(`retired-pull:${ID}:pr=${PR}:closed`));
+});
+
 Deno.test("retired pull: a discovery view with no pending record reads no guarded state", async () => {
   const fake = new FakeSurface(ownPull());
   const { deps } = await rig(retiredRecord(), fake);
