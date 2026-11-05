@@ -65,6 +65,14 @@ export const ATTEMPT_DETAIL_INTERRUPTED_BOUND =
 export const ATTEMPT_DETAIL_LOOP_STOP = "failed_command_loop" as const;
 export const ATTEMPT_DETAIL_ARTIFACT_ONLY =
   "model candidate changed only generated/cache artifacts" as const;
+/**
+ * A completed candidate whose change set is only an unapplied patch/diff file
+ * plus tests (`candidate-shape.ts`): the real file is unchanged, so it is
+ * refused before publication and review. The wording is the instruction the
+ * next attempt's prompt carries as a verified prior fact.
+ */
+export const ATTEMPT_DETAIL_UNAPPLIED_PATCH =
+  "model candidate committed an unapplied patch file instead of the fix; apply the change to the real file in place (even a protected path) and remove the patch file" as const;
 export const ATTEMPT_DETAIL_UNCERTAIN =
   "implementation outcome uncertain; awaiting authoritative disposition" as const;
 /**
@@ -98,6 +106,7 @@ export const ATTEMPT_DETAIL_NO_CHANGE =
 export const JUDGED_ATTEMPT_DETAILS: ReadonlySet<string> = new Set([
   ATTEMPT_DETAIL_NO_CHANGE,
   ATTEMPT_DETAIL_ARTIFACT_ONLY,
+  ATTEMPT_DETAIL_UNAPPLIED_PATCH,
 ]);
 
 /**
@@ -151,6 +160,10 @@ const DETAIL_CLASSIFICATION: readonly (readonly [
   [
     ATTEMPT_DETAIL_NO_CHANGE,
     { stage: "model", failureClass: "semantic_no_progress" },
+  ],
+  [
+    ATTEMPT_DETAIL_UNAPPLIED_PATCH,
+    { stage: "candidate", failureClass: "semantic_no_progress" },
   ],
   [
     ATTEMPT_DETAIL_UNCERTAIN,

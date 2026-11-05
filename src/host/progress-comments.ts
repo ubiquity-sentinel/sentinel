@@ -113,8 +113,11 @@ export function progressStage(record: WorkRecordV1): ProgressStageV1 | null {
     const message = record.blocker?.message ?? "no reason recorded";
     // A record retired because its issue closed says nothing on that issue.
     if (message.startsWith(SOURCE_CLOSED_PREFIX)) return null;
+    // The protected candidate is complete but is never published or merged
+    // by Sentinel (`loop-implementation-result.ts`): say who lands it.
     const person = message.startsWith("candidate touches a protected path")
-      ? " A person needs to fix this one."
+      ? " The fix changes a protected path, which Sentinel never merges; " +
+        "the repository owner needs to land this change."
       : "";
     return {
       key: `blocked:${hashKey(message)}`,
