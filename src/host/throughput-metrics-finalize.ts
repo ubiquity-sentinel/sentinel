@@ -28,9 +28,11 @@ import {
 } from "../state/throughput-metrics-store.ts";
 import type {
   HostedRuntimeRunSummaryV1,
+  RepairPassCountsV1,
   RunJobSummaryV1,
 } from "./run-summary.ts";
 import type { DeliveryCountsV1 } from "./delivery-counts-output.ts";
+import type { TierCountsV1 } from "./tier-counts-output.ts";
 
 /** Bound of the whole advisory metrics read/append/write. */
 export const FINALIZE_METRICS_BUDGET_MS = 60_000;
@@ -52,6 +54,11 @@ export interface FinalizeMetricsFactsV1 {
    * from its step output; null/absent when unobserved.
    */
   deliveryCounts?: DeliveryCountsV1 | null;
+  /**
+   * The maintenance repair-tier step's counts (#324), from its step output;
+   * null/absent when unobserved.
+   */
+  tierCounts?: TierCountsV1 | null;
   /**
    * The repair state the run summary's advisory read returned (#335), or
    * null/absent when it was not read; feeds the wait-cause histogram.
@@ -78,6 +85,41 @@ function collectWaitCauses(
   }
 }
 
+/**
+ * Records read/stepped/skipped and the tier moves (#324, #326). Maintenance's
+ * tier step and the repair pass each read the hot records; when both report
+ * a read the record carries the larger one (never their sum).
+ */
+function collectRecordCounts(
+  collector: MetricsCollectorV1,
+  tier: TierCountsV1 | null,
+  pass: RepairPassCountsV1 | null,
+): void {
+  const reads = [tier?.recordsRead, pass?.recordsRead].filter((
+    value,
+  ): value is number => value !== undefined);
+  if (reads.length > 0) collector.addCount("recordsRead", Math.max(...reads));
+  if (pass !== null) {
+    collector.addCount("recordsStepped", pass.recordsStepped);
+    collector.addCount("recordsSkipped", pass.recordsSkipped);
+  }
+  if (tier === null) return;
+  collector.addCount("recordsDemoted", tier.demoted);
+  collector.addCount("recordsPromoted", tier.promoted);
+  if (tier.releaseRequestsMovedToCold !== null) {
+    collector.addCount(
+      "releaseRequestsMovedToCold",
+      tier.releaseRequestsMovedToCold,
+    );
+  }
+  if (tier.releaseRequestsSuperseded !== null) {
+    collector.addCount(
+      "releaseRequestsSuperseded",
+      tier.releaseRequestsSuperseded,
+    );
+  }
+}
+
 function phaseOf(name: string): ThroughputPhaseV1 | null {
   if (name === "maintenance") return "maintenance";
   if (name === "prepare") return "prepare";
@@ -100,6 +142,12 @@ export function collectFinalizeMetricsV1(
   const jobs = facts.jobs ?? [];
   // A bootstrap execution runs in the repair job's slot (model-disabled).
   const bootstrap = facts.runSummary?.purpose === "bootstrap";
+  const repairJob = jobs.find((job) => job.name === "repair" && ran(job));
+  // #336: the launcher's own child duration beats the job window.
+  const bootstrapMs = bootstrap
+    ? repairJob?.summary?.bootstrapDurationMs ?? null
+    : null;
+  if (bootstrapMs !== null) collector.addPhaseMs("bootstrap", bootstrapMs);
   for (const job of jobs) {
     const phase = phaseOf(job.name);
     const start = job.startedAtMs ?? null;
@@ -108,11 +156,17 @@ export function collectFinalizeMetricsV1(
       continue;
     }
     if (end < start) continue;
-    collector.addPhaseMs(
-      bootstrap && phase === "repair" ? "bootstrap" : phase,
-      end - start,
-    );
+    if (bootstrap && phase === "repair") {
+      if (bootstrapMs === null) collector.addPhaseMs("bootstrap", end - start);
+      continue;
+    }
+    collector.addPhaseMs(phase, end - start);
   }
+  collectRecordCounts(
+    collector,
+    facts.tierCounts ?? null,
+    repairJob?.summary?.repairPass ?? null,
+  );
   collector.addPhaseMs(
     "finalize",
     Math.max(0, facts.nowMs - facts.finalizeStartedAtMs),

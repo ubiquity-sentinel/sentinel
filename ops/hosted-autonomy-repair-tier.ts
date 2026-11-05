@@ -13,6 +13,7 @@ import type { GitSha } from "../src/contracts/brands.ts";
 import { portError, portOk } from "../src/contracts/ports.ts";
 import { releasePathDisabled } from "../src/repair/vps-delivery.ts";
 import { CLOSED_C_WAVE } from "../src/host/modern-matrix-recovery.ts";
+import { tierSummaryAction } from "../src/host/tier-counts-output.ts";
 import {
   type RepairTierMaintenanceResultV1,
   runRepairTierMaintenance,
@@ -108,6 +109,9 @@ export async function runHostedRepairTierStep(
     demotionBudget: tiers.demotionBudget ?? HOSTED_REPAIR_TIER_BUDGET,
   });
   actions.push(outcome.action);
+  // #338: the closed counts finalize reads through the `tierCounts` output.
+  const tierSummary = tierSummaryAction(outcome);
+  if (tierSummary !== null) actions.push(tierSummary);
   console.log(JSON.stringify({
     kind: REPAIR_TIER_SUMMARY_KIND,
     version: "v1",
@@ -120,8 +124,8 @@ export async function runHostedRepairTierStep(
     releaseRequestsMovedToCold: outcome.releaseRequestsMovedToCold,
     releaseRequestsSuperseded: outcome.releaseRequestsSuperseded,
   }));
-  // The cycle collector's existing counters (#338); demoted/promoted and
-  // superseded have no counter yet and travel only in the line above.
+  // An in-process collector, when one is injected (#338). The hosted path
+  // carries every count to finalize through the `tier-summary:` action.
   try {
     if (outcome.recordsRead !== null) {
       deps.metrics?.addCount("recordsRead", outcome.recordsRead);

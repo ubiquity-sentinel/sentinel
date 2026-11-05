@@ -34,6 +34,10 @@ import {
   deliveryCountsFromActions,
   writeDeliveryCountsOutput,
 } from "../src/host/delivery-counts-output.ts";
+import {
+  tierCountsFromActions,
+  writeTierCountsOutput,
+} from "../src/host/tier-counts-output.ts";
 import { createTrainComposerFor } from "./hosted-autonomy-train-git.ts";
 import { CurrentMatrixRecoveryIntegrityFailure } from "./hosted-autonomy-producer-recovery.ts";
 import { ClosedCWaveRecoveryIntegrityFailure } from "../src/host/modern-matrix-recovery.ts";
@@ -146,6 +150,7 @@ export async function runHostedAutonomyMain(
   // A missing output reads as no deferral; the result line stays authoritative.
   await writeUpkeepDeferralOutput(env("GITHUB_OUTPUT"), null);
   await writeDeliveryCountsOutput(env("GITHUB_OUTPUT"), null);
+  await writeTierCountsOutput(env("GITHUB_OUTPUT"), null);
   const result = await runHostedAutonomyMainResult(input, env);
   await writeUpkeepDeferralOutput(
     env("GITHUB_OUTPUT"),
@@ -155,6 +160,11 @@ export async function runHostedAutonomyMain(
   await writeDeliveryCountsOutput(
     env("GITHUB_OUTPUT"),
     deliveryCountsFromActions(result.actions),
+  );
+  // #324/#338: the repair-tier step's counts for the same record.
+  await writeTierCountsOutput(
+    env("GITHUB_OUTPUT"),
+    tierCountsFromActions(result.actions),
   );
   return report(result);
 }

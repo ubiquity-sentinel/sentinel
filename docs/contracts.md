@@ -552,6 +552,27 @@ accounting or merge authority.
   aggregated run summary. A bootstrap execution's repair-slot time is recorded
   as `bootstrap`. Fields that finalize cannot observe stay `null`. The write is
   limited to 60 seconds, never throws and never changes the finalize outcome.
+- Additive counters `recordsDemoted`, `recordsPromoted` and
+  `releaseRequestsSuperseded` (#324): present only when observed, never `null`.
+  A cycle that observed none of them keeps the older shape byte for byte, and
+  older stored lines and rollups still parse. The rollup carries each one's
+  `{ sum, known }` once a folded record had it.
+- Record counts: the maintenance repair-tier step pushes one closed
+  `tier-summary:read=N:demoted=N:promoted=N:moved_cold=N|-:superseded=N|-`
+  action. The step writes it as
+  `tierCounts=<read>,<demoted>,<promoted>,
+  <movedCold>,<superseded>` (`-` when
+  the release path was not observed) or `none`
+  (`src/host/tier-counts-output.ts`). The workflow passes it to finalize as
+  `SENTINEL_TIER_COUNTS`. Finalize also reads the launcher-re-emitted
+  `sentinel_repair_pass` lines (#326) from the `repair` job log. It sums
+  `recordsStepped` and `recordsSkipped` over the passes. When both the tier step
+  and the repair pass report `recordsRead`, the record carries the **maximum**:
+  both read the same hot records, so they are never summed. Within the repair
+  job the largest pass read is used.
+- Bootstrap duration: when the run is a bootstrap, finalize prefers the launcher
+  summary's `bootstrapDurationMs` (#336). It falls back to the `repair` job
+  window only when that value is absent.
 
 ## 5. Ports and result semantics
 
