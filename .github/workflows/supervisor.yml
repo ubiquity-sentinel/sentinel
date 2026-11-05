@@ -680,6 +680,22 @@ jobs:
       # startup like every hosted child; a repository cell never starts one.
       - name: Install pinned Codex app-server
         run: npm install --global @openai/codex@0.154.0
+      # The startup probe's sandbox checks need unprivileged user namespaces,
+      # exactly as in matrix_cell, so a cell's model-start gate (and with it
+      # its step stamps) matches the serial pass. Ephemeral runner only.
+      - name: Enable Linux user namespaces for bubblewrap
+        continue-on-error: true
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
+        run: |
+          set -euo pipefail
+          current_userns=$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || true)
+          if [ -n "$current_userns" ] && [ "$current_userns" != "1" ]; then
+            sudo sysctl -w kernel.unprivileged_userns_clone=1
+          fi
+          current_apparmor=$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true)
+          if [ -n "$current_apparmor" ] && [ "$current_apparmor" != "0" ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
       - name: Resolve the committed target repositories
         id: targets
         working-directory: launcher
@@ -753,7 +769,9 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
-          if [ ! -f .sentinel-repair/result.json ]; then
+          # noclobber: an existing delta or refusal is never overwritten.
+          set -o noclobber
+          if [ ! -e .sentinel-repair/result.json ]; then
             mkdir -p .sentinel-repair
             printf '%s\n' '{"cellId":"${{ matrix.cellId }}","kind":"repair_cell_refusal","reason":"cell_unavailable","version":"v1"}' > .sentinel-repair/result.json
           fi
