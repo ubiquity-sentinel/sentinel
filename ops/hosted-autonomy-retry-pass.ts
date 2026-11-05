@@ -634,7 +634,8 @@ export async function runHostedRetryPass(
   // A record an earlier write of this pass settled (queue custody included)
   // waits for the next pass.
   const humanMerges = await verifyHumanMergeHeadReadmissions(
-    planHumanMergeHeadReadmissions(snapshot).filter((plan) =>
+    // `settled` already holds every queue-protected record of this pass.
+    planHumanMergeHeadReadmissions(snapshot, closedIssues).filter((plan) =>
       !settled(plan.id)
     ),
     scopeFor,

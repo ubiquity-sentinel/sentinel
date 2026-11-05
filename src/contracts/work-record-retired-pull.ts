@@ -38,3 +38,24 @@ export function retiredPullClosurePending(
     branch.startsWith(SENTINEL_REPAIR_BRANCH_PREFIX) &&
     record.retiredPullClosure?.pr !== pr;
 }
+
+/**
+ * True while the repair tiers must keep such a record hot: its pull request
+ * is unsettled (`retiredPullClosurePending`), or the retired-pull pass found
+ * it merged and the launcher's human-merge re-admission has yet to complete
+ * the record as `done`.
+ */
+export function retiredPullKeepsHot(
+  record: Pick<
+    WorkRecordV1,
+    "source" | "nextStep" | "blocker" | "target" | "retiredPullClosure"
+  >,
+): boolean {
+  if (retiredPullClosurePending(record)) return true;
+  return record.nextStep === "blocked" &&
+    record.blocker?.kind === "other" &&
+    record.blocker.message === SOURCE_ISSUE_CLOSED_RETIREMENT &&
+    record.target.pr !== null &&
+    record.retiredPullClosure?.pr === record.target.pr &&
+    record.retiredPullClosure.outcome === "merged";
+}
