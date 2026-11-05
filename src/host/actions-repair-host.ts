@@ -22,7 +22,7 @@ import { SystemClock } from "../contracts/ports.ts";
 import type { GitHubCooldownGateV1, GitHubPort } from "../contracts/ports.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { RepairCycleOutcomeV1 } from "../repair/loop.ts";
-import { DEFAULT_STEP_LIMIT } from "../repair/loop-bounds.ts";
+import { runBootstrapHealthPass } from "./bootstrap-health-pass.ts";
 import { portError, portOk } from "../contracts/ports.ts";
 import { RollingStartBudget } from "../budget/mod.ts";
 import {
@@ -820,6 +820,9 @@ export async function runActionsRepairHost(
     }
     if (!queueReady) {
       outcome = { status: "idle", detail: QUEUE_CUSTODY_IDLE_DETAIL };
+    } else if (execution.purpose === "bootstrap" && deps.job === undefined) {
+      // #336: bootstrap is a health pass; the next ordinary pass walks records.
+      outcome = await runBootstrapHealthPass({ state, execution });
     } else {
       ownerOperationHandled = await runOwnerSuccessorReviewPhase(
         {
@@ -870,12 +873,9 @@ export async function runActionsRepairHost(
           budget,
           deadline,
           runOrigin,
-          stepLimit: execution.purpose === "bootstrap"
-            ? DEFAULT_STEP_LIMIT
-            : STEP_LIMIT,
-          // Only an ordinary hosted execution may start a model. Bootstrap, prior,
-          // candidate and rollback runs execute the deterministic entrypoint with
-          // no model starts while keeping every budget, limit and source behavior.
+          stepLimit: STEP_LIMIT,
+          // Only an ordinary hosted execution may start a model; prior, candidate
+          // and rollback runs are deterministic with every budget and limit kept.
           modelStartsEnabled: startupReady && healthyOrdinaryExecution,
           externalImplementations: deps.job !== undefined,
           // The legacy review class's cutoff, handed over by the launcher that
@@ -966,12 +966,12 @@ export async function runActionsRepairHost(
   if (failure !== null) throw failure;
   if (outcome === null) throw new Error(STATIC_DEADLINE);
 
-  // Deterministic CI approval for durable self-target candidates runs after
-  // the loop and the tracker drain, even when model startup was unavailable.
-  // The helper is bounded and never throws, so an approval failure cannot
-  // prevent deterministic bookkeeping or change the original error semantics.
+  // Deterministic CI approval for durable self-target candidates runs after the
+  // loop and tracker drain, even without model startup (never for bootstrap).
+  // The bounded helper never throws or changes the original error semantics.
   const ciApproval =
-    deps.job === undefined && queueReady && !ownerOperationHandled
+    deps.job === undefined && queueReady && !ownerOperationHandled &&
+      execution.purpose !== "bootstrap"
       ? await runActionsCiApproval({
         state,
         gate,

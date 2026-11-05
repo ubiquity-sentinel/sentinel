@@ -253,6 +253,8 @@ async function launchHostedRuntime(
   }
   observation.run = run;
   const finishedAt = input.clock.now();
+  observation.startedAt = startedAt;
+  observation.finishedAt = finishedAt;
   // A backward or invalid clock is a refusal: no terminal instant is ever
   // fabricated to hide it.
   if (!isNonNegativeSafeInteger(finishedAt) || finishedAt < startedAt) {
@@ -484,6 +486,9 @@ interface SummaryObservationV1 {
   /** null is a positively absent state; undefined is an unavailable read. */
   before?: RepairStateSnapshotV1 | null;
   run?: ReplayCommandResultV1;
+  /** Launcher clock instants around the child command (bootstrap metrics). */
+  startedAt?: number;
+  finishedAt?: number;
 }
 
 interface SummaryIntakeV1 {
@@ -557,6 +562,14 @@ async function summarizeHostedRuntime(
     observation.identity,
     observation.execution,
   );
+  if (summary.purpose === "bootstrap") {
+    const { startedAt, finishedAt } = observation;
+    summary.bootstrapDurationMs = startedAt !== undefined &&
+        finishedAt !== undefined && finishedAt >= startedAt
+      ? finishedAt - startedAt
+      : null;
+    summary.bootstrapOutcome = result.status;
+  }
   try {
     const intake = scanSummaryIntake(observation.run);
     const targets = observation.targets?.length
