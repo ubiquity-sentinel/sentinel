@@ -12,8 +12,10 @@ import {
   DELIVERY_CHECK_FAILED_PREFIX,
   DELIVERY_CHECK_TIMEOUT_PREFIX,
   DELIVERY_CHECK_WAIT_MS,
+  DELIVERY_ISSUE_REOPENED,
 } from "../../ops/hosted-autonomy-delivery-checks.ts";
 import {
+  latestClosingCommit,
   parseDeliveryCheckRun,
   parseDeliveryCommitStatus,
 } from "../../ops/hosted-autonomy-github-delivery.ts";
@@ -53,6 +55,7 @@ async function deliveryRig(
   prefix: string,
   checks: () => readonly HostedDeliveryCheckV1[] | null,
   withReader = true,
+  issue: IssueFake | null = null,
 ) {
   const { rig, github } = await makeRig(prefix, {
     repair: repairSnapshot([foreignRecord()], [foreignReceipt()]),
@@ -73,11 +76,30 @@ async function deliveryRig(
         },
       }
       : {}),
+    ...(issue === null ? {} : {
+      readIssueClosingCommit: (number: number) => {
+        issue.reads.push(number);
+        return Promise.resolve({
+          open: issue.open,
+          closingCommit: issue.open ? null : issue.closingCommit,
+        });
+      },
+      reopenIssue: (number: number) => {
+        issue.reopens.push(number);
+        // The comment must come only after the reopen and the state write.
+        issue.commentsAtReopen = commentsRef.length;
+        issue.writesAtReopen = rigRef.writes;
+        issue.open = true;
+        return Promise.resolve(true);
+      },
+    }),
     commentIssue: (issue: number, body: string) => {
       comments.push({ issue, body });
       return Promise.resolve(true);
     },
   };
+  const commentsRef = comments;
+  const rigRef = rig;
   rig.githubFor = () => surface;
   return { rig, comments, reads };
 }
@@ -86,6 +108,26 @@ async function record(rig: Awaited<ReturnType<typeof makeRig>>["rig"]) {
   const read = await rig.state.readRepair();
   if (!read.ok || read.value.status !== "found") throw new Error("unreadable");
   return read.value.snapshot.work.find((row) => row.id === FOREIGN_TARGET)!;
+}
+
+interface IssueFake {
+  open: boolean;
+  closingCommit: string | null;
+  reads: number[];
+  reopens: number[];
+  commentsAtReopen: number | null;
+  writesAtReopen: number | null;
+}
+
+function issueFake(open: boolean, closingCommit: string | null): IssueFake {
+  return {
+    open,
+    closingCommit,
+    reads: [],
+    reopens: [],
+    commentsAtReopen: null,
+    writesAtReopen: null,
+  };
 }
 
 const policy = (names: readonly string[]) => ({
@@ -333,4 +375,102 @@ Deno.test("delivery checks: commit statuses and check runs parse strictly; polic
   assert.throws(() => parseRequiredForDeliveryV1([DEPLOY, "Deploy-Router"]));
   assert.throws(() => parseRequiredForDeliveryV1([" padded"]));
   assert.throws(() => parseRequiredForDeliveryV1("deploy"));
+});
+
+Deno.test("delivery checks: a merge-closed issue is reopened once, persisted with the park, then commented", async () => {
+  const issue = issueFake(false, MERGE);
+  const { rig, comments } = await deliveryRig(
+    "delivery-reopen",
+    () => [check({ conclusion: "failure" })],
+    true,
+    issue,
+  );
+  try {
+    const writes = rig.writes;
+    const result = await run(rig, undefined, policy([DEPLOY]));
+    assert.equal(result.status, "applied", JSON.stringify(result));
+    assert.deepEqual(issue.reopens, [120]);
+    assert.ok(
+      result.actions.includes(
+        `delivery-checks:${FOREIGN_TARGET}:reopen:issue=120:reopened`,
+      ),
+      JSON.stringify(result.actions),
+    );
+    // Reopen first, then the one park write, then the single comment.
+    assert.equal(issue.writesAtReopen, writes);
+    assert.equal(issue.commentsAtReopen, 0);
+    assert.equal(rig.writes, writes + 1);
+    const parked = await record(rig);
+    assert.equal(parked.nextStep, "blocked");
+    assert.ok(
+      parked.blocker?.message.endsWith(DELIVERY_ISSUE_REOPENED),
+      parked.blocker?.message,
+    );
+    assert.equal(comments.length, 1);
+    assert.ok(comments[0].body.includes("reopened this issue"));
+    assert.deepEqual(rig.closed, []);
+    // A later close by the merge commit again (or anything else) never
+    // reopens twice: the persisted marker settles the park.
+    issue.open = false;
+    await run(rig, undefined, policy([DEPLOY]));
+    assert.deepEqual(issue.reopens, [120]);
+    assert.equal(comments.length, 1);
+    assert.equal(rig.writes, writes + 1);
+  } finally {
+    await Deno.remove(rig.tmp, { recursive: true });
+  }
+});
+
+Deno.test("delivery checks: an issue a person closed is never reopened", async () => {
+  for (const closingCommit of [null, "2".repeat(40)]) {
+    const issue = issueFake(false, closingCommit);
+    const { rig, comments } = await deliveryRig(
+      `delivery-human-${closingCommit === null ? "none" : "other"}`,
+      () => [check({ conclusion: "failure" })],
+      true,
+      issue,
+    );
+    try {
+      await run(rig, undefined, policy([DEPLOY]));
+      assert.deepEqual(issue.reopens, []);
+      assert.deepEqual(issue.reads, [120]);
+      const parked = await record(rig);
+      assert.equal(parked.nextStep, "blocked");
+      assert.ok(
+        !parked.blocker?.message.endsWith(DELIVERY_ISSUE_REOPENED),
+        parked.blocker?.message,
+      );
+      assert.equal(comments.length, 1);
+      assert.ok(!comments[0].body.includes("reopened this issue"));
+      // Unchanged on the next pass: no reopen, no comment, no write.
+      const writes = rig.writes;
+      await run(rig, undefined, policy([DEPLOY]));
+      assert.deepEqual(issue.reopens, []);
+      assert.equal(comments.length, 1);
+      assert.equal(rig.writes, writes);
+    } finally {
+      await Deno.remove(rig.tmp, { recursive: true });
+    }
+  }
+});
+
+Deno.test("delivery checks: the latest closed event names the closing commit", () => {
+  assert.equal(
+    latestClosingCommit([
+      { event: "closed", commit_id: MERGE },
+      { event: "reopened", commit_id: null },
+      { event: "closed", commit_id: null },
+    ]),
+    null,
+  );
+  assert.equal(
+    latestClosingCommit([
+      { event: "closed", commit_id: null },
+      { event: "labeled" },
+      { event: "closed", commit_id: MERGE },
+      { event: "commented" },
+    ]),
+    MERGE,
+  );
+  assert.equal(latestClosingCommit([]), null);
 });

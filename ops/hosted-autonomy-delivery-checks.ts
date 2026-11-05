@@ -44,6 +44,40 @@ export const DELIVERY_CHECK_FAILED_PREFIX = "delivery check failed";
 /** Blocker prefix of a delivery check still incomplete at its deadline. */
 export const DELIVERY_CHECK_TIMEOUT_PREFIX = "delivery check did not complete";
 
+/** Blocker suffix persisted once the park reopened the merge-closed issue. */
+export const DELIVERY_ISSUE_REOPENED = "; source issue reopened";
+
+/**
+ * Reopen a source issue that GitHub closed through this exact merge commit.
+ * Null when nothing was attempted: the issue is open, a person (or another
+ * commit) closed it, or its closure cannot be read. True when the trusted
+ * issue write reopened it, false when that write was refused.
+ */
+export async function reopenMergeClosedIssue(
+  surface: HostedAutonomyGitHubV1,
+  issueNumber: number,
+  mergeCommit: string,
+): Promise<boolean | null> {
+  if (
+    surface.readIssueClosingCommit === undefined ||
+    surface.reopenIssue === undefined
+  ) return null;
+  let closure;
+  try {
+    closure = await surface.readIssueClosingCommit(issueNumber);
+  } catch {
+    return null;
+  }
+  if (
+    closure === null || closure.open || closure.closingCommit !== mergeCommit
+  ) return null;
+  try {
+    return await surface.reopenIssue(issueNumber) === true;
+  } catch {
+    return false;
+  }
+}
+
 /** One required check as the delivery receipt records it. */
 export interface DeliveryCheckReceiptV1 {
   readonly name: string;
@@ -286,15 +320,40 @@ export async function gateDeliveryChecks(
       }:${decision.conclusion ?? "incomplete"}:id=${decision.id ?? "none"}`,
     );
     // The same park already recorded: no rewrite and no repeated comment. A
-    // rerun that turns green later proceeds to closure from this park.
-    if (
-      record.nextStep === "blocked" &&
-      record.blocker?.message === decision.message
-    ) continue;
-    const parked = markBlocked(record, "other", decision.message, now);
+    // rerun that turns green later proceeds to closure from this park. The
+    // reopen marker is part of the persisted blocker, so a record that
+    // already reopened its issue never reopens it again.
+    const reopenedMessage = `${decision.message}${DELIVERY_ISSUE_REOPENED}`;
+    const alreadyParked = record.nextStep === "blocked" &&
+      (record.blocker?.message === decision.message ||
+        record.blocker?.message === reopenedMessage);
+    if (alreadyParked && record.blocker?.message === reopenedMessage) continue;
+    // GitHub's own `Resolves #N` link closed the issue at the merge: reopen it
+    // once, and only when its latest closing event is exactly this merge
+    // commit. An issue a person closed (no commit, or another one) stays
+    // closed, and an unreadable closure is no evidence either way.
+    const reopened = surface === null
+      ? null
+      : await reopenMergeClosedIssue(surface, plan.issueNumber, commit);
+    if (reopened !== null) {
+      actions.push(
+        `delivery-checks:${record.id}:reopen:issue=${plan.issueNumber}:${
+          reopened ? "reopened" : "refused"
+        }`,
+      );
+    }
+    if (alreadyParked && reopened !== true) continue;
+    const parked = markBlocked(
+      record,
+      "other",
+      reopened === true ? reopenedMessage : decision.message,
+      now,
+    );
     gate.updates.set(record.id, parked);
     const stage = progressStage(parked);
-    if (surface !== null && stage !== null) {
+    // One comment per park: a later reopen of an already-parked record only
+    // persists its marker.
+    if (surface !== null && stage !== null && !alreadyParked) {
       gate.comments.push({
         surface,
         issueNumber: plan.issueNumber,
@@ -306,9 +365,11 @@ export async function gateDeliveryChecks(
           decision.conclusion === null
             ? "did not complete"
             : `ended ${decision.conclusion}`
-        }${
-          decision.id === null ? "" : ` (id ${decision.id})`
-        }. The issue stays open and this repair is parked until the delivery is fixed.`,
+        }${decision.id === null ? "" : ` (id ${decision.id})`}.${
+          reopened === true
+            ? " Sentinel reopened this issue, which the merge had closed."
+            : ""
+        } Merge is not delivery: this repair is parked until the delivery is fixed.`,
       });
     }
   }
