@@ -232,7 +232,7 @@ Deno.test("retired pull: an unsettleable record backs off and the others get the
     (_, index) => `issue-ubiquity-ai.ubq.fi-${2000 + index}` as WorkItemId,
   );
   // Eleven pending records ahead of the settleable one; each is on another
-  // repository the pass cannot reach (`surface_unreadable`).
+  // repository whose pull listing cannot be read (`listing_unreadable`).
   const blocked = ids.map((id) =>
     retiredRecord({
       id,
@@ -251,7 +251,10 @@ Deno.test("retired pull: an unsettleable record backs off and the others get the
     state,
     clock: { now: () => now },
     githubFor: (repository: { name: string }) =>
-      repository.name === FOREIGN_REPO.name ? fake.surface() : null,
+      repository.name === FOREIGN_REPO.name ? fake.surface() : {
+        ...fake.surface(),
+        listPullsByHeadRef: () => Promise.reject(new Error("unreadable")),
+      },
   } as unknown as HostedAutonomyDepsV1;
   const snapshot = async () => {
     const read = await state.readRepair();
@@ -261,7 +264,7 @@ Deno.test("retired pull: an unsettleable record backs off and the others get the
   // Pass 1: the first ten are attempted once and stamped.
   const first = await runHostedRetiredPullPass(deps);
   assert.equal(
-    first.filter((line) => line.endsWith(":surface_unreadable")).length,
+    first.filter((line) => line.endsWith(":listing_unreadable")).length,
     10,
   );
   assert.ok(first.includes("retired-pull:backoff=10"));
@@ -277,7 +280,9 @@ Deno.test("retired pull: an unsettleable record backs off and the others get the
   // and the settleable record get their turn.
   now += 5 * 60_000;
   const second = await runHostedRetiredPullPass(deps);
-  assert.ok(second.includes(`retired-pull:${ids[10]}:surface_unreadable`));
+  assert.ok(
+    second.includes(`retired-pull:${ids[10]}:pr=${PR}:listing_unreadable`),
+  );
   assert.ok(second.includes(`retired-pull:${ID}:pr=${PR}:closed`));
   assert.ok(!second.some((line) => line.includes(ids[0])));
   work = (await snapshot()).work;
@@ -293,11 +298,52 @@ Deno.test("retired pull: an unsettleable record backs off and the others get the
   now += PULL_PROBE_BACKOFF_MS;
   const fourth = await runHostedRetiredPullPass(deps);
   assert.equal(
-    fourth.filter((line) => line.endsWith(":surface_unreadable")).length,
+    fourth.filter((line) => line.endsWith(":listing_unreadable")).length,
     10,
   );
   assert.ok(!fourth.some((line) => line.includes(ids[10])));
 });
+
+for (
+  const [name, surface] of [
+    ["surface_unreadable", () => null],
+    [
+      "capability_absent",
+      () => ({ readIssueOpen: () => Promise.resolve(false) }),
+    ],
+  ] as const
+) {
+  Deno.test(`retired pull: a repository whose surface is ${name} skips the pass with no read, stamp or write`, async () => {
+    const fake = new FakeSurface(ownPull());
+    const state = new MemoryState();
+    const seeded = await state.writeRepair(
+      repairSnapshot([retiredRecord()], []),
+      null,
+    );
+    assert.ok(seeded.ok && seeded.value.status === "applied");
+    let resolved = 0;
+    const deps = {
+      state,
+      clock: { now: () => T0 + 10_000 },
+      githubFor: () => {
+        resolved++;
+        return surface();
+      },
+    } as unknown as HostedAutonomyDepsV1;
+    const writes = state.repairWrites;
+    for (let pass = 0; pass < 2; pass++) {
+      assert.deepEqual(await runHostedRetiredPullPass(deps), [
+        `retired-pull:repo=${FOREIGN_REPO.owner}/${FOREIGN_REPO.name}:${name}`,
+      ]);
+    }
+    assert.equal(resolved, 2, "one surface per repository per pass");
+    assert.deepEqual(fake.calls, []);
+    assert.equal(state.repairWrites, writes);
+    const read = await state.readRepair();
+    assert.ok(read.ok && read.value.status === "found");
+    assert.deepEqual(read.value.snapshot.work, [retiredRecord()]);
+  });
+}
 
 Deno.test("retired pull: a record retired for any other reason is never read", async () => {
   const fake = new FakeSurface(ownPull());
