@@ -50,6 +50,8 @@ jobs:
       runtimeMigrationGeneration: ${{ steps.autonomy.outputs.runtimeMigrationGeneration }}
       # #327: the closed upkeep deferral reason (or none) finalize counts.
       upkeepDeferral: ${{ steps.autonomy.outputs.upkeepDeferral }}
+      # #330: the delivery pass's train, CI-run and merge counts (or none).
+      deliveryCounts: ${{ steps.autonomy.outputs.deliveryCounts }}
     # The scoped generation-68 verification settled healthy, so the maintenance
     # writer is restored to its protected-ref condition; it performs bounded
     # self-upkeep (retries and reviewed-head delivery) before prepare.
@@ -839,6 +841,7 @@ jobs:
           SENTINEL_SELF_TOKEN: ${{ steps.self-token.outputs.token }}
           SENTINEL_SELF_TOKEN_MINT_GRANT: ${{ steps.self-token.outputs.mint-grant }}
           SENTINEL_UPKEEP_DEFERRAL: ${{ needs.maintenance.outputs.upkeepDeferral }}
+          SENTINEL_DELIVERY_COUNTS: ${{ needs.maintenance.outputs.deliveryCounts }}
         run: deno task supervisor:run
       - name: Chain the next dispatcher run
         if: always() && github.ref == 'refs/heads/sentinel-supervisor'

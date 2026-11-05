@@ -13,10 +13,13 @@ import {
   hostedPassDeadlineReached,
 } from "./hosted-autonomy-scopes.ts";
 import {
+  DELIVERY_TRAIN_MAX_STALE,
   DELIVERY_TRAIN_REF_PREFIX,
   type DeliveryTrainComposerV1,
+  type DeliveryTrainDropV1,
   type DeliveryTrainLedgerV1,
   type DeliveryTrainMemberV1,
+  type DeliveryTrainRefV1,
   type DeliveryTrainV1,
   type HostedDeliveryTrainDepsV1,
   parseDeliveryTrainLedgerV1,
@@ -46,6 +49,20 @@ export interface DeliveryTrainPassV1 {
 }
 
 export type Outcome = "done" | "deferred";
+
+/** Ended train refs deleted per repository per pass, at most. */
+export const DELIVERY_TRAIN_SWEEP_PER_PASS = 4;
+
+/** `stale` with this train's ref appended (bounded, oldest dropped). */
+export function staleWith(
+  stale: readonly DeliveryTrainRefV1[],
+  train: DeliveryTrainV1,
+): DeliveryTrainRefV1[] {
+  return [
+    ...stale.filter((entry) => entry.ref !== train.ref),
+    { ref: train.ref, sha: train.sha },
+  ].slice(-DELIVERY_TRAIN_MAX_STALE);
+}
 
 /** Operation id: a pure function of the repository, tip, attempt, members. */
 function operationId(
@@ -145,10 +162,55 @@ export class TrainRun {
     return false;
   }
 
-  async end(reason: string): Promise<Outcome> {
-    this.act(`train:${this.train.operationId}:${reason}`);
-    await this.persist({ ...this.ledger, train: null });
+  /**
+   * End the open train: the ledger closes it (with any new drops) and keeps
+   * its ref for deletion, and then the ended refs are swept.
+   */
+  async end(
+    reason: string,
+    drops: readonly DeliveryTrainDropV1[] = this.ledger.drops,
+  ): Promise<Outcome> {
+    const train = this.train;
+    this.act(`train:${train.operationId}:${reason}`);
+    if (
+      await this.persist({
+        ...this.ledger,
+        drops,
+        train: null,
+        stale: staleWith(this.ledger.stale, train),
+      })
+    ) await this.sweep();
     return "done";
+  }
+
+  /**
+   * Delete the ended train refs the ledger still holds, at most
+   * `DELIVERY_TRAIN_SWEEP_PER_PASS` per pass, after the ledger write that
+   * ended them. Best effort: an unavailable deletion stays for a later pass
+   * and nothing here fails the pass.
+   */
+  async sweep(): Promise<void> {
+    const retire = this.composer.retire;
+    if (retire === undefined || this.ledger.stale.length === 0) return;
+    const kept: DeliveryTrainRefV1[] = [];
+    let changed = false;
+    for (const [index, entry] of this.ledger.stale.entries()) {
+      if (index >= DELIVERY_TRAIN_SWEEP_PER_PASS || this.late()) {
+        kept.push(entry);
+        continue;
+      }
+      let outcome: "retired" | "moved" | "unavailable" = "unavailable";
+      try {
+        outcome = await retire.call(this.composer, entry);
+      } catch {
+        outcome = "unavailable";
+      }
+      const op = entry.ref.slice(DELIVERY_TRAIN_REF_PREFIX.length);
+      this.act(`train:${op}:ref_${outcome}`);
+      if (outcome === "unavailable") kept.push(entry);
+      else changed = true;
+    }
+    if (changed) await this.persist({ ...this.ledger, stale: kept });
   }
 
   /** The member's record exactly as the train admitted it. */

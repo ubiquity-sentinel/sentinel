@@ -17,6 +17,7 @@ import type {
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import type { DeliveryTrainHoldV1 } from "../contracts/delivery-train-ledger.ts";
 
 export interface RepairCycleDepsV1 {
   clock: Clock;
@@ -153,6 +154,11 @@ export interface LoopContextV1 {
    * loaded); absent or null means no record is legacy.
    */
   legacyReviewCutoff?: number | null;
+  /**
+   * The launcher's open delivery trains read when the context was loaded
+   * (sentinel #330); absent or empty holds nothing.
+   */
+  deliveryTrainHolds?: readonly DeliveryTrainHoldV1[];
 }
 
 /** Effective run bounds: caller deadline clamped by the fixed ceiling. */

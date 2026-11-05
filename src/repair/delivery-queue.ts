@@ -96,6 +96,7 @@
 import type { GitSha } from "../contracts/brands.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import type { DeliveryTrainHoldV1 } from "../contracts/delivery-train-ledger.ts";
 import {
   releaseRequestMatchesDelivery,
   sameRepositoryIdentity,
@@ -107,6 +108,20 @@ import {
   reviewedHeadCarried,
   reviewRoundsSpent,
 } from "./review-round-cap.ts";
+
+/**
+ * The open delivery train (sentinel #330) of `record`'s repository, if any:
+ * while it is open its members keep their reviewed heads and no record of the
+ * repository refreshes onto the tip it is about to move (pure).
+ */
+export function deliveryTrainHold(
+  holds: readonly DeliveryTrainHoldV1[],
+  record: Pick<WorkRecordV1, "id" | "repository">,
+): DeliveryTrainHoldV1 | null {
+  return holds.find((hold) =>
+    sameRepositoryIdentity(hold.repository, record.repository)
+  ) ?? null;
+}
 
 /** Executions without durable progress after which a record holds nobody. */
 export const DELIVERY_QUEUE_STALL_LIMIT = 12;

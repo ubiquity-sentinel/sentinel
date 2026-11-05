@@ -7,6 +7,7 @@ import type {
   RepairStateSnapshotV1,
 } from "./state-snapshots.ts";
 import type { PortResultV1 } from "./ports.ts";
+import type { DeliveryTrainHoldV1 } from "./delivery-train-ledger.ts";
 
 // ---------------------------------------------------------------------------
 // StateStore: separate repair/release snapshot branches with strict
@@ -77,6 +78,14 @@ export interface StateReadView {
   readHostedRelease?(
     request: ReleaseRequestV1,
   ): Promise<PortResultV1<HostedReleaseRecordV1 | null>>;
+  /**
+   * Optional read-only view of the launcher's open delivery trains (sentinel
+   * #330, `refs/heads/sentinel-state/trains`). Absent or unavailable holds
+   * nothing: a train whose member moved still stops safely by itself.
+   */
+  readDeliveryTrainHolds?(): Promise<
+    PortResultV1<readonly DeliveryTrainHoldV1[]>
+  >;
 }
 
 /**

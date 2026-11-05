@@ -153,3 +153,19 @@ Deno.test("train surface: readCommitTree reads exactly the named commit's tree",
     globalThis.fetch = original;
   }
 });
+
+Deno.test("train CI: failed runs whose jobs never started are unavailable, not red or pending", async () => {
+  const stopped = {
+    ...surface(false, []),
+    runNeverStarted: () => Promise.resolve(true),
+  } as unknown as HostedAutonomyGitHubV1;
+  assert.deepEqual(await trainCiVerdict(stopped, A, B), {
+    kind: "unavailable",
+    cause: "not_started",
+  });
+  const ran = {
+    ...surface(false, []),
+    runNeverStarted: () => Promise.resolve(false),
+  } as unknown as HostedAutonomyGitHubV1;
+  assert.deepEqual(await trainCiVerdict(ran, A, B), { kind: "pending" });
+});

@@ -50,6 +50,7 @@ import {
   type DeliveryTrainPassV1,
   newTrain,
   type Outcome,
+  staleWith,
   TrainRun,
 } from "./hosted-autonomy-train-run.ts";
 import {
@@ -59,6 +60,7 @@ import {
   type DeliveryTrainComposerV1,
   type DeliveryTrainDropV1,
   type DeliveryTrainMemberV1,
+  type DeliveryTrainRefV1,
   type DeliveryTrainV1,
 } from "./hosted-autonomy-train-types.ts";
 import type { HostedAutonomyPassContextV1 } from "./hosted-autonomy-scopes.ts";
@@ -165,8 +167,11 @@ class RepositoryTrain extends TrainRun {
   async start(
     train: DeliveryTrainV1,
     drops: readonly DeliveryTrainDropV1[],
+    stale: readonly DeliveryTrainRefV1[] = this.ledger.stale,
   ): Promise<Outcome> {
-    if (!await this.persist({ ...this.ledger, drops, train })) return "done";
+    if (!await this.persist({ ...this.ledger, drops, stale, train })) {
+      return "done";
+    }
     this.act(
       `train:${train.operationId}:built:attempt=${train.attempt}:tip=${train.tip}:sha=${train.sha}:members=${
         train.members.map((m) => m.recordId).join(",")
@@ -245,9 +250,30 @@ class RepositoryTrain extends TrainRun {
     if (verdict.kind === "red") return await this.red(verdict);
     const now = this.context.deps.clock.now();
     if (!(now - train.createdAt <= DELIVERY_TRAIN_CI_WAIT_MS)) {
-      return await this.end("dissolved:ci_unavailable");
+      // Never red: the members fall back to the per-record path, and train
+      // again only on a moved tip or a new head.
+      return await this.end(
+        "dissolved:ci_unavailable",
+        [
+          ...this.ledger.drops,
+          ...train.members.map((m) => ({
+            recordId: m.recordId,
+            head: m.head,
+            tip: train.tip,
+            runId: null,
+            check: "ci_unavailable",
+            at: now,
+          })),
+        ].slice(-DELIVERY_TRAIN_MAX_DROPS),
+      );
     }
-    this.act(`train:${train.operationId}:ci_${verdict.kind}`);
+    this.act(
+      `train:${train.operationId}:ci_${verdict.kind}${
+        verdict.kind === "unavailable" && verdict.cause !== undefined
+          ? `:${verdict.cause}`
+          : ""
+      }`,
+    );
     return "done";
   }
 
@@ -275,18 +301,22 @@ class RepositoryTrain extends TrainRun {
     if (train.attempt === 1 && train.members.length > 1) {
       const drops = [...this.ledger.drops, drop(train.members.at(-1)!)]
         .slice(-DELIVERY_TRAIN_MAX_DROPS);
-      return await this.start(
+      // The red train's ref ends with it; the retry gets its own ref.
+      const started = await this.start(
         newTrain(this.key, train.tip, 2, train.members.slice(0, -1), now),
         drops,
+        staleWith(this.ledger.stale, train),
       );
+      await this.sweep();
+      return started;
     }
     // No second bisect in the same pass: each member waits for a moved tip
     // or a new head before it trains again.
-    const drops = [...this.ledger.drops, ...train.members.map(drop)]
-      .slice(-DELIVERY_TRAIN_MAX_DROPS);
-    this.act(`train:${train.operationId}:dissolved:ci_red`);
-    await this.persist({ ...this.ledger, drops, train: null });
-    return "done";
+    return await this.end(
+      "dissolved:ci_red",
+      [...this.ledger.drops, ...train.members.map(drop)]
+        .slice(-DELIVERY_TRAIN_MAX_DROPS),
+    );
   }
 
   async advance(group: readonly HostedAutonomyRecordV1[]): Promise<Outcome> {
@@ -345,6 +375,8 @@ export async function runDeliveryTrains(
       continue;
     }
     const run = new RepositoryTrain(input, deps, scope, composer, read, held);
+    // Ended train refs an earlier pass could not delete (bounded).
+    await run.sweep();
     // A landed member's merged pull is the closure's, never merged again.
     for (const record of group) {
       if (
