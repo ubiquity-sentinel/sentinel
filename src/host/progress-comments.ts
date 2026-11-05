@@ -20,6 +20,7 @@ import type { HttpResponseV1, HttpTransportV1 } from "../github/http.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { classifyGitHubRateLimit } from "../github/rate-limit.ts";
+import { ownerLandingWords, ownerMergeReady } from "../repair/owner-landing.ts";
 
 /** One stage of a record in plain words, with its stable change key. */
 export interface ProgressStageV1 {
@@ -119,6 +120,14 @@ export function progressStage(record: WorkRecordV1): ProgressStageV1 | null {
     return {
       key: `blocked:${hashKey(message)}`,
       words: `Parked: ${plain(message)}.${person}`,
+    };
+  }
+  if (record.nextStep === "delivery" && record.ownerLanding !== undefined) {
+    // Sentinel never merges a protected-path change: one owner comment per
+    // reviewed, CI-green head, and no "merging" claim before it.
+    return pr === null || !ownerMergeReady(record) ? null : {
+      key: `owner_merge:${pr}:${record.target.head}`,
+      words: ownerLandingWords(record.ownerLanding.paths),
     };
   }
   if (record.nextStep === "delivery") {

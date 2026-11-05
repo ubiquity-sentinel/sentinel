@@ -14,6 +14,7 @@ import { hasTakeoverCustody } from "../src/github/existing-pr-takeover-provenanc
 import type { ReviewReceiptV1 } from "../src/contracts/review-receipt.ts";
 import { CANDIDATE_CONCLUSIONS } from "../src/repair/ci-rejection.ts";
 import { isGatewayVpsRepository } from "../src/repair/vps-delivery.ts";
+import { OWNER_MERGE_REQUIRED } from "../src/repair/owner-landing.ts";
 import {
   boundReviewReceipts,
   readTrustedTask,
@@ -71,6 +72,10 @@ export async function trainMemberGate(
   record: HostedAutonomyRecordV1,
   receiptId: string | null,
 ): Promise<TrainGateV1> {
+  // A protected-path change is merged only by its repository owner.
+  if (record.ownerLanding !== undefined) {
+    return { refusal: OWNER_MERGE_REQUIRED };
+  }
   const surface = scope.surface;
   const { pr, head } = record.target;
   if (surface === null || pr === null || head === null) {

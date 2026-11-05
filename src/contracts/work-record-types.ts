@@ -11,6 +11,7 @@ import type {
   SeverityV1,
 } from "./shared.ts";
 import type { SelfMergeProofV1 } from "./self-merge.ts";
+import type { OwnerLandingV1 } from "./owner-landing.ts";
 
 export type NextStepV1 = "work" | "review" | "delivery" | "blocked" | "done";
 export type WorkWaitReasonV1 =
@@ -281,4 +282,10 @@ export interface WorkRecordV1 {
   updatedAt: number;
   /** Optional last settled step fingerprint; absent on legacy records. */
   stepInputs?: StepInputsStampV1;
+  /**
+   * Optional owner-landing flag: the published candidate changes a protected
+   * path, so Sentinel never merges it (see `OwnerLandingV1`). Absent on
+   * legacy records and never defaulted.
+   */
+  ownerLanding?: OwnerLandingV1;
 }
