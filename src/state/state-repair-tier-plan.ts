@@ -14,10 +14,12 @@
  *   open issue keeps its record hot, because intake skips an issue that
  *   already has a hot record and would otherwise admit a duplicate);
  * - it is not a record retired because its source issue closed whose own
- *   pull request is still unsettled (`retiredPullClosurePending`): the hosted
- *   maintenance pass reads hot records only, so such a record stays hot
- *   until that pass closes its own open pull request or records that there
- *   was nothing to close (an already cold one is promoted by the once-per-
+ *   pull request is still unsettled, or was found merged and the record is
+ *   not yet completed (`retiredPullKeepsHot`): the hosted maintenance pass
+ *   reads hot records only, so such a record stays hot until that pass
+ *   closes its own open pull request or records that there was nothing to
+ *   close, and a merged one is completed (an already cold one is promoted by
+ *   the once-per-
  *   generation retired-pull scan, `retiredPullScanSeeds`);
  * - no hot record that stays hot depends on it;
  * - every reservation is terminally settled outside the widest rolling
@@ -42,7 +44,7 @@ import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { MaxItems } from "../contracts/validation.ts";
-import { retiredPullClosurePending } from "../contracts/work-record-retired-pull.ts";
+import { retiredPullKeepsHot } from "../contracts/work-record-retired-pull.ts";
 import { RETIRED_PULL_COLD_SCAN_ID } from "../contracts/repair-tier-scan.ts";
 import {
   isTerminalReservationV1,
@@ -126,7 +128,7 @@ export function retiredPullScanSeeds(
   coldWork: readonly WorkRecordV1[],
   budget: number = RETIRED_PULL_SCAN_PROMOTIONS,
 ): { seeds: string[]; complete: boolean } {
-  const pending = coldWork.filter(retiredPullClosurePending).map((row) =>
+  const pending = coldWork.filter(retiredPullKeepsHot).map((row) =>
     String(row.id)
   ).sort();
   return {
@@ -173,7 +175,7 @@ function demotableWork(
   return record.source.kind === "issue" &&
     (settled || releaseDeferred) &&
     record.intent === null &&
-    !retiredPullClosurePending(record) &&
+    !retiredPullKeepsHot(record) &&
     listed.has(repositoryKey(record.repository)) &&
     !policy.openIssueWorkIds.has(record.id) &&
     !(policy.protectedWorkIds?.has(record.id) ?? false);

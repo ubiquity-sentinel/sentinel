@@ -41,9 +41,12 @@ import {
 import { parseWorkRecordV1 } from "../src/contracts/work-record.ts";
 import { HUMAN_MERGE_HEAD_MISMATCH_BLOCKER } from "../src/repair/human-merge.ts";
 import { MERGED_OFF_TIP_PREFIX } from "../src/repair/merge-off-tip.ts";
+import { candidateBranch } from "../src/repair/keys.ts";
+import { SOURCE_ISSUE_CLOSED_RETIREMENT } from "../src/contracts/work-record-retired-pull.ts";
 import {
   HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR,
   HOSTED_AUTONOMY_TRUSTED_AUTHORS,
+  hostedIssueKey,
   sameRepository,
 } from "./hosted-autonomy-policy.ts";
 import type { HostedAutonomyScopeV1 } from "./hosted-autonomy-scopes.ts";
@@ -53,7 +56,8 @@ import type { HostedAutonomyHeadPullV1 } from "./hosted-autonomy-types.ts";
 export type HumanMergeParkV1 =
   | "head_mismatch"
   | "merge_off_base"
-  | "review_backoff";
+  | "review_backoff"
+  | "stale_step";
 
 /** Action detail of every verified human-merge head re-admission. */
 const READMISSION_DETAIL = "human_merge_head_moved";
@@ -61,6 +65,21 @@ const READMISSION_DETAIL = "human_merge_head_moved";
 const MERGED_OFF_TIP_READMISSION_DETAIL = "human_merge_merged_off_base";
 /** Action detail of a re-admission from the stuck review backoff. */
 const REVIEW_BACKOFF_READMISSION_DETAIL = "human_merge_review_backoff";
+/** Action detail of a re-admission of a `work`/`blocked` record (stale). */
+const STALE_STEP_READMISSION_DETAIL = "human_merge_stale_step";
+
+/**
+ * Intents a stale-step re-admission may clear: a merged pull request ends
+ * every one of them. A self-merge proof and every closure, replay, merge or
+ * candidate-preservation operation stay with their own reconciliation.
+ */
+const STALE_STEP_CLEARABLE_INTENTS: ReadonlySet<string> = new Set([
+  "implementation",
+  "base_refresh",
+  "pull_request",
+  "review_request",
+  "push",
+]);
 
 /** A record that passed every local gate; remote facts pending. */
 export interface HumanMergeCandidateV1 {
@@ -74,6 +93,11 @@ export interface HumanMergeCandidateV1 {
   pullRequest: number | null;
   /** Which shape wrote the record; the merge-actor gate depends on it. */
   parkedBy: HumanMergeParkV1;
+  /**
+   * Stale-step only: the still-`reserved` charge the cleared intent names,
+   * settled `ambiguous` (never refunded) in the same write.
+   */
+  settleReservation?: string | null;
 }
 
 /** A verified re-admission, applied by `applyHumanMergeReadmissions`. */
@@ -83,6 +107,8 @@ export interface HumanMergeReadmissionV1 {
   /** The verified merged PR restored as target.pr. */
   pullRequest: number;
   detail: string;
+  /** Stale-step only: clear the intent and settle this reserved charge. */
+  stale?: { settleReservation: string | null };
 }
 
 /** The park a blocked record names, or null for any other blocker. */
@@ -102,9 +128,23 @@ function parkOf(message: string): HumanMergeParkV1 | null {
  */
 export function planHumanMergeHeadReadmissions(
   snapshot: RepairStateSnapshotV1,
+  /**
+   * `hostedIssueKey`s of the source issues this pass read closed. With it, a
+   * `work` or `blocked` record whose bound pull request may have been merged
+   * (its source issue closed, or the retired-pull pass recorded the pull
+   * merged) is a stale-step candidate; the merge itself is verified remotely.
+   */
+  closedIssues?: ReadonlySet<string>,
 ): HumanMergeCandidateV1[] {
   const candidates: HumanMergeCandidateV1[] = [];
   for (const record of snapshot.work) {
+    const stale = closedIssues === undefined
+      ? null
+      : staleStepCandidate(record, snapshot, closedIssues);
+    if (stale !== null) {
+      candidates.push(stale);
+      continue;
+    }
     if (
       record.intent !== null || record.target.head === null ||
       record.target.branch === null
@@ -132,6 +172,66 @@ export function planHumanMergeHeadReadmissions(
     });
   }
   return candidates;
+}
+
+/**
+ * A record stuck at `work` (any wait or clearable intent) or `blocked` with
+ * no wait, whose bound pull request is on its own repair branch and whose
+ * source issue is closed (or whose pull the retired-pull pass recorded
+ * merged). Shapes the exact parks above own are left to them.
+ */
+function staleStepCandidate(
+  record: RepairStateSnapshotV1["work"][number],
+  snapshot: RepairStateSnapshotV1,
+  closedIssues: ReadonlySet<string>,
+): HumanMergeCandidateV1 | null {
+  const { pr, head, branch } = record.target;
+  if (pr === null || head === null || branch !== candidateBranch(record.id)) {
+    return null;
+  }
+  if (record.nextStep !== "work" && record.nextStep !== "blocked") return null;
+  if (record.nextStep === "blocked") {
+    if (record.wait !== null) return null;
+    if (
+      record.blocker?.kind === "other" &&
+      parkOf(record.blocker.message) !== null
+    ) return null;
+  }
+  const intent = record.intent;
+  if (
+    intent !== null &&
+    (!STALE_STEP_CLEARABLE_INTENTS.has(intent.kind) ||
+      intent.selfMerge !== undefined)
+  ) return null;
+  if (record.target.selfMerge !== undefined) return null;
+  // The retired-pull pass owns a record retired on its closed issue: only the
+  // pull it recorded merged is completed here; one it closed, found closed or
+  // found foreign is settled and never read again.
+  const settledPull = record.retiredPullClosure?.pr === pr
+    ? record.retiredPullClosure.outcome
+    : undefined;
+  if (settledPull !== undefined && settledPull !== "merged") return null;
+  if (
+    settledPull === undefined && record.blocker?.kind === "other" &&
+    record.blocker.message === SOURCE_ISSUE_CLOSED_RETIREMENT
+  ) return null;
+  const issue = record.related.issueNumber;
+  const closed = issue !== null &&
+    closedIssues.has(hostedIssueKey(record.repository, issue));
+  if (!closed && settledPull !== "merged") return null;
+  const requestId = intent?.requestId ?? null;
+  const reserved = requestId === null ? undefined : snapshot.reservations.find(
+    (row) => row.id === requestId && row.outcome === "reserved",
+  );
+  return {
+    id: record.id,
+    repository: record.repository,
+    branch,
+    head,
+    pullRequest: pr,
+    parkedBy: "stale_step",
+    settleReservation: reserved?.id ?? null,
+  };
 }
 
 /** A retained PR disambiguates older publications on the same branch. */
@@ -213,7 +313,14 @@ export function decideHumanMergeHeadReadmission(
         ? MERGED_OFF_TIP_READMISSION_DETAIL
         : candidate.parkedBy === "review_backoff"
         ? REVIEW_BACKOFF_READMISSION_DETAIL
+        : candidate.parkedBy === "stale_step"
+        ? STALE_STEP_READMISSION_DETAIL
         : READMISSION_DETAIL,
+      ...(candidate.parkedBy === "stale_step"
+        ? {
+          stale: { settleReservation: candidate.settleReservation ?? null },
+        }
+        : {}),
     },
   };
 }
@@ -271,7 +378,10 @@ export async function verifyHumanMergeHeadReadmissions(
       ? null
       : pullsForCandidate(candidate, pulls);
     const mergedBy = candidate.parkedBy !== "head_mismatch" &&
-        matching !== null && matching.length === 1
+        matching !== null && matching.length === 1 &&
+        // A stale-step candidate is read every pass while its pull is open:
+        // the merger detail is read only once the listing shows it merged.
+        (candidate.parkedBy !== "stale_step" || matching[0].merged === true)
       ? await readMergedBy(surface, matching[0].number, scope.baseBranch)
       : undefined;
     const decision = decideHumanMergeHeadReadmission(
@@ -301,8 +411,20 @@ export function applyHumanMergeReadmissions(
   now: number,
 ): RepairStateSnapshotV1 {
   if (readmissions.length === 0) return snapshot;
+  const settle = new Set(
+    readmissions.flatMap((entry) =>
+      entry.stale?.settleReservation ? [entry.stale.settleReservation] : []
+    ),
+  );
   return parseRepairStateSnapshotV1({
     ...snapshot,
+    // A cleared stale intent's still-reserved charge stays charged: it is
+    // settled `ambiguous`, never refunded.
+    reservations: snapshot.reservations.map((row) =>
+      settle.has(row.id) && row.outcome === "reserved"
+        ? { ...row, outcome: "ambiguous", settledAt: now }
+        : row
+    ),
     work: snapshot.work.map((record) => {
       const readmission = readmissions.find((entry) =>
         entry.id === record.id &&
@@ -315,6 +437,7 @@ export function applyHumanMergeReadmissions(
         nextStep: "review",
         wait: null,
         blocker: null,
+        ...(readmission.stale === undefined ? {} : { intent: null }),
         updatedAt: now,
       });
     }),
