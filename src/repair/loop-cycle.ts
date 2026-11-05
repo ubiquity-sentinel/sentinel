@@ -540,6 +540,7 @@ async function* advanceSerialPass(
 
     awakened.delete(selected.id);
     gate.beginStep(selected.id);
+    options.onStep?.(selected.id);
     context.executionBaseline = selected;
     // Monotonic wall time: the injected run clock is never read for the log.
     const stepStartedAt = performance.now();

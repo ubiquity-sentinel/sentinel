@@ -118,6 +118,12 @@ export interface RepairCycleOptionsV1 {
    * keeps the ordinary lifecycle unchanged.
    */
   bootstrap?: boolean;
+  /**
+   * Fan-out repository pass only (issue #328): told the id of each record
+   * about to be stepped, before its step runs, so the pass can attribute an
+   * interval to its record. It observes and never changes the pass.
+   */
+  onStep?: (id: string) => void;
 }
 
 export type RepairCycleOutcomeV1 =
