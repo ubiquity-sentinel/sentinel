@@ -555,7 +555,7 @@ async function* advanceSerialPass(
       result.kind,
       Math.round(performance.now() - stepStartedAt),
     );
-    await gate.settle(context, selected.id, result);
+    await gate.settle(context, selected.id, result, selected);
     if (result.kind === "deferred") {
       deferred.add(selected.id);
       receiveWake(yield { kind: "progress" });

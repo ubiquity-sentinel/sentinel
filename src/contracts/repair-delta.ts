@@ -30,6 +30,7 @@ import {
   expectArray,
   expectEnum,
   expectExactKeys,
+  expectExactKeysWithOptional,
   expectGitSha,
   expectPattern,
   expectPositiveInt,
@@ -41,6 +42,10 @@ import {
   MaxItems,
 } from "./validation.ts";
 import { parseWorkRecordV1, type WorkRecordV1 } from "./work-record.ts";
+import {
+  parseRepairDeltaStepsV1,
+  type RepairDeltaStepV1,
+} from "./repair-delta-steps.ts";
 
 export const REPAIR_DELTA_KIND = "repair_delta";
 export const REPAIR_DELTA_ENVELOPE_KIND = "repair_delta_envelope";
@@ -87,6 +92,11 @@ export interface RepairDeltaV1 {
   /** Wall time of the cell's pass (advisory, for the metrics collector). */
   startedAt: number;
   finishedAt: number;
+  /**
+   * Advisory per-step summary (`repair-delta-steps.ts`); absent on deltas
+   * written before it existed.
+   */
+  steps?: RepairDeltaStepV1[];
 }
 
 export interface RepairDeltaEnvelopeV1 {
@@ -109,6 +119,7 @@ const DELTA_KEYS = [
   "startedAt",
   "finishedAt",
 ] as const;
+const DELTA_OPTIONAL_KEYS = ["steps"] as const;
 const BINDING_KEYS = ["runId", "runAttempt", "planDigest"] as const;
 const TRANSITION_KEYS = ["before", "after"] as const;
 const ENVELOPE_KEYS = ["version", "kind", "delta", "digest"] as const;
@@ -264,7 +275,7 @@ function parseBinding(input: unknown, path: string): RepairDeltaBindingV1 {
 
 export function parseRepairDeltaV1(input: unknown): RepairDeltaV1 {
   const obj = expectRecord(input, "$");
-  expectExactKeys(obj, DELTA_KEYS, "$");
+  expectExactKeysWithOptional(obj, DELTA_KEYS, DELTA_OPTIONAL_KEYS, "$");
   expectVersion(obj.version, "$.version");
   expectEnum(obj.kind, [REPAIR_DELTA_KIND], "$.kind");
   const repository = parseRepositoryIdentity(obj.repository, "$.repository");
@@ -323,6 +334,10 @@ export function parseRepairDeltaV1(input: unknown): RepairDeltaV1 {
     deferredToTrusted,
     startedAt,
     finishedAt,
+    // Absent stays absent so an older delta re-parses to exactly itself.
+    ...(obj.steps === undefined
+      ? {}
+      : { steps: parseRepairDeltaStepsV1(obj.steps, "$.steps") }),
   };
 }
 
