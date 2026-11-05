@@ -203,6 +203,8 @@ export interface ImplementationPort {
    * the port after construction.
    */
   readonly modelId?: string;
+  /** Trusted, uncharged prerequisite check; never opens a model session. */
+  preflightModel?(request: ModelRunRequestV1): Promise<PortResultV1<void>>;
   runModel(
     request: ModelRunRequestV1,
     options?: ModelRunOptionsV1,

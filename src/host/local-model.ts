@@ -39,7 +39,7 @@ import {
   type PlannedMergeV1,
 } from "../repair/model-port-checkout.ts";
 import { writeLocalModelResult } from "./local-model-result.ts";
-import { commitObjectPresent } from "./local-git.ts";
+import { preflightLocalModel } from "./local-model-preflight.ts";
 import {
   codexChildEnv,
   ensureTaskClient,
@@ -184,6 +184,10 @@ export class LocalCheckoutModelPort implements ImplementationPort {
       input.route?.failoverModel ?? "";
   }
 
+  preflightModel(request: ModelRunRequestV1): Promise<PortResultV1<void>> {
+    return preflightLocalModel(this.input, request);
+  }
+
   async runModel(
     request: ModelRunRequestV1,
     options?: ModelRunOptionsV1,
@@ -228,57 +232,11 @@ export class LocalCheckoutModelPort implements ImplementationPort {
         observedAt: this.input.clock.now(),
         importCandidate: () => Promise.resolve(false),
       });
-    if (
-      checkoutBase !== request.base &&
-      this.input.ensureCandidateObjects !== undefined
-    ) {
-      let restored: PortResultV1<void>;
-      try {
-        restored = await this.input.ensureCandidateObjects({
-          base: request.base,
-          head: checkoutBase,
-          repository: request.repository,
-        });
-      } catch {
-        return await failCheckout();
-      }
-      if (!restored.ok) return await failCheckout();
-    }
+    const ready = await this.preflightModel(request);
+    if (!ready.ok) return await failCheckout();
     const key = await localCheckoutKey(request.taskId);
-    // This request's OWN target mirror: the base commit of a foreign target
-    // does not exist in the sentinel mirror.
     const sourcePath = this.input.resolveSourcePath?.(request.repository) ??
       this.input.sourcePath;
-    // The exact base object must exist in that mirror BEFORE a checkout is
-    // prepared. Requiring it here is what turns a mirror that was fetched
-    // before the branch moved into a bounded, gated catch-up instead of an
-    // unexplained checkout refusal for every record pinned to the newer base.
-    // A conflict resolution needs the base it merges in the same way.
-    const objectReady = async (sha: GitSha): Promise<boolean> => {
-      const present = () =>
-        commitObjectPresent({
-          sourcePath,
-          sha,
-          scratch: this.input.scratch,
-          trustedPath: this.input.trustedPath,
-        });
-      if (await present()) return true;
-      if (this.input.ensureBaseObject === undefined) return false;
-      let ensured: PortResultV1<void>;
-      try {
-        ensured = await this.input.ensureBaseObject({
-          repository: request.repository,
-          base: sha,
-        });
-      } catch {
-        return false;
-      }
-      return ensured.ok && await present();
-    };
-    if (!await objectReady(checkoutBase)) return await failCheckout();
-    if (mergeBase !== undefined && !await objectReady(mergeBase)) {
-      return await failCheckout();
-    }
     const prepared = await ensureTaskCheckout({
       taskId: request.taskId,
       base: checkoutBase,

@@ -6,7 +6,7 @@ import type {
   ModelRunRequestV1,
   PortResultV1,
 } from "../contracts/ports.ts";
-import { portError } from "../contracts/ports.ts";
+import { portError, portOk } from "../contracts/ports.ts";
 import type { ModelRunOptionsV1 } from "../contracts/ports-model.ts";
 import { CodexProtocolError, type CodexSessionV1 } from "./codex-transport.ts";
 import type {
@@ -18,6 +18,7 @@ import {
   finishReceipt,
   type ReceiptVerifierV1,
 } from "./model-port-receipt.ts";
+import { implementationInputRefusal } from "./implementation-preflight.ts";
 import { buildPrompt } from "./model-port-prompt.ts";
 import { awaitSettlement } from "./model-port-settlement.ts";
 import { EarlyNotificationSession } from "./model-port-notifications.ts";
@@ -193,6 +194,16 @@ export class CodexImplementationPort implements ImplementationPort {
     };
   }
 
+  preflightModel(request: ModelRunRequestV1): Promise<PortResultV1<void>> {
+    const refusal = implementationInputRefusal(
+      request,
+      this.options.protectedPaths ?? [],
+    );
+    return Promise.resolve(
+      refusal === null ? portOk(undefined) : portError("invalid", refusal),
+    );
+  }
+
   async runModel(
     request: ModelRunRequestV1,
     options?: ModelRunOptionsV1,
@@ -201,6 +212,8 @@ export class CodexImplementationPort implements ImplementationPort {
     // turn input (failover and backoff included), never into the thread's
     // instructions, and it is never part of a receipt.
     const ciEvidence = options?.untrustedCiEvidence;
+    const preflight = await this.preflightModel(request);
+    if (!preflight.ok) return preflight;
     // Fail-closed model policy validation BEFORE any session or model work:
     // the requested runtime model must be exactly the route-selected model this
     // port was constructed with (never a literal) and the effort exactly `max`.

@@ -64,8 +64,12 @@ import {
 import { existingHeadContinuationShape } from "./loop-eligibility.ts";
 import { verifyNoLiveLocalCandidateBranch } from "./loop-local-candidate.ts";
 import { legacyCutoff } from "./loop-review-round-cap.ts";
+import {
+  implementationInputRefusal,
+  validImplementationRef,
+} from "./implementation-preflight.ts";
 import { RETIRED_TARGET_MESSAGE } from "./selection.ts";
-import { observeIssueForModel, readBase } from "./loop-task-context.ts";
+import { observeIssueForModel } from "./loop-task-context.ts";
 import type {
   LoopContextV1,
   PreparedImplementationV1,
@@ -313,6 +317,18 @@ export async function prepareImplementationStart(
   // never an ambiguous unsent model intent. The value is kept for the model
   // invocation below.
   const observation = await observeIssueForModel(deps, record);
+  if (observation.kind === "refused") {
+    return persistWork(
+      deps,
+      context,
+      markBlocked(
+        record,
+        "other",
+        `implementation preflight refused: ${observation.detail}`,
+        now,
+      ),
+    );
+  }
   if (observation.kind === "unavailable") {
     // A source observed closed or absent is terminal: retire it with the
     // existing source-closed blocker BEFORE the conflict-resolution start
@@ -366,6 +382,36 @@ export async function prepareImplementationStart(
   if (admissionCooling.kind === "deferred") {
     return { kind: "deferred", detail: admissionCooling.detail };
   }
+  if (!validImplementationRef(`refs/heads/${config.baseBranch}`)) {
+    return persistWork(
+      deps,
+      context,
+      markBlocked(
+        record,
+        "other",
+        "implementation preflight refused: target base branch name is invalid",
+        now,
+      ),
+    );
+  }
+  if (
+    record.target.branch !== null &&
+    !validImplementationRef(`refs/heads/${record.target.branch}`)
+  ) {
+    return persistWork(
+      deps,
+      context,
+      markBlocked(
+        record,
+        "other",
+        "implementation preflight refused: target branch name is invalid",
+        now,
+      ),
+    );
+  }
+  // Fresh work must have a live configured target branch. Saved-candidate
+  // corrections already prove their own branch above and their exact base
+  // through the model port preflight; they never follow a moving base ref.
   // Queued issue work has no saved candidate, checkpoint, PR or open intent:
   // its target base is only the development tip captured at intake, so it may
   // have gone stale while the work waited. Refresh it through the same
@@ -374,29 +420,39 @@ export async function prepareImplementationStart(
   // A base read fault keeps the record, counters and history untouched and
   // defers with the existing bounded unavailable wait (zero reservation).
   if (
-    record.source.kind === "issue" &&
     record.target.head === null &&
     record.target.checkpoint === null &&
     record.target.pr === null &&
     record.intent === null
   ) {
-    const latestBase = await readBase(deps, record.repository);
-    if (latestBase === null) {
+    const baseRead = await deps.github.readRef(
+      `refs/heads/${config.baseBranch}`,
+    );
+    if (!baseRead.ok) {
       return persistWork(
         deps,
         context,
-        setWait(
+        setWait(record, {
+          reason: "unavailable",
+          since: now,
+          until: now + ISSUE_PREREQUISITE_RETRY_MS,
+        }, now),
+      );
+    }
+    if (baseRead.value === null) {
+      return persistWork(
+        deps,
+        context,
+        markBlocked(
           record,
-          {
-            reason: "unavailable",
-            since: now,
-            until: now + ISSUE_PREREQUISITE_RETRY_MS,
-          },
+          "other",
+          "implementation preflight refused: target base branch does not exist",
           now,
         ),
       );
     }
-    if (latestBase !== record.target.base) {
+    const latestBase = baseRead.value.sha;
+    if (record.source.kind === "issue" && latestBase !== record.target.base) {
       // Persist ONLY target.base and updatedAt: the immutable source revision,
       // counters, evidence/history, creation time and every other identity are
       // preserved. The returned progress reloads the authoritative state, so
@@ -474,6 +530,34 @@ export async function prepareImplementationStart(
     maxDurationMs: bound.maxDurationMs,
     maxOutputChars: bound.maxOutputChars,
   };
+  const refusal = implementationInputRefusal(request, config.protectedPaths);
+  if (refusal !== null) {
+    return persistWork(
+      deps,
+      context,
+      markBlocked(
+        record,
+        "other",
+        `implementation preflight refused: ${refusal}`,
+        now,
+      ),
+    );
+  }
+  const preflight = await deps.model.preflightModel?.(request);
+  if (preflight !== undefined && !preflight.ok) {
+    const detail =
+      `implementation preflight refused: ${preflight.error.detail}`;
+    if (
+      preflight.error.kind !== "invalid" && preflight.error.kind !== "not_found"
+    ) {
+      return { kind: "deferred", detail };
+    }
+    return persistWork(
+      deps,
+      context,
+      markBlocked(record, "other", detail, now),
+    );
+  }
   if (beforeAdmission !== undefined && !await beforeAdmission(request)) {
     return {
       kind: "deferred",
@@ -512,6 +596,15 @@ export async function prepareImplementationStart(
   };
   const reservationId = await deriveReservationId(admission);
   const admissionAt = deps.clock.now();
+  if (
+    admissionAt >= bounds.modelCutoff ||
+    admissionAt + bound.maxDurationMs + OPERATION_MARGIN_MS > bounds.runDeadline
+  ) {
+    return {
+      kind: "deferred",
+      detail: "implementation preflight no longer fits the run bounds",
+    };
+  }
   const attempted = ciFinding === null
     ? startAttempt(record, admissionAt)
     : countRetry(clearWait(record, admissionAt), admissionAt);
@@ -571,7 +664,11 @@ export async function prepareImplementationStart(
       markBlocked(
         record,
         "unavailable",
-        `model admission refused: ${reservation.status}`,
+        `model admission refused: ${reservation.status}${
+          reservation.status === "invalid" || reservation.status === "disabled"
+            ? `: ${reservation.detail}`
+            : ""
+        }`,
         now,
       ),
     );

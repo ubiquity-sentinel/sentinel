@@ -181,6 +181,7 @@ export async function ensureReviewFreshness(
 export type IssueForModelReadV1 =
   | { kind: "issue"; issue: { number: number; title: string; body: string } }
   | { kind: "none" }
+  | { kind: "refused"; detail: string }
   | { kind: "unavailable"; sourceClosed: boolean };
 
 export async function observeIssueForModel(
@@ -196,6 +197,15 @@ export async function observeIssueForModel(
   // longer exists) can never start model work, even when intake admitted it.
   if (issue === null || issue.state !== "open") {
     return { kind: "unavailable", sourceClosed: true };
+  }
+  if (issue.number !== issueNumber) {
+    return { kind: "refused", detail: "source issue identity changed" };
+  }
+  if (
+    issue.labels.some((label) => label.toLowerCase() === "sentinel:skip") ||
+    /^<!-- sentinel:skip -->(?:\r?\n|$)/.test(issue.body)
+  ) {
+    return { kind: "refused", detail: "source issue opted out" };
   }
   // Issue-only github-adapter intake also gates on native dependency
   // relations: unknown relations, a parent issue (sub-issues) or any open

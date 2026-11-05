@@ -1,6 +1,6 @@
 /**
  * C6 prevention (redesign 2026-10-25): the implementer prompt names the exact
- * trusted protected path prefixes (sorted, at most 60) and tells the model to
+ * trusted protected path prefixes (sorted, complete) and tells the model to
  * fix the issue without them where it can, since a candidate that changes one
  * is parked for the owner (the existing protected-path park and its
  * `sentinel:retry` exit; a "make no change" instruction would land in the
@@ -12,7 +12,6 @@ import { asWorkItemId } from "../../src/contracts/brands.ts";
 import type { ModelRunRequestV1 } from "../../src/contracts/ports.ts";
 import {
   buildPrompt,
-  MAX_PROMPT_PROTECTED_PATHS,
   renderProtectedPaths,
 } from "../../src/repair/model-port-prompt.ts";
 import { MAX_PROMPT_CHARS } from "../../src/repair/model-port-policy.ts";
@@ -45,9 +44,9 @@ const PATHS = [
 const SENTENCE =
   ' The trusted repository configuration protects exactly these path prefixes (sorted): ".github/workflows/", "AGENTS.md", "deno.json", "ops/". Fix the issue without changing them where you can; a candidate that changes one is parked for the repository owner to land.';
 
-/** SHA-256 of `buildPrompt(REQUEST, false, undefined, PATHS)` (pinned 2026-10-25). */
+/** SHA-256 of `buildPrompt(REQUEST, false, undefined, PATHS)` (updated for #333 output bounds). */
 const GOLDEN_HOSTED_PROTECTED =
-  "a52514266f9d6fd9a9f34360bb686f7fa1b4de215e0b2e25129a6226a82b16ba";
+  "559f714d3f0d1cf4490c24c8dc6ea749dfc1572e8fdf32580cb49d153fae765f";
 
 async function sha256(text: string): Promise<string> {
   const digest = await crypto.subtle.digest(
@@ -66,30 +65,22 @@ Deno.test("the protected sentence names the exact prefixes sorted and deduplicat
   assert.equal(renderProtectedPaths([]), "");
 });
 
-Deno.test("at most 60 prefixes are named and the rest are counted", () => {
+Deno.test("the complete denylist is named, including entries beyond the former truncation caps", () => {
   const many = Array.from(
     { length: 75 },
     (_, index) => `dir-${String(index).padStart(2, "0")}/`,
   );
   const sentence = renderProtectedPaths([...many].reverse());
-  assert.equal(MAX_PROMPT_PROTECTED_PATHS, 60);
-  assert.ok(sentence.includes('"dir-00/", "dir-01/"'));
-  assert.ok(sentence.includes('"dir-59/"'));
-  assert.ok(!sentence.includes('"dir-60/"'));
-  assert.ok(
-    sentence.includes("(and 15 more protected prefixes not listed here)."),
-  );
-  assert.equal(sentence.match(/"dir-\d\d\/"/g)?.length, 60);
-  // Long prefixes stay within the character bound: 13 of 40 (306 rendered
-  // characters each) fit in 4,000, and the other 27 are counted.
+  assert.equal(sentence.match(/"dir-\d\d\/"/g)?.length, 75);
+  for (const path of many) assert.ok(sentence.includes(JSON.stringify(path)));
+  assert.ok(!sentence.includes("not listed here"));
   const long = Array.from(
     { length: 40 },
     (_, index) => `${String(index).padStart(2, "0")}${"x".repeat(300)}`,
   );
-  const bounded = renderProtectedPaths(long);
-  assert.ok(bounded.length < 4_500, String(bounded.length));
-  assert.equal(bounded.match(/"\d\dx+"/g)?.length, 13);
-  assert.match(bounded, /\(and 27 more protected prefixes not listed here\)/);
+  const prompt = buildPrompt(REQUEST, false, undefined, long);
+  for (const path of long) assert.ok(prompt.includes(JSON.stringify(path)));
+  assert.ok(prompt.length <= MAX_PROMPT_CHARS);
 });
 
 Deno.test("the prompt carries the sentence inside the role, and none without prefixes", async () => {
@@ -100,8 +91,8 @@ Deno.test("the prompt carries the sentence inside the role, and none without pre
   assert.equal(
     guarded,
     plain.replace(
-      "to force success. Keep the change",
-      `to force success.${SENTENCE} Keep the change`,
+      "to force success.",
+      `to force success.${SENTENCE}`,
     ),
   );
   assert.equal(await sha256(guarded), GOLDEN_HOSTED_PROTECTED);
@@ -180,4 +171,26 @@ Deno.test("the hosted port resolves the prefixes of exactly the requested reposi
     [],
   );
   assert.deepEqual(protectedPathsFor(undefined, REPO), []);
+});
+
+Deno.test("output bounds and the complete denylist survive crowded task context", () => {
+  const crowded = {
+    ...REQUEST,
+    evidence: Array.from(
+      { length: 400 },
+      () => ({
+        kind: "review_receipt" as const,
+        ref: "artifact:" + "x".repeat(200),
+      }),
+    ),
+  };
+  const prompt = buildPrompt(crowded, false, undefined, PATHS);
+  assert.ok(prompt.includes(SENTENCE));
+  assert.ok(prompt.includes("at most 12345 output characters and 5000 ms"));
+  assert.ok(prompt.includes("at most 128 paths"));
+  assert.ok(prompt.includes("524288 UTF-8 bytes"));
+  assert.ok(prompt.includes("128 new commits and 4096 new objects"));
+  assert.ok(prompt.includes("1048576 inspected metadata/blob bytes in total"));
+  assert.ok(prompt.endsWith("the checks run."));
+  assert.ok(prompt.length <= MAX_PROMPT_CHARS);
 });

@@ -40,11 +40,11 @@ const REQUEST = {
   maxOutputChars: 12345,
 } as ModelRunRequestV1;
 
-/** SHA-256 of the generation-81 prompts after removing the output allowance for REQUEST (local, hosted). */
+/** SHA-256 of the prompts with the exact #333 output bounds for REQUEST (local, hosted). */
 const GOLDEN_LOCAL =
-  "fba0d793c5e1911bcc65ccb773bff8c1fbc8349499812eef9bd09f5cb82f8bec";
+  "9814ed4893e55c8fbdcde1d6eccabbf82b75bb6bdb0eb361e8522fd4a459bc15";
 const GOLDEN_HOSTED_WITHOUT_SELF_CHECK =
-  "881ef5c873d86aedc4cd38253fc8ff38d0c761ab7c4fa433fda8fb99284968f1";
+  "1267305bad1ef7a907154247d577df41a475b69141936b84d207249745579347";
 
 async function sha256(text: string): Promise<string> {
   const digest = await crypto.subtle.digest(
@@ -82,7 +82,7 @@ const EVIDENCE = renderCiEvidence({
   }],
 }, NONCE);
 
-Deno.test("without evidence the local prompt matches the generation-81 baseline and the hosted one only adds the self-check", async () => {
+Deno.test("without evidence the bounded local prompt stays pinned and the hosted one only adds the self-check", async () => {
   assert.equal(await sha256(buildPrompt(REQUEST, true)), GOLDEN_LOCAL);
   const hosted = buildPrompt(REQUEST, false);
   assert.ok(hosted.includes(CI_SELF_CHECK_INSTRUCTION));

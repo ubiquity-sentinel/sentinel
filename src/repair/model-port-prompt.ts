@@ -8,50 +8,38 @@ import {
   MAX_ISSUE_BODY_CHARS,
   MAX_PROMPT_CHARS,
 } from "./model-port-policy.ts";
+import {
+  MAX_CHANGED_PATHS,
+  MAX_FILE_BYTES,
+  MAX_METADATA_BYTES,
+  MAX_NEW_COMMITS,
+  MAX_NEW_OBJECTS,
+  MAX_PROMPT_BYTES,
+} from "../github/snapshot-policy.ts";
 import { renderCiEvidenceUnavailable } from "./ci-evidence-render.ts";
 
-/** At most this many protected path prefixes are named in the prompt. */
-export const MAX_PROMPT_PROTECTED_PATHS = 60;
-/** Bound on the named prefixes' rendered characters (the role stays intact). */
-export const MAX_PROMPT_PROTECTED_PATH_CHARS = 4_000;
-
-/**
- * The role's protected-path sentence (C6): the exact trusted configured
- * prefixes, deduplicated and sorted, JSON-quoted so a prefix never reads as
- * prose, at most `MAX_PROMPT_PROTECTED_PATHS` of them within
- * `MAX_PROMPT_PROTECTED_PATH_CHARS`; the rest are counted, never dropped
- * silently. Empty without configured prefixes, so a prompt for a repository
- * with none is byte-identical to the earlier one. The candidate's own
- * protected-path check stays the enforcement: this only steers the model to
- * a fix outside them. A candidate that still changes one parks as `candidate
- * touches a protected path` (its owner comment and `sentinel:retry` exit). An
- * instruction to make no change instead would land in the no-change
- * base-review lane, which has no such exit.
- */
+/** The complete exact trusted denylist; admission rejects an over-bound role. */
 export function renderProtectedPaths(paths: readonly string[]): string {
   const unique = [...new Set(paths)].sort();
   if (unique.length === 0) return "";
-  const named: string[] = [];
-  let chars = 0;
-  for (const path of unique) {
-    const quoted = JSON.stringify(path);
-    if (
-      named.length >= MAX_PROMPT_PROTECTED_PATHS ||
-      chars + quoted.length + 2 > MAX_PROMPT_PROTECTED_PATH_CHARS
-    ) break;
-    named.push(quoted);
-    chars += quoted.length + 2;
-  }
-  const rest = unique.length - named.length;
   return " The trusted repository configuration protects exactly these " +
-    `path prefixes (sorted): ${named.join(", ")}` +
-    (rest === 0
-      ? ""
-      : ` (and ${rest} more protected prefix${
-        rest === 1 ? "" : "es"
-      } not listed here)`) +
+    `path prefixes (sorted): ${
+      unique.map((path) => JSON.stringify(path)).join(", ")
+    }` +
     ". Fix the issue without changing them where you can; a candidate that " +
     "changes one is parked for the repository owner to land.";
+}
+
+/** Existing session and publication limits, not a model-selected allowance. */
+export function renderOutputBounds(request: ModelRunRequestV1): string {
+  return ` Output bounds: the session has at most ${request.maxOutputChars} ` +
+    `output characters and ${request.maxDurationMs} ms. The candidate may ` +
+    `change at most ${MAX_CHANGED_PATHS} paths, each changed blob at most ` +
+    `${MAX_FILE_BYTES} UTF-8 bytes; publication exposes at most ` +
+    `${MAX_NEW_COMMITS} new commits and ${MAX_NEW_OBJECTS} new objects, with ` +
+    `each commit's metadata at most ${MAX_METADATA_BYTES} bytes and ` +
+    `at most ${MAX_PROMPT_BYTES} inspected metadata/blob bytes in total. ` +
+    "Keep command output and the final response within those limits.";
 }
 
 /**
@@ -217,6 +205,7 @@ export function buildPrompt(
     "protected paths, do not write or commit credentials, and do not " +
     "rewrite expected test assertions to force success." +
     renderProtectedPaths(protectedPaths) +
+    renderOutputBounds(request) +
     " Keep the change " +
     "minimal and do not refactor beyond it. Keep every command's " +
     "max_output_tokens at or below 2000 and " +
@@ -236,9 +225,15 @@ export function buildPrompt(
     "current checkpoint or bounded matching sections. Finish with a " +
     "concise final response listing the files changed and the checks " +
     "run.";
+  if (role.length + 2 > MAX_PROMPT_CHARS) {
+    throw new RangeError("implementation constraints exceed the prompt bound");
+  }
   if (ciEvidence === undefined) {
-    parts.push(role);
-    return parts.join("\n\n").slice(0, MAX_PROMPT_CHARS);
+    const context = parts.join("\n\n").slice(
+      0,
+      MAX_PROMPT_CHARS - role.length - 2,
+    );
+    return [context, role].join("\n\n");
   }
   // A section over its bound never arrives cut (its closing marker would be
   // lost); the fixed unavailable line replaces it.

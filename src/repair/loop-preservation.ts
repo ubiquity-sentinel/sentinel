@@ -190,7 +190,7 @@ export async function executeCandidatePreservation(
         markBlocked(
           clearIntent(record, at),
           "other",
-          "candidate preservation validation refused",
+          `candidate preservation validation refused: post-inference generated candidate check: ${preserved.error.detail}`,
           at,
         ),
       );
