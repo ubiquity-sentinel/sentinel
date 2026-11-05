@@ -61,6 +61,11 @@ export interface RepairTierPolicyV1 {
   /** Maximum rows one pass demotes; later families are deferred. */
   demotionBudget: number;
   /**
+   * Rollback preparation: promote EVERY cold family and demote nothing, so
+   * the tier, its marker and its subtree disappear from the ref.
+   */
+  promoteAll?: boolean;
+  /**
    * Release path observed this pass from the positively read release ref.
    * Undefined (unknown) moves no family that holds an open release request.
    */
@@ -76,7 +81,7 @@ export interface RepairTierPolicyV1 {
   /**
    * Target tips read this pass, by `repositoryTierKey`. A cold family with an
    * open release request is promoted only when every such request's target
-   * tip was read, so the supersession check runs right after the promotion.
+   * tip was read, so the supersession is recorded in the promotion commit itself.
    */
   releaseTargetTips?: ReadonlyMap<string, GitSha>;
   /** Maximum rows one pass promotes for release (default `demotionBudget`). */
@@ -301,7 +306,7 @@ export function takeDemotionBudget(
 export function planRepairPromotions(
   hot: RepairStateSnapshotV1,
   cold: RepairColdTierV1,
-  policy: Pick<RepairTierPolicyV1, "openIssueWorkIds">,
+  policy: Pick<RepairTierPolicyV1, "openIssueWorkIds" | "promoteAll">,
   /** Further cold work ids to promote (the bounded release promotions). */
   extraSeeds: readonly string[] = [],
 ): RepairTierMoveV1[] {
@@ -316,6 +321,9 @@ export function planRepairPromotions(
     for (const dependency of record.dependencies) visit(dependency);
   };
   for (const id of policy.openIssueWorkIds) visit(id);
+  if (policy.promoteAll === true) {
+    for (const row of cold.work) visit(row.id);
+  }
   for (const id of extraSeeds) visit(id);
   for (const work of hot.work) {
     for (const dependency of work.dependencies) visit(dependency);

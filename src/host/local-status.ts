@@ -21,6 +21,7 @@ import {
   MAX_MODEL_CHARS,
 } from "./local-policy.ts";
 import { writePrivateFile } from "./local-io.ts";
+import { readRepairLedgerV1 } from "../state/state-repair-ledger.ts";
 
 // ---------------------------------------------------------------------------
 // Status and log
@@ -217,7 +218,8 @@ async function projectLocalStatus(
   }
   let snapshot: RepairStateSnapshotV1;
   try {
-    const read = await input.state.readRepair();
+    // Status totals cover the whole ledger, cold tier included.
+    const read = await readRepairLedgerV1(input.state);
     if (!read.ok || read.value.status !== "found") {
       return unavailableStatus(identity);
     }

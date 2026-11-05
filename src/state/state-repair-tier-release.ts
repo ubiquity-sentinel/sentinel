@@ -6,10 +6,11 @@
  * path is enabled again the same trusted writer promotes those families back,
  * unchanged, within a per-pass budget (the remainder is deferred, never an
  * error). A family is promoted only when every one of its open requests'
- * target tips was read this pass: right after the promotion the caller
- * re-checks each promoted open request against that tip and records a moved
- * tip as a terminal supersession, so re-enabling never re-admits a request
- * whose candidate is no longer the target tip.
+ * target tips was read this pass: the promotion commit itself checks each
+ * promoted open request against that tip and records a moved tip as a
+ * terminal supersession, so re-enabling never re-admits a request whose
+ * candidate is no longer the target tip, and a failed write leaves the
+ * family cold for the next pass to re-evaluate.
  */
 
 import type { GitSha } from "../contracts/brands.ts";

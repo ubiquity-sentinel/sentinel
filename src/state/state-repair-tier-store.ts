@@ -132,6 +132,7 @@ export async function tierRepairOp(
     deferred,
     releaseRequestsMovedToCold,
     promotedOpenReleaseRequestIds,
+    releaseRequestsSuperseded,
   } = built.value;
   let pushed: PushedCandidateV1;
   try {
@@ -151,5 +152,6 @@ export async function tierRepairOp(
     deferred,
     releaseRequestsMovedToCold,
     promotedOpenReleaseRequestIds,
+    releaseRequestsSuperseded,
   });
 }

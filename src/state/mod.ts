@@ -699,3 +699,7 @@ export {
   REPAIR_COLD_PREFIX,
 } from "./state-repair-tier-layout.ts";
 export type { RepairColdTierV1 } from "./state-repair-tier-layout.ts";
+export {
+  mergeRepairTiersV1,
+  readRepairLedgerV1,
+} from "./state-repair-ledger.ts";

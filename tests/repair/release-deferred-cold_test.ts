@@ -113,21 +113,33 @@ async function seededRig(prefix: string) {
   return { rig, ...rows };
 }
 
+/** Complete open-issue numbers from the fake GitHub port. */
+async function openNumbers(rig: RigV1) {
+  const listed = await rig.github.listOpenIssues();
+  return listed.ok
+    ? portOk(
+      listed.value.filter((issue) => issue.state === "open").map((issue) =>
+        issue.number
+      ),
+    )
+    : listed;
+}
+
 /** The maintenance step exactly as the trusted pass runs it. */
 function maintain(
   rig: RigV1,
   releasePath: () => Promise<"disabled" | "enabled">,
   tip: GitSha | null = null,
+  store: Parameters<typeof runRepairTierMaintenanceSummary>[0]["store"] =
+    rig.store,
 ) {
   return runRepairTierMaintenanceSummary({
-    store: rig.store,
-    repositories: [{
-      repository: PASSPORT,
-      listOpenIssues: () => rig.github.listOpenIssues(),
-      readTargetTip: () => Promise.resolve(portOk(tip)),
-    }],
+    store,
+    listOpenIssueNumbers: () => openNumbers(rig),
+    readTargetTip: () => Promise.resolve(portOk(tip)),
     releasePath: async () => portOk(await releasePath()),
     clock: rig.clock,
+    deadlineAt: Number.MAX_SAFE_INTEGER,
     demotionBudget: 64,
   });
 }
@@ -221,7 +233,13 @@ async function demoteWhileDisabled(prefix: string) {
   const steady = await maintain(rig, observedReleasePath(rig));
   assert.match(steady.action, /^repair-tier:unchanged:deferred:0/);
   assert.equal(steady.releaseRequestsMovedToCold, 0);
-  return { ...seeded, paths, original, accountingBefore };
+  return {
+    ...seeded,
+    paths,
+    original,
+    accountingBefore,
+    sequenceAfterDemotion: await rig.sequence(),
+  };
 }
 
 Deno.test("release disabled: a merged delivery waiting on its open release request goes cold in one pass and is never re-stepped", async () => {
@@ -239,17 +257,17 @@ Deno.test("release re-enabled: the family returns unchanged and a moved target t
     assert.match(pass.action, /^repair-tier:promoted:4:demoted:0:deferred:0/);
     assert.match(pass.action, /:release-enabled:moved-cold:0:superseded:1$/);
 
-    // The tier commit (parent of the supersession write) restored every row
-    // with its exact original blob id at its original hot path.
-    const promoted = await tree(rig, `${REF}~1`);
+    // ONE tier commit restored every row with its exact original blob id at
+    // its original hot path and recorded the supersession of the request.
+    const promoted = await tree(rig, REF);
     for (const path of Object.values(paths)) {
-      assert.equal(promoted.get(path), original.get(path), `${path} same blob`);
       assert.ok(!promoted.has(`repair-archive/${path}`));
     }
-    const head = await tree(rig, REF);
     for (const path of [paths.work, paths.reservation, paths.review]) {
-      assert.equal(head.get(path), original.get(path));
+      assert.equal(promoted.get(path), original.get(path), `${path} same blob`);
     }
+    assert.notEqual(promoted.get(paths.request), original.get(paths.request));
+    assert.equal(await rig.sequence(), seeded.sequenceAfterDemotion + 1);
 
     const hot = await rig.snapshot();
     assert.deepEqual(hot.releaseRequests, [{
@@ -301,16 +319,65 @@ Deno.test("release path unknown: nothing release-deferred moves", async () => {
   try {
     const pass = await runRepairTierMaintenanceSummary({
       store: rig.store,
-      repositories: [{
-        repository: PASSPORT,
-        listOpenIssues: () => rig.github.listOpenIssues(),
-      }],
+      listOpenIssueNumbers: () => openNumbers(rig),
       clock: rig.clock,
+      deadlineAt: Number.MAX_SAFE_INTEGER,
       demotionBudget: 64,
     });
-    assert.equal(pass.action, "repair-tier:unchanged:deferred:0");
+    assert.match(pass.action, /^repair-tier:unchanged:deferred:0:read:\d+$/);
     assert.equal(pass.releaseRequestsMovedToCold, null);
     assert.equal((await rig.snapshot()).releaseRequests.length, 1);
+  } finally {
+    await rig.ctx.cleanup();
+  }
+});
+
+Deno.test("release re-enabled: a failed promotion write leaves the request cold and the next pass supersedes it", async () => {
+  const seeded = await demoteWhileDisabled("release-cold-retry");
+  const { rig, request } = seeded;
+  try {
+    // A concurrent trusted write moves the head between the step's read and
+    // its tier write: the expected-head tier write conflicts and defers.
+    const racing = {
+      readRepair: () => rig.store.readRepair(),
+      readRepairTiered: () => rig.store.readRepairTiered(),
+      tierRepair: async (
+        input: Parameters<typeof rig.store.tierRepair>[0],
+      ) => {
+        const read = await rig.store.readRepair();
+        assert.ok(read.ok && read.value.status === "found");
+        if (!read.ok || read.value.status !== "found") {
+          throw new Error("absent");
+        }
+        const moved = await rig.store.writeRepair({
+          ...read.value.snapshot,
+          stateHead: read.value.head,
+          sequence: read.value.snapshot.sequence + 1,
+        }, read.value.head);
+        assert.ok(moved.ok && moved.value.status === "applied");
+        return rig.store.tierRepair(input);
+      },
+    };
+    const failed = await maintain(
+      rig,
+      () => Promise.resolve("enabled"),
+      SHA4,
+      racing,
+    );
+    assert.equal(failed.status, "deferred");
+    assert.match(failed.action, /^repair-tier:deferred:conflict$/);
+    const cold = (await tieredReservations(rig)).view.cold;
+    assert.deepEqual(cold.releaseRequests, [request], "still open and cold");
+    assert.deepEqual((await rig.snapshot()).releaseRequests, []);
+
+    // The next pass re-reads the tip and records the supersession.
+    const retried = await maintain(rig, () => Promise.resolve("enabled"), SHA4);
+    assert.equal(retried.releaseRequestsSuperseded, 1);
+    assert.deepEqual((await rig.snapshot()).releaseRequests, [{
+      ...request,
+      status: "cancelled",
+      failureReason: RELEASE_SUPERSEDED_REASON,
+    }]);
   } finally {
     await rig.ctx.cleanup();
   }

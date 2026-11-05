@@ -25,6 +25,8 @@ import {
   parseStateTreeListing,
   readColdCatalog,
   readColdTier,
+  REPAIR_COLD_LAYOUT_PATH,
+  REPAIR_COLD_LAYOUT_TEXT,
   REPAIR_COLD_PREFIX,
   validateTierDisjoint,
 } from "./state-repair-tier-layout.ts";
@@ -35,9 +37,13 @@ import type {
 import {
   planRepairDemotions,
   planRepairPromotions,
+  repositoryTierKey,
   takeDemotionBudget,
 } from "./state-repair-tier-plan.ts";
-import { planReleasePromotions } from "./state-repair-tier-release.ts";
+import {
+  planReleasePromotions,
+  supersedeReleaseRequest,
+} from "./state-repair-tier-release.ts";
 import type {
   RepairTierMoveV1,
   RepairTierPolicyV1,
@@ -56,6 +62,13 @@ export interface RepairTierReleaseMovesV1 {
   releaseRequestsMovedToCold: number;
   /** Ids of open release requests promoted hot (release path enabled). */
   promotedOpenReleaseRequestIds: string[];
+  /**
+   * Promoted open requests recorded superseded IN THE SAME tier commit (their
+   * candidate is no longer the target tip read this pass). Atomic with the
+   * promotion: a failed write leaves the family cold, so the next pass
+   * re-reads the tip and re-evaluates it until the supersession is recorded.
+   */
+  releaseRequestsSuperseded: number;
 }
 
 export type RepairTierResultV1 =
@@ -191,11 +204,15 @@ async function resolveMoves(
 function preservationMessage(
   prior: ReadonlyMap<string, string>,
   next: ReadonlyMap<string, string>,
+  /** Logical paths whose new blob is a recorded supersession (exact ids). */
+  superseded: ReadonlyMap<string, string> = new Map(),
 ): string | null {
   const logical = (tree: ReadonlyMap<string, string>) => {
     const out = new Map<string, string>();
     for (const [path, sha] of tree) {
-      if (path === "manifest.json") continue;
+      if (path === "manifest.json" || path === REPAIR_COLD_LAYOUT_PATH) {
+        continue;
+      }
       const key = logicalPath(path);
       if (out.has(key)) return null;
       out.set(key, sha);
@@ -211,7 +228,8 @@ function preservationMessage(
     return "a tier transition cannot add or drop a record";
   }
   for (const [key, sha] of before) {
-    if (after.get(key) !== sha) {
+    const expected = superseded.get(key) ?? sha;
+    if (after.get(key) !== expected) {
       return "a tier transition must move records byte-for-byte";
     }
   }
@@ -249,7 +267,8 @@ export async function buildRepairTierCommit(
   // Promotion needs cold content only when an open issue names a cold family
   // (or a hot record depends on one); the common pass reads no cold blob.
   const coldNames = new Set(catalog.value.entries.map((entry) => entry.path));
-  let needsCold = false;
+  let needsCold = policy.promoteAll === true &&
+    catalog.value.entries.length > 0;
   const wanted = [
     ...policy.openIssueWorkIds,
     ...prior.work.flatMap((row) => row.dependencies),
@@ -282,6 +301,7 @@ export async function buildRepairTierCommit(
   let promoted: ResolvedMove[] = [];
   let releaseDeferred = 0;
   let promotedOpenReleaseRequestIds: string[] = [];
+  const superseded = new Map<string, string>();
   if (needsCold) {
     const cold = await readColdTier(io, op, catalog.value);
     if (!cold.ok) return cold;
@@ -309,12 +329,47 @@ export async function buildRepairTierCommit(
     if (resolved === null) {
       return portError("invalid", "a cold family could not be resolved");
     }
+    // A promoted open request whose candidate is no longer the target tip
+    // read this pass is recorded superseded in this same commit.
+    const tips = policy.releaseTargetTips ?? new Map<string, GitSha>();
+    for (const id of promotedOpenReleaseRequestIds) {
+      const request = cold.value.releaseRequests.find((row) => row.id === id)!;
+      const tip = tips.get(repositoryTierKey(request.target.repository));
+      const next = tip === undefined
+        ? null
+        : supersedeReleaseRequest(request, tip);
+      if (next === null) continue;
+      const blob = await io.git(op, ["hash-object", "-w", "--stdin"], {
+        stdin: new TextEncoder().encode(`${canonicalStringify(next)}\n`),
+      });
+      const blobSha = blob.stdout.trim();
+      if (!blob.ok || !/^[0-9a-f]{40}$/.test(blobSha)) {
+        return portError("unavailable", "could not form the supersession");
+      }
+      const path = `releaseRequests/${await sha256Hex(id)}.json`;
+      const move = resolved.find((row) => row.to === path);
+      if (move === undefined) {
+        return portError("invalid", "a cold family could not be resolved");
+      }
+      move.sha = blobSha;
+      superseded.set(logicalPath(path), blobSha);
+    }
+    if (
+      policy.promoteAll === true &&
+      resolved.length !== catalog.value.entries.length
+    ) {
+      return portError("invalid", "a cold row is not bound to a family");
+    }
     promoted = resolved;
   }
 
   const families: RepairTierMoveV1[][] = [];
+  // A promote-all transition (rollback preparation) never demotes.
+  const demotable = policy.promoteAll === true
+    ? []
+    : planRepairDemotions(prior, policy);
   const resolvedFamilies = new Map<RepairTierMoveV1[], ResolvedMove[]>();
-  for (const family of planRepairDemotions(prior, policy)) {
+  for (const family of demotable) {
     const resolved = await resolveMoves(family, priorTree.value, "demote");
     if (resolved === null) continue;
     families.push(family);
@@ -364,6 +419,21 @@ export async function buildRepairTierCommit(
     `100644 ${move.sha}\t${move.to}`,
   ]);
   lines.push(`100644 ${manifestSha}\tmanifest.json`);
+  // The layout marker exists exactly while the cold tier holds a record.
+  const coldAfter = catalog.value.entries.length - promoted.length +
+    demoted.length;
+  if (catalog.value.tree === null && coldAfter > 0) {
+    const marker = await io.git(op, ["hash-object", "-w", "--stdin"], {
+      stdin: new TextEncoder().encode(REPAIR_COLD_LAYOUT_TEXT),
+    });
+    const markerSha = marker.stdout.trim();
+    if (!marker.ok || !/^[0-9a-f]{40}$/.test(markerSha)) {
+      return portError("unavailable", "could not form the tier marker");
+    }
+    lines.push(`100644 ${markerSha}\t${REPAIR_COLD_LAYOUT_PATH}`);
+  } else if (catalog.value.tree !== null && coldAfter === 0) {
+    lines.push(`0 ${zero}\t${REPAIR_COLD_LAYOUT_PATH}`);
+  }
   const readTree = await io.git(op, ["read-tree", head]);
   if (!readTree.ok) {
     return portError("unavailable", "could not form the tier index");
@@ -385,7 +455,11 @@ export async function buildRepairTierCommit(
   // Re-read the exact candidate before it can be offered for a push.
   const nextTree = await listAll(io, op, commitSha);
   if (!nextTree.ok) return nextTree;
-  const preserved = preservationMessage(priorTree.value, nextTree.value);
+  const preserved = preservationMessage(
+    priorTree.value,
+    nextTree.value,
+    superseded,
+  );
   if (preserved !== null) return portError("invalid", preserved);
   const hot = await io.readHotTree(op, commitSha);
   if (!hot.ok) return hot;
@@ -399,5 +473,6 @@ export async function buildRepairTierCommit(
     deferred,
     releaseRequestsMovedToCold,
     promotedOpenReleaseRequestIds,
+    releaseRequestsSuperseded: superseded.size,
   });
 }

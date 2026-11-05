@@ -2,12 +2,16 @@
 // records, tier moves are byte-identical, accounting over hot+cold is
 // unchanged, and a bounded demotion pass defers the remainder.
 import assert from "node:assert/strict";
-import { allReservationsV1 } from "../../src/contracts/state-snapshots.ts";
+import {
+  allReservationsV1,
+  parseRepairStateSnapshotV1,
+} from "../../src/contracts/state-snapshots.ts";
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import {
   allReservationsAcrossTiersV1,
   allWorkAcrossTiersV1,
   GitStateStore,
+  readRepairLedgerV1,
 } from "../../src/state/mod.ts";
 import type { RepairTierPolicyV1 } from "../../src/state/mod.ts";
 import { planRepairDemotions } from "../../src/state/state-repair-tier-plan.ts";
@@ -205,10 +209,23 @@ Deno.test("repair tiers: 731-record snapshot demotes, reads hot only, and promot
       COUNTS.releaseRequests,
     );
     const logical = (tree: Map<string, string>) =>
-      [...tree].filter(([path]) => path !== "manifest.json").map((
+      [...tree].filter(([path]) =>
+        path !== "manifest.json" && path !== "repair-archive/LAYOUT"
+      ).map((
         [path, sha],
       ) => `${path.replace(/^repair-archive\//, "")}=${sha}`).sort();
     assert.deepEqual(logical(split), logical(original));
+
+    // Full-ledger readers (status, report, park and run summaries) see one
+    // valid read-only snapshot holding both tiers.
+    const ledger = await readRepairLedgerV1(store);
+    assert.ok(ledger.ok && ledger.value.status === "found");
+    if (!ledger.ok || ledger.value.status !== "found") return;
+    const merged = parseRepairStateSnapshotV1(ledger.value.snapshot);
+    assert.deepEqual(accountingTotals(allReservationsV1(merged)), before);
+    assert.deepEqual(merged.work, fixture.work);
+    assert.deepEqual(merged.reviews, fixture.reviews);
+    assert.deepEqual(merged.releaseRequests, fixture.releaseRequests);
 
     // An ordinary hot write carries the cold tier forward unchanged and
     // refuses to recreate a cold record.
@@ -298,6 +315,37 @@ Deno.test("repair tiers: 731-record snapshot demotes, reads hot only, and promot
     const afterTiered = await readTiered(store);
     assert.deepEqual(
       accountingTotals(allReservationsAcrossTiersV1(afterTiered.view)),
+      before,
+    );
+
+    // The cold tier carries its layout marker; rollback preparation
+    // (promote-all) empties the tier and removes the marker and subtree, and
+    // every row is back at its original path with its original blob.
+    const marker = await gitRunAt(ctx, [
+      "--git-dir",
+      ctx.bare,
+      "cat-file",
+      "-p",
+      `${promoted.value.head}:repair-archive/LAYOUT`,
+    ]);
+    assert.equal(marker.stdout, "sentinel-repair-tiers v1\n");
+    const all = await store.tierRepair({
+      ...policy({ promoteAll: true }),
+      expectedHead: promoted.value.head,
+    });
+    assert.ok(all.ok && all.value.status === "applied", JSON.stringify(all));
+    if (!all.ok || all.value.status !== "applied") return;
+    assert.equal(all.value.demoted, 0);
+    const restored = await treeEntries(ctx, all.value.head);
+    assert.ok(
+      [...restored.keys()].every((path) => !path.startsWith("repair-archive")),
+    );
+    assert.deepEqual(logical(restored), logical(original));
+    const full = await readHot(store);
+    assert.deepEqual(full.snapshot.work, fixture.work);
+    assert.deepEqual(full.snapshot.reviews, fixture.reviews);
+    assert.deepEqual(
+      accountingTotals(allReservationsV1(full.snapshot)),
       before,
     );
   } finally {
