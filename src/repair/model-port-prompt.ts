@@ -28,11 +28,15 @@ export const MAX_PROMPT_PROTECTED_PATH_CHARS = 4_000;
  * `MAX_PROMPT_PROTECTED_PATH_CHARS`; the rest are counted, never dropped
  * silently. Empty without configured prefixes, so a prompt for a repository
  * with none is byte-identical to the earlier one. The candidate's own
- * protected-path check stays the enforcement: this only steers the model to
- * a fix outside them. A candidate that still changes one parks as `candidate
- * touches a protected path` (its owner comment and `sentinel:retry` exit). An
- * instruction to make no change instead would land in the no-change
- * base-review lane, which has no such exit.
+ * protected-path check stays the enforcement: this steers the model to a fix
+ * outside them when one exists, and otherwise to the real in-place change. A
+ * candidate that changes one parks as `candidate touches a protected path`
+ * (its owner comment and `sentinel:retry` exit). An instruction to make no
+ * change instead would land in the no-change base-review lane, which has no
+ * such exit; and "avoid where you can" alone made ai.ubq.fi 1281/1282 and
+ * 1210/1211 commit tests and unapplied `patches/*.patch` files that spent
+ * every review round without changing the real file (see
+ * `candidate-shape.ts`).
  */
 export function renderProtectedPaths(paths: readonly string[]): string {
   const unique = [...new Set(paths)].sort();
@@ -56,8 +60,14 @@ export function renderProtectedPaths(paths: readonly string[]): string {
       : ` (and ${rest} more protected prefix${
         rest === 1 ? "" : "es"
       } not listed here)`) +
-    ". Fix the issue without changing them where you can; a candidate that " +
-    "changes one is parked for the repository owner to land.";
+    ". Fix the issue without changing them when a correct fix outside them " +
+    "exists. When the issue's fix genuinely requires changing a protected " +
+    "path, this narrows the rule above: make the real, complete change in " +
+    "place in that file, because a candidate that changes a protected path " +
+    "is parked for the repository owner to land as is, which is the useful " +
+    "outcome. Never substitute tests only, an unapplied .patch or .diff " +
+    "file, a copy of the file elsewhere, or a no-op for that change: such a " +
+    "candidate leaves the real file unchanged and can never be accepted.";
 }
 
 /**
