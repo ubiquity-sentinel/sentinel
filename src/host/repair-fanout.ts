@@ -5,7 +5,7 @@ import {
   type RepairDeltaPlanV1,
   sameRepairRepository,
   signRepairDelta,
-} from "../contracts/repair-delta.ts";
+} from "../contracts/signed-repair-delta.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";

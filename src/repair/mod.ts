@@ -18,3 +18,9 @@ export * from "./loop.ts";
 export * from "./codex-transport.ts";
 export * from "./model-port.ts";
 export * from "./github-cooldown.ts";
+// Repository repair fan-out (#328): plan, per-repository pass, trusted apply.
+export * from "./repair-fanout-plan.ts";
+export * from "./repository-pass.ts";
+export * from "./repair-delta-rules.ts";
+export * from "./repair-delta-apply.ts";
+export * from "./fanout-summary-line.ts";

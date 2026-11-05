@@ -1,5 +1,90 @@
 # Sentinel decisions
 
+## Hanging target pull requests: six delivery defects corrected (2026-11-05)
+
+Audit of the eight open Sentinel pull requests on `ubiquity/ai.ubq.fi` (#1329,
+#1330, #1331, #1345, #1346, #1347, #1349, #1350; state branch
+`sentinel-state/repair` at `05cd91b0`, supervisor runs 41974809569 and
+41980261187) found no PR waiting on a review request or a merge step. Each was
+held by a defect in Sentinel's own lifecycle, all corrected on the integrated
+candidate recorded in the build ledger. Policy consequences:
+
+- **A review bot's check run is not CI evidence.** Since 2026-10-27 every
+  ai.ubq.fi head carries a CodeRabbit check run concluded `skipped`, which
+  `decideCiGate` read as green. Review was requested at once, no `ci_pending`
+  wait was ever written, so the dispatch-based pre-merge CI never fired, and
+  PRs #1348, #1353 and #1354 merged with no CI run on their heads (post-merge
+  Gateway CI then failed on `development`). A head is now green only on positive
+  evidence: at least one completed check concluded `success`, `skipped` or
+  `neutral` from the GitHub Actions app (the target's own or dispatched
+  workflow, whose skipped/neutral jobs are a CI decision per the 2026-10-24
+  directive), from no app (legacy shape), or a verified backup-CI stand-in, and
+  nothing failed. Checks from any other app
+  (review bots, scanners, deploy previews) never make a head green; a failed
+  one still blocks. A head with only such checks waits `ci_pending`, which is
+  what makes the dispatch-based pre-merge CI fire; the launcher reads it as
+  neither green nor red.
+- **Protected-path candidates are published for the owner to merge.** A
+  candidate changing a configured protected path (ai.ubq.fi `src/auth/`,
+  `ops/`) used to park before publication; the only exit, `sentinel:retry`,
+  re-ran the record from base and dropped the candidate, so paid work was never
+  landable. The implementer prompt now says to make a required protected fix
+  in place and never to substitute tests, an unapplied `.patch`/`.diff` file,
+  a copy or a no-op. Such a candidate is pushed, CI-gated and natively reviewed
+  like any other, carries the additive record flag `ownerLanding: { paths,
+  since }`, and is never merged by Sentinel: the runtime merge gate writes no
+  merge intent and polls the PR every 15 minutes (`manual` wait, cause
+  `owner_merge`), and the launcher delivery pass, `preMergeGate`, carried gate
+  and train members refuse `owner_merge_required`. One progress comment per
+  ready head says the PR is ready for the owner; the owner's merge completes
+  the record through the 2026-10-30 human-merge rule. A candidate touching
+  `.github/`, `.git/`, env files, act/npm configuration or `sentinel.protected`
+  still parks unpublished, preserving the 2026-10-24 basis for approving held
+  CI runs. This supersedes the prompt wording and the "no exit" finding of the
+  2026-10-25 protected-path entry.
+- **An unapplied patch file is refused before review.** A candidate whose only
+  non-test change is a `*.patch`/`*.diff` or `patches/` file is not reviewed:
+  its implementation start settles ambiguous (charged, never refunded), the
+  closed detail `ATTEMPT_DETAIL_UNAPPLIED_PATCH` is recorded and shown to the
+  next start, and ordinary retry accounting applies. On the four affected
+  issues this shape cost four review rounds and up to eight retry charges each.
+- **A repeat-failure park re-arms once per implementer prompt change.** The
+  "repeated identical failure; owner action required" park now records the
+  implementer prompt template digest (` prompt=<12 hex>`); a changed digest, or
+  a legacy park with none, grants exactly one counted retry. An identical
+  failure re-parks under the new digest. Issue-edit and route-change re-arms
+  are unchanged. Installs that keep the same prompt never re-arm.
+- **A lost matrix cell is settled, not waited on forever.** A charged
+  conflict-resolution cell whose run completed without its authenticated
+  artifact (ai.ubq.fi 1176: launcher rejection `carrier_count`, charge
+  `bdcee952…` reserved since 2026-11-01) settles `ambiguous` in the producer
+  pass once the run is complete and the listing is authenticated, or after the
+  8-day evidence expiry in the serial work step; the record returns to its
+  pending base-refresh intent and the planner may re-grant. Never refunded.
+  Each loss is recorded in attempt memory under the conflict's merge base; a
+  second loss on the same merge base parks the record like a spent resolution
+  (no third charge until the base moves), and losses count toward the 3x
+  repeat-failure park.
+- **A retired record's own open pull request is closed.** When a record retires
+  because its source issue closed and its own unmerged `sentinel/repair/<task>`
+  PR is still open, the maintenance pass closes the PR with one comment and
+  records `retiredPullClosure`; the branch is kept. Foreign, merged or already
+  closed PRs are untouched. Cold records in that shape are promoted by one
+  bounded cold-tier scan per installed generation (`tierScans` row). A `work`
+  or `blocked` record whose own PR a person merged is re-admitted to `review`
+  and completes `done` through the human-merge rule, settling any reserved
+  charge ambiguous. A retired record whose issue was reopened returns to
+  `work` (outcome `reopened`, PR and charges kept). Probes that settle nothing
+  stamp `pullProbe` and back off six hours, least recently probed first, so no
+  record can starve the pass or cost a GitHub read every cycle.
+- **The planner names every deferral.** The plan diagnostic carries
+  `deferredByReason` on every pass and a bounded `deferredRecords` list.
+
+Rollback: runtimes older than this candidate cannot read records carrying
+`ownerLanding`, `retiredPullClosure`, `pullProbe` or the `tierScans` row (the additive-field
+trade-off already taken for `stepInputs` and wait causes). `GATEWAY_PROTECTED_PATHS`
+is unchanged; narrowing it remains an owner security decision.
+
 ## Human merges complete the record; the self-merge owner park is retired (2026-10-30/31)
 
 Owner directive (2026-10-30): a pull request merged by a human is a completed
@@ -3497,7 +3582,9 @@ standing approval above. Applied as follows.
   prefixes of the requested repository (deduplicated, sorted, JSON-quoted, at
   most 60 within 4,000 characters, the rest counted) and says to fix the issue
   without changing them where it can, since a candidate that changes one is
-  parked for the repository owner to land. (Corrected 2026-10-25 by the stage-1
+  parked for the repository owner to land. (Superseded 2026-11-05: a required
+  protected fix is made in place and published for the owner to merge; see the
+  entry at the top of this document.) (Corrected 2026-10-25 by the stage-1
   review: the first wording, "make no change and say
   `OWNER_LANDING_REQUIRED:
   <paths>`", sent a compliant run into the no-change
@@ -4214,3 +4301,243 @@ a maintenance pass takes 25-55 minutes.
   refused record's sibling merging in the same pass, and
   `J3:delivery:no-merge-slot` is no longer a known jam. The moved-tip refusal is
   proved by `tests/host/hosted-autonomy-merge-per-repository_test.ts`.
+
+## 2026-11-05: throughput plan implementation (#340)
+
+Owner tracking issue #340 (2026-11-04 productivity audit) maps sixteen child
+issues. This entry records the policy each child changes; the integrated
+candidate, its local evidence and the open hosted assertions are in
+`docs/build-status.md`. Every child keeps one trusted writer per state
+surface, no model access to state, credentials or promotion, durable
+reservations and accounting, the current-head review and CI gates, and no new
+scheduled or background mechanism beyond the five-minute dispatch and the
+`workflow_run` chain.
+
+### State-shape changes and rollback (applies to every child below)
+
+The repair state and its sidecars gain new optional keys and directories:
+the `deployment` wait reason (#337), attempt-memory `inputs` (#334),
+`targetCapabilities/` (#332), `repair-archive/` (#324, #325), work-record
+`stepInputs` (#326), wait `cause` (#335), and the metrics sidecar ref
+`refs/heads/sentinel-state/metrics` (#338, #327). A runtime from before this
+revision rejects a tree that carries them. This is acceptable under the
+launcher self-install sequence: a new revision installs with a
+model-disabled bootstrap that is now a health pass writing no record (#336),
+and automatic rollback happens only when that bootstrap fails, before any
+ordinary pass has written the new shapes. A later manual rollback past this
+revision requires promoting the cold tier and removing the new rows first;
+the integration owner records that rule here rather than adding a version
+bump to every contract.
+
+### #327 deferred upkeep never fails the run
+
+`historical_quarantine_incomplete` is split. A fixed allowlist of
+missing-input refusals ("unavailable", "unproven", absent custody, raised
+before any settlement or block write) is a deferred upkeep result: the
+maintenance job reports `skipped` / `deferred_historical_quarantine`, writes
+nothing and exits 0, so prepare, planning, repair and delivery continue.
+Changed bindings or custody, an outside witness, ambiguous artifact
+provenance, redacted or unknown errors, and any refusal after a write started
+still fail closed. Maintenance publishes `upkeepDeferral`; finalize (which now
+needs `maintenance`) keeps a bounded streak on the metrics sidecar and claims
+exactly one non-sensitive notice (title, reason code, run id) on the third
+consecutive deferral, through an injected notice port whose only adapter is a
+log and step-summary line. A real ntfy adapter needs an owner topic/secret
+decision.
+
+### #338 throughput metrics and #339 report
+
+Finalize writes one strict `ThroughputMetricsRecordV1` per cycle to
+`refs/heads/sentinel-state/metrics` (`throughput/<UTC date>.jsonl`, newest
+2,000 kept; older folded into `throughput/daily.jsonl`, 400 days). Records
+are at most 1,024 bytes with 32-character strings and no URL-shaped values;
+writes are expected-head and non-force and a duplicate cycle is never written
+twice. Unobserved fields are null, never invented. `sentinel report --since
+<date> [--until <date>]` is read-only over that ref and the repair snapshot
+and prints `n/a (not recorded)` for anything the data does not carry.
+
+### #335 planner refusal and wait causes
+
+The planner records one refusal reason per pass (`deadline_margin`,
+`no_ready_records`, `reservation_denied`, `provider_unavailable`,
+`target_unavailable`) and the count of ready records it did not plan, on the
+plan diagnostic line that finalize reads. `backoff`/`unavailable` waits carry
+an optional bounded `cause` (port, status class, reason code; no bodies or
+URLs), enabled for hosted runs; the per-cycle record carries a bounded
+`waitCauses` histogram.
+
+### #326 batched live reads and changed-input stepping
+
+The step loop reads live inputs once per repository per pass through one
+read-only GraphQL request (`readLiveInputs`); a failed batch is unavailable
+and the per-record reads are used instead. Each stepped or deferred record is
+stamped with an input fingerprint (`stepInputs {digest, deadline}`) in the
+pass's existing expected-head write; a record whose fingerprint is unchanged
+before its deadline (the earlier of its wait deadline and 30 minutes) is
+skipped with no write and no charge, and the skip reason is counted on the
+`sentinel_repair_pass` line. Records woken by a completed review are always
+stepped.
+
+### #324 hot and cold repair state, #325 release-deferred disposition
+
+Cold records live under `repair-archive/<collection>/` on the same ref. The
+hot read (`readRepair`, `readRepairAt`, history views) never lists or parses
+the cold subtree; readers that need the full ledger use `readRepairTiered`.
+The trusted writer demotes whole families (work record, reservations,
+completed reviews, terminal release requests) only when the record is done
+or blocked with no intent, its issue is absent from a complete open-issue
+listing, nothing hot depends on it, every reservation is terminal and outside
+the 7-day accounting window, and no id is protected; moves re-point the same
+blob ids and the candidate is re-read before push. Demotion is budgeted and
+deferred; promotion of a reopened family is never deferred. While the release
+path is disabled, a family holding an open release request (a done record, or
+a delivery record waiting only on that request) is demoted unchanged under
+the same guards; ai.ubq.fi delivery records stay hot until the merge-accepted
+step completes them. When the release path is enabled the same writer
+promotes those families unchanged, bounded per pass and only after reading
+each target tip; a promoted open request whose revision is no longer the tip
+is recorded `cancelled` with reason "release request superseded", which the
+existing cancelled/failed path treats as terminal delivery evidence. Nothing
+is deleted, refunded or rewritten.
+
+### #333 pre-reservation checks and #334 identical-attempt refusal
+
+Deterministic admission checks run before `reserveModelStart`
+(`src/repair/pre-reservation-checks.ts`): repository and task identity, base
+SHA, source freshness, the `<!-- sentinel:skip -->` marker, candidate ref
+naming, denylist and session-bound validity, reservation collisions and the
+budget transition. A refused record is blocked as `model admission refused:
+pre-reservation <check>: <reason>` with nothing reserved or charged;
+post-inference refusals name their check. The implementer prompt carries the
+protected-path denylist and the publication bounds. Attempt memory gains an
+optional `inputs` fingerprint over base tip, candidate head identity, latest
+review findings digest and runtime revision; the second identical fingerprint
+is refused before reservation as `identical_attempt_refused: prior attempt
+<id>` and the next distinct attempt's prompt carries that fact. A refused
+record is re-granted to `work` only when its inputs have changed.
+
+### #332 target capability
+
+Targets without a named policy are verified once per default-branch tip and
+runtime generation (`targetCapabilities`). Capable means a `pull_request`
+workflow exists; a local verify command or backup-CI listing alone is
+recorded but is not capability, because backup CI only re-runs the target's
+own workflow. An incapable target admits no records and gets exactly one
+owner-action issue (first line `<!-- sentinel:skip -->`, second line
+`<!-- sentinel:target-capability -->`), created once, found again by its
+marker when the recording write was lost, and edited only when the missing
+list changes. When capability appears, no-CI parks without an intent return
+to `work` with counters and charges unchanged.
+
+### #329 just-in-time refresh, #330 delivery trains, #331 squash, #337 delivery checks
+
+A reviewed head keeps its reviewed base until it is next to land. The line is
+ordered oldest first by `createdAt`, then id; a base-refresh intent, or a
+head refreshed onto the tip since its latest review, holds every other
+record of the repository until it merges, stalls, idles or is held by its red
+base, and siblings refresh, push and request nothing. `CARRIED_REFRESH_LIMIT`
+(6) and the 6-hour carried wait bound only head-of-line refreshes. This
+supersedes the "waits only behind a landing contender or a ready one with a
+lower number" wording and the PR-number line order.
+
+For a foreign, non-Gateway target, the ready reviewed records of one
+repository land as one validated train per pass, extending the 2026-10-31
+entry: T' = tip ⊕ p1…pk is composed by the deterministic merge-tree
+executor, each member joins only when its reviewed patch is carried byte for
+byte, T' is published on `refs/heads/sentinel-trains/<op>` with intent
+persisted first, and CI runs once on it. On green the members merge in line
+order, each with its own expected-head merge, persisted intent and verified
+landing (parent = previous landing, tree = train tree); per-merge
+reservations and accounting are unchanged. On red the newest member is
+dropped with the run id and check name as its wait reason and the train
+retries once in the same pass, with no second bisect; unavailable CI is not
+red. Conflicting members leave the train and keep the single head-of-line
+refresh. While a train is open no other merge is made in that repository.
+Self and Gateway merges still write delivery state and end the delivery
+phase.
+
+Target pull requests are delivered by squash under the trusted per-target
+policy `mergeMethod: "squash" | "merge"` (`src/contracts/target-delivery.ts`,
+default squash, never in `sentinel.targets.json`), only where the repository
+reports `allow_squash_merge: true`; a target that forbids squash keeps merge
+commits, and an invalid value or unreadable setting refuses the merge and
+never falls back. The squash commit is the PR title plus its `Resolves #N`
+line; the reviewed head SHA is still the merge input and the expected-head
+guard is unchanged. The post-merge check accepts a squash commit whose single
+parent is exactly the reviewed base and whose tree equals the reviewed head's
+tree; anything else is `merged_off_tip`, and an unread tree is never booked.
+
+Per-target policy `requiredForDelivery` names checks beyond the required
+set (`src/host/target-delivery-checks.ts`, default empty). After every
+closure proof holds, the closure pass reads those checks on the merge commit:
+pending is a `deployment` wait (2 hours from the earliest check start);
+failed or overdue parks the record with check name, conclusion and id,
+reopens the issue once if GitHub closed it by that merge (a human close is
+never reopened), then posts one progress comment; passing closes as before.
+Review and merge gates are unchanged. The table stays empty until the owner
+records exact check names, so production behaviour is unchanged until then.
+
+### #336 bootstrap health pass
+
+A repair-job bootstrap reads release state, runtime pins, custody and
+contract versions, verifies compatibility and writes the same
+healthy/settled proof; it steps, prepares, polls, composes and writes no
+record. Intake, pre-ranking reconcilers, candidate-preservation stepping, the
+initial matrix artifact scan and pre-merge CI run in the next ordinary
+bounded pass. A failed health check still fails bootstrap and triggers the
+journaled restoration. The launcher summary carries `bootstrapDurationMs` and
+`bootstrapOutcome`.
+
+### #328 repair fan-out with one trusted writer
+
+Repository cells run the unchanged step loop on a private fork of the hot
+state at the planned head. Every effect (GitHub write, model start, replay,
+reservation, cooldown write) is blocked; a step that needs one is dropped and
+its record is deferred to the trusted path. A cell returns a sealed delta:
+replacement rows for its own existing records only, its base head and a
+digest of its repository's projection of the state. Its authenticity is the
+Actions artifact identity, as for matrix cells; the seal alone proves
+nothing. A delta may not reserve, charge, refund, create records or touch
+implementation or replay intents. Finalize, the only writer, accepts a delta
+only while that repository's projection is unchanged (not strict global head
+equality, which the concurrent serial pass would always break) and applies
+all accepted deltas in one expected-head write through the existing writer;
+a rejected delta writes nothing and is recomputed next pass. The serial
+repair job steps only the records the plan leaves to the trusted path. The
+deadline, the five-minute margin and accounting are unchanged.
+
+## 2026-11-05: throughput watchdog (self-improvement)
+
+Owner request (2026-11-05): let Sentinel work on its own throughput. Sentinel
+already repairs itself through the ordinary issue → PR → native review → merge
+→ auto-follow install loop; this entry closes the feedback side.
+
+Finalize (trusted stage only) evaluates the threshold table in
+`src/host/throughput-watchdog-thresholds.ts` over the metrics sidecar plus the
+cycle's own record: maintenance+repair median ≤ 8 min over the latest 30
+cycles (#324); repair median ≤ 5 min over cycles with `recordsRead` ≥ 60
+(#326); bootstrap median ≤ 5 min over the last 3 (#336); no cycle with ready
+work, no planner refusal and zero cells (#324/#335); refresh commits per merge
+≤ 1 over 7 days (#329); target CI runs per merge ≤ 3 over 7 days (#330);
+owner notices informational only (#327). Each verdict is `met`, `missed` or
+`insufficient_data`; missing data is never `missed` (fewer than 10 cycles, or
+3 for bootstrap, or under 7 days / no merges for weekly ratios).
+
+For a missed threshold, finalize files through the existing trusted App issue
+port one issue on `ubiquity-sentinel/sentinel` with the marker
+`<!-- sentinel:throughput-watchdog:<id> -->` on the second body line, no skip
+marker and label `priority:2`, carrying the measurement, window, cycle count,
+metric fields, the #340 child it derives from and a "what to investigate"
+section. Sentinel then repairs it like any issue and the merged fix
+self-installs. Guardrails: at most one new issue per cycle; none while any
+watchdog issue, or an open PR referencing one, is open; a 7-day re-file
+cooldown after an observed close, recorded in `throughput/watchdog.json` on
+the metrics ref by the same expected-head non-force writer; edits only when
+the measured number changes by more than 10%; an issue whose recording write
+was lost is found by its marker and adopted; a repeated finalize of the same
+cycle acts once; a 60 s bound; it never throws into the run. The cycle record
+carries `watchdogIssuesFiled`, and `sentinel report` prints the same
+evaluation as a Thresholds table. Kill switch: repository variable
+`SENTINEL_SELF_IMPROVE=off` (default on). Review, CI, P0, task-acceptance,
+accounting, custody and auto-follow gates are unchanged; the watchdog has no
+model access and no state authority beyond the metrics sidecar.

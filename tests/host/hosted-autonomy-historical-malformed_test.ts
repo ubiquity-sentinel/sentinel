@@ -305,7 +305,12 @@ Deno.test("historical malformed wave: maintenance leaf diagnostic is secret-free
         ...f.rig.state,
         readRepair: () => Promise.reject(error),
       };
-      assert.equal(await f.runMain(), 1);
+      // A fixed pre-write availability refusal is a bounded deferral (exit 0);
+      // a redacted or unknown refusal still fails closed.
+      assert.equal(
+        await f.runMain(),
+        message === "[redacted]" ? 1 : 0,
+      );
       assert.deepEqual(errors.map((value) => JSON.parse(value)), [{
         kind: "sentinel_historical_quarantine_error",
         name,
@@ -384,7 +389,8 @@ Deno.test("historical malformed wave: missing archive and malformed parser never
             });
           },
         };
-        assert.equal(await f.runMain(), 1);
+        // Absent saved custody is a bounded upkeep deferral: exit 0, no write.
+        assert.equal(await f.runMain(), 0);
         await assert.rejects(f.run);
         assert.equal(f.calls.length, 0);
       } else if (mode === "valid-applicable") {

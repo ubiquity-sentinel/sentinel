@@ -10,7 +10,7 @@ import {
   type RepairDeltaPlanV1,
   sameRepairRepository,
   verifyRepairDelta,
-} from "../contracts/repair-delta.ts";
+} from "../contracts/signed-repair-delta.ts";
 import { parseRepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import { canonicalStringify } from "../contracts/canonical.ts";
 import { MaxItems } from "../contracts/validation.ts";

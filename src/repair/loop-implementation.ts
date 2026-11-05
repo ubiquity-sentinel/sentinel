@@ -1,3 +1,4 @@
+import { causedWait } from "./loop-wait-cause.ts";
 import {
   isNoTestEvidenceTargetV1,
   NO_CI_AND_NO_LOCAL_VERIFY_DETAIL,
@@ -13,10 +14,17 @@ import type { ModelRunRequestV1 } from "../contracts/ports.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import {
+  MAX_PRIOR_ATTEMPT_FACTS,
   priorAttemptFactsForRecordV1,
   repositoryPriorFactsForRecordV1,
   repositoryRegressionFactsV1,
 } from "./attempt-policy.ts";
+import {
+  identicalAttemptRefusalFactV1,
+  identicalAttemptRefusalMessage,
+  identicalAttemptRefusalMutationV1,
+  identicalAttemptRefusalV1,
+} from "./identical-attempt.ts";
 import { candidateBranch, implementationIntentKey } from "./keys.ts";
 import {
   CHECK_POLL_MS,
@@ -66,6 +74,10 @@ import { verifyNoLiveLocalCandidateBranch } from "./loop-local-candidate.ts";
 import { legacyCutoff } from "./loop-review-round-cap.ts";
 import { RETIRED_TARGET_MESSAGE } from "./selection.ts";
 import { observeIssueForModel, readBase } from "./loop-task-context.ts";
+import {
+  preReservationChecks,
+  preReservationRefusalMessage,
+} from "./pre-reservation-checks.ts";
 import type {
   LoopContextV1,
   PreparedImplementationV1,
@@ -340,11 +352,11 @@ export async function prepareImplementationStart(
       context,
       setWait(
         record,
-        {
+        causedWait(deps, {
           reason: "unavailable",
           since: now,
           until: now + ISSUE_PREREQUISITE_RETRY_MS,
-        },
+        }, observation.cause),
         now,
       ),
     );
@@ -366,6 +378,7 @@ export async function prepareImplementationStart(
   if (admissionCooling.kind === "deferred") {
     return { kind: "deferred", detail: admissionCooling.detail };
   }
+  let observedBase: GitSha | undefined;
   // Queued issue work has no saved candidate, checkpoint, PR or open intent:
   // its target base is only the development tip captured at intake, so it may
   // have gone stale while the work waited. Refresh it through the same
@@ -381,17 +394,18 @@ export async function prepareImplementationStart(
     record.intent === null
   ) {
     const latestBase = await readBase(deps, record.repository);
+    observedBase = latestBase ?? undefined;
     if (latestBase === null) {
       return persistWork(
         deps,
         context,
         setWait(
           record,
-          {
+          causedWait(deps, {
             reason: "unavailable",
             since: now,
             until: now + ISSUE_PREREQUISITE_RETRY_MS,
-          },
+          }, { port: "github", status: "unknown", code: "base_unavailable" }),
           now,
         ),
       );
@@ -436,11 +450,40 @@ export async function prepareImplementationStart(
     ? null
     : correctionFindings(context.snapshot, record, ciFinding);
   const part = decompositionPartOf(record.id);
-  const priorAttempts = priorAttemptFactsForRecordV1(
+  // #334: an attempt whose base tip, candidate patch, review findings and
+  // runtime equal an attempt that already produced an outcome is refused
+  // here, before any reservation, naming the exact prior attempt.
+  const identical = identicalAttemptRefusalV1(
     context.snapshot,
     record,
     deps.controllerSha,
   );
+  if (identical !== null) {
+    const refused = markBlocked(
+      record,
+      "other",
+      identicalAttemptRefusalMessage(identical),
+      now,
+    );
+    const counted = identicalAttemptRefusalMutationV1(identical, now);
+    return persistTransition(deps, context, (draft) => {
+      replaceWorkMutation(refused)(draft);
+      counted(draft);
+    });
+  }
+  const refusalFact = identicalAttemptRefusalFactV1(
+    context.snapshot,
+    record,
+    deps.controllerSha,
+  );
+  const priorAttempts = [
+    ...(refusalFact === null ? [] : [refusalFact]),
+    ...priorAttemptFactsForRecordV1(
+      context.snapshot,
+      record,
+      deps.controllerSha,
+    ),
+  ].slice(0, MAX_PRIOR_ATTEMPT_FACTS);
   const repositoryLessons = repositoryPriorFactsForRecordV1(
     context.snapshot,
     record,
@@ -521,6 +564,34 @@ export async function prepareImplementationStart(
     failure: conflictMarker(conflict.mergeBase, admissionAt),
   };
   const nextWork = setIntent(attempted, intent, admissionAt);
+  // Every deterministic refusal is decided BEFORE the reservation (#333): a
+  // refused start is never reserved or charged, and its precise check and
+  // reason code are persisted on the record through the trusted work write.
+  const precheck = preReservationChecks(record, config, {
+    issue,
+    ...(observedBase === undefined ? {} : { latestBase: observedBase }),
+    candidateRef: intent.branch,
+    admission: {
+      reservationId,
+      attempt: admission.attempt,
+      purpose: admission.purpose,
+      nextWork,
+      now: admissionAt,
+      snapshot: context.snapshot,
+    },
+  });
+  if (!precheck.ok) {
+    return persistWork(
+      deps,
+      context,
+      markBlocked(
+        record,
+        "unavailable",
+        preReservationRefusalMessage(precheck),
+        now,
+      ),
+    );
+  }
   const reservation = await deps.budget.reserveModelStart({
     ...admission,
     implementationTransition: {
@@ -588,7 +659,11 @@ export async function prepareImplementationStart(
       context,
       setWait(
         record,
-        { reason: "unavailable", since: now, until: now + CHECK_POLL_MS },
+        causedWait(
+          deps,
+          { reason: "unavailable", since: now, until: now + CHECK_POLL_MS },
+          { port: "budget", status: "none", code: reservation.status },
+        ),
         now,
       ),
     );

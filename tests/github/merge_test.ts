@@ -80,7 +80,12 @@ Deno.test("mergePullRequest: exact-head merge after full authoritative verificat
   assert.equal(putCount(transport), 1);
   const put = transport.requests.find((request) => request.method === "PUT");
   assert.ok(put !== undefined);
-  assert.deepEqual(JSON.parse(put.body ?? "{}"), { sha: SHA1 });
+  // The repository forbids squash (the fixture default), so the merge keeps
+  // the merge-commit method under the same expected-head guard (#331).
+  assert.deepEqual(JSON.parse(put.body ?? "{}"), {
+    sha: SHA1,
+    merge_method: "merge",
+  });
   const rulesRequest = transport.requests.find((request) =>
     request.url.includes("/rules/branches/development")
   );

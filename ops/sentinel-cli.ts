@@ -13,6 +13,14 @@
  *   sentinel wait <observe|supervisor|repair> [--timeout-min N] [--dispatch]
  *   sentinel run <observe|supervisor> [--timeout-min N]
  *   sentinel receipts <run-id> [--grep <pattern>]
+ *   sentinel report --since <YYYY-MM-DD> [--until <YYYY-MM-DD>]
+ *                   [--remote <url-or-path>] [--scratch <dir>]
+ *
+ * `report` is read-only throughput readback (ops/sentinel-report.ts) and
+ * needs no gh: run it with
+ *   --allow-run=git --allow-env=PATH --allow-read=<scratch> --allow-write=<scratch>
+ * (scratch defaults to /tmp; add --allow-read=<path> for a local --remote).
+ * A missing grant refuses instead of prompting.
  */
 
 const REPO = "ubiquity-sentinel/sentinel";
@@ -536,8 +544,15 @@ async function main(): Promise<void> {
     case "receipts":
       await cmdReceipts(Number(opts._), opts.grep);
       break;
+    case "report": {
+      const { cmdReport } = await import("./sentinel-report.ts");
+      await cmdReport(opts);
+      break;
+    }
     default:
-      console.error("usage: sentinel status|dispatch|wait|run|receipts ...");
+      console.error(
+        "usage: sentinel status|dispatch|wait|run|receipts|report ...",
+      );
       Deno.exit(2);
   }
 }

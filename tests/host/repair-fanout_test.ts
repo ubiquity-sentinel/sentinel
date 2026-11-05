@@ -5,7 +5,7 @@ import {
   parseSignedRepairDelta,
   type RepairDeltaPlanV1,
   signRepairDelta,
-} from "../../src/contracts/repair-delta.ts";
+} from "../../src/contracts/signed-repair-delta.ts";
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import {

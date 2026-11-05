@@ -7,7 +7,15 @@ import type {
   PortResultV1,
 } from "../contracts/ports.ts";
 import type { GitSha } from "../contracts/brands.ts";
-import { portOk } from "../contracts/ports.ts";
+import { portError, portOk } from "../contracts/ports.ts";
+import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
+import {
+  effectiveMergeMethodV1,
+  type RepositoryMergeSettingsV1,
+  squashCommitMessageV1,
+  targetDeliveryPolicyV1,
+} from "../contracts/target-delivery.ts";
+import type { MergePullShapeV1 } from "./client-contracts.ts";
 import type { GitHubEffectiveProtectionsV1 } from "./port-contracts.ts";
 import { isGreenConclusion } from "../repair/ci-rejection.ts";
 
@@ -188,4 +196,41 @@ export function blocked(
     head,
   }));
   return portOk({ outcome: "blocked", reason, head });
+}
+
+/**
+ * The exact shape of one merge call (#331): the trusted per-target policy,
+ * squash only where the repository allows it (merge commits where it forbids
+ * squash), with the pull request title and its `Resolves #N` line as the
+ * squash commit. An invalid policy refuses with its precise reason; an
+ * unreadable repository setting is the read's own retryable error. Neither
+ * ever falls back to another method.
+ */
+export async function mergeShapeV1(
+  repository: Pick<RepositoryIdentityV1, "owner" | "name">,
+  policies: Readonly<Record<string, unknown>>,
+  readSettings: () => Promise<PortResultV1<RepositoryMergeSettingsV1>>,
+  title: string,
+  issueNumber: number | null,
+): Promise<PortResultV1<MergePullShapeV1>> {
+  const policy = targetDeliveryPolicyV1(repository, policies);
+  let settings: RepositoryMergeSettingsV1 | null = null;
+  if (policy.ok && policy.policy.mergeMethod === "squash") {
+    const read = await readSettings();
+    if (!read.ok) return read;
+    settings = read.value;
+  }
+  const method = effectiveMergeMethodV1(policy, settings);
+  if (!method.ok) {
+    console.error(JSON.stringify({
+      event: "sentinel_merge_policy_refused",
+      reason: method.reason,
+    }));
+    return portError("invalid", method.reason);
+  }
+  if (method.method === "merge") return portOk({ method: "merge" });
+  return portOk({
+    method: "squash",
+    ...squashCommitMessageV1(title, issueNumber),
+  });
 }

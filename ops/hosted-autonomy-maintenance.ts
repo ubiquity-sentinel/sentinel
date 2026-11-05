@@ -12,6 +12,7 @@ import { runHistoricalMatrixQuarantine } from "../src/host/matrix-actions.ts";
 import {
   beginMaintenanceProgress,
   HistoricalQuarantineIncomplete,
+  isDeferrableHistoricalQuarantineMessage,
 } from "./hosted-autonomy-state.ts";
 import {
   dedicatedMatrixReservations,
@@ -262,7 +263,9 @@ export async function runHostedMatrixMaintenance(
         name,
         message,
       }));
-      throw new HistoricalQuarantineIncomplete();
+      throw new HistoricalQuarantineIncomplete(
+        !isDeferrableHistoricalQuarantineMessage(message),
+      );
     }
     if (count > 0) actions.push(`historical-matrix:quarantined:${count}`);
   }

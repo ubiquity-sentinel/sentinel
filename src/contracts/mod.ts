@@ -32,3 +32,17 @@ export * from "./hosted-supervisor.ts";
 export * from "./merge-request.ts";
 // Ports.
 export * from "./ports.ts";
+// Repository repair fan-out deltas (#328).
+export * from "./repair-delta.ts";
+// Signed planning artifacts use a separate wire format and byte bound.
+export {
+  assertRepairDeltaScope,
+  MAX_REPAIR_DELTA_BYTES as MAX_SIGNED_REPAIR_DELTA_BYTES,
+  parseSignedRepairDelta,
+  type RepairDeltaPlanV1,
+  type RepairDeltaV1 as SignedRepairDeltaBodyV1,
+  sameRepairRepository,
+  type SignedRepairDeltaV1,
+  signRepairDelta,
+  verifyRepairDelta,
+} from "./signed-repair-delta.ts";
