@@ -202,6 +202,7 @@ export async function runActionsMatrixAggregateCycles(
   // Bootstrap must not construct artifact transports or read the record store.
   if (isActionsBootstrap(input)) return await runActionsBootstrapHealth(input);
   const host = hostOf(input);
+  const bootstrap = host.execution.purpose === "bootstrap";
   let read = await input.state.readRepair();
   if (!read.ok || read.value.status !== "found") {
     throw new Error("matrix aggregate cannot read authoritative state");
@@ -209,7 +210,7 @@ export async function runActionsMatrixAggregateCycles(
   // #183: progress comments compare against the state before this job's
   // ingestion, so a park or publication made while consuming cells reports.
   const progressBaseline = read.value.snapshot.work;
-  if (closedCWaveNeedsRecovery(read.value.snapshot)) {
+  if (!bootstrap && closedCWaveNeedsRecovery(read.value.snapshot)) {
     if (!host.readExecution) {
       throw new Error("C recovery native proof reader unavailable");
     }
@@ -259,7 +260,7 @@ export async function runActionsMatrixAggregateCycles(
   const consumer = matrixConsumerWindowV1({
     now: input.clock.now(),
     deadline: input.deadline,
-    maxWaitMs: options.maxWaitMs ?? MATRIX_CONSUMER_MAX_WAIT_MS,
+    maxWaitMs: bootstrap ? 0 : options.maxWaitMs ?? MATRIX_CONSUMER_MAX_WAIT_MS,
     targets: input.configs.length,
     reviewsMayStart: lifecycleModelStarts,
   });
@@ -269,6 +270,7 @@ export async function runActionsMatrixAggregateCycles(
     ...input,
     modelStartsEnabled: lifecycleModelStarts,
     externalImplementations: true,
+    progressComments: bootstrap ? undefined : input.progressComments,
     progressBaseline: input.progressBaseline ?? progressBaseline,
     prepareTarget: async (config) => {
       const key = config.repository.owner + "/" + config.repository.name;

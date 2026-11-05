@@ -43,14 +43,29 @@ Deno.test("hosted runtime: bootstrap-only real child empty stdin aggregate", asy
   assert.ok(detached.ok, detached.stderr);
   const frozenHead = await gitRun(frozen, ["rev-parse", "HEAD"], env);
   assert.equal(frozenHead.stdout.trim(), revision);
-  // Preserve a local aggregate correction over the immutable current snapshot.
+  // Exercise local consumer corrections over the immutable current snapshot.
   const aggregateSource = await Deno.readTextFile(
     `${ROOT}/src/host/matrix-actions.ts`,
   );
-  await Deno.writeTextFile(
-    `${frozen}/src/host/matrix-actions.ts`,
-    aggregateSource,
-  );
+  for (
+    const path of [
+      "src/host/matrix-actions.ts",
+      "src/host/actions.ts",
+      "src/host/actions-bootstrap-health.ts",
+      "src/host/actions-target-flow.ts",
+      "src/host/matrix-aggregate.ts",
+      "src/main.ts",
+      "src/repair/loop-types.ts",
+      "src/repair/loop-cycle.ts",
+    ]
+  ) {
+    await Deno.writeTextFile(
+      `${frozen}/${path}`,
+      path === "src/host/matrix-actions.ts"
+        ? aggregateSource
+        : await Deno.readTextFile(`${ROOT}/${path}`),
+    );
+  }
   const aggregateDigest = [
     ...new Uint8Array(
       await crypto.subtle.digest(

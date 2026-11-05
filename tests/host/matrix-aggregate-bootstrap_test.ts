@@ -13,6 +13,7 @@ import { parseReleaseStateSnapshotV1 } from "../../src/contracts/state-snapshots
 import type { ActionsTargetCyclesInputV1 } from "../../src/host/actions-target-cycles.ts";
 import { runActionsCiApproval } from "../../src/host/actions-ci.ts";
 import { runActionsTargetCycles } from "../../src/host/actions-target-cycles.ts";
+import { runActionsHostedCycles } from "../../src/host/actions.ts";
 import { runActionsMatrixAggregateCycles } from "../../src/host/matrix-aggregate.ts";
 import { DurableGitHubCooldownGate } from "../../src/repair/github-cooldown.ts";
 import {
@@ -64,6 +65,7 @@ function seeded(): RepairStateSnapshotV1 {
 
 for (
   const [name, run] of [
+    ["hosted entrypoint", runActionsHostedCycles],
     ["matrix aggregate", runActionsMatrixAggregateCycles],
     ["serial target flow", runActionsTargetCycles],
     [
@@ -192,8 +194,11 @@ for (
           stepLimit: 32,
           modelStartsEnabled: false,
           runOrigin: T0,
-          bootstrap: scenario === "explicit flag",
-          // Infer bootstrap from the persisted execution, as the hosted entrypoint does.
+          // Only the installed entrypoint infers health-only from the intent;
+          // lower-level callers opt in so legacy matrix recovery still drains.
+          bootstrap: name === "hosted entrypoint"
+            ? scenario === "explicit flag"
+            : true,
           host: scenario === "explicit flag" ? undefined : {
             execution: scenario === "moved generation"
               ? { ...execution, generation: 2 }

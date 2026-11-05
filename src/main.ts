@@ -139,11 +139,12 @@ export interface RepairEntrypointOptionsV1 {
    */
   modelStartsEnabled?: boolean;
   /**
-   * Trusted host confirmation that this is the model-disabled BOOTSTRAP
-   * execution: maintenance, compatibility and health only, never a walk of
-   * the work queue (issue #297). Forwarded unchanged to the cycle.
+   * Trusted host confirmation of metadata-only BOOTSTRAP health. Forwarded
+   * unchanged to the cycle; no intake or work-record reconciliation is allowed.
    */
   bootstrap?: boolean;
+  /** Historical verification callers retain bounded preservation and drain. */
+  preservationOnly?: boolean;
 }
 
 /**
@@ -244,9 +245,8 @@ export function createRepairInvocation(
       stepLimit: options.stepLimit,
       runStartedAt,
       modelStartsEnabled: options.modelStartsEnabled,
-      // A production bootstrap invocation must take the maintenance-only path
-      // of the cycle, so the trusted host flag is forwarded unchanged.
       bootstrap: options.bootstrap,
+      preservationOnly: options.preservationOnly,
     },
     (continuation) => {
       postDrain.continuation = continuation;

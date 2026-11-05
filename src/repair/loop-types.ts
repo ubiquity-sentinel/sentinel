@@ -109,6 +109,8 @@ export interface RepairCycleOptionsV1 {
    * ordinary lifecycle unchanged.
    */
   bootstrap?: boolean;
+  /** Historical verification callers reconcile preservation, never other work. */
+  preservationOnly?: boolean;
 }
 
 export type RepairCycleOutcomeV1 =

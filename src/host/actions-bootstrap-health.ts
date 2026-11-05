@@ -13,8 +13,9 @@ import {
 } from "./hosted-custody-capability.ts";
 
 export function isActionsBootstrap(input: ActionsTargetCyclesInputV1): boolean {
-  return input.bootstrap === true ||
-    input.host?.execution.purpose === "bootstrap";
+  // An execution purpose also appears on historical matrix/recovery callers.
+  // Only the live entrypoint opts into skipping their mandatory reconciliation.
+  return input.bootstrap === true;
 }
 
 /** The trusted host has already checked source identity and live custody. */

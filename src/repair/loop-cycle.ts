@@ -81,6 +81,9 @@ export async function* advanceRepairCycle(
   if (options.bootstrap === true) {
     return { status: "idle", detail: "bootstrap pass: metadata health only" };
   }
+  const preservationOnly = options.preservationOnly === true;
+  const preservationDetail =
+    "bootstrap pass: maintenance, compatibility and health only";
   const tracking: RepairCycleTrackingV1 = {
     steps: 0,
     lastSnapshot: null,
@@ -395,6 +398,10 @@ export async function* advanceRepairCycle(
       if (!didWork && sourceError !== null) {
         return { status: "source_error", detail: sourceError };
       }
+      if (preservationOnly) {
+        tracking.postDrainAllowed = true;
+        return { status: "idle", detail: preservationDetail };
+      }
       tracking.postDrainAllowed = true;
       const wake = yield {
         kind: "waiting",
@@ -422,6 +429,9 @@ export async function* advanceRepairCycle(
         return { status: "state_error", detail: "selected record missing" };
       }
       if (
+        preservationOnly && record.intent?.kind !== "candidate_preservation"
+      ) continue;
+      if (
         declaredOperationFits(deps, context, record)
       ) {
         selected = record;
@@ -433,6 +443,13 @@ export async function* advanceRepairCycle(
       cannotFit = `next operation for ${id} cannot fit`;
     }
     if (selected === null) {
+      if (preservationOnly) {
+        if (!didWork && sourceError !== null) {
+          return { status: "source_error", detail: sourceError };
+        }
+        tracking.postDrainAllowed = true;
+        return { status: "idle", detail: preservationDetail };
+      }
       // Every remaining record was deferred: matrix ownership, a model start
       // past the horizon, a cooldown or a transient read. None of these stops
       // deterministic work, which this loop keeps running for lower-ranked

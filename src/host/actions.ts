@@ -1,6 +1,7 @@
 /** Public hosted entrypoint; implementation is split by responsibility. */
 import { runActionsMatrixAggregateCycles } from "./matrix-actions.ts";
 import { runActionsRepairHost } from "./actions-repair-host.ts";
+import type { ActionsTargetCyclesInputV1 } from "./actions-target-cycles.ts";
 export {
   ACTIONS_UOS_BASE_URL,
   childRunDeadlineV1,
@@ -16,6 +17,19 @@ export type {
   ActionsTargetCyclesResultV1,
 } from "./actions-target-cycles.ts";
 export { runActionsRepairHost } from "./actions-repair-host.ts";
+
+/** The installed child opts into health-only bootstrap, not legacy recovery. */
+export function runActionsHostedCycles(input: ActionsTargetCyclesInputV1) {
+  return runActionsMatrixAggregateCycles(
+    {
+      ...input,
+      bootstrap: input.bootstrap === true ||
+        input.host?.execution.purpose === "bootstrap",
+    },
+    undefined,
+    input.host?.matrixCarrier,
+  );
+}
 
 if (import.meta.main) {
   const parts: Uint8Array[] = [];
@@ -37,11 +51,6 @@ if (import.meta.main) {
   await runActionsRepairHost({
     trustedStdin,
     issueOnly: true,
-    runTargetCycles: (input) =>
-      runActionsMatrixAggregateCycles(
-        input,
-        undefined,
-        input.host?.matrixCarrier,
-      ),
+    runTargetCycles: runActionsHostedCycles,
   });
 }

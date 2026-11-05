@@ -155,6 +155,9 @@ export function createActionsTargetFlow(input: ActionsTargetCyclesInputV1) {
             deadline: input.deadline,
             stepLimit: input.stepLimit,
             modelStartsEnabled: input.modelStartsEnabled,
+            // Historical verification callers still own bounded preservation
+            // and drain; the installed child opts into metadata health above.
+            preservationOnly: input.host?.execution.purpose === "bootstrap",
             runStartedAt: origin,
           };
           if (input.runCycle !== undefined) {
