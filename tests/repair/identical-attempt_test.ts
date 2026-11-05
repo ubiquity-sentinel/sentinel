@@ -19,7 +19,10 @@ import { canonicalStringifySha256 } from "../../src/contracts/canonical.ts";
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import {
+  ATTEMPT_DETAIL_ARTIFACT_ONLY,
   ATTEMPT_DETAIL_INCOMPLETE,
+  ATTEMPT_DETAIL_LOOP_STOP,
+  ATTEMPT_DETAIL_NO_CHANGE,
   ATTEMPT_DETAIL_PROVIDER_THROTTLED,
   attemptMemorySettlementMutationV1,
   attemptMemorySuccessMutationV1,
@@ -380,7 +383,7 @@ Deno.test("only proven outcomes record the admitted attempt's inputs", async () 
     mutation(draft);
     return draft;
   };
-  const semantic = await settle(ATTEMPT_DETAIL_INCOMPLETE);
+  const semantic = await settle(ATTEMPT_DETAIL_NO_CHANGE);
   const rows = semantic.attemptMemory[0]!.inputs!;
   assert.equal(rows.length, 1);
   assert.equal(rows[0]!.attemptId, PRIOR_ATTEMPT);
@@ -389,12 +392,26 @@ Deno.test("only proven outcomes record the admitted attempt's inputs", async () 
     attemptInputsForRecordV1(semantic, record, SHA1).fingerprint,
   );
   parseAttemptMemoryRecordV1(semantic.attemptMemory[0]);
+  assert.equal(
+    (await settle(ATTEMPT_DETAIL_ARTIFACT_ONLY)).attemptMemory[0]!.inputs
+      ?.length,
+    1,
+    "an artifact-only candidate is a judged outcome",
+  );
   const transient = await settle(ATTEMPT_DETAIL_PROVIDER_THROTTLED);
   assert.equal(
     transient.attemptMemory[0]!.inputs,
     undefined,
     "a transient failure proves nothing about its inputs",
   );
+  // Regression (matrix mixed-ingestion recovery): an incomplete or looped
+  // session is semantic_no_progress for the equivalence policy, but it was
+  // never judged, so its fresh retry with the same inputs is admitted.
+  for (const detail of [ATTEMPT_DETAIL_INCOMPLETE, ATTEMPT_DETAIL_LOOP_STOP]) {
+    const incomplete = await settle(detail);
+    assert.equal(incomplete.attemptMemory[0]!.inputs, undefined, detail);
+    assert.equal(identicalAttemptRefusalV1(incomplete, record, SHA1), null);
+  }
 });
 
 Deno.test("a new accepted candidate records no inputs, so its loss never refuses the fresh attempt", async () => {

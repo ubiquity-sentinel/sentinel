@@ -7,12 +7,14 @@
  * every such replay is a charged model start.
  *
  * - Recorded inputs: only attempts that PROVED what their inputs produce are
- *   recorded: a `semantic_no_progress` failure, or an accepted candidate
- *   that reproduced the exact head it started from. A NEW accepted candidate
- *   is not recorded: if it later goes missing or is dropped, the record
- *   returns to the same inputs and its fresh attempt is legitimate. A
- *   transient-infrastructure or unknown failure proves nothing about the
- *   inputs and keeps the existing bounded equivalence/decay allowance.
+ *   recorded: a completed session judged without progress
+ *   (`JUDGED_ATTEMPT_DETAILS`: no change at all, or only generated/cache
+ *   artifacts), or an accepted candidate that reproduced the exact head it
+ *   started from. A NEW accepted candidate is not recorded: if it later goes
+ *   missing or is dropped, the record returns to the same inputs and its
+ *   fresh attempt is legitimate. An incomplete, interrupted, looped,
+ *   transient or unknown run proves nothing about its inputs and keeps the
+ *   existing bounded equivalence/decay allowance.
  * - Refusal: the first identical replay is refused with
  *   `identical_attempt_refused` naming the exact prior attempt (reservation)
  *   id; the prior row's refusal count grows in the SAME state commit. The
@@ -35,10 +37,7 @@ import {
   IDENTICAL_ATTEMPT_REFUSED,
 } from "../contracts/attempt-input.ts";
 import type { AttemptInputV1 } from "../contracts/attempt-input.ts";
-import type {
-  AttemptFailureClassV1,
-  AttemptMemoryRecordV1,
-} from "../contracts/attempt-memory.ts";
+import type { AttemptMemoryRecordV1 } from "../contracts/attempt-memory.ts";
 import { type GitSha, isGitSha } from "../contracts/brands.ts";
 import type { PriorAttemptFactV1 } from "../contracts/ports.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
@@ -174,13 +173,6 @@ export function identicalAttemptRefusalMutationV1(
       ),
     };
   };
-}
-
-/** Outcomes that prove what their inputs produce (see module doc). */
-export function attemptOutcomeRecordsInputs(
-  failureClass: AttemptFailureClassV1 | "success",
-): boolean {
-  return failureClass === "success" || failureClass === "semantic_no_progress";
 }
 
 /**

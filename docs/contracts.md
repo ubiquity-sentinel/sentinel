@@ -393,11 +393,13 @@ review/replay/request) ids are rejected instead of collapsing to last-wins maps.
 
 `AttemptMemoryRecordV1.inputs` (`src/contracts/attempt-input.ts`) records the
 input fingerprint of each implementation attempt that proved what its inputs
-produce (an accepted candidate or a `semantic_no_progress` failure), written by
-the trusted settlement/success mutations in the same state commit. Absent is the
-exact legacy shape, never injected, and matches nothing. Digest domains are
-distinct and never compared with each other or with the family/failure
-fingerprints (`sentinel.memory.attempt-family.v1`,
+produce (a completed session judged without progress, `JUDGED_ATTEMPT_DETAILS`:
+no change or only generated/cache artifacts, or an accepted candidate that
+reproduced its starting head; never an incomplete, lost or transient run),
+written by the trusted settlement/success mutations in the same state commit.
+Absent is the exact legacy shape, never injected, and matches nothing. Digest
+domains are distinct and never compared with each other or with the
+family/failure fingerprints (`sentinel.memory.attempt-family.v1`,
 `sentinel.memory.attempt-fingerprint.v1`):
 
 | Field            | Domain                                | Canonical payload                                                              |
