@@ -223,3 +223,40 @@ Deno.test("retired pull scan: a cold pending record is promoted once per generat
     await ctx.cleanup();
   }
 });
+
+Deno.test("retired pull scan: a ref with no cold work rows records no scan row and writes nothing", async () => {
+  // CI run 41998037894: a maintenance pass with nothing to do gained a
+  // `tierScans` row and a second commit on a ref that has no cold tier.
+  const ctx = await makeCtx("retired-scan-empty");
+  try {
+    const runner = new CountingRunner(`${ctx.tmp}/runner-home`);
+    await Deno.mkdir(`${ctx.tmp}/runner-home`, { recursive: true });
+    const store = new GitStateStore({
+      scratchDir: `${ctx.tmp}/scratch`,
+      remoteUrl: ctx.remoteUrl,
+      role: "repair",
+      runner,
+    });
+    await pushRawStateTree(ctx, null, REF, [
+      { path: "manifest.json", text: rawManifestText(1, NOW - 50, null) },
+    ]);
+    const seeded = await remoteHead(ctx, REF);
+    for (let pass = 0; pass < 2; pass++) {
+      const result = await store.tierRepair({
+        ...policy(7),
+        expectedHead: seeded,
+      });
+      assert.ok(
+        result.ok && result.value.status === "unchanged",
+        JSON.stringify(result),
+      );
+    }
+    assert.equal(await remoteHead(ctx, REF), seeded);
+    const hot = await store.readRepair();
+    assert.ok(hot.ok && hot.value.status === "found");
+    if (!hot.ok || hot.value.status !== "found") throw new Error("x");
+    assert.deepEqual(hot.value.snapshot.tierScans ?? [], []);
+  } finally {
+    await ctx.cleanup();
+  }
+});
