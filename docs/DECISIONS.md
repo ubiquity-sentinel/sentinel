@@ -59,6 +59,10 @@ candidate recorded in the build ledger. Policy consequences:
   pass once the run is complete and the listing is authenticated, or after the
   8-day evidence expiry in the serial work step; the record returns to its
   pending base-refresh intent and the planner may re-grant. Never refunded.
+  Each loss is recorded in attempt memory under the conflict's merge base; a
+  second loss on the same merge base parks the record like a spent resolution
+  (no third charge until the base moves), and losses count toward the 3x
+  repeat-failure park.
 - **A retired record's own open pull request is closed.** When a record retires
   because its source issue closed and its own unmerged `sentinel/repair/<task>`
   PR is still open, the maintenance pass closes the PR with one comment and
@@ -67,12 +71,15 @@ candidate recorded in the build ledger. Policy consequences:
   bounded cold-tier scan per installed generation (`tierScans` row). A `work`
   or `blocked` record whose own PR a person merged is re-admitted to `review`
   and completes `done` through the human-merge rule, settling any reserved
-  charge ambiguous.
+  charge ambiguous. A retired record whose issue was reopened returns to
+  `work` (outcome `reopened`, PR and charges kept). Probes that settle nothing
+  stamp `pullProbe` and back off six hours, least recently probed first, so no
+  record can starve the pass or cost a GitHub read every cycle.
 - **The planner names every deferral.** The plan diagnostic carries
   `deferredByReason` on every pass and a bounded `deferredRecords` list.
 
 Rollback: runtimes older than this candidate cannot read records carrying
-`ownerLanding`, `retiredPullClosure` or the `tierScans` row (the additive-field
+`ownerLanding`, `retiredPullClosure`, `pullProbe` or the `tierScans` row (the additive-field
 trade-off already taken for `stepInputs` and wait causes). `GATEWAY_PROTECTED_PATHS`
 is unchanged; narrowing it remains an owner security decision.
 
