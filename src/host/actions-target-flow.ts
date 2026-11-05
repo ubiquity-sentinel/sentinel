@@ -1,4 +1,8 @@
 /** One authoritative coordinator; only native session settlement overlaps. */
+import {
+  isActionsBootstrap,
+  runActionsBootstrapHealth,
+} from "./actions-bootstrap-health.ts";
 import { createRepairInvocation, type RepairInvocationV1 } from "../main.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
@@ -13,11 +17,8 @@ import type {
 
 export function createActionsTargetFlow(input: ActionsTargetCyclesInputV1) {
   const origin = input.runOrigin ?? input.clock.now();
-  // A model-disabled bootstrap execution still prepares every target (the
-  // bootstrap contract's source intake) and dispatches pre-merge CI; only the
-  // work-record walk is skipped (issue #297).
-  const bootstrap = input.bootstrap === true ||
-    input.host?.execution.purpose === "bootstrap";
+  const bootstrap = isActionsBootstrap(input);
+  let bootstrapDone = false;
   const addressed: string[] = [];
   const skipped: string[] = [];
   const failed: string[] = [];
@@ -70,6 +71,17 @@ export function createActionsTargetFlow(input: ActionsTargetCyclesInputV1) {
     }
     advancing = true;
     try {
+      if (bootstrap) {
+        if (!bootstrapDone) {
+          bootstrapDone = true;
+          const result = await runActionsBootstrapHealth({
+            ...input,
+            report: undefined,
+          });
+          outcome = result.outcome;
+        }
+        return false;
+      }
       const start = cursor;
       for (let offset = 0; offset < slots.length; offset++) {
         const index = (start + offset) % slots.length;
@@ -143,9 +155,6 @@ export function createActionsTargetFlow(input: ActionsTargetCyclesInputV1) {
             deadline: input.deadline,
             stepLimit: input.stepLimit,
             modelStartsEnabled: input.modelStartsEnabled,
-            // A model-disabled bootstrap execution performs intake, maintenance
-            // and health only: it never walks the work queue (issue #297).
-            bootstrap,
             runStartedAt: origin,
           };
           if (input.runCycle !== undefined) {

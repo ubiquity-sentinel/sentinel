@@ -95,9 +95,11 @@ export async function runHostedRuntimeLauncher(
 ): Promise<
   HostedRuntimeLauncherResultV1 & { summary: HostedRuntimeSummaryV1 }
 > {
+  let passStartedAt: number | null = null;
   let result = unavailableResult();
   const observation: SummaryObservationV1 = {};
   try {
+    passStartedAt = input.clock.now();
     result = await launchHostedRuntime(
       input,
       capability,
@@ -112,10 +114,27 @@ export async function runHostedRuntimeLauncher(
   } catch {
     result = unavailableResult();
   }
-  return {
-    ...result,
-    summary: await summarizeHostedRuntime(input, result, observation),
-  };
+  const summary = await summarizeHostedRuntime(input, result, observation);
+  if (observation.execution?.purpose === "bootstrap") {
+    // Advisory only; use the resolved terminal, not the child's health claim.
+    try {
+      const elapsed = passStartedAt === null
+        ? Number.NaN
+        : input.clock.now() - passStartedAt;
+      console.log(JSON.stringify({
+        kind: "sentinel_pass_metrics",
+        pass: "bootstrap",
+        executionId: observation.execution.id,
+        revision: observation.execution.revision,
+        generation: observation.execution.generation,
+        durationMs: Number.isSafeInteger(elapsed) && elapsed >= 0
+          ? elapsed
+          : null,
+        outcome: result.status,
+      }));
+    } catch { /* metrics never change settlement */ }
+  }
+  return { ...result, summary };
 }
 
 async function launchHostedRuntime(
@@ -204,7 +223,9 @@ async function launchHostedRuntime(
   observation.targets = (await readTargetSlugsV1({ root: dirs.runtime })).map((
     target,
   ) => target.slug);
-  observation.before = await readSummaryState(input.state);
+  observation.before = execution.purpose === "bootstrap"
+    ? undefined
+    : await readSummaryState(input.state);
 
   const custody = input.reviewCustody;
   let childStdin = stdin;
@@ -557,6 +578,17 @@ async function summarizeHostedRuntime(
     observation.identity,
     observation.execution,
   );
+  // Bootstrap owns no admissions or PR work: do not read record ledgers just
+  // to populate advisory counts. The bounded ordinary pass will observe them.
+  if (observation.execution?.purpose === "bootstrap") {
+    summary.targets = (observation.targets ?? []).map((repository) => ({
+      repository,
+      openIssues: null,
+      admitted: null,
+      skippedIssues: null,
+    }));
+    return summary;
+  }
   try {
     const intake = scanSummaryIntake(observation.run);
     const targets = observation.targets?.length

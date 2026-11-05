@@ -104,10 +104,9 @@ export interface RepairCycleOptionsV1 {
   modelStartsEnabled?: boolean;
   /**
    * Trusted host confirmation that this is the model-disabled BOOTSTRAP
-   * execution. It performs intake, maintenance and health only and never walks
-   * the work queue: no record is stepped, so a large state cannot spend the
-   * bootstrap bound on deterministic work the next ordinary run owns. Omitted
-   * keeps the ordinary lifecycle unchanged.
+   * execution. The host verifies metadata health; this cycle performs no
+   * intake, reconciliation or work-record stepping. Omitted keeps the
+   * ordinary lifecycle unchanged.
    */
   bootstrap?: boolean;
 }

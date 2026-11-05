@@ -9,8 +9,8 @@
  * `runRepairCycle` consumer with the in-memory state, fake ports and an
  * injected clock: matrix-only records are never stepped (one summary line),
  * the serial pass yields one operation margin before the run deadline, and a
- * bootstrap execution never walks the model-disabled work queue (it still runs
- * intake, maintenance, health and pending candidate-preservation maintenance).
+ * bootstrap execution never reads or steps the model-disabled work queue;
+ * intake and candidate-preservation reconciliation belong to ordinary passes.
  * No model call, no network, no credentials and no real waiting.
  */
 import assert from "node:assert/strict";
@@ -274,9 +274,13 @@ Deno.test("serial pass: production entrypoint keeps one operation margin when th
   assert.ok(pending.length > 0, "the pass yielded before walking every record");
 });
 
-Deno.test("bootstrap pass: no work record is stepped; maintenance and health only", async () => {
-  const records = Array.from({ length: 5 }, (_, index) => freshRecord(index));
+Deno.test("bootstrap pass: 700 records are neither read nor stepped", async () => {
+  const records = Array.from({ length: 700 }, (_, index) => freshRecord(index));
   const rig = makeRig(records, { externalImplementations: false });
+  const readRepair = rig.state.readRepair.bind(rig.state);
+  rig.state.readRepair = () => {
+    throw new Error("bootstrap must not load work records");
+  };
 
   const { result, lines } = await captureLogs(() =>
     runRepairCycle(rig.deps, {
@@ -291,23 +295,27 @@ Deno.test("bootstrap pass: no work record is stepped; maintenance and health onl
   assert.match(String(result.detail), /bootstrap/);
   // No step line, and every record is untouched (branch still unassigned).
   assert.deepEqual(parseLines(lines, STEP_LINE_KIND), []);
-  const read = await rig.state.readRepair();
+  const read = await readRepair();
   assert.ok(read.ok && read.value.status === "found");
   if (!read.ok || read.value.status !== "found") return;
   assert.deepEqual(
     read.value.snapshot.work.map((record) => record.target.branch),
     records.map(() => null),
   );
-  // Health still reads its sources.
-  assert.ok(rig.github.calls.includes("listOpenIssues"));
+  // Install health must not poll issue sources; the next ordinary pass owns intake.
+  assert.deepEqual(rig.github.calls, []);
   assert.equal(rig.state.repairWrites, 0);
   // The repository identity is preserved by the seeded fixture.
   assert.equal(read.value.snapshot.work[0].repository.name, REPO.name);
 });
 
 Deno.test("bootstrap pass: the production entrypoint forwards bootstrap and steps no work record", async () => {
-  const records = Array.from({ length: 5 }, (_, index) => freshRecord(index));
+  const records = Array.from({ length: 700 }, (_, index) => freshRecord(index));
   const rig = makeRig(records, { externalImplementations: false });
+  const readRepair = rig.state.readRepair.bind(rig.state);
+  rig.state.readRepair = () => {
+    throw new Error("bootstrap must not load work records");
+  };
   const invocation = createRepairInvocation(rig.deps, {
     deadline: T0 + 30 * MINUTE,
     stepLimit: 32,
@@ -323,18 +331,18 @@ Deno.test("bootstrap pass: the production entrypoint forwards bootstrap and step
   assert.equal(result.status, "idle", JSON.stringify(result));
   assert.match(String(result.detail), /bootstrap/);
   assert.deepEqual(parseLines(lines, STEP_LINE_KIND), []);
-  const read = await rig.state.readRepair();
+  const read = await readRepair();
   assert.ok(read.ok && read.value.status === "found");
   if (!read.ok || read.value.status !== "found") return;
   assert.deepEqual(
     read.value.snapshot.work.map((record) => record.target.branch),
     records.map(() => null),
   );
-  assert.ok(rig.github.calls.includes("listOpenIssues"));
+  assert.deepEqual(rig.github.calls, []);
   assert.equal(rig.state.repairWrites, 0);
 });
 
-Deno.test("bootstrap pass: a failed source read stays a source error", async () => {
+Deno.test("ordinary model-disabled pass: a failed source read stays a source error", async () => {
   class FailingGithub extends FakeGithub {
     override listOpenIssues() {
       this.calls.push("listOpenIssues");
@@ -349,12 +357,11 @@ Deno.test("bootstrap pass: a failed source read stays a source error", async () 
       deadline: T0 + 30 * MINUTE,
       stepLimit: 32,
       modelStartsEnabled: false,
-      bootstrap: true,
+      bootstrap: false,
     })
   );
 
-  // A failed source read during bootstrap is still an unhealthy source, never
-  // a successful idle health pass.
+  // Deferring intake from bootstrap does not weaken ordinary source failures.
   assert.equal(result.status, "source_error", JSON.stringify(result));
 });
 

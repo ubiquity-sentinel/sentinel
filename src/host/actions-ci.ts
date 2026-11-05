@@ -19,6 +19,7 @@ import type {
   StateReadView,
 } from "../contracts/ports.ts";
 import { portError, portOk } from "../contracts/ports.ts";
+import { parseReleaseStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { GitHubApiClient } from "../github/client.ts";
@@ -68,6 +69,19 @@ export async function runActionsCiApproval(
       summary.unavailable = 1;
       return summary;
     }
+    // The host also calls this post-cycle helper on install verification.
+    // Bootstrap never sweeps candidates or starts CI approval side effects.
+    const release = await input.state.readRelease();
+    if (!release.ok) {
+      summary.unavailable = 1;
+      return summary;
+    }
+    if (
+      release.value.status === "found" &&
+      parseReleaseStateSnapshotV1(release.value.snapshot).hostedRuntimes.some(
+        (runtime) => runtime.execution?.purpose === "bootstrap",
+      )
+    ) return summary;
     const read = await input.state.readRepair();
     if (!read.ok || read.value.status !== "found") {
       summary.unavailable = 1;

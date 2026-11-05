@@ -76,12 +76,11 @@ export async function* advanceRepairCycle(
   const bounds = createRunBounds(deps, options);
   const { runDeadline } = bounds;
   const stepLimit = options.stepLimit ?? DEFAULT_STEP_LIMIT;
-  // A model-disabled bootstrap still runs intake, maintenance, compatibility,
-  // health and pending candidate-preservation reconciliation, but it must not
-  // walk the model-disabled work queue (issue #297).
-  const bootstrap = options.bootstrap === true;
-  const bootstrapDetail =
-    "bootstrap pass: maintenance, compatibility and health only";
+  // Hosted callers verify manifest/runtime/custody contracts before this seam.
+  // Even direct bootstrap invocations must never load or reconcile work records.
+  if (options.bootstrap === true) {
+    return { status: "idle", detail: "bootstrap pass: metadata health only" };
+  }
   const tracking: RepairCycleTrackingV1 = {
     steps: 0,
     lastSnapshot: null,
@@ -396,12 +395,6 @@ export async function* advanceRepairCycle(
       if (!didWork && sourceError !== null) {
         return { status: "source_error", detail: sourceError };
       }
-      // The model-disabled bootstrap owns no work step: only its intake,
-      // maintenance and health ran (issue #297).
-      if (bootstrap) {
-        tracking.postDrainAllowed = true;
-        return { status: "idle", detail: bootstrapDetail };
-      }
       tracking.postDrainAllowed = true;
       const wake = yield {
         kind: "waiting",
@@ -428,13 +421,6 @@ export async function* advanceRepairCycle(
       if (record === undefined) {
         return { status: "state_error", detail: "selected record missing" };
       }
-      // A bootstrap execution still reconciles pending candidate-preservation
-      // intents (deterministic, no model), but every other work record is the
-      // ordinary run's: it is never walked here (issue #297).
-      if (
-        bootstrap &&
-        record.intent?.kind !== "candidate_preservation"
-      ) continue;
       if (
         declaredOperationFits(deps, context, record)
       ) {
@@ -447,16 +433,6 @@ export async function* advanceRepairCycle(
       cannotFit = `next operation for ${id} cannot fit`;
     }
     if (selected === null) {
-      // Bootstrap has no work-record walk beyond preservation maintenance.
-      // Its failed source read is still an unhealthy source, never an idle
-      // health pass.
-      if (bootstrap) {
-        if (!didWork && sourceError !== null) {
-          return { status: "source_error", detail: sourceError };
-        }
-        tracking.postDrainAllowed = true;
-        return { status: "idle", detail: bootstrapDetail };
-      }
       // Every remaining record was deferred: matrix ownership, a model start
       // past the horizon, a cooldown or a transient read. None of these stops
       // deterministic work, which this loop keeps running for lower-ranked
