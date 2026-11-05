@@ -30,12 +30,19 @@ this file only says what is left and where to look.
    (`gh api repos/ubiquity/ubq.fi-router/commits/<sha>/check-runs`). If it
    differs, correct the table entry; a wrong name parks every router delivery
    at its two-hour deadline.
-3. Watchdog first filing. After ten metrics cycles on the current runtime,
-   `sentinel report --since 2026-11-05` prints the Thresholds table; the first
-   `Throughput:` issue (label `priority:2`, marker
-   `<!-- sentinel:throughput-watchdog:<id> -->`) should appear on
-   `ubiquity-sentinel/sentinel`. Verify Sentinel picks it up through intake,
-   PR, native review, merge and auto-follow. Kill switch: repository variable
+3. Watchdog issues not admitted (open defect, 2026-11-05 20:30 UTC). The
+   watchdog filed #359 and #360 (label `priority:2`, marker on body line 2).
+   Supervisor run 42097043887 reports for the self target `openIssues 26,
+   admitted 0, skippedIssues []`: intake saw them, admitted neither and
+   recorded no skip reason. A worker was assigned to find the cause in
+   `src/repair/loop-intake.ts` and its filters (App-authored issues? label
+   convention? marker rules?) and to make every non-admission produce a skip
+   row. If that fix is not on `development`, this is the first thing to do:
+   until it lands, the self-improvement loop files issues nobody works on.
+   Related: records for the closed children #324..#339 kept stepping in that
+   run and their candidate PRs #341..#358 were not retired (the
+   `retired_pulls` phase ran in 0 ms); same worker, same question for the
+   closed-issue retirement path. Kill switch for filing: repository variable
    `SENTINEL_SELF_IMPROVE=off`.
 4. Trains on targets whose CI does not run on `sentinel-trains/**` pushes: add
    a push trigger for that ref pattern in the target's CI workflow, or trains
