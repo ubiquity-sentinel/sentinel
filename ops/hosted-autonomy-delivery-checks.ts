@@ -199,7 +199,8 @@ export function deliveryReceiptText(
 
 interface PendingComment {
   readonly surface: HostedAutonomyGitHubV1;
-  readonly issueNumber: number;
+  /** The issue or pull request number the comment is posted on. */
+  readonly number: number;
   readonly body: string;
 }
 
@@ -358,7 +359,7 @@ export async function gateDeliveryChecks(
     if (surface !== null && stage !== null && !alreadyParked) {
       gate.comments.push({
         surface,
-        issueNumber: progressCommentTarget(parked, plan.issueNumber),
+        number: progressCommentTarget(parked, plan.issueNumber),
         body: `${
           progressMarker(record.id, stage.key)
         }\nSentinel merged pull request #${record.target.pr}, but the ${
@@ -369,7 +370,7 @@ export async function gateDeliveryChecks(
             : `ended ${decision.conclusion}`
         }${decision.id === null ? "" : ` (id ${decision.id})`}.${
           reopened === true
-            ? " Sentinel reopened this issue, which the merge had closed."
+            ? ` Sentinel reopened issue #${plan.issueNumber}, which the merge had closed.`
             : ""
         } Merge is not delivery: this repair is parked until the delivery is fixed.`,
       });
@@ -392,14 +393,14 @@ export async function postDeliveryCheckComments(
     let posted = false;
     try {
       posted = await comment.surface.commentIssue?.(
-        comment.issueNumber,
+        comment.number,
         comment.body,
       ) === true;
     } catch {
       posted = false;
     }
     context.actions.push(
-      `delivery-checks:comment:issue=${comment.issueNumber}:${
+      `delivery-checks:comment:on=${comment.number}:${
         posted ? "posted" : "unavailable"
       }`,
     );
