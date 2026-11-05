@@ -14,9 +14,14 @@ candidate recorded in the build ledger. Policy consequences:
   `decideCiGate` read as green. Review was requested at once, no `ci_pending`
   wait was ever written, so the dispatch-based pre-merge CI never fired, and
   PRs #1348, #1353 and #1354 merged with no CI run on their heads (post-merge
-  Gateway CI then failed on `development`). A head whose only checks belong to
-  the closed review-bot list (`coderabbit`) now waits `ci_pending`; the launcher
-  reads it as neither green nor red. A failed bot check still blocks.
+  Gateway CI then failed on `development`). A head is now green only on positive
+  evidence: at least one completed `success` check from the GitHub Actions app
+  (the target's own or dispatched workflow), from no app (legacy shape), or a
+  verified backup-CI stand-in, and nothing failed. Checks from any other app
+  (review bots, scanners, deploy previews) never make a head green; a failed
+  one still blocks. A head with only such checks waits `ci_pending`, which is
+  what makes the dispatch-based pre-merge CI fire; the launcher reads it as
+  neither green nor red.
 - **Protected-path candidates are published for the owner to merge.** A
   candidate changing a configured protected path (ai.ubq.fi `src/auth/`,
   `ops/`) used to park before publication; the only exit, `sentinel:retry`,
