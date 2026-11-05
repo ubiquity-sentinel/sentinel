@@ -5,9 +5,10 @@
  * `none`); finalize reads it from `SENTINEL_UPKEEP_DEFERRAL`, advances the
  * streak stored as one small file on the metrics sidecar ref (the same
  * trusted writer and expected-head write as the throughput record, never the
- * strict repair snapshot), and on the third consecutive deferral publishes
- * one notice through the injected port. The production port is log-only: no
- * ntfy topic or credential exists in this repository.
+ * strict repair snapshot), and on the third consecutive deferral (then once
+ * per three further deferrals) publishes one notice through the injected
+ * port. The production port is the owner issue adapter with the log adapter
+ * as its fallback (`upkeep-deferral-issue.ts`).
  *
  * Advisory: bounded, never throws and never changes the finalize outcome.
  */
@@ -15,7 +16,6 @@ import { createDeadline } from "../github/http.ts";
 import {
   isUpkeepDeferralReason,
   settleUpkeepDeferralStreak,
-  type UpkeepDeferralNoticeV1,
   type UpkeepDeferralReasonV1,
   type UpkeepDeferralSettlementV1,
   type UpkeepDeferralStreakStoreV1,
@@ -23,6 +23,12 @@ import {
 } from "../contracts/upkeep-deferral-streak.ts";
 import type { ThroughputMetricsLedgerV1 } from "../state/throughput-metrics-ledger.ts";
 import type { ThroughputMetricsPortV1 } from "../state/throughput-metrics-store.ts";
+
+export {
+  fallbackUpkeepNoticePort,
+  issueUpkeepNoticePort,
+  logUpkeepNoticePort,
+} from "./upkeep-deferral-issue.ts";
 
 export const UPKEEP_DEFERRAL_ENV = "SENTINEL_UPKEEP_DEFERRAL";
 export const FINALIZE_UPKEEP_BUDGET_MS = 30_000;
@@ -72,32 +78,6 @@ export function metricsUpkeepStreakStore(
   };
 }
 
-/** Log-only notice port: one bounded JSON line and one step-summary line. */
-export function logUpkeepNoticePort(deps: {
-  log?: (line: string) => void;
-  appendSummary?: (line: string) => Promise<void>;
-}): UpkeepNoticePortV1 {
-  const log = deps.log ?? ((line: string) => console.log(line));
-  return {
-    async publish(notice: UpkeepDeferralNoticeV1) {
-      log(JSON.stringify({
-        kind: "sentinel_upkeep_deferral_notice",
-        title: notice.title,
-        reason: notice.reason,
-        runId: notice.runId,
-      }));
-      try {
-        await deps.appendSummary?.(
-          `- ${notice.title}: \`${notice.reason}\` (run ${notice.runId})\n`,
-        );
-      } catch {
-        // The summary is a convenience; the log line is the notice.
-      }
-      return true;
-    },
-  };
-}
-
 export interface FinalizeUpkeepDeferralDepsV1 {
   store: UpkeepDeferralStreakStoreV1;
   notice: UpkeepNoticePortV1;
@@ -107,7 +87,7 @@ export interface FinalizeUpkeepDeferralDepsV1 {
 /** Settle one finalize observation under a bound. Never throws. */
 export async function runFinalizeUpkeepDeferral(
   deps: FinalizeUpkeepDeferralDepsV1,
-  input: { runId: number; observation: string | undefined },
+  input: { runId: number; observation: string | undefined; nowMs?: number },
 ): Promise<
   UpkeepDeferralSettlementV1 | { status: "unobserved"; notified: false }
 > {
@@ -122,7 +102,11 @@ export async function runFinalizeUpkeepDeferral(
       result = await deadline.race(settleUpkeepDeferralStreak({
         store: deps.store,
         notice: deps.notice,
-        observation: { runId: input.runId, reason },
+        observation: {
+          runId: input.runId,
+          reason,
+          ...(input.nowMs === undefined ? {} : { atMs: input.nowMs }),
+        },
       }));
     } catch {
       result = { status: "unavailable", notified: false };
@@ -135,6 +119,9 @@ export async function runFinalizeUpkeepDeferral(
     runId: input.runId,
     status: result.status,
     notified: result.notified,
+    adapter: "adapter" in result && result.adapter !== undefined
+      ? result.adapter
+      : null,
   }));
   return result;
 }
