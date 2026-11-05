@@ -22,6 +22,11 @@ import {
   conflictResolutionAdmissible,
   conflictResolutionRouteOpen,
 } from "./conflict-resolution.ts";
+import {
+  lostConflictCellBinding,
+  lostConflictCellExpired,
+  settleLostConflictCell,
+} from "./conflict-lost-cell.ts";
 import { correctFailedHeadBeforeRefresh } from "./loop-ci-correction.ts";
 import { executeConflictResolutionStep } from "./loop-conflict-resolution.ts";
 import { retryAlreadySatisfiedClosure, retryClosure } from "./loop-closure.ts";
@@ -130,6 +135,12 @@ export async function executeWorkStep(
   // A saved implementation intent is never resubmitted; fail closed.
   if (record.intent !== null && record.intent.kind === "implementation") {
     if (deps.externalImplementations === true) {
+      // A conflict-resolution admission past its cell's evidence expiry can
+      // never be consumed: settle the lost cell instead of deferring forever.
+      if (
+        lostConflictCellExpired(record, deps.clock.now()) &&
+        lostConflictCellBinding(context.snapshot, record) !== null
+      ) return settleLostConflictCell(deps, context, record, "expired");
       return MATRIX_ARTIFACT_DEFERRED;
     }
     return handleImplementationUncertainty(deps, context, record);
