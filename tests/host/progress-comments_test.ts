@@ -100,8 +100,11 @@ Deno.test("progress: only a changed stage of this repository reports", () => {
   const change = progressChanges([started], [opened], REPO);
   assert.equal(change.length, 1);
   assert.equal(change[0].issueNumber, 1);
+  assert.equal(change[0].commentOn, 1258, "a record with a PR comments there");
   assert.equal(change[0].stage.key, "opened:1258:ci_pending");
-  assert.equal(progressChanges([], [started], REPO).length, 1, "a new record");
+  const fresh = progressChanges([], [started], REPO);
+  assert.equal(fresh.length, 1, "a new record");
+  assert.equal(fresh[0].commentOn, 1, "no PR yet: the issue");
   const other = { ...REPO, name: "passport.ubq.fi" };
   assert.deepEqual(progressChanges([started], [opened], other), []);
 });
@@ -154,16 +157,23 @@ function deps(
   };
 }
 
-Deno.test("progress: a stage change posts exactly one comment with its marker", async () => {
+Deno.test("progress: a stage change posts exactly one comment with its marker, on the PR once there is one", async () => {
   const { http, sent } = fakeHttp([{ body: "unrelated human comment" }]);
   const changes = progressChanges([started], [opened], REPO);
   const report = await postProgressComments(deps(http), CONFIG, changes);
   assert.equal(report.posted, 1);
+  const reads = sent.filter((row) => row.method === "GET");
+  assert.equal(
+    reads[0].path,
+    `/repos/${REPO.owner}/${REPO.name}/issues/1258/comments`,
+    "the marker lookup reads the PR's comments",
+  );
   const posts = sent.filter((row) => row.method === "POST");
   assert.equal(posts.length, 1);
   assert.equal(
     posts[0].path,
-    `/repos/${REPO.owner}/${REPO.name}/issues/1/comments`,
+    `/repos/${REPO.owner}/${REPO.name}/issues/1258/comments`,
+    "the comment goes on the pull request, not the issue",
   );
   const body = JSON.parse(posts[0].body!).body as string;
   assert.ok(body.startsWith("Sentinel opened pull request #1258"));
