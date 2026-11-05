@@ -26,6 +26,10 @@ import {
   parseUpkeepDeferralStreakV1,
   type UpkeepDeferralStreakV1,
 } from "../contracts/upkeep-deferral-streak.ts";
+import {
+  parseThroughputWatchdogStateV1,
+  type ThroughputWatchdogStateV1,
+} from "../contracts/throughput-watchdog-state.ts";
 
 /** The metrics sidecar ref; no repair/release snapshot reader touches it. */
 export const THROUGHPUT_METRICS_REF = "refs/heads/sentinel-state/metrics";
@@ -36,6 +40,8 @@ export const THROUGHPUT_DAILY_PATH = `${THROUGHPUT_DIR}/daily.jsonl`;
 /** Consecutive deferred upkeep passes (#327), one small canonical file. */
 export const THROUGHPUT_UPKEEP_STREAK_PATH =
   `${THROUGHPUT_DIR}/upkeep-streak.json`;
+/** The throughput watchdog's filings and cooldowns, one canonical file. */
+export const THROUGHPUT_WATCHDOG_PATH = `${THROUGHPUT_DIR}/watchdog.json`;
 const HOT_PATH = /^throughput\/(\d{4}-\d{2}-\d{2})\.jsonl$/;
 
 export interface ThroughputMetricsLedgerV1 {
@@ -45,6 +51,8 @@ export interface ThroughputMetricsLedgerV1 {
   daily: ThroughputDailySummaryV1[];
   /** Present once finalize recorded an upkeep deferral observation. */
   upkeepStreak?: UpkeepDeferralStreakV1;
+  /** Present once the throughput watchdog recorded an evaluation. */
+  watchdog?: ThroughputWatchdogStateV1;
 }
 
 export const EMPTY_THROUGHPUT_LEDGER: ThroughputMetricsLedgerV1 = {
@@ -92,6 +100,7 @@ export function appendThroughputRecordV1(
       ...(ledger.upkeepStreak === undefined
         ? {}
         : { upkeepStreak: ledger.upkeepStreak }),
+      ...(ledger.watchdog === undefined ? {} : { watchdog: ledger.watchdog }),
     },
   };
 }
@@ -121,6 +130,11 @@ export function encodeThroughputLedgerV1(
       `${canonicalStringify(streak)}\n`,
     );
   }
+  if (ledger.watchdog !== undefined) {
+    const watchdog = parseThroughputWatchdogStateV1(ledger.watchdog);
+    if (watchdog === null) throw new Error("watchdog state is malformed");
+    files.set(THROUGHPUT_WATCHDOG_PATH, `${canonicalStringify(watchdog)}\n`);
+  }
   return files;
 }
 
@@ -129,6 +143,20 @@ function lines(text: string, path: string): string[] {
     throw new Error(`${path} is not newline-terminated JSONL`);
   }
   return text.slice(0, -1).split("\n");
+}
+
+/** One canonical JSON value on one newline-terminated line; else throws. */
+function singleValue<T>(
+  text: string,
+  path: string,
+  parse: (value: unknown) => T | null,
+): T {
+  const [line, ...rest] = lines(text, path);
+  const value = rest.length === 0 ? parse(JSON.parse(line)) : null;
+  if (value === null || canonicalStringify(value) !== line) {
+    throw new Error(`${path} is not one canonical value`);
+  }
+  return value;
 }
 
 /**
@@ -142,16 +170,14 @@ export function decodeThroughputLedgerV1(
   const records: ThroughputMetricsRecordV1[] = [];
   let daily: ThroughputDailySummaryV1[] = [];
   let upkeepStreak: UpkeepDeferralStreakV1 | undefined;
+  let watchdog: ThroughputWatchdogStateV1 | undefined;
   for (const [path, text] of [...files.entries()].sort()) {
     if (path === THROUGHPUT_UPKEEP_STREAK_PATH) {
-      const [line, ...rest] = lines(text, path);
-      const streak = rest.length === 0
-        ? parseUpkeepDeferralStreakV1(JSON.parse(line))
-        : null;
-      if (streak === null || canonicalStringify(streak) !== line) {
-        throw new Error("upkeep streak is not one canonical value");
-      }
-      upkeepStreak = streak;
+      upkeepStreak = singleValue(text, path, parseUpkeepDeferralStreakV1);
+      continue;
+    }
+    if (path === THROUGHPUT_WATCHDOG_PATH) {
+      watchdog = singleValue(text, path, parseThroughputWatchdogStateV1);
       continue;
     }
     if (path === THROUGHPUT_DAILY_PATH) {
@@ -196,7 +222,10 @@ export function decodeThroughputLedgerV1(
   ) {
     throw new Error("metrics surface exceeds its retention bound");
   }
-  return upkeepStreak === undefined
-    ? { records, daily }
-    : { records, daily, upkeepStreak };
+  return {
+    records,
+    daily,
+    ...(upkeepStreak === undefined ? {} : { upkeepStreak }),
+    ...(watchdog === undefined ? {} : { watchdog }),
+  };
 }

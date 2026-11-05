@@ -658,6 +658,14 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.19.0
+      # The self-dependency seal pins the sandbox Node at its platform path
+      # (`SANDBOX_NODE_EXECUTABLE`); without this copy the seal step refuses
+      # and the cell never starts (same copy as matrix_plan and matrix_cell).
+      - name: Expose the pinned Node to the model sandbox
+        run: |
+          set -euo pipefail
+          sudo install -m755 "$(command -v node)" /usr/local/bin/node
+          test "$(/usr/local/bin/node --version)" = "v24.19.0"
       - name: Install locked self-test dependencies
         working-directory: launcher
         run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund --prefix .github/actions/sentinel-app-token
@@ -739,6 +747,16 @@ jobs:
           --allow-env=HOME,PATH,GITHUB_TOKEN,SENTINEL_SUPERVISOR_TOKEN,SENTINEL_SELF_TOKEN,SENTINEL_SELF_TOKEN_MINT_GRANT,SENTINEL_TARGET_INSTALLATION_ID,SENTINEL_SELF_INSTALLATION_ID,SENTINEL_COOLDOWN_MODE,SENTINEL_MERGE_QUEUE,SENTINEL_BACKUP_CI,SENTINEL_MODEL_BASE_URL,SENTINEL_MODEL_ID,SENTINEL_REVIEW_MODEL_ID,SENTINEL_MODEL_FALLBACK,SENTINEL_DEEPSEEK_API_KEY,SENTINEL_APP_INSTALLATION_ID,UOS_AI_TOKEN,NODE_V8_COVERAGE,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_WORKFLOW_REF,GITHUB_JOB \
           src/host/hosted-runtime.ts
 
+      # A cell whose child never wrote its result (a failed setup step) still
+      # uploads one bounded refusal record, which finalize counts `refused`.
+      - name: Record a refused repair cell
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          if [ ! -f .sentinel-repair/result.json ]; then
+            mkdir -p .sentinel-repair
+            printf '%s\n' '{"cellId":"${{ matrix.cellId }}","kind":"repair_cell_refusal","reason":"cell_unavailable","version":"v1"}' > .sentinel-repair/result.json
+          fi
       - name: Upload sealed repair delta
         id: repair_cell_artifact
         if: ${{ !cancelled() }}
@@ -1011,6 +1029,11 @@ jobs:
           SENTINEL_UPKEEP_DEFERRAL: ${{ needs.maintenance.outputs.upkeepDeferral }}
           SENTINEL_DELIVERY_COUNTS: ${{ needs.maintenance.outputs.deliveryCounts }}
           SENTINEL_TIER_COUNTS: ${{ needs.maintenance.outputs.tierCounts }}
+          # Throughput watchdog (self-improvement): a missed threshold files at
+          # most one issue per cycle on this repository for Sentinel to repair.
+          # Default on; set the repository variable SENTINEL_SELF_IMPROVE to
+          # `off` to stop evaluating and filing.
+          SENTINEL_SELF_IMPROVE: ${{ vars.SENTINEL_SELF_IMPROVE || 'on' }}
           # #328: the fan-out plan digest when repository cells ran; finalize
           # authenticates their deltas and applies them in one trusted write.
           SENTINEL_REPAIR_PLAN_DIGEST: ${{ needs.matrix_plan.outputs.hasRepairCells == 'true' && needs.matrix_plan.outputs.repairPlanDigest || '' }}

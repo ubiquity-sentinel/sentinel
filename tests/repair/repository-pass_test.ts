@@ -106,6 +106,12 @@ function artifacts(fanout: RepairFanoutPlanV1, list: unknown[]) {
   }));
 }
 
+/** A record without its advisory #326 step stamp. */
+function unstamped(record: WorkRecordV1): WorkRecordV1 {
+  const { stepInputs: _stamp, ...rest } = record;
+  return rest as WorkRecordV1;
+}
+
 function row(rig: Rig, id: string): WorkRecordV1 {
   const found = rig.state.repair!.work.find((record) => record.id === id);
   assert.ok(found !== undefined, id);
@@ -249,26 +255,30 @@ Deno.test("fan-out: a delta whose delegated base moved is rejected whole while t
   ]);
   assert.equal(rig.state.repairWrites, writes + 1);
   for (const id of ["issue-alpha-0", "issue-alpha-1", "issue-alpha-2"]) {
+    // The stale delta contributed nothing; its records are only handed back
+    // (their stamp removed) so the next plan keeps them trusted.
     assert.deepEqual(
       row(rig, id),
-      before.work.find((record) => record.id === id),
+      unstamped(before.work.find((record) => record.id === id)!),
       "the stale delta contributed nothing",
     );
   }
 
-  // Every delta stale now: nothing is written.
-  const again = rig.state.repairWrites;
+  // Every delta stale now: nothing but stamp hand-backs can be written.
+  const settled = structuredClone(rig.state.repair!);
   const { value: none } = await apply(
     rig,
     second.fanout,
     artifacts(second.fanout, second.envelopes),
   );
-  assert.equal(none.status, "none");
+  assert.deepEqual(none.applied, []);
   assert.deepEqual(none.rejected.map((entry) => entry.reason), [
     "base_moved",
     "base_moved",
   ]);
-  assert.equal(rig.state.repairWrites, again);
+  for (const record of settled.work) {
+    assert.deepEqual(unstamped(row(rig, record.id)), unstamped(record));
+  }
 });
 
 Deno.test("fan-out: unsealed, tampered, rebound, out-of-scope, charging and missing deltas are refused before any write", async () => {
@@ -312,12 +322,24 @@ Deno.test("fan-out: unsealed, tampered, rebound, out-of-scope, charging and miss
     [await sealRepairDeltaV1(outOfScope), alphaCell, "transition_refused"],
     [null, alphaCell, "missing"],
   ];
+  const pristine = { repair: rig.state.repair!, head: rig.state.repairHead };
+  const reset = () => {
+    rig.state.repair = pristine.repair;
+    rig.state.repairHead = pristine.head;
+  };
   for (const [envelope, cellId, reason] of cases) {
+    reset();
     const { value: result } = await apply(rig, fanout, [{ cellId, envelope }]);
-    assert.equal(result.status, "none", reason);
+    assert.deepEqual(result.applied, [], reason);
     assert.deepEqual(result.rejected.map((entry) => entry.reason), [reason]);
+    // Nothing of a refused delta lands; only the planned cells' stamps are
+    // handed back to the trusted path.
+    assert.equal(result.handedBack, 5, reason);
+    for (const record of pristine.repair.work) {
+      assert.deepEqual(unstamped(row(rig, record.id)), unstamped(record));
+    }
   }
-  assert.equal(rig.state.repairWrites, 0);
+  reset();
   // Two deltas for one cell: the second is a duplicate.
   const { value: duplicate } = await apply(
     rig,
@@ -327,7 +349,9 @@ Deno.test("fan-out: unsealed, tampered, rebound, out-of-scope, charging and miss
   assert.deepEqual(duplicate.rejected.map((entry) => entry.reason), [
     "duplicate",
   ]);
-  assert.equal(rig.state.repairWrites, 1, "only the one valid beta delta");
+  assert.deepEqual(duplicate.applied.map((entry) => entry.repository.name), [
+    "beta",
+  ]);
 });
 
 Deno.test("fan-out: a delegated step that needs a GitHub effect is handed back to the trusted path", async () => {

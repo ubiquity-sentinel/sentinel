@@ -50,6 +50,11 @@ export interface FinalizeMetricsFactsV1 {
   /** Owner notices this finalize claimed and published (#327). */
   ownerNoticesSent?: number;
   /**
+   * Throughput watchdog issues this finalize filed (0 or 1); null/absent
+   * when the watchdog was off or its outcome is unknown.
+   */
+  watchdogIssuesFiled?: number | null;
+  /**
    * The maintenance delivery pass's train, CI-run and merge counts (#330),
    * from its step output; null/absent when unobserved.
    */
@@ -219,6 +224,8 @@ export function collectFinalizeMetricsV1(
   if (facts.ownerNoticesSent !== undefined && facts.ownerNoticesSent > 0) {
     collector.addCount("ownerNoticesSent", facts.ownerNoticesSent);
   }
+  const filed = facts.watchdogIssuesFiled ?? null;
+  if (filed !== null) collector.addCount("watchdogIssuesFiled", filed);
   // The planner's refusal reason and ready-unplanned count (#335), from the
   // matrix_plan job's launcher-re-emitted plan diagnostic.
   const refusal = plan?.conclusion === "success"

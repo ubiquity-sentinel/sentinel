@@ -11,7 +11,14 @@ import {
   parseThroughputReportWindowV1,
   renderThroughputReport,
   ThroughputReportRefusal,
+  type ThroughputReportSnapshotV1,
+  type ThroughputReportWindowV1,
 } from "../src/state/throughput-report.ts";
+import type { ThroughputMetricsLedgerV1 } from "../src/state/throughput-metrics-ledger.ts";
+import {
+  evaluateThroughputWatchdogV1,
+  renderThroughputThresholdsV1,
+} from "../src/host/throughput-watchdog.ts";
 import { readRepairLedgerV1 } from "../src/state/state-repair-ledger.ts";
 
 export const REPORT_DEFAULT_REMOTE =
@@ -37,6 +44,30 @@ async function granted(
 function refuse(message: string): never {
   console.error(`sentinel report refused: ${message}\n${REPORT_USAGE}`);
   Deno.exit(2);
+}
+
+/**
+ * The report text: the throughput tables plus the Thresholds table, which
+ * is the watchdog's own evaluation as of the end of `--until` (or now).
+ */
+export function renderSentinelReportV1(
+  ledger: ThroughputMetricsLedgerV1 | null,
+  snapshot: ThroughputReportSnapshotV1 | null,
+  window: ThroughputReportWindowV1,
+): string {
+  const untilEnd = Date.parse(`${window.until}T23:59:59.999Z`);
+  const asOf = Math.min(window.nowMs, untilEnd);
+  const thresholds = renderThroughputThresholdsV1(
+    evaluateThroughputWatchdogV1({
+      records: ledger?.records ?? [],
+      daily: ledger?.daily ?? [],
+      nowMs: asOf,
+    }),
+    asOf,
+  );
+  return `${renderThroughputReport(ledger, snapshot, window)}\n${
+    thresholds.join("\n")
+  }\n`;
 }
 
 export async function cmdReport(opts: Record<string, string>): Promise<void> {
@@ -94,7 +125,7 @@ export async function cmdReport(opts: Record<string, string>): Promise<void> {
       }`,
     );
     console.log(
-      renderThroughputReport(
+      renderSentinelReportV1(
         metrics.value.head === null ? null : metrics.value.ledger,
         snapshot,
         window,
