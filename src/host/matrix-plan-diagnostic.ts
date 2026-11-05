@@ -93,11 +93,15 @@ const DEFERRED = new Set(MATRIX_PLAN_DEFERRED_REASONS);
 export function planDeferredKey(
   outcome: { kind: string; detail?: string },
   waitReason?: string | null,
+  waitPort?: string,
 ): string {
   if (outcome.kind === "progress") {
-    // A capacity refusal writes a bounded wait and reports `progress`. A stale
-    // wait must not override the reason of a current deferral or failure.
-    return waitReason === "ledger_capacity" ? "admission_capacity" : "progress";
+    // Reservation faults and capacity refusals persist a wait as `progress`.
+    // A stale wait must not override a current deferral or failure.
+    return waitReason === "ledger_capacity" || waitReason === "budget_cap" ||
+        waitPort === "budget"
+      ? "admission_capacity"
+      : "progress";
   }
   if (outcome.kind === "blocked") return "blocked";
   if (outcome.kind === "state_error") return "state_error";

@@ -26,6 +26,7 @@ import {
   runtimeSummaryWithPlanRefusal,
 } from "../../src/host/run-summary.ts";
 import { collectFinalizeMetricsV1 } from "../../src/host/throughput-metrics-finalize.ts";
+import { assignTarget } from "../../src/repair/transitions.ts";
 import { DurableGitHubCooldownGate } from "../../src/repair/github-cooldown.ts";
 import {
   FakeClock,
@@ -40,6 +41,11 @@ import { seededSnapshot } from "../repair/loop-rig.ts";
 import { SHA1, T0, workRecord } from "../state/helpers.ts";
 
 const SESSION = { maxDurationMs: 240_000, maxOutputChars: 200_000 };
+
+function readyRecord(id: string, overrides: Record<string, unknown> = {}) {
+  const record = workRecord(id, overrides);
+  return assignTarget(record, { base: SHA1, branch: `sentinel/${id}` }, T0);
+}
 
 function planner(
   work: ReturnType<typeof workRecord>[],
@@ -80,18 +86,17 @@ function planner(
 Deno.test("planner: a start that cannot fit the operation margin refuses as deadline_margin", async () => {
   // 10 minutes left: the planner keeps one 5-minute margin for its handoff
   // and a 4-minute session plus another margin no longer fits.
-  const { deps, options } = planner([workRecord("issue-late")], 10 * 60_000);
+  const { deps, options } = planner([readyRecord("issue-late")], 10 * 60_000);
   const report = await planMatrixWave(deps, options);
   assert.equal(report.prepared, 0);
   assert.deepEqual(report.refusal, {
     reason: "deadline_margin",
-    // The pass stopped before any state read, so the count is unknown.
-    readyUnplanned: null,
+    readyUnplanned: 1,
   });
 });
 
 Deno.test("planner: a pass with no ready record refuses as no_ready_records with a zero count", async () => {
-  const waiting = workRecord("issue-waiting", {
+  const waiting = readyRecord("issue-waiting", {
     wait: { reason: "backoff", since: T0, until: T0 + 3_600_000 },
   });
   const { deps, options } = planner([waiting], 60 * 60_000);
@@ -101,6 +106,156 @@ Deno.test("planner: a pass with no ready record refuses as no_ready_records with
     reason: "no_ready_records",
     readyUnplanned: 0,
   });
+});
+
+Deno.test("planner: deadline diagnostics count ready records without admitting or writing", async () => {
+  const { deps, options } = planner([
+    readyRecord("ready-a"),
+    readyRecord("ready-b"),
+    readyRecord("waiting", {
+      wait: { reason: "backoff", since: T0, until: T0 + 3_600_000 },
+    }),
+  ], 10 * 60_000);
+  const before = canonicalStringify(deps.state.repair);
+  const report = await planMatrixWave(deps, options);
+  assert.deepEqual(report.refusal, {
+    reason: "deadline_margin",
+    readyUnplanned: 2,
+  });
+  assert.equal(canonicalStringify(deps.state.repair), before);
+  assert.equal(deps.state.repairHead, SHA1);
+  assert.equal(deps.github.calls.length, 0);
+  assert.equal(deps.model.requests.length, 0);
+});
+
+Deno.test("planner: disabled model starts still count ready records as provider_unavailable", async () => {
+  const { deps, options } = planner(
+    [readyRecord("provider-disabled")],
+    60 * 60_000,
+  );
+  const before = canonicalStringify(deps.state.repair);
+  const report = await planMatrixWave(deps, {
+    ...options,
+    modelStartsEnabled: false,
+  });
+  assert.deepEqual(report.refusal, {
+    reason: "provider_unavailable",
+    readyUnplanned: 1,
+  });
+  assert.equal(canonicalStringify(deps.state.repair), before);
+  assert.equal(deps.github.calls.length, 0);
+  assert.equal(deps.model.requests.length, 0);
+});
+
+Deno.test("planner: a target wait retains the ready record and its cause through finalize", async () => {
+  const { deps, options } = planner(
+    [readyRecord("source-unavailable")],
+    60 * 60_000,
+  );
+  const recordedDeps = { ...deps, recordWaitCauses: true };
+  deps.github.readIssue = () =>
+    Promise.resolve({
+      ok: false,
+      error: {
+        kind: "unavailable",
+        detail: "upstream detail must not enter metrics",
+      },
+    });
+  const report = await planMatrixWave(recordedDeps, options);
+  assert.equal(report.prepared, 0);
+  assert.deepEqual(report.refusal, {
+    reason: "target_unavailable",
+    readyUnplanned: 1,
+  });
+  const line = matrixPlanDiagnosticLineOf({
+    waveId: options.waveId,
+    prepared: report.prepared,
+    cause: "planner",
+    refusal: report.refusal,
+  });
+  const hosted = scanPlanDiagnostic(JSON.stringify(line), {
+    id: options.waveId,
+  });
+  const summary = runtimeSummaryWithPlanRefusal([
+    JSON.stringify({ ...childSummary(), kind: "hosted_runtime_summary" }),
+    JSON.stringify(hosted),
+  ].join("\n"));
+  const metrics = collectFinalizeMetricsV1({
+    cycle: { runId: 10, attempt: 1 },
+    finalizeStartedAtMs: T0,
+    nowMs: T0 + 1_000,
+    jobs: [{
+      name: "matrix_plan",
+      conclusion: "success",
+      summary,
+      startedAtMs: T0,
+      completedAtMs: T0,
+    }],
+    runSummary: null,
+    repair: deps.state.repair,
+  });
+  assert.equal(metrics.plannerRefusal, "target_unavailable");
+  assert.equal(metrics.counts.readyRecordsNotPlanned, 1);
+  assert.deepEqual(metrics.waitCauses, { "github:unknown:unavailable": 1 });
+  assert(!JSON.stringify(metrics).includes("upstream detail"));
+});
+
+Deno.test("planner: a denied reservation is counted even after it persists a wait", async () => {
+  const { deps, options } = planner(
+    [readyRecord("reservation-unavailable")],
+    60 * 60_000,
+  );
+  const reserve = deps.budget.reserveModelStart.bind(deps.budget);
+  deps.budget.reserveModelStart = () =>
+    Promise.resolve({
+      status: "unavailable",
+      detail: "budget store unavailable",
+    });
+  const report = await planMatrixWave(
+    { ...deps, recordWaitCauses: true },
+    options,
+  );
+  assert.deepEqual(report.refusal, {
+    reason: "reservation_denied",
+    readyUnplanned: 1,
+  });
+  assert.deepEqual(deps.state.repair?.work[0]?.wait?.cause, {
+    port: "budget",
+    status: "none",
+    code: "unavailable",
+  });
+  assert.equal(deps.state.repair?.reservations.length, 0);
+  assert.equal(deps.model.requests.length, 0);
+  // The recorded wait neither changes the retry time nor suppresses a later
+  // admission. Once it expires, this same real planner can prepare the cell.
+  deps.budget.reserveModelStart = reserve;
+  const until = deps.state.repair?.work[0]?.wait?.until;
+  assert.ok(until !== null && until !== undefined && until > deps.clock.now());
+  deps.clock.advance(until - deps.clock.now());
+  const retry = await planMatrixWave({ ...deps, recordWaitCauses: true }, {
+    ...options,
+    waveId: "wave-reservation-retry",
+    plannedAt: deps.clock.now(),
+  });
+  assert.equal(retry.prepared, 1);
+  assert.deepEqual(retry.refusal, { reason: null, readyUnplanned: 0 });
+  assert.equal(deps.state.repair?.reservations.length, 1);
+  assert.equal(deps.state.repair?.work[0]?.intent?.kind, "implementation");
+});
+
+Deno.test("planner: cell capacity explains the ready records left after a partial plan", async () => {
+  const { deps, options } = planner([
+    readyRecord("capacity-a"),
+    readyRecord("capacity-b"),
+  ], 60 * 60_000);
+  const report = await planMatrixWave(deps, { ...options, maxCells: 1 });
+  assert.equal(report.prepared, 1);
+  assert.deepEqual(report.refusal, {
+    reason: "reservation_denied",
+    readyUnplanned: 1,
+  });
+  assert.equal(deps.state.repair?.reservations.length, 1);
+  assert.equal(deps.model.requests.length, 0);
 });
 
 Deno.test("refusal classification: closed reasons and the unplanned count", () => {

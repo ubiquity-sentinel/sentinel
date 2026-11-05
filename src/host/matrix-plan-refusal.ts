@@ -13,20 +13,22 @@ import {
 } from "../contracts/throughput-metrics.ts";
 
 export interface MatrixPlanRefusalV1 {
-  /** null when the pass refused nothing (or only hit the cell ceiling). */
+  /** null when the pass refused nothing or the cause was not observed. */
   reason: PlannerRefusalReasonV1 | null;
-  /** Ready records of the last read left unplanned; null when never read. */
+  /** Records observed ready during this pass but left unplanned; null when never read. */
   readyUnplanned: number | null;
 }
 
 export interface MatrixPlanRefusalFactsV1 {
   prepared: number;
-  /** Ready implementation-start ids of the last state read, or null. */
+  /** Distinct implementation-start ids observed ready during the pass, or null. */
   readyIds: readonly string[] | null;
   /** Task ids that received a cell. */
   plannedTaskIds: ReadonlySet<string>;
   /** The loop stopped because no start fits the operation margin. */
   stoppedByDeadline: boolean;
+  /** No further grant fits the configured/native cell capacity this wave. */
+  cellLimitReached?: boolean;
   /** Model starts are disabled for this run (unreachable model cutoff). */
   modelStartsDisabled: boolean;
   /** Closed `planDeferredKey` histogram of this pass's deferrals. */
@@ -51,10 +53,21 @@ function reasonOf(
     return "deadline_margin";
   }
   if (
-    facts.memoryRefused > 0 ||
+    facts.cellLimitReached === true || facts.memoryRefused > 0 ||
     anyOf(facts.deferredByReason, ["admission_capacity", "memory_refused"])
   ) return "reservation_denied";
-  if (anyOf(facts.deferredByReason, ["cooldown", "admission", "progress"])) {
+  if (
+    anyOf(facts.deferredByReason, [
+      "cooldown",
+      "admission",
+      "progress",
+      "blocked",
+      "state_error",
+      "artifact",
+      "deferred",
+      "other",
+    ])
+  ) {
     return "target_unavailable";
   }
   return null;

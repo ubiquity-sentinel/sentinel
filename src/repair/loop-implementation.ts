@@ -1,4 +1,5 @@
 import { causedWait } from "./loop-wait-cause.ts";
+import type { WorkWaitCauseV1 } from "../contracts/work-wait-cause.ts";
 import {
   isNoTestEvidenceTargetV1,
   NO_CI_AND_NO_LOCAL_VERIFY_DETAIL,
@@ -393,7 +394,14 @@ export async function prepareImplementationStart(
     record.target.pr === null &&
     record.intent === null
   ) {
-    const latestBase = await readBase(deps, record.repository);
+    let baseCause: WorkWaitCauseV1 = {
+      port: "github",
+      status: "unknown",
+      code: "base_unavailable",
+    };
+    const latestBase = await readBase(deps, record.repository, (cause) => {
+      baseCause = cause;
+    });
     observedBase = latestBase ?? undefined;
     if (latestBase === null) {
       return persistWork(
@@ -405,7 +413,7 @@ export async function prepareImplementationStart(
             reason: "unavailable",
             since: now,
             until: now + ISSUE_PREREQUISITE_RETRY_MS,
-          }, { port: "github", status: "unknown", code: "base_unavailable" }),
+          }, baseCause),
           now,
         ),
       );

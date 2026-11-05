@@ -465,9 +465,18 @@ export function semanticRefusalKind(
 export async function readBase(
   deps: RepairCycleDepsV1,
   repository: RepositoryIdentityV1,
+  onUnavailable?: (cause: WorkWaitCauseV1) => void,
 ): Promise<GitSha | null> {
   const config = configFor(deps, repository);
   if (config === null) return null;
   const ref = await deps.github.readRef(`refs/heads/${config.baseBranch}`);
-  return ref.ok && ref.value !== null ? ref.value.sha : null;
+  if (!ref.ok) {
+    onUnavailable?.(waitCauseOfPortError("github", ref.error));
+    return null;
+  }
+  if (ref.value === null) {
+    onUnavailable?.({ port: "github", status: "none", code: "base_missing" });
+    return null;
+  }
+  return ref.value.sha;
 }

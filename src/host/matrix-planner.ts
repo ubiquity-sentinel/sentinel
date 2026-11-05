@@ -553,7 +553,7 @@ export async function planMatrixWave(
   let noTestEvidenceParked = 0;
   // #335: why ready records stayed unplanned (see matrix-plan-refusal.ts).
   let stoppedByDeadline = false;
-  let lastReadyIds: string[] | null = null;
+  let observedReadyIds: Set<string> | null = null;
   // A CI correction is granted only where its cell survives a rollback
   // (`ciCorrectionRouteOpen`): in process, and in hosted runs from generation
   // 78, whose rollback target isolates the cell.
@@ -568,6 +568,47 @@ export async function planMatrixWave(
   // rollback target R80 isolates it.
   const preReviewRouteOpen = preReviewCiFixRouteOpen(deps);
 
+  // Keep records observed ready even when this pass later writes their wait.
+  // The deadline-only read below is advisory: it cannot reconcile or mutate.
+  const observeReady = (
+    snapshot: RepairStateSnapshotV1,
+    now: number,
+    cutoff: LegacyCutoff,
+  ): Set<string> => {
+    const conflictCapReached = conflictResolutionCapReached(snapshot, now);
+    const isReady = (id: string) => {
+      const record = snapshot.work.find((work) => work.id === id);
+      if (record === undefined) return false;
+      if (
+        conflictCapReached && pendingConflictResolution(record.intent) !== null
+      ) return false;
+      // A decomposed parent is superseded by its children; grant the parts,
+      // never the whole issue again.
+      if (decompositionChildrenOf(snapshot, record.id).length > 0) {
+        return false;
+      }
+      const config = configForRepository(deps, record.repository);
+      return config !== null &&
+        !noTestEvidence(config, snapshot, record) &&
+        isMatrixImplementationReadyV1(
+          record,
+          snapshot,
+          config,
+          now,
+          ciRouteOpen,
+          conflictRouteOpen,
+          preReviewRouteOpen,
+          cutoff,
+        );
+    };
+    const ready = rankEligibleWork(snapshot, deps.configs, now).ordered.filter(
+      isReady,
+    );
+    observedReadyIds ??= new Set<string>();
+    for (const id of ready) observedReadyIds.add(id);
+    return new Set(ready);
+  };
+
   while (cells.length < limit) {
     const readAt = deps.clock.now();
     if (
@@ -579,12 +620,24 @@ export async function planMatrixWave(
       )
     ) {
       stoppedByDeadline = true;
+      const read = await deps.state.readRepair();
+      if (read.ok && read.value.status === "found") {
+        observeReady(
+          read.value.snapshot,
+          deps.clock.now(),
+          deps.legacyReviewCutoff,
+        );
+      }
       break;
     }
     const context = await loadRepairContext(deps, bounds);
-    if (context === null) break;
+    if (context === null) {
+      noteDeferred(undefined, "state_error");
+      break;
+    }
     const now = deps.clock.now();
     if (now >= bounds.modelCutoff || now >= bounds.runDeadline) {
+      observeReady(context.snapshot, now, context.legacyReviewCutoff);
       stoppedByDeadline = true;
       break;
     }
@@ -695,34 +748,13 @@ export async function planMatrixWave(
     attempted += parkOutcome.parked;
     noTestEvidenceParked += parkOutcome.parked;
     if (parkOutcome.stateError) break;
-    const isReady = (id: string) => {
-      const record = context.snapshot.work.find((work) => work.id === id);
-      if (record === undefined) return false;
-      if (
-        conflictCapReached && pendingConflictResolution(record.intent) !== null
-      ) return false;
-      // A decomposed parent is superseded by its children; grant the parts,
-      // never the whole issue again.
-      if (decompositionChildrenOf(context.snapshot, record.id).length > 0) {
-        return false;
-      }
-      const config = configForRepository(deps, record.repository);
-      return config !== null &&
-        !noTestEvidence(config, context.snapshot, record) &&
-        isMatrixImplementationReadyV1(
-          record,
-          context.snapshot,
-          config,
-          now,
-          ciRouteOpen,
-          conflictRouteOpen,
-          preReviewRouteOpen,
-          context.legacyReviewCutoff ?? null,
-        );
-    };
-    lastReadyIds = ranked.ordered.filter(isReady);
+    const readyIds = observeReady(
+      context.snapshot,
+      now,
+      context.legacyReviewCutoff,
+    );
     const nextId = ranked.ordered.find((id) =>
-      !attemptedIds.has(id) && !takeoverRefused.has(id) && isReady(id)
+      !attemptedIds.has(id) && !takeoverRefused.has(id) && readyIds.has(id)
     );
     if (nextId === undefined) break;
     attemptedIds.add(nextId);
@@ -822,10 +854,12 @@ export async function planMatrixWave(
       { existingHeadContinuation: true },
     );
     if (outcome.kind !== "prepared") {
-      const waitReason = context.snapshot.work.find((entry) =>
-        entry.id === record.id
-      )?.wait?.reason;
-      noteDeferred(record, planDeferredKey(outcome, waitReason));
+      const wait = context.snapshot.work.find((entry) => entry.id === record.id)
+        ?.wait;
+      noteDeferred(
+        record,
+        planDeferredKey(outcome, wait?.reason, wait?.cause?.port),
+      );
       // An ordinary fresh-base refresh is progress, not a failed admission.
       // Reconsider that same task against its persisted current base.
       if (outcome.kind === "progress") {
@@ -891,9 +925,10 @@ export async function planMatrixWave(
     deferredRecords,
     refusal: classifyMatrixPlanRefusalV1({
       prepared: cells.length,
-      readyIds: lastReadyIds,
+      readyIds: observedReadyIds === null ? null : [...observedReadyIds],
       plannedTaskIds: new Set(cells.map((cell) => cell.taskId as string)),
       stoppedByDeadline,
+      cellLimitReached: cells.length >= limit,
       modelStartsDisabled: bounds.modelCutoff === Number.NEGATIVE_INFINITY,
       deferredByReason,
       memoryRefused,

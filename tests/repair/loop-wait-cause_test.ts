@@ -46,7 +46,10 @@ class Unavailable503Github extends FakeGithub {
   }
 }
 
-async function issueRead503(recordWaitCauses: boolean) {
+async function prepareWait(
+  recordWaitCauses: boolean,
+  github: FakeGithub = new Unavailable503Github(),
+) {
   const record = workRecord("issue-503");
   const state = new MemoryState();
   state.repair = seededSnapshot([record]);
@@ -61,7 +64,7 @@ async function issueRead503(recordWaitCauses: boolean) {
     state,
     configs,
     controllerSha: SHA1,
-    github: new Unavailable503Github(),
+    github,
     githubCooldown: new DurableGitHubCooldownGate({ state, clock }),
     incidents: new FakeIncidents({ summaries: [] }),
     replay: new FakeReplay(),
@@ -95,7 +98,7 @@ async function issueRead503(recordWaitCauses: boolean) {
 }
 
 Deno.test("an HTTP 503 issue read records a 5xx github cause on its unavailable wait", async () => {
-  const stored = await issueRead503(true);
+  const stored = await prepareWait(true);
   assert.equal(stored?.wait?.reason, "unavailable");
   assert.deepEqual(stored?.wait?.cause, {
     port: "github",
@@ -108,9 +111,42 @@ Deno.test("an HTTP 503 issue read records a 5xx github cause on its unavailable 
   assert(!text.includes("issue read failed"));
 });
 
+Deno.test("an unavailable base read keeps the concrete port failure on its wait", async () => {
+  const github = new FakeGithub({ baseSha: SHA1 });
+  github.readRef = () =>
+    Promise.resolve({
+      ok: false,
+      error: {
+        kind: "rate_limited",
+        detail: "upstream detail https://example.invalid/private",
+      },
+    });
+  const stored = await prepareWait(true, github);
+  assert.equal(stored?.wait?.reason, "unavailable");
+  assert.deepEqual(stored?.wait?.cause, {
+    port: "github",
+    status: "429",
+    code: "rate_limited",
+  });
+  assert(!JSON.stringify(stored).includes("example.invalid"));
+  const legacy = await prepareWait(false, github);
+  assert.equal(Object.hasOwn(legacy?.wait ?? {}, "cause"), false);
+});
+
+Deno.test("a missing base is distinguished from an HTTP failure", async () => {
+  const github = new FakeGithub({ baseSha: SHA1 });
+  github.readRef = () => Promise.resolve({ ok: true, value: null });
+  const stored = await prepareWait(true, github);
+  assert.deepEqual(stored?.wait?.cause, {
+    port: "github",
+    status: "none",
+    code: "base_missing",
+  });
+});
+
 Deno.test("without the host's enablement the same wait keeps its prior shape", async () => {
   // A rollback target whose parser predates `cause` must read this state.
-  const stored = await issueRead503(false);
+  const stored = await prepareWait(false);
   assert.equal(stored?.wait?.reason, "unavailable");
   assert.equal(Object.hasOwn(stored!.wait!, "cause"), false);
 });
