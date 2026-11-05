@@ -4,7 +4,8 @@
  * of deterministic daily rollups in one JSONL file. Only the trusted finalize
  * writer changes it, through `src/state/throughput-metrics-store.ts`.
  *
- * Retention: at most `THROUGHPUT_HOT_MAX_RECORDS` hot records. Appending past
+ * Retention: finalize folds completed UTC days into the cold tier. At most
+ * `THROUGHPUT_HOT_MAX_RECORDS` hot records remain; appending past
  * the bound folds the oldest hot record into its day's rollup (so nothing is
  * counted twice and nothing silently vanishes from the totals), and at most
  * `THROUGHPUT_DAILY_MAX_SUMMARIES` rollups are retained (older ones remain
@@ -72,11 +73,13 @@ const sameCycle = (
 
 /**
  * Append one cycle record. A cycle already present in the hot tier is a
- * `duplicate` (a rerun finalize never writes twice). Pure.
+ * `duplicate` (a rerun finalize never writes twice). Finalize also enables
+ * daily compaction; the pure count-bound append remains usable alone. Pure.
  */
 export function appendThroughputRecordV1(
   ledger: ThroughputMetricsLedgerV1,
   input: ThroughputMetricsRecordV1,
+  options: { compactCompletedDays?: boolean } = {},
 ): { status: "appended" | "duplicate"; ledger: ThroughputMetricsLedgerV1 } {
   const record = parseThroughputMetricsRecordV1(input);
   if (ledger.records.some((row) => sameCycle(row, record))) {
@@ -84,7 +87,13 @@ export function appendThroughputRecordV1(
   }
   const records = [...ledger.records, record].sort(order);
   const daily = new Map(ledger.daily.map((row) => [row.date, row]));
-  while (records.length > THROUGHPUT_HOT_MAX_RECORDS) {
+  const cutoff = options.compactCompletedDays
+    ? throughputDateV1(record.finishedAtMs)
+    : null;
+  while (
+    records.length > THROUGHPUT_HOT_MAX_RECORDS ||
+    (cutoff !== null && throughputDateV1(records[0].finishedAtMs) < cutoff)
+  ) {
     const oldest = records.shift()!;
     const date = throughputDateV1(oldest.finishedAtMs);
     daily.set(date, foldThroughputRecordV1(daily.get(date) ?? null, oldest));

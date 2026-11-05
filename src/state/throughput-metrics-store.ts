@@ -10,7 +10,10 @@
  */
 import type { GitSha } from "../contracts/brands.ts";
 import { portError, portOk, type PortResultV1 } from "../contracts/ports.ts";
-import type { ThroughputMetricsRecordV1 } from "../contracts/throughput-metrics.ts";
+import {
+  parseThroughputMetricsRecordV1,
+  type ThroughputMetricsRecordV1,
+} from "../contracts/throughput-metrics.ts";
 import {
   type GitStateStoreOptions,
   type OpContext,
@@ -244,10 +247,13 @@ export async function appendThroughputMetricsV1(
   attempts = 3,
 ): Promise<ThroughputAppendResultV1> {
   try {
+    const validated = parseThroughputMetricsRecordV1(record);
     for (let attempt = 0; attempt < attempts; attempt++) {
       const read = await port.read();
       if (!read.ok) return { status: "unavailable", detail: read.error.kind };
-      const next = appendThroughputRecordV1(read.value.ledger, record);
+      const next = appendThroughputRecordV1(read.value.ledger, validated, {
+        compactCompletedDays: true,
+      });
       if (next.status === "duplicate") {
         return { status: "duplicate", head: read.value.head };
       }
