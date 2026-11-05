@@ -48,6 +48,7 @@ import {
   outputBoundCells,
   settleOutputBoundCells,
 } from "./hosted-autonomy-output-bound.ts";
+import { missingCells, settleLostCells } from "./hosted-autonomy-lost-cell.ts";
 
 export class CurrentMatrixRecoveryIntegrityFailure extends Error {
   constructor(
@@ -522,6 +523,8 @@ async function recoverProducerWithinBudget(
   let unfinished = 0;
   // Output-bound overruns settled as interrupted-output failures.
   let outputBound = 0;
+  // Lost conflict cells settled charged, one observability line each.
+  const lostCells: string[] = [];
   const selected = new Set<string>();
   const selectedTasks = new Set<string>();
   for (const config of ports.configs) {
@@ -634,6 +637,31 @@ async function recoverProducerWithinBudget(
         return { result: null, deferred: true };
       }
       outputBound += overBound.size;
+      checkDeadline();
+    }
+    // This producer's native run is confirmed completed above and its
+    // complete artifact listing holds nothing for a `missing` cell: a marked
+    // conflict resolution among them is a lost cell, settled charged.
+    const missing = missingCells(report, cellResults);
+    if (missing.size > 0) {
+      await custody();
+      const settledLost = await settleLostCells(
+        cycle,
+        cells,
+        missing,
+        deadlineAt,
+        before.snapshot,
+        saved.execution.runId,
+      ).catch((error: unknown) => {
+        throw integrityFailure ?? error;
+      });
+      if (integrityFailure !== null) throw integrityFailure;
+      if (settledLost === false) {
+        writes.attempted = true;
+        onDeferred();
+        return { result: null, deferred: true };
+      }
+      lostCells.push(...settledLost);
       checkDeadline();
     }
     // A cell this consumer just consumed leaves its exact candidate in
@@ -837,6 +865,7 @@ async function recoverProducerWithinBudget(
         ...(outputBound > 0
           ? [`current-matrix:output-bound:${outputBound}`]
           : []),
+        ...lostCells,
       ],
       revisions: [],
     },

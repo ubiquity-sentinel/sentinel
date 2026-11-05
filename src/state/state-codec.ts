@@ -83,6 +83,7 @@ export function recordFiles(
     add("attempt_memory", repair.attemptMemory);
     add("memory_lessons", repair.lessons);
     add("target_capability", repair.targetCapabilities ?? []);
+    add("repair_tier_scan", repair.tierScans ?? []);
   } else {
     const release = next as ReleaseStateSnapshotV1;
     const add = (recordKind: string, rows: readonly unknown[]) => {
@@ -339,6 +340,9 @@ export async function readCommitTree(
         ) as MemoryLessonsRecordV1[],
         ...(records.targetCapabilities.length === 0 ? {} : {
           targetCapabilities: orderRecords(records.targetCapabilities),
+        }),
+        ...(records.tierScans.length === 0 ? {} : {
+          tierScans: orderRecords(records.tierScans),
         }),
       };
       snapshot = parseRepairStateSnapshotV1(repair);

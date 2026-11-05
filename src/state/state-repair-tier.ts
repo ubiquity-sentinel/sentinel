@@ -41,6 +41,10 @@ import {
   takeDemotionBudget,
 } from "./state-repair-tier-plan.ts";
 import {
+  planRetiredPullScan,
+  TIER_SCAN_DIRECTORY,
+} from "./state-repair-tier-scan.ts";
+import {
   planReleasePromotions,
   supersedeReleaseRequest,
 } from "./state-repair-tier-release.ts";
@@ -210,7 +214,11 @@ function preservationMessage(
   const logical = (tree: ReadonlyMap<string, string>) => {
     const out = new Map<string, string>();
     for (const [path, sha] of tree) {
-      if (path === "manifest.json" || path === REPAIR_COLD_LAYOUT_PATH) {
+      // The scan row is tier-transition memory, not a moved record.
+      if (
+        path === "manifest.json" || path === REPAIR_COLD_LAYOUT_PATH ||
+        path.startsWith(`${TIER_SCAN_DIRECTORY}/`)
+      ) {
         continue;
       }
       const key = logicalPath(path);
@@ -263,12 +271,15 @@ export async function buildRepairTierCommit(
   if (!catalog.ok) return catalog;
   const priorTree = await listAll(io, op, head);
   if (!priorTree.ok) return priorTree;
+  // The once-per-generation retired-pull cold scan (work rows only).
+  const scan = await planRetiredPullScan(io, op, catalog.value, prior, policy);
+  if (!scan.ok) return scan;
 
   // Promotion needs cold content only when an open issue names a cold family
   // (or a hot record depends on one); the common pass reads no cold blob.
   const coldNames = new Set(catalog.value.entries.map((entry) => entry.path));
-  let needsCold = policy.promoteAll === true &&
-    catalog.value.entries.length > 0;
+  let needsCold = (policy.promoteAll === true &&
+    catalog.value.entries.length > 0) || scan.value.seeds.length > 0;
   const wanted = [
     ...policy.openIssueWorkIds,
     ...prior.work.flatMap((row) => row.dependencies),
@@ -311,7 +322,7 @@ export async function buildRepairTierCommit(
       prior,
       cold.value,
       policy,
-      release.seeds,
+      [...release.seeds, ...scan.value.seeds],
     );
     const openCold = new Set(
       cold.value.releaseRequests.filter((row) => row.status === "open").map((
@@ -395,7 +406,8 @@ export async function buildRepairTierCommit(
       move.from === "releaseRequests" && openHot.has(move.id)
     ).length;
   const deferred = budgeted.deferred + releaseDeferred;
-  if (promoted.length === 0 && demoted.length === 0) {
+  const scanMarker = scan.value.marker;
+  if (promoted.length === 0 && demoted.length === 0 && scanMarker === null) {
     return portOk({ status: "unchanged", deferred });
   }
 
@@ -419,6 +431,9 @@ export async function buildRepairTierCommit(
     `100644 ${move.sha}\t${move.to}`,
   ]);
   lines.push(`100644 ${manifestSha}\tmanifest.json`);
+  if (scanMarker !== null) {
+    lines.push(`100644 ${scanMarker.sha}\t${scanMarker.path}`);
+  }
   // The layout marker exists exactly while the cold tier holds a record.
   const coldAfter = catalog.value.entries.length - promoted.length +
     demoted.length;

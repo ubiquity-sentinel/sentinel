@@ -1,7 +1,8 @@
 /**
  * Post-merge delivery reads for the hosted GitHub surface (sentinel #337):
  * the check runs and commit statuses on one exact merge commit, and the one
- * trusted progress comment a delivery park posts. Every listing must be
+ * trusted progress comment a delivery park posts, and the close of a retired
+ * record's own pull request. Every listing must be
  * complete and bound to the commit; anything else reads as null.
  */
 import type { HostedDeliveryCheckV1 } from "./hosted-autonomy-types.ts";
@@ -162,6 +163,18 @@ export function createHostedDeliveryReads(
       if (reopened === null || typeof reopened !== "object") return false;
       const fields = reopened as Record<string, unknown>;
       return fields["number"] === number && fields["state"] === "open";
+    },
+    async closePull(number: number): Promise<boolean> {
+      if (!Number.isSafeInteger(number) || number <= 0) return false;
+      const closed = await request(
+        "PATCH",
+        `/repos/${scope}/pulls/${number}`,
+        { state: "closed" },
+      );
+      if (closed === null || typeof closed !== "object") return false;
+      const fields = closed as Record<string, unknown>;
+      return fields["number"] === number && fields["state"] === "closed" &&
+        fields["merged"] !== true;
     },
     async commentIssue(number: number, body: string): Promise<boolean> {
       if (!Number.isSafeInteger(number) || number <= 0) return false;
