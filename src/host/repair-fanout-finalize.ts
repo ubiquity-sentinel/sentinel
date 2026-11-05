@@ -17,7 +17,9 @@
  *   revision and generation, the cell and the delta's seal.
  *
  * A cell without a completed producer or artifact counts as missing; a cell
- * failing any check counts as unauthenticated. The opened deltas are then
+ * whose authenticated artifact is its bounded refusal record counts as
+ * refused; a cell failing any check counts as unauthenticated. None of these
+ * ever fails finalize. The opened deltas are then
  * applied by `applyRepairDeltas` in one expected-head write. Bounded; nothing
  * here reserves, charges or starts anything.
  */
@@ -30,7 +32,10 @@ import {
 } from "../contracts/hosted-supervisor.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import type { Clock } from "../contracts/ports.ts";
-import { decodeRepairDeltaArtifactV1 } from "../contracts/repair-delta.ts";
+import {
+  decodeRepairDeltaArtifactV1,
+  parseRepairCellRefusalV1,
+} from "../contracts/repair-delta.ts";
 import { createDeadline, type HttpTransportV1 } from "../github/http.ts";
 import type { RepairCycleDepsV1 } from "../repair/loop-types.ts";
 import {
@@ -236,10 +241,16 @@ export async function authenticateRepairFanout(
     try {
       if (rows.length !== 1 || producers.length !== 1) refuse();
       provenance(rows[0]);
-      const marker = await cellMarker(reader, producers[0], input, cell.cellId);
       const envelope = decodeRepairDeltaArtifactV1(
         only(await archive(rows[0]), "result.json"),
       );
+      // A bounded refusal (written by the cell, or by its workflow when the
+      // child never ran) carries no state: it is counted, never applied.
+      if (parseRepairCellRefusalV1(envelope)?.cellId === cell.cellId) {
+        cells.push({ cellId: cell.cellId, envelope: null, refused: true });
+        continue;
+      }
+      const marker = await cellMarker(reader, producers[0], input, cell.cellId);
       if (
         typeof envelope !== "object" || envelope === null ||
         (envelope as Json).digest !== marker.deltaDigest

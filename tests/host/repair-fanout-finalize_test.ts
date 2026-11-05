@@ -129,8 +129,8 @@ async function actionsRun(
         generation: RUNTIME.generation,
         cellId: cell.cellId,
         deltaDigest: (envelope as RepairDeltaEnvelopeV1).digest,
-        transitions: (envelope as RepairDeltaEnvelopeV1).delta.transitions
-          .length,
+        transitions: (envelope as RepairDeltaEnvelopeV1).delta?.transitions
+          .length ?? 0,
       }) + "\n",
     );
     await upload(
@@ -272,11 +272,17 @@ Deno.test("finalize applies two authenticated repair deltas in one write and rej
     { repository: GAMMA, reason: "unauthenticated" },
   ]);
   assert.equal(rig.state.repairWrites, 1, "one expected-head write");
+  // The tampered delta contributed nothing: its record is only handed back
+  // to the trusted serial pass (its advisory stamp removed).
+  const { stepInputs: _stamp, ...gammaBefore } = before.work.find((row) =>
+    row.id === "issue-gamma-200"
+  )!;
   assert.deepEqual(
     rig.state.repair!.work.find((row) => row.id === "issue-gamma-200"),
-    before.work.find((row) => row.id === "issue-gamma-200"),
+    gammaBefore,
     "the tampered delta contributed nothing",
   );
+  assert.equal(outcome.handedBack, 1);
   for (const id of ["issue-alpha-0", "issue-alpha-1", "issue-beta-100"]) {
     assert.equal(
       rig.state.repair!.work.find((row) => row.id === id)?.wait?.reason,
@@ -315,9 +321,60 @@ Deno.test("finalize authenticates nothing for a foreign plan digest or a foreign
       runtime: { revision: SHA1, generation: RUNTIME.generation },
     })
   );
-  assert.equal(producer.value?.status, "none");
+  assert.deepEqual(producer.value?.applied, []);
   assert.deepEqual(producer.value?.rejected.map((entry) => entry.reason), [
     "unauthenticated",
   ]);
-  assert.equal(rig.state.repairWrites, 0);
+  assert.equal(producer.value?.handedBack, 1, "only the stamp hand-back");
+});
+
+Deno.test("finalize counts a refused and a missing repository cell, hands their records back and never fails", async () => {
+  const [ALPHA, BETA, GAMMA] = REPOS;
+  const rig = makeRig([
+    reviewing(ALPHA, 0),
+    reviewing(BETA, 100),
+    reviewing(GAMMA, 200),
+  ]);
+  const { fanout, envelopes } = await fanOut(rig);
+  const cellOf = (name: string) =>
+    fanout.cells.find((cell) => cell.repository.name === name)!.cellId;
+  // beta's setup failed: the workflow uploaded its bounded refusal record;
+  // gamma's producer never uploaded anything.
+  envelopes.set("beta", {
+    cellId: cellOf("beta"),
+    kind: "repair_cell_refusal",
+    reason: "cell_unavailable",
+    version: "v1",
+  });
+  envelopes.delete("gamma");
+  const run = await actionsRun(rig, fanout, envelopes);
+  const { value: outcome } = await captured(async () =>
+    runRepairFanoutFinalize({
+      token: TOKEN,
+      http: run.http,
+      clock: rig.clock,
+      state: rig.state,
+      run: RUN,
+      runtime: RUNTIME,
+      planDigest: await repairFanoutPlanDigestV1(fanout),
+      deadline: rig.clock.now() + 60 * MINUTE,
+    })
+  );
+  assert.ok(outcome !== null);
+  assert.equal(outcome.status, "applied");
+  assert.deepEqual(outcome.applied.map((entry) => entry.repository.name), [
+    "alpha",
+  ]);
+  assert.deepEqual(
+    outcome.rejected.map((entry) => [entry.repository.name, entry.reason])
+      .sort(),
+    [["beta", "refused"], ["gamma", "missing"]],
+  );
+  assert.equal(outcome.handedBack, 2);
+  for (const id of ["issue-beta-100", "issue-gamma-200"]) {
+    const row = rig.state.repair!.work.find((record) => record.id === id)!;
+    assert.equal(row.stepInputs, undefined, id);
+    assert.equal(row.nextStep, "review", id);
+  }
+  assert.equal(rig.state.repairWrites, 1);
 });
