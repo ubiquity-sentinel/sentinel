@@ -42,7 +42,29 @@ export interface IssueSourceErrorContextV1 {
   issueNumber?: number;
 }
 
-/** One positively identified issue excluded by wire or work-record validation. */
+/**
+ * Why issue intake listed an open issue and created no work record for it,
+ * although it has none yet: an App-filed CI outage notice, a native parent
+ * or an issue with open native blockers, a cooling GitHub installation, an
+ * unreadable base, or the run deadline before its base read. Every such
+ * issue is reported, so no non-admission is ever silent.
+ */
+export const ISSUE_NOT_ADMITTED_REASONS = [
+  "ci_outage_notice",
+  "native_parent",
+  "native_open_blockers",
+  "github_cooldown",
+  "base_unavailable",
+  "run_deadline",
+] as const;
+
+export type IssueNotAdmittedReasonV1 =
+  typeof ISSUE_NOT_ADMITTED_REASONS[number];
+
+/**
+ * One positively identified issue excluded by wire or work-record validation,
+ * or listed open and not admitted by intake (`not_admitted`).
+ */
 export type SkippedIssueV1 = {
   number: number;
   code: "bound_exceeded";
@@ -53,6 +75,10 @@ export type SkippedIssueV1 = {
   number: number;
   code: "record_parse_error";
   reason: ParseIssueCode;
+} | {
+  number: number;
+  code: "not_admitted";
+  reason: IssueNotAdmittedReasonV1;
 };
 
 export interface PortErrorV1 {

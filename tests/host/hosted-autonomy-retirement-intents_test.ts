@@ -34,7 +34,13 @@ Deno.test("hosted autonomy: retirement status preserves real state and accountin
       body: { number: 63, state: "closed", merged: false },
       retires: true,
     },
-    { name: "open", body: { number: 63, state: "open", merged: false } },
+    // An open pull on a closed issue retires the record; the retired-pull
+    // pass closes Sentinel's own pull on the next pass.
+    {
+      name: "open",
+      body: { number: 63, state: "open", merged: false },
+      retires: true,
+    },
     { name: "merged", body: { number: 63, state: "closed", merged: true } },
     {
       name: "wrong number",
