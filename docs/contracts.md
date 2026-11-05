@@ -494,7 +494,8 @@ accounting or merge authority.
   the records waiting in `backoff`/`unavailable` at the cycle's end. Keys are
   `port:status:code` from the record's `wait.cause`, or `legacy:none:<reason>`
   for a wait written without one. It has at most six keys; further keys fold
-  into `other:none:other`. The daily rollup does not fold it.
+  into `other:none:other`. The daily rollup sums it per key under the same bound
+  (absent until a folded record carried it).
 - Planner refusal (#335): `planMatrixWave` classifies each pass
   (`src/host/matrix-plan-refusal.ts`) and reports a `refusal` with a `reason`
   and a `readyUnplanned` count. `readyUnplanned` counts the ready records of the
@@ -512,7 +513,12 @@ accounting or merge authority.
   holds, issue prerequisite and base-read waits and admission-unavailable waits.
   It never stores bodies, URLs or raw text. The work-record parser accepts waits
   with or without it. A wait without a cause serializes exactly as it did
-  before.
+  before. Writes are gated by `recordWaitCauses`, which the hosted hosts set
+  from `HOSTED_RECORD_WAIT_CAUSES` (on) under the installed rollback-target
+  rule. A new revision installs with a model-disabled bootstrap that writes no
+  record (#336), and automatic rollback happens only when that bootstrap fails.
+  A runtime that cannot parse `cause` therefore never reads a state this
+  revision wrote.
 - `parseThroughputMetricsRecordV1` rejects unknown and missing keys at every
   level. It checks that `finishedAtMs >= startedAtMs` and that the canonical
   form is at most 1,024 bytes. Before any structural check it scans the whole

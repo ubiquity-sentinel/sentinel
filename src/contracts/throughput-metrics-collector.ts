@@ -11,14 +11,13 @@
  */
 
 import {
+  addWaitCauseCountV1,
   isThroughputWaitCauseKeyV1,
   parseThroughputMetricsRecordV1,
   PLANNER_REFUSAL_REASONS_V1,
   type PlannerRefusalReasonV1,
   THROUGHPUT_COUNTERS_V1,
   THROUGHPUT_PHASES_V1,
-  THROUGHPUT_WAIT_CAUSE_KEYS,
-  THROUGHPUT_WAIT_CAUSE_OTHER,
   type ThroughputCounterV1,
   type ThroughputCycleIdV1,
   type ThroughputMetricsRecordV1,
@@ -92,19 +91,8 @@ export function createMetricsCollectorV1(): MetricsCollectorV1 {
       if (!isThroughputWaitCauseKeyV1(key)) {
         throw new Error("invalid wait cause key");
       }
-      const causes: Record<string, number> = waitCauses ??= {};
-      if (n === 0) return;
       // One slot stays reserved for the fold key, so at most the bound.
-      const named =
-        Object.keys(causes).filter((existing) =>
-          existing !== THROUGHPUT_WAIT_CAUSE_OTHER
-        ).length;
-      const slot = Object.hasOwn(causes, key) ||
-          key === THROUGHPUT_WAIT_CAUSE_OTHER ||
-          named < THROUGHPUT_WAIT_CAUSE_KEYS - 1
-        ? key
-        : THROUGHPUT_WAIT_CAUSE_OTHER;
-      causes[slot] = nonnegative((causes[slot] ?? 0) + n, "wait cause count");
+      addWaitCauseCountV1(waitCauses ??= {}, key, n);
     },
     snapshot({ cycle, startedAtMs, finishedAtMs }) {
       return parseThroughputMetricsRecordV1({
