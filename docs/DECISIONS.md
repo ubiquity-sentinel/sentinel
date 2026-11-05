@@ -4542,6 +4542,21 @@ evaluation as a Thresholds table. Kill switch: repository variable
 accounting, custody and auto-follow gates are unchanged; the watchdog has no
 model access and no state authority beyond the metrics sidecar.
 
+## 2026-11-05: two integration lanes on development
+
+Owner decision (2026-11-05): the throughput lane (this session) and the
+hanging-PR lane may both push to `development` and advance
+`sentinel-supervisor`. Rule: each lane merges the current `development` into
+its candidate, validates the merged result, and pushes fast-forward only;
+whichever candidate is CI-green last installs, through auto-follow when the
+workflow files are unchanged or through that lane's manual advance when they
+changed. Neither lane rewrites the other's history or force-moves the
+launcher. The other owner answers of the same day: the deferral-streak notice
+is delivered as an owner issue (see the entry recorded with that change);
+repository cells are widened beyond observe-only records, with every write
+still owned by finalize; and this session reads the Passport and router
+repositories to record the exact required-for-delivery check names.
+
 ## 2026-11-05: throughput watchdog guardrails, second set
 
 Owner decision (2026-11-05, "improve"): the first guardrail set in the entry
