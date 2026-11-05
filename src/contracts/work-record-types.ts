@@ -246,6 +246,20 @@ export interface StepInputsStampV1 {
   deadline: number;
 }
 
+/**
+ * How the pass that settles a retired record's own pull request settled it
+ * (the record was retired because its source issue closed): `closed` when
+ * Sentinel commented on and closed its own still-open, unmerged pull request;
+ * `merged`, `closed_elsewhere` and `not_own` when there was nothing for
+ * Sentinel to close. Additive and ABSENT on every record written before it
+ * existed; an absent value means the pull request was not yet settled.
+ */
+export interface RetiredPullClosureV1 {
+  pr: number;
+  outcome: "closed" | "merged" | "closed_elsewhere" | "not_own";
+  at: number;
+}
+
 export interface WorkRecordV1 {
   version: "v1";
   kind: "work";
@@ -281,4 +295,6 @@ export interface WorkRecordV1 {
   updatedAt: number;
   /** Optional last settled step fingerprint; absent on legacy records. */
   stepInputs?: StepInputsStampV1;
+  /** Optional settlement of a retired record's own pull request. */
+  retiredPullClosure?: RetiredPullClosureV1;
 }

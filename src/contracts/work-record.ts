@@ -32,6 +32,7 @@ import {
 } from "./validation.ts";
 import { parseWorkWaitCauseV1 } from "./work-wait-cause.ts";
 import type {
+  RetiredPullClosureV1,
   SelectionUrgencyV1,
   StepInputsStampV1,
   WorkBlockerV1,
@@ -102,7 +103,8 @@ const COUNTERS_KEYS = ["attempts", "retries", "reviewRounds"] as const;
 /** Additive counter keys absent from rows written before they existed. */
 const COUNTERS_OPTIONAL_KEYS = ["stalled", "timeouts"] as const;
 /** Additive record keys absent from rows written before they existed. */
-const OPTIONAL_KEYS = ["stepInputs"] as const;
+const OPTIONAL_KEYS = ["stepInputs", "retiredPullClosure"] as const;
+const RETIRED_PULL_CLOSURE_KEYS = ["pr", "outcome", "at"] as const;
 const STEP_INPUTS_KEYS = ["digest", "deadline"] as const;
 
 export function parseWorkRecordV1(input: unknown): WorkRecordV1 {
@@ -398,6 +400,29 @@ export function parseWorkRecordV1(input: unknown): WorkRecordV1 {
     ...(obj.stepInputs === undefined
       ? {}
       : { stepInputs: parseStepInputs(obj.stepInputs, "$.stepInputs") }),
+    ...(obj.retiredPullClosure === undefined ? {} : {
+      retiredPullClosure: parseRetiredPullClosure(
+        obj.retiredPullClosure,
+        "$.retiredPullClosure",
+      ),
+    }),
+  };
+}
+
+function parseRetiredPullClosure(
+  input: unknown,
+  path: string,
+): RetiredPullClosureV1 {
+  const obj = expectRecord(input, path);
+  expectExactKeys(obj, RETIRED_PULL_CLOSURE_KEYS, path);
+  return {
+    pr: expectPositiveInt(obj.pr, `${path}.pr`),
+    outcome: expectEnum(
+      obj.outcome,
+      ["closed", "merged", "closed_elsewhere", "not_own"],
+      `${path}.outcome`,
+    ),
+    at: expectTimestamp(obj.at, `${path}.at`),
   };
 }
 
@@ -520,6 +545,7 @@ export type {
   IncompleteOpKindV1,
   NextStepV1,
   OperationFailureV1,
+  RetiredPullClosureV1,
   SelectionUrgencyV1,
   StepInputsStampV1,
   TaskSourceKindV1,
