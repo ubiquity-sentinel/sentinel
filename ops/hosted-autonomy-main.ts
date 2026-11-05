@@ -5,7 +5,11 @@ import {
   writeHostedMigrationOutput,
 } from "./hosted-autonomy-compatibility.ts";
 import { emitHostedParkSummary } from "./hosted-autonomy-summary.ts";
-import { writeQueueCustodyOutput } from "./hosted-autonomy-queue-output.ts";
+import {
+  upkeepDeferralReason,
+  writeQueueCustodyOutput,
+  writeUpkeepDeferralOutput,
+} from "./hosted-autonomy-queue-output.ts";
 import { createHostedQueueCoordinator } from "./hosted-autonomy-queue-host.ts";
 import { createMaintenancePublicationFor } from "../src/host/maintenance-existing-pr-publication.ts";
 import { DurableGitHubCooldownGate } from "../src/repair/github-cooldown.ts";
@@ -33,6 +37,7 @@ import {
   HistoricalQuarantineIncomplete,
   isHardAutonomyFailure,
   maintenanceFailureCategory,
+  skipped,
 } from "./hosted-autonomy-state.ts";
 import { createHostedAutonomyGitHub } from "./hosted-autonomy-github.ts";
 import {
@@ -118,14 +123,32 @@ export async function emitMemoryDigest(state: StateReadView): Promise<void> {
   }
 }
 
-export async function runHostedAutonomyMain(input?: {
+export interface HostedAutonomyMainInputV1 {
   /** Trusted in-process test transport; native checkout identity remains mandatory. */
   env: Readonly<Record<string, string | undefined>>;
   deps: HostedAutonomyDepsV1;
   compatibility?: HostedMaintenanceCompatibilityFixture;
-}): Promise<number> {
+}
+
+export async function runHostedAutonomyMain(
+  input?: HostedAutonomyMainInputV1,
+): Promise<number> {
   const env = (key: string) =>
     input === undefined ? readEnv(key) : input.env[key] ?? null;
+  // A missing output reads as no deferral; the result line stays authoritative.
+  await writeUpkeepDeferralOutput(env("GITHUB_OUTPUT"), null);
+  const result = await runHostedAutonomyMainResult(input, env);
+  await writeUpkeepDeferralOutput(
+    env("GITHUB_OUTPUT"),
+    upkeepDeferralReason(result),
+  );
+  return report(result);
+}
+
+async function runHostedAutonomyMainResult(
+  input: HostedAutonomyMainInputV1 | undefined,
+  env: (key: string) => string | null,
+): Promise<HostedAutonomyResultV1> {
   // Missing output and every failure before custody are closed at the workflow boundary.
   await writeQueueCustodyOutput(env("GITHUB_OUTPUT"), false);
   await writeHostedMigrationOutput(env("GITHUB_OUTPUT"), null);
@@ -146,7 +169,7 @@ export async function runHostedAutonomyMain(input?: {
     checkoutHead: facts.head,
     checkoutClean: facts.clean,
   });
-  if (!validated) return report(failed("identity_rejected", null));
+  if (!validated) return failed("identity_rejected", null);
   const runFromVerifiedSource = (deps: HostedAutonomyDepsV1) =>
     runHostedAutonomy({
       ...deps,
@@ -166,7 +189,7 @@ export async function runHostedAutonomyMain(input?: {
     apiToken === null || apiToken.length === 0 ||
     selfToken === null || selfToken.length === 0
   ) {
-    return report(failed("identity_rejected", null));
+    return failed("identity_rejected", null);
   }
   const compatibility = async (
     state: StateReadView,
@@ -238,7 +261,7 @@ export async function runHostedAutonomyMain(input?: {
         } finally {
           finish();
         }
-        return report(disposition);
+        return disposition;
       }
       // One backup CI consumer for every surface (spec §11.4, §11.8): the
       // lower-only mode and the committed targets; absent, all reads native.
@@ -375,17 +398,17 @@ export async function runHostedAutonomyMain(input?: {
         kind: "sentinel_autonomy_failure_detail",
         category: maintenanceFailureCategory(error),
       }));
-      return report(failed("unexpected_failure", error.beforeHead));
+      return failed("unexpected_failure", error.beforeHead);
     }
     if (error instanceof CurrentMatrixRecoveryIntegrityFailure) {
       console.log(JSON.stringify({
         kind: "sentinel_autonomy_failure_detail",
         category: maintenanceFailureCategory(error),
       }));
-      return report({
+      return {
         ...failed("unexpected_failure", error.beforeHead),
         appliedHead: error.appliedHead,
-      });
+      };
     }
     if (isDeferredCurrentMatrixHistoryBudget(error)) {
       // Availability, not integrity: the walk wrote nothing after its bound,
@@ -394,7 +417,7 @@ export async function runHostedAutonomyMain(input?: {
         kind: "sentinel_current_matrix_deferred",
         detail: CURRENT_MATRIX_HISTORY_DEADLINE_MESSAGE,
       }));
-      result = {
+      return {
         kind: "hosted_autonomy",
         status: "skipped",
         reason: "deferred_matrix_history_budget",
@@ -403,7 +426,6 @@ export async function runHostedAutonomyMain(input?: {
         actions: ["matrix-history:deferred"],
         revisions: [],
       };
-      return report(result);
     }
     // Bounded diagnostic: only a fixed category code from this codebase's
     // own failure taxonomy is echoed; no raw error text can reach the log.
@@ -412,7 +434,20 @@ export async function runHostedAutonomyMain(input?: {
       category: maintenanceFailureCategory(error),
     }));
     if (error instanceof HistoricalQuarantineIncomplete) {
-      return report(failed("historical_quarantine_incomplete", null));
+      // Only a changed or conflicting custody refusal fails closed. Every
+      // other incomplete upkeep pass wrote nothing, so it is a bounded
+      // deferral: prepare, planning and delivery continue this run.
+      if (error.integrity) {
+        return failed("historical_quarantine_incomplete", null);
+      }
+      console.log(JSON.stringify({
+        kind: "sentinel_autonomy_deferred",
+        reason: "historical_quarantine_deferred",
+        category: "historical_quarantine_incomplete",
+      }));
+      return skipped("deferred_historical_quarantine", null, [
+        "historical-matrix:deferred",
+      ]);
     }
     result = {
       kind: "hosted_autonomy",
@@ -431,7 +466,7 @@ export async function runHostedAutonomyMain(input?: {
       category: maintenanceFailureCategory(error),
     }));
   }
-  return report(result);
+  return result;
 }
 
 export function report(result: HostedAutonomyResultV1): number {

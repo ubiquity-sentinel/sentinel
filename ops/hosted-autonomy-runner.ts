@@ -103,7 +103,7 @@ const PHASES: readonly PhaseV1[] = [
 function integrityFault(error: unknown): boolean {
   return error instanceof CurrentMatrixRecoveryIntegrityFailure ||
     error instanceof ClosedCWaveRecoveryIntegrityFailure ||
-    error instanceof HistoricalQuarantineIncomplete;
+    (error instanceof HistoricalQuarantineIncomplete && error.integrity);
 }
 
 /**

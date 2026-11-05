@@ -41,6 +41,7 @@ export type HostedAutonomyReasonV1 =
   | "identity_rejected"
   | "historical_quarantine_incomplete"
   | "deferred_matrix_history_budget"
+  | "deferred_historical_quarantine"
   | "deferred_unexpected_error"
   | "unexpected_failure";
 
