@@ -65,6 +65,29 @@ export function isPassportDeployCheck(
     );
 }
 
+/**
+ * Check runs a review bot reports on a pull request head. They are not CI:
+ * live, every Sentinel pull request on `ubiquity/ai.ubq.fi` from 2026-10-27
+ * carried one `CodeRabbit` check completed `skipped` and nothing else (its
+ * `Gateway CI` runs only when dispatched or once the pull request is merged),
+ * and that lone skipped check read as green CI, so #1348, #1353 and #1354
+ * were reviewed and merged on heads no CI ever ran on. Closed trusted policy
+ * keyed by producer name, matched case-insensitively; a repository slug or a
+ * candidate cannot add to it.
+ */
+const REVIEW_BOT_CHECK_NAMES: ReadonlySet<string> = new Set([
+  "coderabbit",
+]);
+
+/**
+ * Whether `name` is a review bot's check (not CI evidence). Such a check is
+ * still judged by the gate (its failure stays red); it only never counts as
+ * the evidence that CI ran on the head.
+ */
+export function isReviewBotCheck(name: string): boolean {
+  return REVIEW_BOT_CHECK_NAMES.has(name.trim().toLowerCase());
+}
+
 /** One observation split into the gate set and retained evidence. */
 export interface MergeGateCheckSelectionV1 {
   /** Checks that decide the gate (the target's own CI observations). */
