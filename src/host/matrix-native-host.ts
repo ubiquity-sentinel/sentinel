@@ -163,6 +163,10 @@ export async function runActionsMatrixHost(
               prepared: planned.prepared,
               attempted: planned.attempted,
               deferred: planned.deferred,
+              // Every pass names its deferrals, not only a zero-cell one.
+              deferredByReason: planned.diagnostic?.deferredByReason ??
+                planned.deferredByReason,
+              deferredRecords: planned.deferredRecords,
               cause: "planner",
               diagnostic: planned.diagnostic,
               refusal: planned.refusal,

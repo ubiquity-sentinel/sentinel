@@ -146,6 +146,20 @@ export interface MatrixPlanRepositoryLineV1 {
   notReadyByReason: Record<string, number>;
 }
 
+/**
+ * One deferred record of a planner pass (#335): the exact record the pass
+ * left unplanned and its closed deferral key, so every unplanned ready record
+ * is named, not only counted. No detail text, head or reservation is carried.
+ */
+export interface MatrixPlanDeferredRecordV1 {
+  taskId: string;
+  repository: string;
+  reason: string;
+}
+
+/** At most this many deferred records ride one line (the rest are counted). */
+export const MAX_PLAN_DEFERRED_RECORDS = 48;
+
 /** The child's line (exact keys; `scanPlanDiagnostic` re-parses it). */
 export interface MatrixPlanDiagnosticLineV1 {
   kind: typeof MATRIX_PLAN_DIAGNOSTIC_KIND;
@@ -160,6 +174,8 @@ export interface MatrixPlanDiagnosticLineV1 {
   /** #335 (optional: an older child omits both). */
   plannerRefusal?: MatrixPlanRefusalV1["reason"];
   readyUnplanned?: number | null;
+  /** #335 per-record deferrals (optional: an older child omits it). */
+  deferredRecords?: MatrixPlanDeferredRecordV1[];
 }
 
 /** The launcher's re-emitted advisory: only re-parsed, closed content. */
@@ -178,6 +194,8 @@ export interface HostedMatrixPlanDiagnosticV1 {
   /** #335: present only when the child line carried a valid refusal. */
   plannerRefusal?: MatrixPlanRefusalV1["reason"];
   readyUnplanned?: number | null;
+  /** #335: present only when the child line carried valid deferred records. */
+  deferredRecords?: MatrixPlanDeferredRecordV1[];
 }
 
 const LINE_KEYS = [
@@ -193,6 +211,10 @@ const LINE_KEYS = [
 ];
 /** Optional #335 keys; a line carries both or neither. */
 const REFUSAL_KEYS = ["plannerRefusal", "readyUnplanned"];
+/** Optional #335 per-record key. */
+const DEFERRED_RECORDS_KEY = "deferredRecords";
+const DEFERRED_RECORD_KEYS = ["reason", "repository", "taskId"];
+const TASK_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/;
 const REPOSITORY_KEYS = ["notReadyByReason", "repository", "skippedByReason"];
 const MAX_LINE_CHARS = 16_384;
 const MAX_REPOSITORIES = 32;
@@ -222,6 +244,7 @@ export function matrixPlanDiagnosticLineOf(input: {
   attempted?: number;
   deferred?: number;
   deferredByReason?: Record<string, number>;
+  deferredRecords?: readonly MatrixPlanDeferredRecordV1[];
   cause: MatrixPlanDiagnosticCauseV1;
   diagnostic?: MatrixPlanDiagnosticV1;
   refusal?: MatrixPlanRefusalV1;
@@ -253,6 +276,15 @@ export function matrixPlanDiagnosticLineOf(input: {
     ...(input.refusal === undefined ? {} : {
       plannerRefusal: input.refusal.reason,
       readyUnplanned: input.refusal.readyUnplanned,
+    }),
+    ...(input.deferredRecords === undefined ? {} : {
+      deferredRecords: input.deferredRecords
+        .slice(0, MAX_PLAN_DEFERRED_RECORDS)
+        .map((row) => ({
+          taskId: row.taskId,
+          repository: row.repository,
+          reason: planDeferredKeyOf(row.reason),
+        })),
     }),
   };
 }
@@ -289,13 +321,19 @@ function parseLine(
   const refusal = Object.hasOwn(value, "plannerRefusal")
     ? parseMatrixPlanRefusalV1(value.plannerRefusal, value.readyUnplanned)
     : undefined;
+  const deferredRecords = Object.hasOwn(value, DEFERRED_RECORDS_KEY)
+    ? parseDeferredRecords(value[DEFERRED_RECORDS_KEY])
+    : undefined;
   if (
     !exactKeys(
       value,
-      refusal === undefined
-        ? LINE_KEYS
-        : [...LINE_KEYS, ...REFUSAL_KEYS].sort(),
-    ) || refusal === null || value.waveId !== waveId ||
+      [
+        ...LINE_KEYS,
+        ...(refusal === undefined ? [] : REFUSAL_KEYS),
+        ...(deferredRecords === undefined ? [] : [DEFERRED_RECORDS_KEY]),
+      ].sort(),
+    ) || refusal === null || deferredRecords === null ||
+    value.waveId !== waveId ||
     (value.cause !== "planner" && value.cause !== "queue_custody_idle") ||
     !isCount(value.prepared, MaxItems.snapshotRecords) ||
     !isCount(value.attempted, MaxItems.snapshotRecords) ||
@@ -337,7 +375,32 @@ function parseLine(
       plannerRefusal: refusal.reason,
       readyUnplanned: refusal.readyUnplanned,
     }),
+    ...(deferredRecords === undefined ? {} : { deferredRecords }),
   };
+}
+
+/** Bounded per-record deferrals with closed reasons, or null when malformed. */
+function parseDeferredRecords(
+  value: unknown,
+): MatrixPlanDeferredRecordV1[] | null {
+  if (!Array.isArray(value) || value.length > MAX_PLAN_DEFERRED_RECORDS) {
+    return null;
+  }
+  const rows: MatrixPlanDeferredRecordV1[] = [];
+  for (const row of value) {
+    if (
+      !isRecord(row) || !exactKeys(row, DEFERRED_RECORD_KEYS) ||
+      typeof row.taskId !== "string" || !TASK_ID.test(row.taskId) ||
+      typeof row.repository !== "string" || !SLUG.test(row.repository) ||
+      typeof row.reason !== "string" || !DEFERRED.has(row.reason)
+    ) return null;
+    rows.push({
+      taskId: row.taskId,
+      repository: row.repository,
+      reason: row.reason,
+    });
+  }
+  return rows;
 }
 
 /**
