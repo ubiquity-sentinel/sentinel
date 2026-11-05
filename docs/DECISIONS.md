@@ -1,5 +1,26 @@
 # Sentinel decisions
 
+## ai.ubq.fi source, auth, ops and tooling are ordinary work (2026-11-05)
+
+Owner directive (2026-11-05, "remove the policy"): the gateway's protected-path
+list no longer covers its source, authentication code (`src/auth/`,
+`src/api-keys.ts`, `src/api-key-policy.ts`, `src/codex/auth*.ts`,
+`src/config.ts`, `src/runtime-config.ts`, `src/kv.ts`), operations scripts
+(`ops/`, `scripts/verify.sh` and the other verification scripts, `tools/lint/`)
+or tooling configuration (`deno.json`, `deno.lock`, `package.json`, `bun.lock`,
+`bunfig.toml`, `tsconfig*.json`, `knip.json`, `.prettierrc*`,
+`file-size-baseline.json`). A Sentinel candidate changing them merges
+autonomously once it has a completed current-head native review with no
+unresolved P0 and green current-head CI, like any other change. Still
+protected for ai.ubq.fi: `.env`, `.data/`, `.release/`, `.kv-migration/`,
+`.github/workflows/`, `AGENTS.md`, `docs/DECISIONS.md`, the replay consumer
+scripts, `tests/helpers/sentinel-recorded-upstream.ts`, `src/sentinel/` and
+`src/codex/supervisor-secret.ts`; those publish as owner-landing PRs (or park
+unpublished for workflows) under the entry below. The 2026-10-24 basis for
+approving held CI runs is unchanged: workflows stay protected, and the gateway
+workflow runs with `contents: read` and no secrets. Passport and the generic
+template lists are unchanged.
+
 ## Hanging target pull requests: six delivery defects corrected (2026-11-05)
 
 Audit of the eight open Sentinel pull requests on `ubiquity/ai.ubq.fi` (#1329,

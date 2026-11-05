@@ -53,14 +53,18 @@ Deno.test("owner landing policy: protected source publishes, CI-executable paths
   assert.equal(ciExecutablePath("src/auth/session.ts"), false);
 });
 
-Deno.test("owner landing policy: the gateway's auth change publishes, its workflow change parks", () => {
+Deno.test("owner landing policy: the gateway's auth change is ordinary, its Sentinel code lands for the owner, its workflow change parks", () => {
   const gateway = selectTrustedTargetPolicyV1(createLocalRepositoryConfig(), {
     owner: "ubiquity",
     name: "ai.ubq.fi",
   });
+  // Owner directive 2026-11-05: the gateway's auth code is ordinary work.
   assert.deepEqual(ownerLandingTouch(gateway, ["src/auth/login.ts"]), {
+    kind: "none",
+  });
+  assert.deepEqual(ownerLandingTouch(gateway, ["src/sentinel/probe.ts"]), {
     kind: "owner",
-    paths: ["src/auth/"],
+    paths: ["src/sentinel/"],
   });
   assert.deepEqual(
     ownerLandingTouch(gateway, [".github/workflows/deno-deploy.yml"]),
