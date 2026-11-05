@@ -1,4 +1,4 @@
-#!/usr/bin/env -S deno run --allow-run=gh
+#!/usr/bin/env -S deno run --allow-read --allow-run=gh
 /**
  * sentinel - explicit operator access to ubiquity-sentinel/sentinel GitHub Actions.
  *
@@ -8,12 +8,15 @@
  * `development`.
  *
  * Usage:
+ *   sentinel report --since <UTC date> [--until <UTC date>] [--metrics <file>]
  *   sentinel status [--json]
  *   sentinel dispatch <observe|supervisor|repair>
  *   sentinel wait <observe|supervisor|repair> [--timeout-min N] [--dispatch]
  *   sentinel run <observe|supervisor> [--timeout-min N]
  *   sentinel receipts <run-id> [--grep <pattern>]
  */
+
+import { reportFromFile } from "./sentinel-report.ts";
 
 const REPO = "ubiquity-sentinel/sentinel";
 
@@ -512,6 +515,9 @@ async function main(): Promise<void> {
   const command = argv[0];
   const opts = parseArgs(argv.slice(1));
   switch (command) {
+    case "report":
+      console.log(await reportFromFile(opts));
+      break;
     case "status":
       await cmdStatus(opts.json === "true");
       break;
@@ -537,7 +543,9 @@ async function main(): Promise<void> {
       await cmdReceipts(Number(opts._), opts.grep);
       break;
     default:
-      console.error("usage: sentinel status|dispatch|wait|run|receipts ...");
+      console.error(
+        "usage: sentinel report|status|dispatch|wait|run|receipts ...",
+      );
       Deno.exit(2);
   }
 }
