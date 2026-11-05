@@ -4418,3 +4418,39 @@ all accepted deltas in one expected-head write through the existing writer;
 a rejected delta writes nothing and is recomputed next pass. The serial
 repair job steps only the records the plan leaves to the trusted path. The
 deadline, the five-minute margin and accounting are unchanged.
+
+## 2026-11-05: throughput watchdog (self-improvement)
+
+Owner request (2026-11-05): let Sentinel work on its own throughput. Sentinel
+already repairs itself through the ordinary issue → PR → native review → merge
+→ auto-follow install loop; this entry closes the feedback side.
+
+Finalize (trusted stage only) evaluates the threshold table in
+`src/host/throughput-watchdog-thresholds.ts` over the metrics sidecar plus the
+cycle's own record: maintenance+repair median ≤ 8 min over the latest 30
+cycles (#324); repair median ≤ 5 min over cycles with `recordsRead` ≥ 60
+(#326); bootstrap median ≤ 5 min over the last 3 (#336); no cycle with ready
+work, no planner refusal and zero cells (#324/#335); refresh commits per merge
+≤ 1 over 7 days (#329); target CI runs per merge ≤ 3 over 7 days (#330);
+owner notices informational only (#327). Each verdict is `met`, `missed` or
+`insufficient_data`; missing data is never `missed` (fewer than 10 cycles, or
+3 for bootstrap, or under 7 days / no merges for weekly ratios).
+
+For a missed threshold, finalize files through the existing trusted App issue
+port one issue on `ubiquity-sentinel/sentinel` with the marker
+`<!-- sentinel:throughput-watchdog:<id> -->` on the second body line, no skip
+marker and label `priority:2`, carrying the measurement, window, cycle count,
+metric fields, the #340 child it derives from and a "what to investigate"
+section. Sentinel then repairs it like any issue and the merged fix
+self-installs. Guardrails: at most one new issue per cycle; none while any
+watchdog issue, or an open PR referencing one, is open; a 7-day re-file
+cooldown after an observed close, recorded in `throughput/watchdog.json` on
+the metrics ref by the same expected-head non-force writer; edits only when
+the measured number changes by more than 10%; an issue whose recording write
+was lost is found by its marker and adopted; a repeated finalize of the same
+cycle acts once; a 60 s bound; it never throws into the run. The cycle record
+carries `watchdogIssuesFiled`, and `sentinel report` prints the same
+evaluation as a Thresholds table. Kill switch: repository variable
+`SENTINEL_SELF_IMPROVE=off` (default on). Review, CI, P0, task-acceptance,
+accounting, custody and auto-follow gates are unchanged; the watchdog has no
+model access and no state authority beyond the metrics sidecar.
