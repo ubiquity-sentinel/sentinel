@@ -111,7 +111,8 @@ Deno.test("closed C recovery: real mixed ingestion preserves charges and rehydra
               : "sources/ubiquity-ai.ubq.fi");
           const path = request.repository.name === "sentinel" || number === 4
             ? "repair.txt"
-            : "deno.json";
+            : "src/sentinel/probe.ts";
+          await Deno.mkdir(source + "/src/sentinel", { recursive: true });
           await Deno.writeTextFile(source + "/" + path, "candidate\n");
           await checked(source, ["add", path], r.env);
           await checked(source, ["commit", "-q", "-m", "candidate"], r.env);
@@ -362,7 +363,7 @@ Deno.test("closed C recovery: real mixed ingestion preserves charges and rehydra
       ).length,
       3,
     );
-    // A protected `deno.json` change is published for its owner to merge
+    // A protected `src/sentinel/` change is published for its owner to merge
     // (2026-11-05 owner-landing decision): it is preserved like any
     // candidate and flagged, never parked before publication.
     const protectedRow = first.dispositions.find((row) =>
@@ -378,7 +379,7 @@ Deno.test("closed C recovery: real mixed ingestion preserves charges and rehydra
     const protectedWork = settled.value.snapshot.work.find((row) =>
       row.id === protectedRow.taskId
     )!;
-    assert.deepEqual(protectedWork.ownerLanding?.paths, ["deno.json"]);
+    assert.deepEqual(protectedWork.ownerLanding?.paths, ["src/sentinel/"]);
     assert.equal(
       closedCWaveHandledReservations(settled.value.snapshot, binding).size,
       5,
@@ -655,7 +656,7 @@ Deno.test("closed C recovery: real mixed ingestion preserves charges and rehydra
       row.id.endsWith("ai.ubq.fi-1")
     )!;
     assert.equal(ownerLanding.intent, null);
-    assert.deepEqual(ownerLanding.ownerLanding?.paths, ["deno.json"]);
+    assert.deepEqual(ownerLanding.ownerLanding?.paths, ["src/sentinel/"]);
     const newRetry = ready.value.snapshot.work.find((row) =>
       row.id.endsWith("ai.ubq.fi-2")
     )!;
