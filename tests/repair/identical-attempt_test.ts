@@ -28,7 +28,11 @@ import {
   attemptInputsForRecordV1,
   identicalAttemptRefusalV1,
 } from "../../src/repair/identical-attempt.ts";
-import { candidateBranch } from "../../src/repair/keys.ts";
+import { conflictMarker } from "../../src/repair/conflict-resolution.ts";
+import {
+  baseRefreshIntentKey,
+  candidateBranch,
+} from "../../src/repair/keys.ts";
 import { DurableGitHubCooldownGate } from "../../src/repair/github-cooldown.ts";
 import { prepareImplementationStart } from "../../src/repair/loop-implementation.ts";
 import type {
@@ -297,6 +301,42 @@ Deno.test("a changed candidate head or runtime revision is distinct", async () =
   assert.equal(identicalAttemptRefusalV1(snapshot, record, SHA3), null);
   const moved = { ...record, target: { ...record.target, head: SHA3 } };
   assert.equal(identicalAttemptRefusalV1(snapshot, moved, SHA1), null);
+});
+
+Deno.test("a conflict resolution at a moved tip is distinct; the same tip stays identical", async () => {
+  const record = loopedRecord();
+  const snapshot0 = seededSnapshot([record], {
+    reviews: [rejection("fix it")],
+  });
+  const resolving = (mergeBase: typeof SHA2): WorkRecordV1 => ({
+    ...record,
+    intent: {
+      kind: "base_refresh",
+      key: baseRefreshIntentKey(7, HEAD, mergeBase),
+      startedAt: T0,
+      branch: BRANCH,
+      expectedHead: HEAD,
+      observedBase: mergeBase,
+      pr: 7,
+      requestId: null,
+      resultId: null,
+      failure: conflictMarker(mergeBase, T0),
+    },
+  });
+  // The prior charged resolution ran against tip SHA2 (target.base stays
+  // SHA1 until a resolution is published).
+  const prior = resolving(SHA2);
+  assert.equal(attemptInputsForRecordV1(snapshot0, prior, SHA1).baseTip, SHA2);
+  const family = await familyWith(record, priorRow(snapshot0, prior));
+  const snapshot = { ...snapshot0, attemptMemory: [family] };
+  assert.notEqual(
+    identicalAttemptRefusalV1(snapshot, resolving(SHA2), SHA1),
+    null,
+  );
+  assert.equal(
+    identicalAttemptRefusalV1(snapshot, resolving(SHA3), SHA1),
+    null,
+  );
 });
 
 Deno.test("historical attempt memory without inputs parses and never matches", async () => {

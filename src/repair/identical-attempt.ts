@@ -44,6 +44,10 @@ import type { PriorAttemptFactV1 } from "../contracts/ports.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import {
+  conflictResolutionInFlight,
+  pendingConflictResolution,
+} from "./conflict-resolution.ts";
 import { correctionFindings } from "./loop-review-records.ts";
 import { isPassportWorkTrial } from "./passport-work-trial.ts";
 
@@ -69,9 +73,15 @@ export function attemptInputsForRecordV1(
   record: WorkRecordV1,
   runtimeSha: GitSha,
 ): AttemptInputsV1 {
-  const baseTip = record.target.base;
+  // A conflict resolution runs against its marked merge base, not the old
+  // `target.base` it stays on until publication: a moved tip is a distinct
+  // attempt (pending refresh intent before admission, in-flight marker on
+  // the admitted implementation intent when its inputs are recorded).
+  const baseTip = pendingConflictResolution(record.intent) ??
+    conflictResolutionInFlight(record.intent) ?? record.target.base;
+  // The candidate patch stays the candidate head over its own base.
   const patchDigest = attemptPatchDigestV1({
-    base: baseTip,
+    base: record.target.base,
     head: record.target.head,
   });
   const findingsDigest = attemptFindingsDigestV1(
