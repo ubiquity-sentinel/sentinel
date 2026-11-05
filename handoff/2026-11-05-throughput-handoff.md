@@ -10,11 +10,10 @@ this file only says what is left and where to look.
   sixteen #340 children, the throughput watchdog (self-improvement loop with
   the second guardrail set) and the fan-out corrections. Last observed cycle
   with fan-out: supervisor run 42027706441, green end to end.
-- Two pending worktree deliveries may still land from the previous session's
-  workers: the upkeep-deferral notice as an owner issue, and wider repository
-  cell delegation. If they are not on `development`, their worktree branches
-  are `worktree-agent-*` refs in the previous session's checkout only; redo
-  them from the DECISIONS wording if needed.
+- The upkeep-deferral notice as an owner issue is on `development` (`b1ea2a0`
+  or later). One pending worktree delivery may still land from the previous
+  session: wider repository cell delegation (the "delegate more" decision). If
+  it is not on `development`, redo it from the DECISIONS wording.
 - Two integration lanes push to `development` (this throughput lane and the
   "hanging-PR" lane). Rule: merge `development` first, validate, push
   fast-forward only; last green installs. Never force-move the launcher.
