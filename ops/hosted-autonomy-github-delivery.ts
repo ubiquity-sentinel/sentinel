@@ -67,6 +67,28 @@ export function parseDeliveryCommitStatus(
   };
 }
 
+/** Issue event pages read to find the latest closing event. */
+const ISSUE_EVENT_PAGES = 10;
+
+/**
+ * The commit named by the LATEST `closed` event (GitHub's closing reference),
+ * or null when that event names none (a person closed it) or none exists.
+ * Events are ordered oldest first; a malformed latest event names nothing.
+ */
+export function latestClosingCommit(events: readonly unknown[]): string | null {
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index];
+    if (event === null || typeof event !== "object") continue;
+    const fields = event as Record<string, unknown>;
+    if (fields["event"] !== "closed") continue;
+    const commit = fields["commit_id"];
+    return typeof commit === "string" && COMMIT_SHA.test(commit)
+      ? commit
+      : null;
+  }
+  return null;
+}
+
 export function createHostedDeliveryReads(
   request: ReturnType<typeof createHostedAutonomyRequest>,
   scope: string,
@@ -104,6 +126,42 @@ export function createHostedDeliveryReads(
         checks.push(parsed);
       }
       return checks;
+    },
+    async readIssueClosingCommit(
+      number: number,
+    ): Promise<{ open: boolean; closingCommit: string | null } | null> {
+      if (!Number.isSafeInteger(number) || number <= 0) return null;
+      const issue = await request("GET", `/repos/${scope}/issues/${number}`);
+      if (issue === null || typeof issue !== "object") return null;
+      const fields = issue as Record<string, unknown>;
+      if (fields["number"] !== number) return null;
+      if (fields["state"] === "open") {
+        return { open: true, closingCommit: null };
+      }
+      if (fields["state"] !== "closed") return null;
+      const events: unknown[] = [];
+      for (let page = 1;; page++) {
+        if (page > ISSUE_EVENT_PAGES) return null;
+        const list = await request(
+          "GET",
+          `/repos/${scope}/issues/${number}/events?per_page=100&page=${page}`,
+        );
+        if (!Array.isArray(list)) return null;
+        events.push(...list);
+        if (list.length < 100) break;
+      }
+      return { open: false, closingCommit: latestClosingCommit(events) };
+    },
+    async reopenIssue(number: number): Promise<boolean> {
+      if (!Number.isSafeInteger(number) || number <= 0) return false;
+      const reopened = await request(
+        "PATCH",
+        `/repos/${scope}/issues/${number}`,
+        { state: "open", state_reason: "reopened" },
+      );
+      if (reopened === null || typeof reopened !== "object") return false;
+      const fields = reopened as Record<string, unknown>;
+      return fields["number"] === number && fields["state"] === "open";
     },
     async commentIssue(number: number, body: string): Promise<boolean> {
       if (!Number.isSafeInteger(number) || number <= 0) return false;

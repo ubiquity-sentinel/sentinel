@@ -157,6 +157,21 @@ export interface HostedAutonomyGitHubV1 {
    */
   commentIssue?(number: number, body: string): Promise<boolean>;
   /**
+   * The source issue's state and the commit its LATEST `closed` event names
+   * (GitHub's own closing reference: a merge through `Resolves #N` names the
+   * merge commit; a person's close names none). Null when the issue or its
+   * complete event listing cannot be read. Optional: without it a delivery
+   * park never reopens an issue.
+   */
+  readIssueClosingCommit?(
+    number: number,
+  ): Promise<{ open: boolean; closingCommit: string | null } | null>;
+  /**
+   * Trusted issue write (sentinel #337): reopen one issue with
+   * `state_reason: "reopened"`; true when GitHub reports it open.
+   */
+  reopenIssue?(number: number): Promise<boolean>;
+  /**
    * The repository's own default branch, or null when it cannot be read. Only
    * a foreign repository consults this; the self scope keeps its recorded
    * `development` constant.
