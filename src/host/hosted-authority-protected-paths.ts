@@ -40,6 +40,11 @@ export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
     // The policy half split out of that CI verdict dependency: editing
     // it alone must not weaken the exact-head check verdict.
     "src/repair/ci-correction-policy.ts",
+    // Owner-landing merge refusal: the protected-touch classification, the
+    // publication protected set and the delivery that never merges a
+    // protected change. A candidate weakening them could auto-merge itself.
+    "src/repair/owner-landing.ts",
+    "src/repair/loop-owner-landing.ts",
     // Per-run credential selection and per-target token binding: the mint
     // action, self-versus-target token selection, grant parsing, target cycle
     // selection, the host composition that chooses the write tokens and

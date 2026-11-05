@@ -102,6 +102,27 @@ export function withOwnerLanding(
   };
 }
 
+/**
+ * The record with its owner-landing flag REPLACED from one implementation
+ * candidate's full base..head change set: the protected prefixes it touches
+ * now, or no flag when it touches none (ordinary delivery applies again). A
+ * conflict-resolution merge never replaces; it only widens (above).
+ */
+export function replaceOwnerLanding(
+  record: WorkRecordV1,
+  paths: readonly string[],
+  now: number,
+): WorkRecordV1 {
+  if (paths.length === 0) return withoutOwnerLanding(record);
+  return {
+    ...record,
+    ownerLanding: {
+      paths: [...new Set(paths)].sort(),
+      since: record.ownerLanding?.since ?? now,
+    },
+  };
+}
+
 /** The record without the owner-landing flag (an unpublished park). */
 export function withoutOwnerLanding(record: WorkRecordV1): WorkRecordV1 {
   if (record.ownerLanding === undefined) return record;

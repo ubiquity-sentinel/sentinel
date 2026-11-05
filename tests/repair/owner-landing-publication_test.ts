@@ -156,3 +156,59 @@ for (
     }
   });
 }
+
+Deno.test(
+  "owner landing: a later candidate without protected paths clears the flag and merges normally",
+  async () => {
+    const rig = await makeRig("ownerlandingcleared", {
+      configOverrides: { repository: REPO_2, ...PROTECTED },
+      model: {
+        heads: [SHA3, SHA4],
+        changedPaths: ["src/app.ts", "src/auth/session.ts"],
+      },
+      github: { candidateLifecycle: positiveLifecycle() },
+    });
+    try {
+      const first = await rig.run();
+      assert.equal(first.status, "idle", JSON.stringify(first));
+      let work = (await rig.snapshot()).work[0]!;
+      assert.equal(work.nextStep, "review");
+      assert.deepEqual(work.ownerLanding?.paths, ["src/auth/"]);
+
+      // The correction's full base..head diff no longer touches `src/auth/`:
+      // the flag is replaced from the current diff, not widened.
+      rig.model["options"].changedPaths = ["src/app.ts"];
+      rig.clock.advance(15 * 60_000 + 1);
+      rig.github.completeReview([{
+        id: "finding-1",
+        severity: "P0",
+        path: "src/app.ts",
+        message: "required fix",
+        fingerprint: "a".repeat(64),
+        resolved: false,
+        resolutionEvidence: null,
+      }], rig.clock.now());
+      const second = await rig.run();
+      assert.equal(second.status, "idle", JSON.stringify(second));
+      work = (await rig.snapshot()).work[0]!;
+      assert.equal(rig.model.requests.length, 2);
+      assert.equal(work.nextStep, "review");
+      assert.equal(work.target.head, SHA4);
+      assert.equal(work.ownerLanding, undefined, "the flag is cleared");
+
+      rig.clock.advance(100_000_000 + 1);
+      rig.github.completeReview([], rig.clock.now());
+      const third = await rig.run();
+      assert.equal(third.status, "idle", JSON.stringify(third));
+      work = (await rig.snapshot()).work[0]!;
+      assert.notEqual(work.wait?.reason, "manual", "no owner wait");
+      assert.equal(
+        rig.github.calls.filter((c) => c === "merge").length,
+        1,
+        "ordinary delivery merges the unprotected candidate",
+      );
+    } finally {
+      await rig.ctx.cleanup();
+    }
+  },
+);

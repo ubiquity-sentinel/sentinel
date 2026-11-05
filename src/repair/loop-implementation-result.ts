@@ -39,8 +39,8 @@ import {
 import { verifiedPublishedHead } from "./loop-preservation.ts";
 import {
   ownerLandingTouch,
+  replaceOwnerLanding,
   withoutOwnerLanding,
-  withOwnerLanding,
 } from "./owner-landing.ts";
 import {
   loadSnapshot,
@@ -349,9 +349,16 @@ export async function handleModelReceipt(
       preserved: null,
       publishedHead: priorPublished.head,
     }, now);
-  const withCandidate = touch.kind === "owner"
-    ? withOwnerLanding(candidateRecord, touch.paths, now)
-    : candidateRecord;
+  // The full base..head change set decides the flag afresh: a later
+  // candidate that no longer touches a protected path is delivered normally.
+  // An unpublishable touch parks below and keeps the published flag.
+  const withCandidate = touch.kind === "unpublishable"
+    ? candidateRecord
+    : replaceOwnerLanding(
+      candidateRecord,
+      touch.kind === "owner" ? touch.paths : [],
+      now,
+    );
   if (protectedHit) {
     // An unpublished park carries no owner-landing flag, so the owner's
     // `sentinel:retry` exit still recognizes its fresh shape.

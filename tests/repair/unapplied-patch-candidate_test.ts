@@ -14,7 +14,10 @@ import {
   classifyAttemptDetailV1,
   JUDGED_ATTEMPT_DETAILS,
 } from "../../src/repair/attempt-policy.ts";
-import { unappliedPatchOnly } from "../../src/repair/candidate-shape.ts";
+import {
+  patchShapedPath,
+  unappliedPatchOnly,
+} from "../../src/repair/candidate-shape.ts";
 import { HOSTED_AUTONOMY_RETRYABLE } from "../../ops/hosted-autonomy-policy.ts";
 import { buildPrompt } from "../../src/repair/model-port-prompt.ts";
 import { asWorkItemId } from "../../src/contracts/brands.ts";
@@ -164,4 +167,18 @@ Deno.test("unappliedPatchOnly: patch files with nothing but tests", () => {
   assert.equal(unappliedPatchOnly(["tests/a_test.ts"]), false);
   assert.equal(unappliedPatchOnly(["src/patcher.ts"]), false);
   assert.equal(unappliedPatchOnly([]), false);
+});
+
+Deno.test("patchShapedPath: only *.patch/*.diff files and the root patches/ directory", () => {
+  assert.equal(patchShapedPath("patches/issue-1211.patch"), true);
+  assert.equal(patchShapedPath("patches/notes.md"), true);
+  assert.equal(patchShapedPath("src/fix/change.DIFF"), true);
+  // A source directory named `patches` is ordinary code.
+  assert.equal(patchShapedPath("src/patches/x.ts"), false);
+  assert.equal(patchShapedPath("packages/a/patches/notes.md"), false);
+  assert.equal(patchShapedPath("patches/nested/x.ts"), false);
+  assert.equal(
+    unappliedPatchOnly(["src/patches/x.ts", "tests/patches/x_test.ts"]),
+    false,
+  );
 });
