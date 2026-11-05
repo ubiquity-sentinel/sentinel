@@ -16,13 +16,16 @@
  * that applies the change and removes the patch) is never refused here.
  */
 
-/** A `*.patch` / `*.diff` file, or any file under a `patches/` directory. */
+/**
+ * A `*.patch` / `*.diff` file anywhere, or a file directly under the
+ * root-level `patches/` directory. A source directory that happens to be
+ * named `patches` (`src/patches/x.ts`) is ordinary code, never patch-shaped.
+ */
 export function patchShapedPath(path: string): boolean {
-  const lower = path.toLowerCase();
-  const segments = lower.split("/");
+  const segments = path.toLowerCase().split("/");
   const base = segments[segments.length - 1] ?? "";
   return base.endsWith(".patch") || base.endsWith(".diff") ||
-    segments.slice(0, -1).includes("patches");
+    (segments.length === 2 && segments[0] === "patches");
 }
 
 const TEST_DIRECTORIES = new Set([

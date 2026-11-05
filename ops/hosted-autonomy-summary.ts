@@ -16,6 +16,8 @@ const QUEUE_OWNER_LABELS: Readonly<Record<string, string>> = {
     "Owner: foreign queue entry authorization changed",
   "owner_park:refusals_exhausted": "Owner: queue admission refusals spent",
   "owner_park:repeated_queue_failure": "Owner: repeated queue CI failure",
+  "owner_park:owner_merge_required":
+    "Owner: protected change waits for the owner's merge",
   "invalid_intent_owner_action": "Owner: queue intent binding is invalid",
   "binding_changed_owner_action": "Owner: queue authorization binding changed",
   "foreign_hold_absent_owner_action":

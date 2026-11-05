@@ -33,6 +33,10 @@ const authorityPaths = [
   "src/repair/loop-checks.ts",
   "src/repair/merge-gate-checks.ts",
   "src/repair/ci-rejection.ts",
+  // Owner-landing merge refusal (protected-touch classification and the
+  // delivery that never merges a protected change).
+  "src/repair/owner-landing.ts",
+  "src/repair/loop-owner-landing.ts",
   "src/host/hosted-app-credentials.ts",
   ".github/actions/sentinel-app-token/action.yml",
   "src/host/actions-target-bindings.ts",

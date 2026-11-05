@@ -8,6 +8,7 @@ import { parseWorkRecordV1 } from "../../src/contracts/work-record.ts";
 import { selectTrustedTargetPolicyV1 } from "../../src/host/target-policy.ts";
 import { createLocalRepositoryConfig } from "../../src/host/local-config.ts";
 import {
+  authorityPath,
   ciExecutablePath,
   ownerLandingTouch,
   protectedBeyondOwnerLanding,
@@ -127,4 +128,41 @@ Deno.test("owner landing policy: the flag widens, keeps its first time and round
   );
   const legacy = workRecord("issue-1");
   assert.equal("ownerLanding" in parseWorkRecordV1(legacy), false);
+});
+
+Deno.test("owner landing policy: Sentinel authority files never publish, other self-protected paths do", () => {
+  const template = createLocalRepositoryConfig();
+  const self = {
+    commands: template.commands,
+    protectedPaths: [...template.protectedPaths, "docs/private/"],
+  };
+  for (
+    const path of [
+      "src/repair/owner-landing.ts",
+      "src/repair/loop-owner-landing.ts",
+      "src/repair/loop-records.ts",
+      "src/host/local-config.ts",
+      ".github/actions/sentinel-app-token/action.yml",
+    ]
+  ) {
+    assert.equal(authorityPath(path), true, path);
+    assert.deepEqual(ownerLandingTouch(self, ["src/app.ts", path]), {
+      kind: "unpublishable",
+    }, path);
+  }
+  assert.equal(authorityPath("docs/private/notes.md"), false);
+  assert.deepEqual(ownerLandingTouch(self, ["docs/private/notes.md"]), {
+    kind: "owner",
+    paths: ["docs/private/"],
+  });
+  // An authority prefix is never dropped from the publication check.
+  assert.deepEqual(
+    publicationProtectedPaths(["src/repair/loop-records.ts", "docs/private/"], {
+      ownerLanding: {
+        paths: ["src/repair/loop-records.ts", "docs/private/"],
+        since: T0,
+      },
+    }),
+    ["src/repair/loop-records.ts"],
+  );
 });
