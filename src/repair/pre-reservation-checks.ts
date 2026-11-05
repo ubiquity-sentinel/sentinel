@@ -303,3 +303,31 @@ export function isPreservationRefusalMessage(message: string): boolean {
   return message === PRESERVATION_REFUSED_PREFIX ||
     message.startsWith(`${PRESERVATION_REFUSED_PREFIX}: `);
 }
+
+/**
+ * The closed set of pre-reservation refusals `preReservationChecks` can
+ * return (check, reason code), for the blocked-cause census.
+ */
+export const PRE_RESERVATION_REFUSALS: ReadonlyArray<
+  { check: PreReservationCheckV1; refused: string }
+> = [
+  { check: "repository_identity", refused: "repository_identity_invalid" },
+  { check: "task_identity", refused: "task_id_invalid" },
+  { check: "base_revision", refused: "base_not_commit_sha" },
+  { check: "source_freshness", refused: "base_stale" },
+  { check: "opt_out_marker", refused: "sentinel_skip_marker" },
+  { check: "candidate_ref", refused: "candidate_ref_absent" },
+  { check: "candidate_ref", refused: "candidate_ref_invalid" },
+  { check: "protected_paths", refused: "protected_paths_malformed" },
+  { check: "output_bounds", refused: "session_bound_invalid" },
+  { check: "attempt_identity", refused: "attempt_invalid" },
+  { check: "attempt_identity", refused: "reservation_id_collision" },
+  { check: "attempt_identity", refused: "logical_identity_collision" },
+  { check: "admission_transition", refused: "transition_not_admissible" },
+];
+
+/** Every post-inference check name a preservation refusal can carry. */
+export const POST_INFERENCE_CHECK_NAMES: readonly string[] = [
+  ...POST_INFERENCE_CHECKS.map(([, name]) => name),
+  "unclassified",
+];
