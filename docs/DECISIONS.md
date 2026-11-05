@@ -4400,3 +4400,21 @@ initial matrix artifact scan and pre-merge CI run in the next ordinary
 bounded pass. A failed health check still fails bootstrap and triggers the
 journaled restoration. The launcher summary carries `bootstrapDurationMs` and
 `bootstrapOutcome`.
+
+### #328 repair fan-out with one trusted writer
+
+Repository cells run the unchanged step loop on a private fork of the hot
+state at the planned head. Every effect (GitHub write, model start, replay,
+reservation, cooldown write) is blocked; a step that needs one is dropped and
+its record is deferred to the trusted path. A cell returns a sealed delta:
+replacement rows for its own existing records only, its base head and a
+digest of its repository's projection of the state. Its authenticity is the
+Actions artifact identity, as for matrix cells; the seal alone proves
+nothing. A delta may not reserve, charge, refund, create records or touch
+implementation or replay intents. Finalize, the only writer, accepts a delta
+only while that repository's projection is unchanged (not strict global head
+equality, which the concurrent serial pass would always break) and applies
+all accepted deltas in one expected-head write through the existing writer;
+a rejected delta writes nothing and is recomputed next pass. The serial
+repair job steps only the records the plan leaves to the trusted path. The
+deadline, the five-minute margin and accounting are unchanged.
