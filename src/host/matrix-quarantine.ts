@@ -27,17 +27,21 @@ export async function runHistoricalMatrixQuarantine(
   deps: HistoricalMatrixQuarantineDepsV1,
   deadlineAt: number = deps.clock.now() + MATRIX_ARTIFACT_RECOVERY_MAX_MS,
 ): Promise<number> {
+  const deferred = (reason: "budget" | "custody") => {
+    deps.onDeferred?.(reason);
+    return 0;
+  };
   // One shared, bounded window covers the whole pass: a wave with many
   // missing-cell artifacts quarantines one record per recursion and each
   // recursion must reuse this same deadline instead of minting a fresh
   // transport window, so the pass cannot multiply its way past the
   // maintenance budget.
   if (!Number.isSafeInteger(deadlineAt) || deps.clock.now() >= deadlineAt) {
-    return 0;
+    return deferred("budget");
   }
   const repair = await deps.state.readRepair();
   // Missing or temporarily unavailable repair custody defers this pass.
-  if (!repair.ok || repair.value.status !== "found") return 0;
+  if (!repair.ok || repair.value.status !== "found") return deferred("custody");
   const [witness, ...remainingWitnesses] = deps.historicalReleaseWitnesses ??
     [];
   const revalidate = deps.revalidateNotStarted === true;
@@ -94,7 +98,9 @@ export async function runHistoricalMatrixQuarantine(
   const release = await deps.state.readRelease();
   // Missing or temporarily unavailable release custody defers this pass; the
   // next maintenance cycle re-runs it instead of failing the run.
-  if (!release.ok || release.value.status !== "found") return 0;
+  if (!release.ok || release.value.status !== "found") {
+    return deferred("custody");
+  }
   const runtime = release.value.snapshot.hostedRuntimes.find((row) =>
     row.id === HOSTED_RUNTIME_ID
   );
@@ -286,13 +292,16 @@ export async function runHistoricalMatrixQuarantine(
         !witness.reservationIds.includes(error.captured.reservation.id))
     ) throw new Error("historical matrix missing-cell identity unavailable");
     await quarantineRow(deps, error, error.captured, current, historical);
-    if (deps.clock.now() >= deadlineAt) return 1;
+    if (deps.clock.now() >= deadlineAt) {
+      deps.onDeferred?.("budget");
+      return 1;
+    }
     return 1 + await runHistoricalMatrixQuarantine(deps, deadlineAt);
   }
   if (historical && waves.length === 0) {
     // The shared pass deadline can shorten the witness scan to nothing; that
     // is a bounded stop, not an unavailable witness.
-    if (deps.clock.now() >= deadlineAt) return 0;
+    if (deps.clock.now() >= deadlineAt) return deferred("budget");
     throw new Error("historical matrix selected witness rejection unavailable");
   }
   if (waves.length === 0) {
@@ -324,7 +333,10 @@ export async function runHistoricalMatrixQuarantine(
           "historical matrix rejection reservation outside witness",
         );
       }
-      if (deps.clock.now() >= deadlineAt) return count;
+      if (deps.clock.now() >= deadlineAt) {
+        deps.onDeferred?.("budget");
+        return count;
+      }
       await quarantineRow(deps, wave, captured, current, historical);
       count++;
     }

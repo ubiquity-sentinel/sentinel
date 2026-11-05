@@ -141,16 +141,23 @@ export async function runHostedMatrixMaintenance(
     }
     if (restored !== null) return restored;
   }
+  const recordDeferral = () => {
+    if (!actions.includes("historical-matrix:deferred")) {
+      actions.push("historical-matrix:deferred");
+    }
+  };
   let custodyDeferred = false;
+  const deferCustody = () => {
+    custodyDeferred = true;
+    recordDeferral();
+  };
   let currentMatrix: HostedAutonomyResultV1 | null;
   const finishCurrent = beginMaintenanceProgress("current_matrix");
   try {
     currentMatrix = await recoverHostedCurrentMatrix(
       deps,
       closedBinding,
-      () => {
-        custodyDeferred = true;
-      },
+      deferCustody,
       // A producer whose plan evidence expired or was never listed is a
       // typed skip: nothing is written and later passes still run.
       (kind) => actions.push(`current-matrix:unrecoverable:${kind}`),
@@ -177,7 +184,7 @@ export async function runHostedMatrixMaintenance(
       } finally {
         finishC63();
       }
-      if (c63.deferred) custodyDeferred = true;
+      if (c63.deferred) deferCustody();
       if (c63.ingested > 0) {
         actions.push(`historical-c63:ingested:${c63.ingested}`);
       }
@@ -190,7 +197,14 @@ export async function runHostedMatrixMaintenance(
           "historical_quarantine",
         );
         try {
-          count = await runHistoricalMatrixQuarantine(deps.historicalMatrix);
+          const historical = deps.historicalMatrix;
+          count = await runHistoricalMatrixQuarantine({
+            ...historical,
+            onDeferred: (reason) => {
+              recordDeferral();
+              historical.onDeferred?.(reason);
+            },
+          });
         } finally {
           finishQuarantine();
         }

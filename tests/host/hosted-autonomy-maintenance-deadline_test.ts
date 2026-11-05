@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { darkQueueCoordinatorFixture } from "./hosted-autonomy-dark-queue-fixture.ts";
 import { runHostedAutonomy } from "../../ops/hosted-autonomy-runner.ts";
+import { upkeepDeferralReason } from "../../ops/hosted-autonomy-queue-output.ts";
 import { CURRENT_MATRIX_HISTORY_DEADLINE_MESSAGE } from "../../ops/hosted-autonomy-policy.ts";
 import { CurrentMatrixRecoveryIntegrityFailure } from "../../ops/hosted-autonomy-producer-recovery.ts";
 import { CLOSED_C_WAVE } from "../../src/host/modern-matrix-recovery.ts";
@@ -158,6 +159,11 @@ Deno.test("maintenance deadline: real history expiry continues reviewed foreign 
     assert.ok(
       result.actions.includes("matrix-history:deferred"),
       JSON.stringify(result),
+    );
+    assert.equal(
+      upkeepDeferralReason(result),
+      "deferred_matrix_history_budget",
+      "independent delivery must not hide the deferred upkeep from finalize",
     );
     assert.equal(f.rig.merges, 1);
     assert.deepEqual(f.rig.closed, [120]);

@@ -90,6 +90,8 @@ export function historicalNotStartedProven(
 }
 
 export interface HistoricalMatrixQuarantineDepsV1 {
+  /** Observe a bounded stop without treating it as a completed upkeep pass. */
+  onDeferred?: (reason: "budget" | "custody") => void;
   /** Custody owned by another trusted coordinator; never settled or quarantined here. */
   protectedRecordIds?: ReadonlySet<string>;
   nativeQueueFor?: MaintenanceNativeQueueFactory;

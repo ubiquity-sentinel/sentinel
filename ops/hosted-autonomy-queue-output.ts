@@ -16,12 +16,25 @@ export async function writeQueueCustodyOutput(
   );
 }
 
-/** The bounded upkeep deferral a maintenance result reports, if any. */
+/**
+ * The bounded upkeep deferral a maintenance result reports, if any. Independent
+ * delivery can apply writes after upkeep deferred; its success must not hide
+ * that deferral from finalize. Integrity failures never count as deferrals.
+ */
 export function upkeepDeferralReason(
-  result: { status: string; reason: string },
+  result: { status: string; reason: string; actions?: readonly string[] },
 ): UpkeepDeferralReasonV1 | null {
-  if (result.status !== "skipped") return null;
-  return isUpkeepDeferralReason(result.reason) ? result.reason : null;
+  if (result.status !== "skipped" && result.status !== "applied") return null;
+  if (result.status === "skipped" && isUpkeepDeferralReason(result.reason)) {
+    return result.reason;
+  }
+  if (result.actions?.includes("historical-matrix:deferred")) {
+    return "deferred_historical_quarantine";
+  }
+  if (result.actions?.includes("matrix-history:deferred")) {
+    return "deferred_matrix_history_budget";
+  }
+  return null;
 }
 
 /**
