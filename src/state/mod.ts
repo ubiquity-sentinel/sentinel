@@ -23,6 +23,7 @@ import {
   randomHex,
   RELEASE_REF,
   REPAIR_REF,
+  STATE_COMMIT_ENV,
   StateGitTransport,
   StatePushError,
 } from "./state-git.ts";
@@ -36,6 +37,22 @@ import {
   ReservationLedgerCapacityError,
 } from "./state-reservation-archive.ts";
 import { RepairHistoryCache } from "./state-repair-history-cache.ts";
+import {
+  readColdCatalog,
+  REPAIR_COLD_PREFIX,
+} from "./state-repair-tier-layout.ts";
+import { coldCollisionMessage } from "./state-repair-tier.ts";
+import type {
+  RepairTierIoV1,
+  RepairTierResultV1,
+} from "./state-repair-tier.ts";
+import { readRepairTieredOp, tierRepairOp } from "./state-repair-tier-store.ts";
+import type {
+  RepairTieredReadV1,
+  RepairTierStore,
+  RepairTierStoreHooksV1,
+} from "./state-repair-tier-store.ts";
+import type { RepairTierPolicyV1 } from "./state-repair-tier-plan.ts";
 
 /**
  * GitStateStore: the production state-storage implementation for the two
@@ -122,6 +139,22 @@ export class GitStateStore extends StateGitTransport implements StateStore {
         });
       },
     );
+  }
+
+  readRepairTiered(): Promise<PortResultV1<RepairTieredReadV1>> {
+    return this.withOpDir((op) => readRepairTieredOp(this.tierHooks(), op));
+  }
+
+  tierRepair(
+    input: RepairTierPolicyV1 & { expectedHead: GitSha },
+  ): Promise<PortResultV1<RepairTierResultV1>> {
+    if (this.role !== "repair") {
+      return Promise.resolve(portError(
+        "invalid",
+        "repair tier writes require a repair-role store (role mismatch)",
+      ));
+    }
+    return this.withOpDir((op) => tierRepairOp(this.tierHooks(), op, input));
   }
 
   readRepairAt(input: { commit: GitSha; expectedHead: GitSha }): Promise<
@@ -376,6 +409,25 @@ export class GitStateStore extends StateGitTransport implements StateStore {
       if (transitionMessage !== null) {
         return portError("invalid", transitionMessage);
       }
+      // The hot write carries the prior cold tier forward unchanged (its exact
+      // subtree id) and refuses to recreate any row the cold tier holds.
+      let files: { path: string; text: string }[];
+      let coldTree: string | null = null;
+      try {
+        files = await recordFiles(snapshot, kind);
+      } catch {
+        return portError(
+          "unavailable",
+          "could not form the state commit locally",
+        );
+      }
+      if (kind === "repair" && priorHead !== null) {
+        const catalog = await readColdCatalog(this.ops(), op, priorHead);
+        if (!catalog.ok) return catalog;
+        const collision = coldCollisionMessage(files, catalog.value);
+        if (collision !== null) return portError("invalid", collision);
+        coldTree = catalog.value.tree;
+      }
 
       let candidate: {
         pushed: boolean;
@@ -389,6 +441,8 @@ export class GitStateStore extends StateGitTransport implements StateStore {
           expectedHead,
           kind,
           ref,
+          files,
+          coldTree,
         );
       } catch {
         // Local formation failure only (before any push): a sanitized typed
@@ -398,53 +452,68 @@ export class GitStateStore extends StateGitTransport implements StateStore {
           "could not form the state commit locally",
         );
       }
-      const ourHead = candidate.head;
+      return await this.reconcilePush(op, ref, candidate, priorHead);
+    });
+  }
 
-      // Reconcile the authoritative ref before reporting any outcome; never
-      // retry blindly. The response may have been lost — or the transport
-      // itself may have thrown — after the server accepted the update; the
-      // ref, not the push response, decides. A failed, thrown or malformed
-      // verification read after an attempted push is ambiguous, never a false
-      // "not applied" error.
-      const verify = await this.git(op, ["ls-remote", "origin", ref]);
-      const verifyParsed = !verify.ok
-        ? ({ status: "invalid" } as const)
-        : this.parseLsRemote(verify.stdout, ref);
-      if (verifyParsed.status === "absent" && !candidate.pushed) {
-        // A successful authoritative reread proves that a failed push did not
-        // create the ref. Preserve the safe transport category so a trusted
-        // caller can distinguish authentication from local availability
-        // failure without exposing Git's raw stderr.
+  /**
+   * Reconciles the authoritative ref after an attempted non-force push of
+   * `candidate` over `priorHead` (shared by snapshot and tier writes).
+   */
+  private async reconcilePush(
+    op: OpContext,
+    ref: string,
+    candidate: {
+      pushed: boolean;
+      head: GitSha;
+      pushFailureKind: PortErrorV1["kind"] | null;
+    },
+    priorHead: GitSha | null,
+  ): Promise<PortResultV1<StateWriteResultV1>> {
+    // Reconcile the authoritative ref before reporting any outcome; never
+    // retry blindly. The response may have been lost — or the transport
+    // itself may have thrown — after the server accepted the update; the
+    // ref, not the push response, decides. A failed, thrown or malformed
+    // verification read after an attempted push is ambiguous, never a false
+    // "not applied" error.
+    const verify = await this.git(op, ["ls-remote", "origin", ref]);
+    const verifyParsed = !verify.ok
+      ? ({ status: "invalid" } as const)
+      : this.parseLsRemote(verify.stdout, ref);
+    if (verifyParsed.status === "absent" && !candidate.pushed) {
+      // A successful authoritative reread proves that a failed push did not
+      // create the ref. Preserve the safe transport category so a trusted
+      // caller can distinguish authentication from local availability
+      // failure without exposing Git's raw stderr.
+      return portError(
+        candidate.pushFailureKind ?? "unavailable",
+        "state push was not applied; the remote ref remains absent",
+      );
+    }
+    if (verifyParsed.status !== "found") {
+      return portOk({ status: "ambiguous", currentHead: priorHead });
+    }
+    const verifyHead = verifyParsed.head as GitSha;
+    if (verifyHead === candidate.head) {
+      return portOk({ status: "applied", head: candidate.head });
+    }
+    if (!candidate.pushed) {
+      if (verifyHead === priorHead) {
         return portError(
-          candidate.pushFailureKind ?? "unavailable",
-          "state push was not applied; the remote ref remains absent",
+          "unavailable",
+          "state push was not applied; the remote ref is unchanged",
         );
       }
-      if (verifyParsed.status !== "found") {
-        return portOk({ status: "ambiguous", currentHead: priorHead });
-      }
-      const verifyHead = verifyParsed.head as GitSha;
-      if (verifyHead === ourHead) {
-        return portOk({ status: "applied", head: ourHead });
-      }
-      if (!candidate.pushed) {
-        if (verifyHead === priorHead) {
-          return portError(
-            "unavailable",
-            "state push was not applied; the remote ref is unchanged",
-          );
-        }
-        return portOk({
-          status: "conflict",
-          currentHead: verifyHead,
-        });
-      }
-      // The push reported success but the ref does not point at our commit:
-      // preserve the ambiguous outcome for exact-state reconciliation.
       return portOk({
-        status: "ambiguous",
+        status: "conflict",
         currentHead: verifyHead,
       });
+    }
+    // The push reported success but the ref does not point at our commit:
+    // preserve the ambiguous outcome for exact-state reconciliation.
+    return portOk({
+      status: "ambiguous",
+      currentHead: verifyHead,
     });
   }
 
@@ -461,6 +530,8 @@ export class GitStateStore extends StateGitTransport implements StateStore {
     expectedHead: GitSha | null,
     kind: StateKind,
     ref: string,
+    records: { path: string; text: string }[],
+    coldTree: string | null,
   ): Promise<{
     pushed: boolean;
     head: GitSha;
@@ -477,7 +548,7 @@ export class GitStateStore extends StateGitTransport implements StateStore {
       path: "manifest.json",
       text: `${canonicalStringify(manifest)}\n`,
     }];
-    files.push(...await recordFiles(next, kind));
+    files.push(...records);
     for (const file of files) {
       const slash = file.path.lastIndexOf("/");
       if (slash !== -1) {
@@ -490,6 +561,15 @@ export class GitStateStore extends StateGitTransport implements StateStore {
 
     const add = await this.git(op, ["add", "-A"]);
     if (!add.ok) throw new StatePushError("add");
+    if (coldTree !== null) {
+      // Exact prior cold subtree, never re-serialized by a hot write.
+      const cold = await this.git(op, [
+        "read-tree",
+        `--prefix=${REPAIR_COLD_PREFIX}/`,
+        coldTree,
+      ]);
+      if (!cold.ok) throw new StatePushError("read-tree");
+    }
     const tree = await this.git(op, ["write-tree"]);
     if (!tree.ok) throw new StatePushError("write-tree");
     const treeSha = tree.stdout.trim();
@@ -498,21 +578,12 @@ export class GitStateStore extends StateGitTransport implements StateStore {
     }
 
     const nonce = await randomHex(32);
-    // State pushes stay on the native Actions token, so their bookkeeping
-    // commits carry the native Actions identity, never the App identity.
-    const commitEnv = {
-      GIT_AUTHOR_NAME: "github-actions[bot]",
-      GIT_AUTHOR_EMAIL: "41898282+github-actions[bot]@users.noreply.github.com",
-      GIT_COMMITTER_NAME: "github-actions[bot]",
-      GIT_COMMITTER_EMAIL:
-        "41898282+github-actions[bot]@users.noreply.github.com",
-    };
     const message = `sentinel-state ${kind} write\n\nnonce: ${nonce}`;
     const parentArgs = expectedHead === null ? [] : ["-p", expectedHead];
     const commit = await this.git(
       op,
       ["commit-tree", treeSha, ...parentArgs, "-m", message],
-      commitEnv,
+      STATE_COMMIT_ENV,
     );
     if (!commit.ok) throw new StatePushError("commit-tree");
     const ourHead = commit.stdout.trim();
@@ -520,15 +591,48 @@ export class GitStateStore extends StateGitTransport implements StateStore {
       throw new StatePushError("commit-tree");
     }
 
-    const push = await this.git(op, [
-      "push",
-      "origin",
-      `${ourHead}:${ref}`,
-    ]);
+    return await this.pushCandidate(op, ourHead as GitSha, ref);
+  }
+
+  /** Ordinary non-force push of one formed candidate commit. */
+  private async pushCandidate(op: OpContext, head: GitSha, ref: string) {
+    const push = await this.git(op, ["push", "origin", `${head}:${ref}`]);
     return {
       pushed: push.ok,
-      head: ourHead as GitSha,
+      head,
       pushFailureKind: push.ok ? null : this.classifyGitError(push),
+    };
+  }
+
+  private ops(): RepairTierIoV1 {
+    return {
+      git: (op, args, options) => this.git(op, args, undefined, options),
+      gitFailure: (kind, operation, result) =>
+        this.gitFailure(kind, operation, result),
+      readHotTree: async (op, commit) => {
+        const tree = await this.readCommitTree(op, commit, "repair");
+        return tree as PortResultV1<RepairStateSnapshotV1>;
+      },
+      commitTree: (op, tree, parent) =>
+        this.git(op, [
+          "commit-tree",
+          tree,
+          "-p",
+          parent,
+          "-m",
+          `sentinel-state repair tier write\n\nnonce: ${randomHex(32)}`,
+        ], STATE_COMMIT_ENV),
+    };
+  }
+
+  private tierHooks(): RepairTierStoreHooksV1 {
+    return {
+      ref: REPAIR_REF,
+      io: this.ops(),
+      loadRepair: (op) => this.loadRemote(op, REPAIR_REF, "repair"),
+      push: (op, commit) => this.pushCandidate(op, commit, REPAIR_REF),
+      reconcile: (op, candidate, priorHead) =>
+        this.reconcilePush(op, REPAIR_REF, candidate, priorHead),
     };
   }
 }
@@ -538,7 +642,8 @@ export class GitStateStore extends StateGitTransport implements StateStore {
 // write capability and vice versa).
 // ---------------------------------------------------------------------------
 
-export interface RepairGitStateStore extends StateReadView, RepairStateWriter {}
+export interface RepairGitStateStore
+  extends StateReadView, RepairStateWriter, RepairTierStore {}
 export interface ReleaseGitStateStore
   extends StateReadView, ReleaseStateWriter {}
 
@@ -566,3 +671,25 @@ export type {
   GitStateStoreOptions,
   StateWriterRole,
 } from "./state-git.ts";
+
+export {
+  allReservationsAcrossTiersV1,
+  allWorkAcrossTiersV1,
+} from "./state-repair-tier.ts";
+export type {
+  RepairTieredSnapshotV1,
+  RepairTierResultV1,
+} from "./state-repair-tier.ts";
+export type {
+  RepairTieredReadV1,
+  RepairTierStore,
+} from "./state-repair-tier-store.ts";
+export type {
+  RepairTierMoveV1,
+  RepairTierPolicyV1,
+} from "./state-repair-tier-plan.ts";
+export {
+  REPAIR_COLD_DIRECTORIES,
+  REPAIR_COLD_PREFIX,
+} from "./state-repair-tier-layout.ts";
+export type { RepairColdTierV1 } from "./state-repair-tier-layout.ts";

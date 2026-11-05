@@ -30,12 +30,9 @@ import type {
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import type { VpsReleaseRecordV1 } from "../contracts/vps-release.ts";
 import type { OpContext, StateGitOps } from "./state-git.ts";
-import type { ValidatedMemoRecord } from "./state-repair-history-cache.ts";
 import { parseBlobBatch } from "./state-batch.ts";
-import {
-  legacyIdentityRecordId,
-  legacyIdentityRecordMatches,
-} from "./state-legacy-identity.ts";
+import { parseRecordFiles } from "./state-record-parse.ts";
+import { validateStateRoot } from "./state-repair-tier-layout.ts";
 import {
   collectionDirectory,
   orderRecords,
@@ -126,9 +123,22 @@ export async function readCommitTree(
   commitSha: string,
   kind: StateKind,
 ): Promise<PortResultV1<RepairStateSnapshotV1 | ReleaseStateSnapshotV1>> {
-  const [parentRead, treeRead] = await Promise.allSettled([
+  const collections = RECORD_COLLECTIONS[kind];
+  // The hot read lists only the manifest and the hot collections: the cold
+  // repair tier (`repair-archive/`) is never listed, fetched from the object
+  // store or parsed here. A separate non-recursive root listing still proves
+  // the root holds nothing but known entries.
+  const [parentRead, treeRead, rootRead] = await Promise.allSettled([
     io.git(op, ["rev-list", "--parents", "-n", "1", commitSha]),
-    io.git(op, ["ls-tree", "-r", commitSha]),
+    io.git(op, [
+      "ls-tree",
+      "-r",
+      commitSha,
+      "--",
+      "manifest.json",
+      ...collections.map((collection) => collection.directory),
+    ]),
+    io.git(op, ["ls-tree", commitSha]),
   ]);
   if (parentRead.status === "rejected") {
     return portError("unavailable", "state parent read failed");
@@ -143,6 +153,11 @@ export async function readCommitTree(
   }
   const tree = treeRead.value;
   if (!tree.ok) return io.gitFailure("unavailable", "ls-tree", tree);
+  if (rootRead.status === "rejected") {
+    return portError("unavailable", "state tree read failed");
+  }
+  const root = rootRead.value;
+  if (!root.ok) return io.gitFailure("unavailable", "ls-tree", root);
 
   interface Entry {
     mode: string;
@@ -187,6 +202,8 @@ export async function readCommitTree(
   ) {
     return portError("invalid", "state tree has duplicate manifest entries");
   }
+  const rootError = validateStateRoot(root.stdout, kind);
+  if (rootError !== null) return portError("invalid", rootError);
   const requested = entries.map((entry) => entry.sha);
   const batch = await io.git(op, ["cat-file", "--batch"], {
     stdin: new TextEncoder().encode(`${requested.join("\n")}\n`),
@@ -200,7 +217,7 @@ export async function readCommitTree(
   }
   const proof = {
     parents: parents.stdout,
-    tree: tree.stdout,
+    tree: `${root.stdout}\0${tree.stdout}`,
     bytes: batch.stdoutBytes,
   };
   const memoKey = `${kind}:${commitSha}`;
@@ -250,7 +267,6 @@ export async function readCommitTree(
     }
   }
 
-  const collections = RECORD_COLLECTIONS[kind];
   const directories = new Set(collections.map((c) => c.directory));
   const byDirectory: Record<string, Record<string, string>> = {};
   for (const collection of collections) {
@@ -278,73 +294,9 @@ export async function readCommitTree(
 
   // Parse and validate every record file; the filename must be the SHA-256
   // of the record id, preventing duplication or misplacement.
-  const records: Record<string, { id: string; value: unknown }[]> = {};
-  const memoRecords: Record<string, ValidatedMemoRecord> = {};
-  for (const collection of collections) records[collection.directory] = [];
-  for (const collection of collections) {
-    for (
-      const [fileName, text] of Object.entries(
-        byDirectory[collection.directory],
-      )
-    ) {
-      const expectedHex = fileName.slice(0, 64);
-      const path = `${collection.directory}/${fileName}`;
-      const remembered = op.treeMemo?.record(path, text);
-      if (remembered) {
-        memoRecords[path] = remembered;
-        records[collection.directory].push({
-          id: remembered.id,
-          value: remembered.value,
-        });
-        continue;
-      }
-      let raw: unknown;
-      let record: RecordIdentitySource;
-      try {
-        raw = JSON.parse(text);
-        record = collection.parse(raw);
-      } catch {
-        return portError(
-          "invalid",
-          `state record in ${collection.directory} failed validation`,
-        );
-      }
-      // Exact canonical bytes, exactly as this store writes them. Duplicate
-      // JSON keys re-parse to one last-wins value, so their original bytes
-      // never match the canonical form of the parsed record and are
-      // rejected instead of silently accepted. The one exception is the
-      // documented pre-migration controller identity: its raw canonical bytes
-      // are accepted only when every difference from the parsed record is that
-      // retired identity, and consumers still receive the current identity.
-      if (`${canonicalStringify(record)}\n` !== text) {
-        if (
-          `${canonicalStringify(raw)}\n` !== text ||
-          !legacyIdentityRecordMatches(collection.directory, raw, record)
-        ) {
-          return portError(
-            "invalid",
-            `state record in ${collection.directory} is not canonical JSON`,
-          );
-        }
-      }
-      // The digest filename must equal sha256 of the record's storage
-      // identity. The retired runtime id retains its pre-migration file name;
-      // the normalized record still exposes the current runtime id.
-      const identity = recordIdentity(record);
-      const actualHex = await sha256Hex(identity);
-      if (actualHex !== expectedHex) {
-        const legacyId = legacyIdentityRecordId(collection.directory, raw);
-        if (legacyId === null || await sha256Hex(legacyId) !== expectedHex) {
-          return portError(
-            "invalid",
-            "state record file name does not match the record id",
-          );
-        }
-      }
-      records[collection.directory].push({ id: identity, value: record });
-      memoRecords[path] = { text, id: identity, value: record };
-    }
-  }
+  const parsed = await parseRecordFiles(op, collections, byDirectory);
+  if (!parsed.ok) return parsed;
+  const { records, memoRecords } = parsed.value;
 
   // Deterministic order by id, then full snapshot validation (exact keys,
   // schema, duplicate ids) via the frozen snapshot parsers.
