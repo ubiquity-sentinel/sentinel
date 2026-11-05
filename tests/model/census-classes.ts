@@ -174,7 +174,7 @@ export const PARK_CLASSES: ParkClassV1[] = [
     kind: "unavailable",
     writer: W(
       IMPL_START,
-      "`model admission refused: ${reservation.status}`",
+      "`model admission refused: ${reservation.status}${",
       "w.impl.admission",
     ),
     trigger: "contradiction",
@@ -304,7 +304,7 @@ export const PARK_CLASSES: ParkClassV1[] = [
     kind: "other",
     writer: W(
       "src/repair/loop-preservation.ts",
-      `"candidate preservation validation refused",`,
+      "`candidate preservation validation refused: post-inference generated candidate check: ${preserved.error.detail}`",
       "w.pres.validation_refused",
     ),
     trigger: "pipeline",
