@@ -15,9 +15,10 @@
  *   already has a hot record and would otherwise admit a duplicate);
  * - it is not a record retired because its source issue closed whose own
  *   pull request is still unsettled (`retiredPullClosurePending`): the hosted
- *   maintenance pass reads hot records only, so such a record stays hot (and
- *   an already cold one is promoted) until that pass closes its own open pull
- *   request or records that there was nothing to close;
+ *   maintenance pass reads hot records only, so such a record stays hot
+ *   until that pass closes its own open pull request or records that there
+ *   was nothing to close (an already cold one is promoted by the once-per-
+ *   generation retired-pull scan, `retiredPullScanSeeds`);
  * - no hot record that stays hot depends on it;
  * - every reservation is terminally settled outside the widest rolling
  *   accounting window, so no live accounting, retry or duplicate-detection
@@ -42,6 +43,7 @@ import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { MaxItems } from "../contracts/validation.ts";
 import { retiredPullClosurePending } from "../contracts/work-record-retired-pull.ts";
+import { RETIRED_PULL_COLD_SCAN_ID } from "../contracts/repair-tier-scan.ts";
 import {
   isTerminalReservationV1,
   referencedReservationIdsV1,
@@ -92,6 +94,45 @@ export interface RepairTierPolicyV1 {
   releaseTargetTips?: ReadonlyMap<string, GitSha>;
   /** Maximum rows one pass promotes for release (default `demotionBudget`). */
   releasePromotionBudget?: number;
+  /**
+   * The installed runtime generation. When the hot snapshot holds no
+   * complete retired-pull cold scan for it, the transition scans the cold
+   * work rows once and promotes the pending ones (`retiredPullScanSeeds`).
+   * Absent: no scan.
+   */
+  retiredPullScanGeneration?: number;
+}
+
+/** Pending retired records one scan promotes at most. */
+export const RETIRED_PULL_SCAN_PROMOTIONS = 50;
+
+/** True when this generation's retired-pull cold scan is still owed. */
+export function retiredPullScanDue(
+  hot: Pick<RepairStateSnapshotV1, "tierScans">,
+  policy: Pick<RepairTierPolicyV1, "retiredPullScanGeneration" | "promoteAll">,
+): boolean {
+  const generation = policy.retiredPullScanGeneration;
+  if (generation === undefined || policy.promoteAll === true) return false;
+  return !(hot.tierScans ?? []).some((row) =>
+    row.id === RETIRED_PULL_COLD_SCAN_ID && row.generation === generation
+  );
+}
+
+/**
+ * The cold work ids the scan promotes (bounded, in id order) and whether
+ * they are every pending cold record, so the scan can be recorded complete.
+ */
+export function retiredPullScanSeeds(
+  coldWork: readonly WorkRecordV1[],
+  budget: number = RETIRED_PULL_SCAN_PROMOTIONS,
+): { seeds: string[]; complete: boolean } {
+  const pending = coldWork.filter(retiredPullClosurePending).map((row) =>
+    String(row.id)
+  ).sort();
+  return {
+    seeds: pending.slice(0, Math.max(0, budget)),
+    complete: pending.length <= Math.max(0, budget),
+  };
 }
 
 /** One exact row move between the tiers (same bytes, same file name). */
@@ -306,8 +347,7 @@ export function takeDemotionBudget(
 
 /**
  * Plans the promotions of one pass: every cold family whose issue is open
- * again (or that a hot record depends on, or whose retired record's own pull
- * request is unsettled) returns hot unchanged, together
+ * again (or that a hot record depends on) returns hot unchanged, together
  * with its cold dependencies. Promotions are never deferred: a reopened issue
  * must be hot before intake, or intake would admit a duplicate record.
  */
@@ -333,11 +373,6 @@ export function planRepairPromotions(
     for (const row of cold.work) visit(row.id);
   }
   for (const id of extraSeeds) visit(id);
-  // A retired record whose own pull request is unsettled returns hot, where
-  // the maintenance pass settles it (it never reads the cold tier).
-  for (const row of cold.work) {
-    if (retiredPullClosurePending(row)) visit(row.id);
-  }
   for (const work of hot.work) {
     for (const dependency of work.dependencies) visit(dependency);
   }

@@ -124,14 +124,15 @@ Deno.test("hosted maintenance pass: 731-record surface demotes under budget, def
     assert.equal(record.counts.recordsRead, FIXTURE_RECORDS);
     assert.equal(record.counts.releaseRequestsMovedToCold, 0);
 
-    // The next pass reads exactly the rows the first one left hot and keeps
-    // draining under the same budget, never failing.
+    // The next pass reads exactly the rows the first one left hot (plus the
+    // generation's retired-pull scan row that first commit recorded) and
+    // keeps draining under the same budget, never failing.
     const second = await pass(rig, github, extra);
     assert.notEqual(second.result.status, "failed");
     assert.equal(second.summary.status, "applied");
     assert.equal(
       second.summary.recordsRead,
-      FIXTURE_RECORDS - first.summary.demoted,
+      FIXTURE_RECORDS - first.summary.demoted + 1,
     );
     assert.equal(second.summary.demoted, 1_197);
     assert.equal(second.summary.deferred, 827);
