@@ -78,7 +78,8 @@ async function seed(work: WorkRecordV1[]): Promise<MemoryState> {
 
 interface Rig {
   deps: TargetCapabilityPassDepsV1;
-  created: { repo: string; title: string; body: string }[];
+  created: { repo: string; number: number; title: string; body: string }[];
+  lookups: number;
   updated: { repo: string; number: number; body: string }[];
   factsReads: number;
   tips: Map<string, GitSha>;
@@ -92,6 +93,7 @@ function rig(
 ): Rig {
   const out: Rig = {
     created: [],
+    lookups: 0,
     updated: [],
     factsReads: 0,
     tips: new Map(targets.map((target) => [target.name, SHA2])),
@@ -115,8 +117,17 @@ function rig(
       return Promise.resolve(out.facts.get(repository.name) ?? null);
     },
     issuesFor: (repository) => ({
+      findExisting: () => {
+        out.lookups++;
+        const open = out.created.filter((issue) =>
+          issue.repo === repository.name
+        ).map((issue) => issue.number);
+        return Promise.resolve({
+          number: open.length === 0 ? null : Math.min(...open),
+        });
+      },
       create: (input) => {
-        out.created.push({ repo: repository.name, ...input });
+        out.created.push({ repo: repository.name, number: next, ...input });
         return Promise.resolve(next++);
       },
       update: (number, input) => {
@@ -290,14 +301,56 @@ Deno.test("capability pass: an unreadable tip or facts writes nothing; named pol
   );
 });
 
-Deno.test("capability pass: a conflicting write reports the created issue as unrecorded", async () => {
+Deno.test("capability pass: an issue whose recording write failed is adopted, never duplicated", async () => {
   const state = await seed([]);
   const r = rig(state);
   state.conflictRepairNext = true;
   const result = await runTargetCapabilityPass(r.deps);
   assert.equal(result.status, "skipped");
-  assert.ok(result.actions.includes(
-    "capability:ubiquity/prospector-chrome-extension:issue_unrecorded",
-  ));
+  assert.ok(result.actions.includes("capability:write_conflict"));
   assert.equal(snap(state).targetCapabilities, undefined);
+  assert.equal(r.created.length, 1);
+
+  const again = await runTargetCapabilityPass(r.deps);
+  assert.equal(again.status, "applied");
+  assert.ok(again.actions.includes(
+    "capability:ubiquity/prospector-chrome-extension:issue_adopted:41",
+  ));
+  assert.equal(r.created.length, 1, "no duplicate issue");
+  assert.equal(r.updated.length, 1, "the adopted issue states the list");
+  const row = cachedTargetCapabilityV1(snap(state), PROSPECTOR)!;
+  assert.equal(row.ownerIssue, 41);
+  assert.equal(row.ownerIssueDigest, row.missingDigest);
+  await runTargetCapabilityPass(r.deps);
+  assert.equal(r.lookups, 2, "a recorded issue needs no lookup");
+  assert.equal(r.updated.length, 1);
+});
+
+Deno.test("capability pass: an unreadable issue listing creates nothing", async () => {
+  const state = await seed([]);
+  const r = rig(state);
+  const issues = r.deps.issuesFor(PROSPECTOR)!;
+  r.deps = {
+    ...r.deps,
+    issuesFor: () => ({ ...issues, findExisting: () => Promise.resolve(null) }),
+  };
+  const result = await runTargetCapabilityPass(r.deps);
+  assert.ok(result.actions.includes(
+    "capability:ubiquity/prospector-chrome-extension:issue_lookup_unreadable",
+  ));
+  assert.equal(r.created.length, 0);
+  const row = cachedTargetCapabilityV1(snap(state), PROSPECTOR)!;
+  assert.equal(row.ownerIssue, null, "the verdict is still cached");
+});
+
+Deno.test("capability pass: no target starts past the deadline", async () => {
+  const state = await seed([]);
+  const r = rig(state, [PROSPECTOR, STAKE]);
+  r.deps = { ...r.deps, deadline: T0 + 10_000 };
+  const result = await runTargetCapabilityPass(r.deps);
+  assert.equal(result.status, "unchanged");
+  assert.ok(result.actions.includes(
+    "capability:ubiquity/prospector-chrome-extension:deadline",
+  ));
+  assert.equal(r.factsReads, 0);
 });

@@ -10,6 +10,11 @@
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import { HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR } from "./hosted-autonomy-policy.ts";
 import {
+  SENTINEL_SKIP_MARKER,
+  TARGET_CAPABILITY_ISSUE_MARKER,
+  type TargetCapabilityIssuesV1,
+} from "../src/repair/target-capability.ts";
+import {
   API_BASE,
   type createHostedAutonomyRequest,
   LISTING_PAGE_SIZE,
@@ -221,25 +226,55 @@ export function createHostedBaseRepairIssues(
 }
 
 /**
- * The owner-action capability issue writes (`hosted-autonomy-target-capability.ts`):
- * the follow-up create without a label, and one edit of title and body. An
- * edit is confirmed only when GitHub answers with this repository's
- * App-created issue echoing the exact text; the state is never changed.
+ * The owner-action capability issues (`hosted-autonomy-target-capability.ts`):
+ * one complete bounded listing of the OPEN issues the sentinel App created
+ * here, to find an existing capability issue by its second-line marker (so a
+ * failed state write never produces a duplicate), the follow-up create
+ * without a label, and one edit of title and body. An edit is confirmed only
+ * when GitHub answers with this repository's App-created issue echoing the
+ * exact text; nothing here changes Sentinel state.
  */
 export function createHostedCapabilityIssues(
   request: ReturnType<typeof createHostedAutonomyRequest>,
   repository: RepositoryIdentityV1,
-): {
-  create(input: { title: string; body: string }): Promise<number | null>;
-  update(
-    number: number,
-    input: { title: string; body: string },
-  ): Promise<boolean>;
-} {
+): TargetCapabilityIssuesV1 {
   const scope = `${repository.owner}/${repository.name}`;
   const repositoryUrl = `${API_BASE}/repos/${scope}`;
+  const creator = encodeURIComponent(HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR);
   const followUps = createHostedFollowUpIssues(request, repository);
   return {
+    async findExisting() {
+      const seen = new Set<number>();
+      let found: number | null = null;
+      for (let page = 1; page <= MAX_LISTING_PAGES; page++) {
+        const raw = await request(
+          "GET",
+          `/repos/${scope}/issues?creator=${creator}&state=open&sort=created&direction=asc&per_page=${LISTING_PAGE_SIZE}&page=${page}`,
+          undefined,
+          MAX_COMPARE_RESPONSE_BYTES,
+        );
+        if (!Array.isArray(raw) || raw.length > LISTING_PAGE_SIZE) return null;
+        for (const entry of raw) {
+          const item = parseIssueItem(entry, repositoryUrl);
+          const body = record(entry)?.["body"];
+          if (
+            item === null || seen.has(item.number) ||
+            item.author !== HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR
+          ) return null;
+          seen.add(item.number);
+          if (item.pullRequest || typeof body !== "string") continue;
+          const lines = body.split(/\r?\n/, 2);
+          if (
+            lines[0]?.trim() === SENTINEL_SKIP_MARKER &&
+            lines[1]?.trim() === TARGET_CAPABILITY_ISSUE_MARKER &&
+            (found === null || item.number < found)
+          ) found = item.number;
+        }
+        if (raw.length < LISTING_PAGE_SIZE) return { number: found };
+      }
+      // A full last page at the bound proves nothing about the rest.
+      return null;
+    },
     create: (input) => followUps.create(input),
     async update(number, input) {
       if (!Number.isSafeInteger(number) || number <= 0) return false;

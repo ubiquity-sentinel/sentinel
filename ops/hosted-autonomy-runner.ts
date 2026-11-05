@@ -43,6 +43,7 @@ import {
 } from "./hosted-autonomy-continuation.ts";
 import { runHostedFollowUpPass } from "./hosted-autonomy-follow-up-pass.ts";
 import { runHostedBaseRepairPass } from "./hosted-autonomy-base-repair.ts";
+import { runHostedTargetCapabilityPass } from "./hosted-autonomy-target-capability.ts";
 import { runHostedCiResumePass } from "./hosted-autonomy-ci-resume.ts";
 import { runHostedOutageObservationPass } from "./hosted-autonomy-outage-observation.ts";
 import { runHostedQueueCustody } from "./hosted-autonomy-queue-pass.ts";
@@ -234,6 +235,22 @@ export async function runHostedAutonomy(
       } finally {
         finish();
       }
+    }
+    // Target capability (#332): the one state-writing pass after the chain,
+    // over the guarded state (never the shared read-only view), bounded by
+    // the same deadline. It only appends actions and never fails the run.
+    const finishCapability = beginMaintenanceProgress("target_capability");
+    try {
+      followUps = [
+        ...followUps,
+        ...await runHostedTargetCapabilityPass(
+          scoped,
+          startedAt + HOSTED_AUTONOMY_PASS_DEADLINE_MS,
+          readOnly.state,
+        ),
+      ];
+    } finally {
+      finishCapability();
     }
     await deps.onQueueCustodyReady?.(followUpComplete && !degraded);
     return followUps.length === 0

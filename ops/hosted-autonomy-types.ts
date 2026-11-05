@@ -354,6 +354,21 @@ export interface HostedAutonomyGitHubV1 {
    * base-repair issue in THIS repository. Absent means none is filed.
    */
   baseRepairIssues?: HostedBaseRepairIssuesV1;
+  /**
+   * Optional trusted launcher capability: the owner-action capability issue
+   * of THIS repository (`ops/hosted-autonomy-target-capability.ts`).
+   */
+  capabilityIssues?:
+    import("../src/repair/target-capability.ts").TargetCapabilityIssuesV1;
+  /**
+   * The target tree facts at exactly this commit
+   * (`src/host/target-tree-facts.ts`), or null when unreadable.
+   */
+  readTreeFacts?(
+    commit: string,
+  ): Promise<
+    import("../src/host/target-policy-generic.ts").TargetTreeFactsV1 | null
+  >;
 
   /**
    * Optional trusted launcher capability: the owner's `sentinel:retry` label
@@ -538,6 +553,11 @@ export interface HostedAutonomyDepsV1 {
    * borrows another repository's surface.
    */
   githubFor(repository: RepositoryIdentityV1): HostedAutonomyGitHubV1 | null;
+  /**
+   * `owner/name` of every committed backup CI target
+   * (`sentinel.backup-ci-targets.json`); absent means none.
+   */
+  backupCiTargets?: readonly string[];
   clock: { now(): number };
   /**
    * Trusted post-merge delivery-check names for one repository (sentinel
