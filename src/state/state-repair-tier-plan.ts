@@ -18,12 +18,19 @@
  *   accounting window, so no live accounting, retry or duplicate-detection
  *   window changes, and none is referenced from outside the family or owned
  *   by a caller-protected recovery;
- * - every bound review is completed and every bound release request terminal.
+ * - every bound review is completed and every bound release request terminal,
+ *   except while the release path is observed disabled (Sentinel #325): an
+ *   OPEN release request then moves cold with its family, unchanged, and so
+ *   does a `delivery` record waiting only on such a request (the release
+ *   acceptance it waits for cannot occur while release is disabled). Those
+ *   families return hot when release is enabled again (see
+ *   state-repair-tier-release.ts).
  * Attempt memory, lessons, incidents, evidence, replays, cooldowns and
  * owner-successor reviews always stay hot: the lesson digest is derived from
  * the whole attempt memory, and moving it would regenerate that view.
  */
 
+import type { GitSha } from "../contracts/brands.ts";
 import type { BudgetReservationV1 } from "../contracts/budget-reservation.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
@@ -53,6 +60,27 @@ export interface RepairTierPolicyV1 {
   protectedReservationIds?: ReadonlySet<string>;
   /** Maximum rows one pass demotes; later families are deferred. */
   demotionBudget: number;
+  /**
+   * Release path observed this pass from the positively read release ref.
+   * Undefined (unknown) moves no family that holds an open release request.
+   */
+  releasePath?: "disabled" | "enabled";
+  /**
+   * Repositories whose ordinary delivery step itself completes a merged
+   * record while release is disabled (owner directive 2026-10-31); their
+   * `delivery` records stay hot so that completion still happens.
+   */
+  releaseDeferredDeliveryExcluded?: (
+    repository: RepositoryIdentityV1,
+  ) => boolean;
+  /**
+   * Target tips read this pass, by `repositoryTierKey`. A cold family with an
+   * open release request is promoted only when every such request's target
+   * tip was read, so the supersession check runs right after the promotion.
+   */
+  releaseTargetTips?: ReadonlyMap<string, GitSha>;
+  /** Maximum rows one pass promotes for release (default `demotionBudget`). */
+  releasePromotionBudget?: number;
 }
 
 /** One exact row move between the tiers (same bytes, same file name). */
@@ -67,11 +95,15 @@ export interface RepairTierMoveV1 {
 interface Family {
   workId: string;
   moves: RepairTierMoveV1[];
+  delivery: boolean;
+  openRequests: number;
 }
 
-function repositoryKey(repository: RepositoryIdentityV1): string {
+/** Stable repository key used by the tier policy maps. */
+export function repositoryTierKey(repository: RepositoryIdentityV1): string {
   return `${repository.owner}/${repository.name}#${repository.installationId}`;
 }
+const repositoryKey = repositoryTierKey;
 
 function byId(left: { id: string }, right: { id: string }): number {
   return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
@@ -82,8 +114,12 @@ function demotableWork(
   listed: ReadonlySet<string>,
   policy: RepairTierPolicyV1,
 ): boolean {
+  const settled = record.nextStep === "done" || record.nextStep === "blocked";
+  const releaseDeferred = policy.releasePath === "disabled" &&
+    record.nextStep === "delivery" && record.target.pr !== null &&
+    !(policy.releaseDeferredDeliveryExcluded?.(record.repository) ?? false);
   return record.source.kind === "issue" &&
-    (record.nextStep === "done" || record.nextStep === "blocked") &&
+    (settled || releaseDeferred) &&
     record.intent === null &&
     listed.has(repositoryKey(record.repository)) &&
     !policy.openIssueWorkIds.has(record.id) &&
@@ -149,11 +185,17 @@ export function planRepairDemotions(
       });
       familyOfReservation.set(reservation.id, work.id);
     }
-    families.set(work.id, { workId: work.id, moves });
+    families.set(work.id, {
+      workId: work.id,
+      moves,
+      delivery: work.nextStep === "delivery",
+      openRequests: 0,
+    });
   }
 
   // Bind reviews and release requests to their family; a non-terminal bound
-  // row keeps its whole family hot.
+  // row keeps its whole family hot (an open release request only while the
+  // release path is not observed disabled).
   const drop = (workId: string) => {
     const family = families.get(workId);
     if (family === undefined) return;
@@ -176,15 +218,24 @@ export function planRepairDemotions(
   for (const request of hot.releaseRequests) {
     const workId = familyOfReservation.get(request.source.reviewRequestId);
     if (workId === undefined) continue;
+    const family = families.get(workId);
+    if (family === undefined) continue;
     if (request.status === "open") {
-      drop(workId);
-      continue;
+      if (policy.releasePath !== "disabled") {
+        drop(workId);
+        continue;
+      }
+      family.openRequests++;
     }
-    families.get(workId)?.moves.push({
+    family.moves.push({
       id: request.id,
       from: "releaseRequests",
       to: "releaseRequests",
     });
+  }
+  // A `delivery` record moves only while it waits on an open request.
+  for (const family of [...families.values()]) {
+    if (family.delivery && family.openRequests === 0) drop(family.workId);
   }
   // References from rows outside every family (an incomplete operation of
   // another work record, an owner-successor review) keep a family hot.
@@ -251,6 +302,8 @@ export function planRepairPromotions(
   hot: RepairStateSnapshotV1,
   cold: RepairColdTierV1,
   policy: Pick<RepairTierPolicyV1, "openIssueWorkIds">,
+  /** Further cold work ids to promote (the bounded release promotions). */
+  extraSeeds: readonly string[] = [],
 ): RepairTierMoveV1[] {
   const coldWork = new Map<string, WorkRecordV1>(
     cold.work.map((row) => [row.id, row]),
@@ -263,6 +316,7 @@ export function planRepairPromotions(
     for (const dependency of record.dependencies) visit(dependency);
   };
   for (const id of policy.openIssueWorkIds) visit(id);
+  for (const id of extraSeeds) visit(id);
   for (const work of hot.work) {
     for (const dependency of work.dependencies) visit(dependency);
   }

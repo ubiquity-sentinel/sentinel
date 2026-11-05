@@ -11,7 +11,10 @@
  * the cold subtree. Cold rows keep the exact blob bytes and file name they had
  * in the hot tier: a tier transition is a tree move, never a re-serialization,
  * so accounting, reservations and provenance are preserved byte-for-byte.
- * Only the collections a demotion may move exist in the cold tier.
+ * Only the collections a demotion may move exist in the cold tier. Cold rows
+ * are terminal, except a release-deferred family (Sentinel #325): an open
+ * release request and a `delivery` record waiting only on it, moved cold
+ * together while the release path is disabled.
  */
 
 import type { BudgetReservationV1 } from "../contracts/budget-reservation.ts";
@@ -197,11 +200,16 @@ export async function readColdCatalog(
   return portOk({ tree: rootMatch[1], entries: listed.value });
 }
 
-/** Reads and validates every cold record (explicit full-ledger readers only). */
+/**
+ * Reads and validates every cold record (explicit full-ledger readers only).
+ * `partial` reads a subset of the catalog: per-row checks apply, cross-row
+ * family bindings (which need the whole tier) do not.
+ */
 export async function readColdTier(
   io: StateGitOps,
   op: OpContext,
   catalog: RepairColdCatalogV1,
+  options: { partial?: boolean } = {},
 ): Promise<PortResultV1<RepairColdTierV1>> {
   if (catalog.entries.length === 0) return portOk(emptyColdTierV1());
   const requested = catalog.entries.map((entry) => entry.sha);
@@ -236,15 +244,25 @@ export async function readColdTier(
     reviews: orderRecords(records.reviews),
     releaseRequests: orderRecords(records.releaseRequests),
   };
-  const message = validateColdTier(cold);
+  const message = validateColdTier(cold, options.partial === true);
   return message === null ? portOk(cold) : portError("invalid", message);
 }
 
-/** Cold rows are terminal: a demotion never moves a row that can still change. */
-export function validateColdTier(cold: RepairColdTierV1): string | null {
+/**
+ * Cold rows are terminal: a demotion never moves a row that can still change,
+ * except a release-deferred family, whose open request and waiting `delivery`
+ * record are bound to each other through a cold reservation.
+ */
+export function validateColdTier(
+  cold: RepairColdTierV1,
+  partial = false,
+): string | null {
   for (const row of cold.work) {
-    if (row.nextStep !== "done" && row.nextStep !== "blocked") {
-      return "a cold work record must be done or blocked";
+    if (
+      row.nextStep !== "done" && row.nextStep !== "blocked" &&
+      row.nextStep !== "delivery"
+    ) {
+      return "a cold work record must be done, blocked or release-deferred";
     }
     if (row.intent !== null) {
       return "a cold work record cannot carry an incomplete operation";
@@ -261,8 +279,9 @@ export function validateColdTier(cold: RepairColdTierV1): string | null {
   if (cold.reviews.some((row) => row.outcome !== "completed")) {
     return "a cold review receipt must be completed";
   }
-  if (cold.releaseRequests.some((row) => row.status === "open")) {
-    return "a cold release request must be terminal";
+  if (!partial) {
+    const binding = releaseDeferredBindingMessage(cold);
+    if (binding !== null) return binding;
   }
   const reservationIds = new Set<string>();
   for (const row of [...cold.reservations, ...cold.reservationArchive]) {
@@ -274,6 +293,33 @@ export function validateColdTier(cold: RepairColdTierV1): string | null {
     for (const row of rows) {
       if (ids.has(row.id)) return "duplicate cold record id";
       ids.add(row.id);
+    }
+  }
+  return null;
+}
+
+/**
+ * Every cold open release request binds a cold reservation of a cold work
+ * record, and every cold `delivery` record holds such an open request.
+ */
+function releaseDeferredBindingMessage(cold: RepairColdTierV1): string | null {
+  const taskOf = new Map<string, string>();
+  for (const row of [...cold.reservations, ...cold.reservationArchive]) {
+    taskOf.set(row.id, String(row.taskId));
+  }
+  const coldWork = new Set<string>(cold.work.map((row) => row.id));
+  const deferred = new Set<string>();
+  for (const request of cold.releaseRequests) {
+    if (request.status !== "open") continue;
+    const workId = taskOf.get(request.source.reviewRequestId);
+    if (workId === undefined || !coldWork.has(workId)) {
+      return "a cold open release request must belong to a cold family";
+    }
+    deferred.add(workId);
+  }
+  for (const row of cold.work) {
+    if (row.nextStep === "delivery" && !deferred.has(row.id)) {
+      return "a cold delivery record must wait on a cold open release request";
     }
   }
   return null;
