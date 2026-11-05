@@ -4577,3 +4577,21 @@ recording write was lost is adopted by its marker; a repeated finalize of one
 cycle acts once; 60 s bound; never throws into the run; kill switch
 `SENTINEL_SELF_IMPROVE=off`. The 7-day cooldown, the one-issue-per-cycle rule
 and the >10% edit rule are retired.
+
+## 2026-11-05: upkeep-deferral notice as an owner issue (#327)
+
+Owner decision (2026-11-05): the upkeep-deferral notice is one owner issue on
+`ubiquity-sentinel/sentinel`, filed by finalize through the trusted App issue
+port with the self App token the watchdog uses. The body's first line is
+`<!-- sentinel:skip -->` and its second is `<!-- sentinel:upkeep-deferral -->`;
+the title is "Upkeep deferred for N consecutive supervisor cycles"; the body
+carries only the closed reason codes, the streak's run ids (most recent 30),
+the streak start and this pointer. A deferral means the bounded self-upkeep
+pass was skipped without writing and the run stayed green. The third
+consecutive deferral opens the issue; later claims (each +3 to the streak) or
+a new streak edit the open marker issue, preferring the number recorded in
+`throughput/upkeep-streak.json` (version 2; version 1 is lifted on read);
+Sentinel never closes it. When the issue is not delivered the log line is the
+fallback, the finalize line records the adapter, and the run outcome is
+unaffected. A runtime before this revision rejects a version 2 streak file;
+the #340 rollback rule applies.
