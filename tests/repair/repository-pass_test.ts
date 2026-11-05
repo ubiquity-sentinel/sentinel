@@ -2,9 +2,9 @@
  * Fan-out repository passes and the single trusted writer (issue #328).
  *
  * Each case runs the ACTUAL step loop per repository against one shared
- * in-memory snapshot (concurrently, never writing it), then applies the
- * sealed deltas through the existing repair-state writer. No network, no
- * model call, no real waiting.
+ * in-memory state (concurrently, never writing it), then applies the sealed
+ * deltas through the existing repair-state writer. No network, no model
+ * call, no real waiting.
  */
 import assert from "node:assert/strict";
 import {
@@ -20,8 +20,13 @@ import {
 } from "../../src/repair/fanout-summary-line.ts";
 import { runRepairCycle } from "../../src/repair/loop.ts";
 import { PASS_SUMMARY_LINE_KIND } from "../../src/repair/pass-summary-line.ts";
+import { STEP_LINE_KIND } from "../../src/repair/step-line.ts";
 import { applyRepairDeltas } from "../../src/repair/repair-delta-apply.ts";
-import { repairFanoutMatrixV1 } from "../../src/repair/repair-fanout-plan.ts";
+import {
+  delegatedRecordsV1,
+  repairFanoutMatrixV1,
+  type RepairFanoutPlanV1,
+} from "../../src/repair/repair-fanout-plan.ts";
 import { runRepositoryRepairPass } from "../../src/repair/repository-pass.ts";
 import { SHA1, SHA2 } from "../state/helpers.ts";
 import {
@@ -31,29 +36,32 @@ import {
   pendingArtifact,
   plan,
   REPOS,
+  reviewing,
   type Rig,
 } from "./repository-pass-rig.ts";
 
 const [ALPHA, BETA, GAMMA] = REPOS;
 
+/** Delegable reviews in alpha and beta, one matrix-owned alpha record. */
 function fleet(): WorkRecordV1[] {
   return [
-    ...[0, 1, 2].map((index) => pendingArtifact(ALPHA, index)),
-    ...[100, 101].map((index) => pendingArtifact(BETA, index)),
-    pendingArtifact(GAMMA, 200, { nextStep: "done", intent: null }),
+    ...[0, 1, 2].map((index) => reviewing(ALPHA, index)),
+    pendingArtifact(ALPHA, 9),
+    ...[100, 101].map((index) => reviewing(BETA, index)),
+    reviewing(GAMMA, 200, { nextStep: "done" }),
   ];
 }
 
-/** Every planned repository pass, started together on the planned head. */
+/** Every planned repository cell, started together. */
 async function fanOut(rig: Rig) {
   const { plan: fanout, binding } = await plan(rig);
   const { value: results } = await captured(() =>
     Promise.all(
-      fanout.repositories.map((repository) =>
+      fanout.cells.map((cell) =>
         runRepositoryRepairPass(rig.deps, {
-          repository,
+          repository: cell.repository,
           binding,
-          baseHead: fanout.baseHead,
+          records: cell.records,
           deadline: rig.clock.now() + 90 * MINUTE,
           stepLimit: 1_000,
           modelStartsEnabled: true,
@@ -81,10 +89,20 @@ async function sealRawDelta(delta: unknown): Promise<unknown> {
   };
 }
 
-function artifacts(envelopes: RepairDeltaEnvelopeV1[]) {
-  return envelopes.map((envelope) => ({
-    repository: envelope.delta.repository,
-    envelope: structuredClone(envelope) as unknown,
+/** The plan cell of `name`, and every envelope as its own cell's artifact. */
+function cellOf(fanout: RepairFanoutPlanV1, name: string) {
+  const cell = fanout.cells.find((entry) => entry.repository.name === name);
+  assert.ok(cell !== undefined, name);
+  return cell;
+}
+
+function artifacts(fanout: RepairFanoutPlanV1, list: unknown[]) {
+  return list.map((envelope) => ({
+    cellId: cellOf(
+      fanout,
+      (envelope as RepairDeltaEnvelopeV1).delta.repository.name,
+    ).cellId,
+    envelope: structuredClone(envelope),
   }));
 }
 
@@ -96,28 +114,38 @@ function row(rig: Rig, id: string): WorkRecordV1 {
 
 function apply(
   rig: Rig,
-  binding: Awaited<ReturnType<typeof plan>>["binding"],
-  list: { repository: typeof ALPHA; envelope: unknown }[],
+  fanout: RepairFanoutPlanV1,
+  list: { cellId: string; envelope: unknown }[],
   deadline = rig.clock.now() + 10 * MINUTE,
 ) {
   return captured(() =>
-    applyRepairDeltas(rig.deps, { binding, artifacts: list, deadline })
+    applyRepairDeltas(rig.deps, { plan: fanout, artifacts: list, deadline })
   );
 }
 
-Deno.test("fan-out: two repositories step concurrently on one snapshot and the trusted writer applies both in one write", async () => {
+Deno.test("fan-out: two repositories step their delegated records concurrently and the trusted writer applies both in one write", async () => {
   const rig = makeRig(fleet());
-  const { fanout, binding, envelopes } = await fanOut(rig);
-  // The done gamma record plans no cell.
-  assert.deepEqual(repairFanoutMatrixV1(fanout).include, [
-    { repository: "ubiquity/alpha", installationId: 7 },
-    { repository: "ubiquity/beta", installationId: 7 },
-  ]);
+  const { fanout, envelopes } = await fanOut(rig);
+  // Done and matrix-owned records are never delegated.
+  assert.deepEqual(
+    fanout.cells.map((cell) => [cell.repository.name, cell.records]),
+    [["alpha", ["issue-alpha-0", "issue-alpha-1", "issue-alpha-2"]], [
+      "beta",
+      ["issue-beta-100", "issue-beta-101"],
+    ]].sort((left, right) =>
+      fanout.cells.findIndex((cell) => cell.repository.name === left[0]) -
+      fanout.cells.findIndex((cell) => cell.repository.name === right[0])
+    ),
+  );
+  assert.equal(repairFanoutMatrixV1(fanout).include.length, 2);
   // The passes wrote nothing shared and performed no GitHub effect.
   assert.equal(rig.state.repairWrites, 0);
   assert.equal(rig.state.repairHead, SHA1);
   assert.deepEqual(rig.github.effects(), []);
-  const [alpha, beta] = envelopes.map((envelope) => envelope.delta);
+  const alpha = envelopes.find((e) => e.delta.repository.name === "alpha")!
+    .delta;
+  const beta = envelopes.find((e) => e.delta.repository.name === "beta")!
+    .delta;
   assert.equal(alpha.baseHead, SHA1);
   assert.deepEqual(alpha.transitions.map((t) => t.after.id), [
     "issue-alpha-0",
@@ -131,15 +159,14 @@ Deno.test("fan-out: two repositories step concurrently on one snapshot and the t
   for (const delta of [alpha, beta]) {
     assert.deepEqual(delta.deferredToTrusted, []);
     for (const transition of delta.transitions) {
-      assert.ok(transition.after.stepInputs !== undefined);
-      assert.equal(transition.after.repository.name, delta.repository.name);
+      assert.equal(transition.after.wait?.reason, "review_pending");
     }
   }
 
   const { value: applied, lines } = await apply(
     rig,
-    binding,
-    artifacts(envelopes),
+    fanout,
+    artifacts(fanout, envelopes),
   );
   assert.equal(applied.status, "applied");
   assert.deepEqual(applied.rejected, []);
@@ -147,6 +174,8 @@ Deno.test("fan-out: two repositories step concurrently on one snapshot and the t
   for (const transition of [...alpha.transitions, ...beta.transitions]) {
     assert.deepEqual(row(rig, transition.after.id), transition.after);
   }
+  // The matrix-owned record was not touched by its repository's cell.
+  assert.deepEqual(row(rig, "issue-alpha-9"), pendingArtifact(ALPHA, 9));
   const summary = lines.filter((line) =>
     line.kind === FANOUT_SUMMARY_LINE_KIND
   );
@@ -156,52 +185,61 @@ Deno.test("fan-out: two repositories step concurrently on one snapshot and the t
   assert.equal(parsed.deltasApplied, 2);
   assert.equal(parsed.transitionsApplied, 5);
   assert.equal(parsed.repositoryWallMs.length, 2);
+});
 
-  // The applied stamps are the serial pass's own: an unchanged next serial
-  // pass steps nothing and writes nothing.
-  rig.clock.advance(5 * MINUTE);
-  const head = rig.state.repairHead;
-  const { lines: serial } = await captured(() =>
+Deno.test("fan-out: the serial pass never steps a delegated record", async () => {
+  const rig = makeRig(fleet());
+  const { plan: fanout } = await plan(rig);
+  const { lines } = await captured(() =>
     runRepairCycle(rig.deps, {
       deadline: rig.clock.now() + 90 * MINUTE,
       stepLimit: 1_000,
       modelStartsEnabled: true,
+      excludeRecords: delegatedRecordsV1(fanout),
     })
   );
-  const pass = serial.find((line) => line.kind === PASS_SUMMARY_LINE_KIND);
-  assert.equal(pass?.recordsStepped, 0, JSON.stringify(pass));
-  assert.deepEqual(pass?.skipReasons, { unchanged_inputs: 5, waiting: 0 });
-  assert.equal(rig.state.repairHead, head);
+  const stepped = lines.filter((line) => line.kind === STEP_LINE_KIND)
+    .map((line) => line.recordId);
+  assert.deepEqual(stepped, ["issue-alpha-9"]);
+  const pass = lines.find((line) => line.kind === PASS_SUMMARY_LINE_KIND);
+  assert.equal(pass?.recordsStepped, 1);
 });
 
-Deno.test("fan-out: a delta whose repository base moved is rejected whole while the other applies", async () => {
+Deno.test("fan-out: a delta whose delegated base moved is rejected whole while the other applies", async () => {
   const rig = makeRig(fleet());
-  const { binding, envelopes } = await fanOut(rig);
-  // Another trusted writer moves one alpha record and the unrelated gamma
-  // record after the plan; beta's projection is untouched.
-  const moved = rig.state.repair!.work.map((record) =>
-    record.id === "issue-alpha-1"
-      ? {
-        ...record,
-        wait: {
-          reason: "backoff" as const,
-          since: record.updatedAt,
-          until: record.updatedAt + MINUTE,
-        },
-      }
-      : record.id === "issue-gamma-200"
-      ? { ...record, updatedAt: record.updatedAt + 1 }
-      : record
+  const { fanout, envelopes } = await fanOut(rig);
+  // Another trusted writer moves the NON-delegated alpha record: alpha's
+  // delegated projection is unchanged, so both deltas still apply.
+  const write = async (id: string) => {
+    const work = rig.state.repair!.work.map((record) =>
+      record.id === id ? { ...record, updatedAt: record.updatedAt + 1 } : record
+    );
+    const written = await rig.state.writeRepair(
+      { ...rig.state.repair!, sequence: rig.state.repair!.sequence + 1, work },
+      rig.state.repairHead,
+    );
+    assert.ok(written.ok && written.value.status === "applied");
+  };
+  await write("issue-alpha-9");
+  await write("issue-gamma-200");
+  const { value: both } = await apply(
+    rig,
+    fanout,
+    artifacts(fanout, envelopes),
   );
-  const written = await rig.state.writeRepair(
-    { ...rig.state.repair!, sequence: 2, work: moved },
-    SHA1,
-  );
-  assert.ok(written.ok && written.value.status === "applied");
+  assert.equal(both.applied.length, 2, JSON.stringify(both.rejected));
+
+  // A fresh fan-out, then the serial writer moves one DELEGATED alpha record.
+  rig.clock.advance(20 * MINUTE);
+  const second = await fanOut(rig);
+  await write("issue-alpha-1");
   const before = structuredClone(rig.state.repair!);
   const writes = rig.state.repairWrites;
-
-  const { value: result } = await apply(rig, binding, artifacts(envelopes));
+  const { value: result } = await apply(
+    rig,
+    second.fanout,
+    artifacts(second.fanout, second.envelopes),
+  );
   assert.equal(result.status, "applied");
   assert.deepEqual(result.applied.map((entry) => entry.repository.name), [
     "beta",
@@ -210,18 +248,21 @@ Deno.test("fan-out: a delta whose repository base moved is rejected whole while 
     { repository: ALPHA, reason: "base_moved" },
   ]);
   assert.equal(rig.state.repairWrites, writes + 1);
-  // No alpha row moved at all: the stale delta contributed nothing.
   for (const id of ["issue-alpha-0", "issue-alpha-1", "issue-alpha-2"]) {
     assert.deepEqual(
       row(rig, id),
       before.work.find((record) => record.id === id),
+      "the stale delta contributed nothing",
     );
   }
-  assert.ok(row(rig, "issue-beta-100").stepInputs !== undefined);
 
   // Every delta stale now: nothing is written.
   const again = rig.state.repairWrites;
-  const { value: none } = await apply(rig, binding, artifacts(envelopes));
+  const { value: none } = await apply(
+    rig,
+    second.fanout,
+    artifacts(second.fanout, second.envelopes),
+  );
   assert.equal(none.status, "none");
   assert.deepEqual(none.rejected.map((entry) => entry.reason), [
     "base_moved",
@@ -230,49 +271,58 @@ Deno.test("fan-out: a delta whose repository base moved is rejected whole while 
   assert.equal(rig.state.repairWrites, again);
 });
 
-Deno.test("fan-out: unsealed, tampered, rebound and charging deltas are refused before any write", async () => {
+Deno.test("fan-out: unsealed, tampered, rebound, out-of-scope, charging and missing deltas are refused before any write", async () => {
   const rig = makeRig(fleet());
-  const { binding, envelopes } = await fanOut(rig);
-  const [alpha, beta] = envelopes;
+  const { fanout, binding, envelopes } = await fanOut(rig);
+  const alpha = envelopes.find((e) => e.delta.repository.name === "alpha")!;
+  const beta = envelopes.find((e) => e.delta.repository.name === "beta")!;
+  const alphaCell = cellOf(fanout, "alpha").cellId;
+  const betaCell = cellOf(fanout, "beta").cellId;
   const tampered = structuredClone(alpha);
   tampered.delta.transitions[0].after.nextStep = "done";
   const unsigned = structuredClone(alpha) as Partial<RepairDeltaEnvelopeV1>;
   delete unsigned.digest;
-  // A validly resealed delta that charges an attempt is still refused.
+  // Validly resealed deltas that charge an attempt or step a record the
+  // plan did not delegate are still refused.
   const charged = structuredClone(alpha.delta);
   charged.transitions[0].after.counters.attempts += 1;
-  const resealed = await sealRepairDeltaV1(charged);
+  const outOfScope = structuredClone(alpha.delta);
+  const pending = pendingArtifact(ALPHA, 9);
+  outOfScope.transitions = [{
+    before: await canonicalDigestV1(pending),
+    after: { ...pending, updatedAt: pending.updatedAt + 1 },
+  }];
   const otherAttempt = await sealRepairDeltaV1({
     ...structuredClone(beta.delta),
     binding: { ...binding, runAttempt: 2 },
   });
-  const cases: [unknown, typeof ALPHA, string][] = [
-    [unsigned, ALPHA, "unauthenticated"],
-    [alpha.delta, ALPHA, "unauthenticated"],
+  const cases: [unknown, string, string][] = [
+    [unsigned, alphaCell, "unauthenticated"],
+    [alpha.delta, alphaCell, "unauthenticated"],
     [
       await sealRawDelta({ ...alpha.delta, extra: 1 }),
-      ALPHA,
+      alphaCell,
       "invalid",
     ],
-    [tampered, ALPHA, "unauthenticated"],
-    [{ ...alpha, digest: "0".repeat(64) }, ALPHA, "unauthenticated"],
-    [alpha, BETA, "unauthenticated"],
-    [otherAttempt, BETA, "unauthenticated"],
-    [resealed, ALPHA, "transition_refused"],
+    [tampered, alphaCell, "unauthenticated"],
+    [{ ...alpha, digest: "0".repeat(64) }, alphaCell, "unauthenticated"],
+    [alpha, betaCell, "unauthenticated"],
+    [otherAttempt, betaCell, "unauthenticated"],
+    [await sealRepairDeltaV1(charged), alphaCell, "transition_refused"],
+    [await sealRepairDeltaV1(outOfScope), alphaCell, "transition_refused"],
+    [null, alphaCell, "missing"],
   ];
-  for (const [envelope, repository, reason] of cases) {
-    const { value: result } = await apply(rig, binding, [
-      { repository, envelope },
-    ]);
+  for (const [envelope, cellId, reason] of cases) {
+    const { value: result } = await apply(rig, fanout, [{ cellId, envelope }]);
     assert.equal(result.status, "none", reason);
     assert.deepEqual(result.rejected.map((entry) => entry.reason), [reason]);
   }
   assert.equal(rig.state.repairWrites, 0);
-  // Two deltas for one repository: the second is a duplicate.
+  // Two deltas for one cell: the second is a duplicate.
   const { value: duplicate } = await apply(
     rig,
-    binding,
-    artifacts([beta, beta]),
+    fanout,
+    artifacts(fanout, [beta, beta]),
   );
   assert.deepEqual(duplicate.rejected.map((entry) => entry.reason), [
     "duplicate",
@@ -280,10 +330,10 @@ Deno.test("fan-out: unsealed, tampered, rebound and charging deltas are refused 
   assert.equal(rig.state.repairWrites, 1, "only the one valid beta delta");
 });
 
-Deno.test("fan-out: a step that needs a GitHub effect is discarded and deferred to the trusted writer", async () => {
+Deno.test("fan-out: a delegated step that needs a GitHub effect is handed back to the trusted path", async () => {
   // A produced candidate with no PR: its step would assign, push and publish.
-  const publish = pendingArtifact(ALPHA, 60, {
-    intent: null,
+  const publish = reviewing(ALPHA, 60, {
+    nextStep: "work",
     target: {
       base: SHA1,
       branch: "sentinel/repair/issue-alpha-60",
@@ -293,20 +343,30 @@ Deno.test("fan-out: a step that needs a GitHub effect is discarded and deferred 
     },
   });
   const rig = makeRig([...fleet(), publish]);
-  const { binding, envelopes } = await fanOut(rig);
+  const { fanout, envelopes } = await fanOut(rig);
+  assert.ok(cellOf(fanout, "alpha").records.includes("issue-alpha-60"));
   assert.deepEqual(rig.github.effects(), [], "no effect reached GitHub");
   assert.equal(rig.state.repairWrites, 0);
-  const alpha = envelopes[0].delta;
+  const alpha = envelopes.find((e) => e.delta.repository.name === "alpha")!
+    .delta;
   assert.deepEqual(alpha.deferredToTrusted, ["issue-alpha-60"]);
-  // The other records keep the stamps their own clean steps settled.
-  assert.deepEqual(alpha.transitions.map((t) => t.after.id), [
-    "issue-alpha-0",
-    "issue-alpha-1",
-    "issue-alpha-2",
-  ]);
-  const { value: result } = await apply(rig, binding, artifacts(envelopes));
+  // Its only transition drops the stamp; the other records keep theirs.
+  const handed = alpha.transitions.find((t) => t.after.id === "issue-alpha-60");
+  const { stepInputs: _stamp, ...unstamped } = publish;
+  assert.deepEqual(handed?.after, unstamped);
+  const { value: result } = await apply(
+    rig,
+    fanout,
+    artifacts(fanout, envelopes),
+  );
   assert.equal(result.status, "applied");
-  assert.deepEqual(row(rig, "issue-alpha-60"), publish);
+  assert.deepEqual(row(rig, "issue-alpha-60"), unstamped);
+  // The next plan leaves it with the trusted serial pass.
+  const next = await plan(rig);
+  assert.equal(
+    delegatedRecordsV1(next.plan).has("issue-alpha-60"),
+    false,
+  );
 });
 
 Deno.test("fan-out: intake of a new issue stays with the trusted writer", async () => {
@@ -316,16 +376,10 @@ Deno.test("fan-out: intake of a new issue stays with the trusted writer", async 
   const { envelopes } = await fanOut(rig);
   assert.equal(rig.state.repairWrites, 0);
   for (const envelope of envelopes) {
-    const delta = envelope.delta;
-    // No record is created by a delta; the new one is the trusted path's.
-    assert.ok(delta.deferredToTrusted.length > 0, JSON.stringify(delta));
-    for (const transition of delta.transitions) {
+    for (const transition of envelope.delta.transitions) {
       assert.ok(
         rig.state.repair!.work.some((row) => row.id === transition.after.id),
-      );
-      assert.equal(
-        delta.deferredToTrusted.includes(transition.after.id),
-        false,
+        "a delta never creates a record",
       );
     }
   }
@@ -333,11 +387,11 @@ Deno.test("fan-out: intake of a new issue stays with the trusted writer", async 
 
 Deno.test("fan-out: no write starts at or after the shared deadline", async () => {
   const rig = makeRig(fleet());
-  const { binding, envelopes } = await fanOut(rig);
+  const { fanout, envelopes } = await fanOut(rig);
   const { value: late } = await apply(
     rig,
-    binding,
-    artifacts(envelopes),
+    fanout,
+    artifacts(fanout, envelopes),
     rig.clock.now(),
   );
   assert.equal(late.status, "none");

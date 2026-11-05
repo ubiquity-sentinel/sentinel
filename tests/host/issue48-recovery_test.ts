@@ -1235,7 +1235,7 @@ Deno.test("issue48 recovery: supervisor workflow dependency and locking contract
   const finalize = text.slice(finalizeAt);
   assert.ok(
     finalize.includes(
-      "needs: [maintenance, prepare, matrix_plan, matrix_cell, repair]",
+      "needs: [maintenance, prepare, matrix_plan, matrix_cell, repair_cell, repair]",
     ),
   );
   assert.ok(

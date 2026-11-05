@@ -20,6 +20,10 @@ import {
 } from "./matrix.ts";
 import { createGitBundleExporter } from "./matrix-git.ts";
 import {
+  noRepairFanoutOutputs,
+  publishRepairFanoutOrNone,
+} from "./repair-fanout-host.ts";
+import {
   matrixPlanDiagnosticLineOf,
   type MatrixPlanDiagnosticLineV1,
 } from "./matrix-plan-diagnostic.ts";
@@ -133,6 +137,15 @@ export async function runActionsMatrixHost(
             "\n",
           { append: true },
         );
+        // #328: the repository fan-out plan on the state the planner left.
+        // It is an optimization: any failure plans no repository cell.
+        await publishRepairFanoutOrNone({
+          state: input.state,
+          configs: pooled.configs,
+          run: host.run,
+          artifactRoot: host.artifactRoot,
+          output,
+        });
         console.log(JSON.stringify(matrixPlanCarrierOf({
           waveId: result.plan.waveId,
           run: host.run,
@@ -276,7 +289,7 @@ export async function runActionsMatrixHost(
     await Deno.writeTextFile(
       output,
       'matrix={"include":[]}\nplanDigest=' + result.planDigest +
-        "\nhasCells=false\n",
+        "\nhasCells=false\n" + noRepairFanoutOutputs(),
       { append: true },
     );
     console.log(

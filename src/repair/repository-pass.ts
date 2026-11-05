@@ -3,24 +3,28 @@
  *
  * A credential-free repository cell runs the ORDINARY serial step loop
  * (`advanceRepairCycle`) for its one repository against a private fork of the
- * hot repair state at the exact head the fan-out was planned on, and returns
- * a sealed, bounded delta instead of writing shared state. The loop keeps its
- * own bounds: the caller's shared run deadline, the five-minute operation
- * margin and the step limit are unchanged, and no model can start: the model,
- * budget and replay capabilities are fenced (starts stay in the planner/cell
- * path).
+ * hot repair state it reads at its start, steps only the records the fan-out
+ * plan delegated to it (every other record of the repository stays visible
+ * and is never selected), and returns a sealed, bounded delta instead of
+ * writing shared state. The loop keeps its own bounds: the shared run
+ * deadline, the fixed run ceiling and the five-minute operation margin of the
+ * production entrypoint are applied exactly as there, the step limit is
+ * unchanged, and no model can start: the model, budget and replay
+ * capabilities are fenced (starts stay in the planner/cell path).
  *
  * The pass is speculative per interval. An interval ends at each progress
  * point the loop yields and at the loop's end. An interval is kept only when
  * it attempted no fenced effect, changed no collection but the repository's
  * own existing work records (and the cooldown/lesson bookkeeping a write
  * always refreshes), and every row it changed satisfies the shared transition
- * rule. Any other interval is discarded whole: the fork returns to the state
- * before it, its changed records are hidden for the rest of the pass and
- * listed as deferred to the trusted writer. A kept interval therefore never
- * reserves, charges, settles, publishes, merges, reviews or closes anything.
+ * rule, and changed only delegated records. Any other interval is discarded
+ * whole: the fork returns to the state before it, its changed records are
+ * hidden for the rest of the pass and listed as deferred to the trusted
+ * writer. A kept interval therefore never reserves, charges, settles,
+ * publishes, merges, reviews or closes anything. A delegated record deferred
+ * to the trusted writer loses its step stamp in the delta, so the next plan
+ * leaves it with the trusted serial pass, which performs the effect.
  */
-import type { GitSha } from "../contracts/brands.ts";
 import { canonicalStringify } from "../contracts/canonical.ts";
 import {
   canonicalDigestV1,
@@ -32,8 +36,10 @@ import {
   sealRepairDeltaV1,
 } from "../contracts/repair-delta.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
+import type { GitSha } from "../contracts/brands.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import { OPERATION_MARGIN_MS, REPAIR_RUN_CEILING_MS } from "./loop-bounds.ts";
 import { advanceRepairCycle } from "./loop-cycle.ts";
 import type { RepairCycleDepsV1, RepairCycleOutcomeV1 } from "./loop-types.ts";
 import { repairTransitionRefusalV1 } from "./repair-delta-rules.ts";
@@ -49,9 +55,9 @@ import {
 export interface RepositoryPassInputV1 {
   repository: RepositoryIdentityV1;
   binding: RepairDeltaBindingV1;
-  /** Exact authoritative repair state head the fan-out was planned on. */
-  baseHead: GitSha;
-  /** The shared run deadline (the loop applies its own operation margin). */
+  /** The record ids the plan delegated to this cell. */
+  records: readonly string[];
+  /** The shared run deadline (the operation margin is applied here). */
   deadline: number;
   /** Trusted original run start (the loop's model/ceiling anchor). */
   runStartedAt?: number;
@@ -127,21 +133,10 @@ function changedIds(
 
 async function readBase(
   deps: RepairCycleDepsV1,
-  baseHead: GitSha,
-): Promise<RepairStateSnapshotV1 | null> {
+): Promise<{ snapshot: RepairStateSnapshotV1; head: GitSha } | null> {
   const read = await deps.state.readRepair();
   if (!read.ok || read.value.status !== "found") return null;
-  if (read.value.head === baseHead) return read.value.snapshot;
-  // The head moved since the plan: read the planned head itself, never a
-  // newer one, so the delta's base is exactly what was planned.
-  if (deps.state.readRepairAt === undefined) return null;
-  const at = await deps.state.readRepairAt({
-    commit: baseHead,
-    expectedHead: read.value.head,
-  });
-  return at.ok && at.value.status === "found" && at.value.head === baseHead
-    ? at.value.snapshot
-    : null;
+  return { snapshot: read.value.snapshot, head: read.value.head };
 }
 
 /** True when two rows differ in nothing but their #326 step stamp. */
@@ -161,6 +156,7 @@ class IntervalJudge {
     private readonly fork: RepairForkState,
     private readonly fence: RepositoryPassFence,
     private readonly repository: RepositoryIdentityV1,
+    private readonly delegated: ReadonlySet<string>,
   ) {
     this.checkpoint = fork.checkpoint();
   }
@@ -186,6 +182,7 @@ class IntervalJudge {
       const left = prior.get(id);
       const right = current.get(id);
       return left === undefined || right === undefined ||
+        !this.delegated.has(id) ||
         repairTransitionRefusalV1(left, right, this.repository) !== null ||
         this.fork.leaksSyntheticHead(right);
     });
@@ -235,32 +232,45 @@ export async function runRepositoryRepairPass(
   if (configs.length === 0) {
     return { status: "refused", reason: "unconfigured" };
   }
-  const base = await readBase(deps, input.baseHead);
-  if (base === null) return { status: "refused", reason: "base_unavailable" };
+  const read = await readBase(deps);
+  if (read === null) return { status: "refused", reason: "base_unavailable" };
+  const base = read.snapshot;
+  const delegated = new Set(input.records);
   const own = base.work.filter((record) =>
     sameRepositoryV1(record.repository, input.repository)
   );
   const fork = new RepairForkState(
-    { snapshot: { ...base, work: own }, head: input.baseHead },
+    { snapshot: { ...base, work: own }, head: read.head },
     deps.state,
   );
   const fence = new RepositoryPassFence();
-  const judge = new IntervalJudge(fork, fence, input.repository);
-  const passDeps = fencedRepositoryDeps(
-    deps,
-    fork,
-    configs,
-    fence,
+  const judge = new IntervalJudge(fork, fence, input.repository, delegated);
+  const passDeps = fencedRepositoryDeps(deps, fork, configs, fence);
+  const excluded = new Set(
+    own.filter((record) => !delegated.has(record.id)).map((record) =>
+      record.id as string
+    ),
   );
-  const outcome = await drive(passDeps, input, judge);
+  const outcome = await drive(passDeps, input, judge, excluded);
 
   const finalRows = byId(fork.current().work);
   const transitions: RepairDeltaTransitionV1[] = [];
+  const deferred = new Set<string>();
   for (const record of own) {
-    if (fork.hidden.has(record.id)) continue;
-    const after = finalRows.get(record.id);
+    if (!delegated.has(record.id)) continue;
+    const after = fork.hidden.has(record.id)
+      ? undefined
+      : finalRows.get(record.id);
     if (after === undefined) {
-      judge.deferred.add(record.id);
+      // Handed back: without its stamp the next plan keeps it trusted.
+      deferred.add(record.id);
+      if (record.stepInputs !== undefined) {
+        const { stepInputs: _dropped, ...unstamped } = record;
+        transitions.push({
+          before: await canonicalDigestV1(record),
+          after: unstamped as WorkRecordV1,
+        });
+      }
       continue;
     }
     if (canonicalStringify(after) === canonicalStringify(record)) continue;
@@ -274,10 +284,14 @@ export async function runRepositoryRepairPass(
     kind: "repair_delta",
     repository: input.repository,
     binding: input.binding,
-    baseHead: input.baseHead,
-    baseDigest: await repairProjectionDigestV1(base, input.repository),
+    baseHead: read.head,
+    baseDigest: await repairProjectionDigestV1(
+      base,
+      input.repository,
+      delegated,
+    ),
     transitions,
-    deferredToTrusted: [...judge.deferred].sort(),
+    deferredToTrusted: [...deferred].sort(),
     startedAt,
     finishedAt: Math.max(startedAt, deps.clock.now()),
   });
@@ -292,13 +306,17 @@ async function drive(
   deps: RepairCycleDepsV1,
   input: RepositoryPassInputV1,
   judge: IntervalJudge,
+  excluded: ReadonlySet<string>,
 ): Promise<RepairCycleOutcomeV1["status"]> {
+  // The production entrypoint's own bounds (`runRepairEntrypoint`): the
+  // caller deadline clamped by the fixed run ceiling, less the margin.
+  const runStartedAt = input.runStartedAt ?? deps.clock.now();
   const cycle = advanceRepairCycle(deps, {
-    deadline: input.deadline,
+    deadline: Math.min(input.deadline, runStartedAt + REPAIR_RUN_CEILING_MS) -
+      OPERATION_MARGIN_MS,
+    runStartedAt,
+    excludeRecords: excluded,
     ...(input.stepLimit === undefined ? {} : { stepLimit: input.stepLimit }),
-    ...(input.runStartedAt === undefined
-      ? {}
-      : { runStartedAt: input.runStartedAt }),
     ...(input.modelStartsEnabled === undefined
       ? {}
       : { modelStartsEnabled: input.modelStartsEnabled }),

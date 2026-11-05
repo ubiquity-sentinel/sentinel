@@ -27,7 +27,9 @@ export function reviewOwnerChildInput(
   ) throw new Error("trusted review owner descriptor invalid");
   const { reviewCustody: _privateDescriptor, ...matrix } = value;
   if (
-    Object.keys(matrix).some((key) => key !== "planDigest" && key !== "cellId")
+    Object.keys(matrix).some((key) =>
+      key !== "planDigest" && key !== "cellId" && key !== "repairPlanDigest"
+    )
   ) throw new Error("trusted review owner matrix input invalid");
   return {
     matrix: Object.keys(matrix).length === 0

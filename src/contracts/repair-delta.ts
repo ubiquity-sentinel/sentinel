@@ -46,8 +46,11 @@ export const REPAIR_DELTA_KIND = "repair_delta";
 export const REPAIR_DELTA_ENVELOPE_KIND = "repair_delta_envelope";
 /** Every transition is one existing record; never more than the hot ledger. */
 export const MAX_REPAIR_DELTA_TRANSITIONS = MaxItems.snapshotRecords;
-/** Serialized envelope bound (the consumer refuses larger bytes unread). */
-export const MAX_REPAIR_DELTA_BYTES = 8 * 1024 * 1024;
+/**
+ * Serialized envelope bound (the consumer refuses larger bytes unread); the
+ * same bound the authenticated archive reader applies to a `result.json`.
+ */
+export const MAX_REPAIR_DELTA_BYTES = 2 * 1024 * 1024;
 
 /** The run, attempt and plan one delta was produced for. */
 export interface RepairDeltaBindingV1 {
@@ -162,6 +165,15 @@ const PROJECTION_EXCLUDED = new Set([
   "lessons",
 ]);
 
+function pullNumberOf(row: unknown): number | null {
+  const value = row as {
+    target?: { pr?: unknown };
+    intent?: { pr?: unknown } | null;
+  };
+  const pr = value.target?.pr ?? value.intent?.pr ?? null;
+  return typeof pr === "number" ? pr : null;
+}
+
 /**
  * Canonical digest of everything a repository's pass can read from repair
  * state: every collection row bound to that repository, every row bound to no
@@ -169,18 +181,54 @@ const PROJECTION_EXCLUDED = new Set([
  * projection are indistinguishable to that pass, so a delta planned on one is
  * exactly as valid on the other; any movement of a row the pass could have
  * read changes the digest.
+ *
+ * With `scope` (the records delegated to that repository's cell), the
+ * repository's rows narrow to the scope: its work records, the rows keyed to
+ * them by `taskId` (reservations, archive, replays, attempt memory) and the
+ * reviews and release requests of their pull requests. Rows bound to no
+ * repository and the repository's other unkeyed rows stay in, so the trusted
+ * serial pass moving another record of the same repository does not make a
+ * delegated delta stale, while any movement a delegated step could read does.
  */
 export function repairProjectionDigestV1(
   snapshot: RepairStateSnapshotV1,
   repository: RepositoryIdentityV1,
+  scope?: ReadonlySet<string>,
 ): Promise<string> {
+  const pulls = new Set<number>();
+  if (scope !== undefined) {
+    for (const record of snapshot.work) {
+      const pr = pullNumberOf(record);
+      if (scope.has(record.id) && pr !== null) pulls.add(pr);
+    }
+  }
+  const inScope = (key: string, row: unknown): boolean => {
+    if (scope === undefined || typeof row !== "object" || row === null) {
+      return true;
+    }
+    const value = row as Record<string, unknown>;
+    if (key === "work") return scope.has(String(value.id));
+    if (typeof value.taskId === "string") return scope.has(value.taskId);
+    if (key === "reviews") {
+      const pr = (value.pullRequest as { number?: unknown } | undefined)
+        ?.number;
+      return typeof pr === "number" && pulls.has(pr);
+    }
+    if (key === "releaseRequests") {
+      const pr = (value.source as { pullRequest?: unknown } | undefined)
+        ?.pullRequest;
+      return typeof pr === "number" && pulls.has(pr);
+    }
+    return true;
+  };
   const projection: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(snapshot)) {
     if (PROJECTION_EXCLUDED.has(key) || value === undefined) continue;
     projection[key] = Array.isArray(value)
       ? value.filter((row) => {
         const owner = rowRepository(row);
-        return owner === null || sameRepositoryV1(owner, repository);
+        if (owner === null) return true;
+        return sameRepositoryV1(owner, repository) && inScope(key, row);
       })
       : value;
   }

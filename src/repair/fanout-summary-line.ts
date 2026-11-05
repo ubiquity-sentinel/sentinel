@@ -19,6 +19,7 @@ const MAX_DURATION_MS = 86_400_000;
 const MAX_COUNT = 100_000;
 
 export interface FanoutRejectionsV1 {
+  missing: number;
   unauthenticated: number;
   invalid: number;
   duplicate: number;
@@ -47,6 +48,7 @@ const REASONS = [
   "base_moved",
   "duplicate",
   "invalid",
+  "missing",
   "transition_refused",
   "unauthenticated",
 ] as const;
@@ -97,6 +99,7 @@ export function fanoutSummaryLine(
   result: RepairDeltaApplyResultV1,
 ): string | null {
   const rejected: FanoutRejectionsV1 = {
+    missing: 0,
     unauthenticated: 0,
     invalid: 0,
     duplicate: 0,

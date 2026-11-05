@@ -43,6 +43,7 @@ import { GitHubApiClient } from "../github/client.ts";
 import { parseReleaseStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import { fetchHttpTransport } from "../github/http.ts";
 import { runActionsPreflight } from "./actions-preflight.ts";
+import { isReadOnlyCellJob } from "./repair-cell-job.ts";
 import {
   prepareActionsQueueCustody,
   QUEUE_CUSTODY_IDLE_DETAIL,
@@ -245,7 +246,7 @@ export async function runActionsRepairHost(
       githubGitAuthEnv(githubToken),
     ),
   });
-  const state = deps.job === "matrix_cell"
+  const state = isReadOnlyCellJob(deps.job)
     ? hostedCellState(stateStore)
     : stateStore;
   // The saved supervisor pointer must bind exactly this run, attempt, launcher
@@ -264,7 +265,7 @@ export async function runActionsRepairHost(
   const matrixCarrier = childInput.matrix === undefined
     ? undefined
     : parseCarrier(JSON.parse(childInput.matrix), false);
-  if (deps.job !== "matrix_cell") await ensureRepairStateSeed(state, clock);
+  if (!isReadOnlyCellJob(deps.job)) await ensureRepairStateSeed(state, clock);
   // The enforcement mode is injected through the environment and parsed
   // strictly: an absent or empty setting enforces, a typo fails the run before
   // any request, and `off` is the explicit development switch.
@@ -276,7 +277,7 @@ export async function runActionsRepairHost(
     clock,
     mode: cooldownMode,
   });
-  const gate: GitHubCooldownGateV1 = deps.job === "matrix_cell"
+  const gate: GitHubCooldownGateV1 = isReadOnlyCellJob(deps.job)
     ? {
       beforeRequest: (scope) => mutableGate.beforeRequest(scope),
       recordRateLimit: () =>
@@ -401,7 +402,7 @@ export async function runActionsRepairHost(
     selfMintGrant: selfGrant,
     targetInstallationId,
     selfInstallationId,
-    contextsAllowed: identity.job !== "matrix_cell",
+    contextsAllowed: !isReadOnlyCellJob(identity.job),
     sourceProfiles: deps.hostedAppSourceProfiles,
   });
   const { isSelfTarget, tokenFor, loginFor, selfContext } = bindings;
@@ -736,7 +737,7 @@ export async function runActionsRepairHost(
     };
     if (isGatewayTarget(config)) {
       capabilities = unavailableTargetCapabilities();
-      if (deps.job !== "matrix_cell" && deps.gateway !== undefined) {
+      if (!isReadOnlyCellJob(deps.job) && deps.gateway !== undefined) {
         const native = new DenoReplayRuntime(trustedPath);
         const base = await native.run({
           executable: gitExecutable,
@@ -795,7 +796,7 @@ export async function runActionsRepairHost(
     canonicalStringify(runtime.execution) === canonicalStringify(execution) &&
     hostedOrdinaryAdmitted(runtime);
 
-  let queueReady = deps.job === "matrix_cell";
+  let queueReady = isReadOnlyCellJob(deps.job);
   let outcome: RepairCycleOutcomeV1 | null = null;
   let ownerOperationHandled = false;
   let failure: unknown = null;
@@ -857,7 +858,7 @@ export async function runActionsRepairHost(
           githubCooldown: gate,
           premergeCi: bindings.premergeCi,
           // #183 progress comments: the trusted host only, never a matrix cell.
-          progressComments: deps.job === "matrix_cell"
+          progressComments: isReadOnlyCellJob(deps.job)
             ? undefined
             : bindings.progressComments,
           // Legacy callers retain a closed pair; each prepared target resolves its own pair below.
