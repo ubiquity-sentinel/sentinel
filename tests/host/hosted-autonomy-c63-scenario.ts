@@ -436,8 +436,10 @@ export async function historicalC63Scenario(
         const previous = Deno.cwd();
         Deno.chdir(f.checkout);
         try {
-          await f.withHistoricalGraph(async (graph, deps) => {
+          return await f.withHistoricalGraph(async (graph, deps) => {
             const { runHostedAutonomy } = await graph.runner();
+            const { HistoricalQuarantineIncomplete } = await graph
+              .autonomyState();
             const { createHostedClosedMatrixRecovery } = await graph
               .matrixAdapters();
             const { createActionsMatrixArtifactTransport } = await graph
@@ -474,9 +476,17 @@ export async function historicalC63Scenario(
                   },
                 };
               },
+            }).catch((error: unknown) => {
+              // The protected main's exit mapping: an incomplete quarantine
+              // without an integrity fault is a bounded deferral (exit 0).
+              if (
+                error instanceof HistoricalQuarantineIncomplete &&
+                !error.integrity
+              ) return null;
+              throw error;
             });
+            return 0;
           });
-          return 0;
         } catch {
           return 1;
         } finally {
