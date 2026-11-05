@@ -41,14 +41,20 @@ import {
   readColdCatalog,
   REPAIR_COLD_PREFIX,
 } from "./state-repair-tier-layout.ts";
+import { readRepairManifest } from "./state-repair-tier-directory.ts";
 import { coldCollisionMessage } from "./state-repair-tier.ts";
 import type {
   RepairTierIoV1,
   RepairTierResultV1,
 } from "./state-repair-tier.ts";
-import { readRepairTieredOp, tierRepairOp } from "./state-repair-tier-store.ts";
+import {
+  readRepairForTieringOp,
+  readRepairTieredOp,
+  tierRepairOp,
+} from "./state-repair-tier-store.ts";
 import type {
   RepairTieredReadV1,
+  RepairTierHotReadV1,
   RepairTierStore,
   RepairTierStoreHooksV1,
 } from "./state-repair-tier-store.ts";
@@ -139,6 +145,10 @@ export class GitStateStore extends StateGitTransport implements StateStore {
         });
       },
     );
+  }
+
+  readRepairForTiering(): Promise<PortResultV1<RepairTierHotReadV1>> {
+    return this.withOpDir((op) => readRepairForTieringOp(this.tierHooks(), op));
   }
 
   readRepairTiered(): Promise<PortResultV1<RepairTieredReadV1>> {
@@ -544,6 +554,17 @@ export class GitStateStore extends StateGitTransport implements StateStore {
       updatedAt: next.updatedAt,
       stateHead: expectedHead,
     };
+    if (coldTree !== null && expectedHead !== null) {
+      const priorManifest = await readRepairManifest(
+        this.ops(),
+        op,
+        expectedHead,
+      );
+      if (!priorManifest.ok) throw new StatePushError("show");
+      if (priorManifest.value.repairTier !== undefined) {
+        manifest.repairTier = priorManifest.value.repairTier;
+      }
+    }
     const files: { path: string; text: string }[] = [{
       path: "manifest.json",
       text: `${canonicalStringify(manifest)}\n`,

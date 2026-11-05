@@ -9,9 +9,12 @@ import type { GitSha } from "../contracts/brands.ts";
 import type {
   PortErrorV1,
   PortResultV1,
+  StateReadResultV1,
   StateWriteResultV1,
 } from "../contracts/ports.ts";
 import { portOk } from "../contracts/ports.ts";
+import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
+import { readRepairTierDirectory } from "./state-repair-tier-directory.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { LoadedState, OpContext } from "./state-git.ts";
 import {
@@ -35,8 +38,14 @@ export type RepairTieredReadV1 =
     view: RepairTieredSnapshotV1;
   };
 
+/** Hot snapshot plus a compact directory, never a full-ledger view. */
+export type RepairTierHotReadV1 = StateReadResultV1<RepairStateSnapshotV1> & {
+  tierRepositories?: readonly RepositoryIdentityV1[];
+};
+
 /** Trusted repair-writer tier capability (hot/cold transitions). */
 export interface RepairTierStore {
+  readRepairForTiering?(): Promise<PortResultV1<RepairTierHotReadV1>>;
   /**
    * Explicit full-ledger view (hot + cold) for historical and compatible
    * readers: accounting, audits. The hot step loop, planner and maintenance
@@ -70,6 +79,30 @@ export interface RepairTierStoreHooksV1 {
     candidate: PushedCandidateV1,
     priorHead: GitSha,
   ): Promise<PortResultV1<StateWriteResultV1>>;
+}
+
+export async function readRepairForTieringOp(
+  hooks: RepairTierStoreHooksV1,
+  op: OpContext,
+): Promise<PortResultV1<RepairTierHotReadV1>> {
+  const loaded = await hooks.loadRepair(op);
+  if (!loaded.ok) return loaded;
+  if (loaded.value.status === "absent") {
+    return portOk({ status: "absent", currentHead: null, ref: hooks.ref });
+  }
+  const directory = await readRepairTierDirectory(
+    hooks.io,
+    op,
+    loaded.value.head,
+  );
+  if (!directory.ok) return directory;
+  return portOk({
+    status: "found",
+    head: loaded.value.head,
+    ref: hooks.ref,
+    snapshot: loaded.value.snapshot as RepairStateSnapshotV1,
+    tierRepositories: directory.value.directory.repositories,
+  });
 }
 
 export async function readRepairTieredOp(

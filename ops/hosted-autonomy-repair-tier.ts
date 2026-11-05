@@ -67,7 +67,9 @@ export async function runHostedRepairTierStep(
     store: {
       readRepair: () => deps.state.readRepair(),
       tierRepair: (input) => tiers.store.tierRepair(input),
-      readRepairTiered: () => tiers.store.readRepairTiered(),
+      ...(tiers.store.readRepairForTiering === undefined ? {} : {
+        readRepairForTiering: () => tiers.store.readRepairForTiering!(),
+      }),
     },
     listOpenIssueNumbers: (repository) =>
       tiers.listOpenIssueNumbers(repository),

@@ -19,9 +19,12 @@ import { parseReplayResultV1 } from "../contracts/replay-result.ts";
 import { parseReviewReceiptV1 } from "../contracts/review-receipt.ts";
 import { parseOwnerSuccessorReviewV1 } from "../contracts/owner-successor-review.ts";
 import {
+  expectArray,
   expectCount,
   expectExactKeys,
+  expectExactKeysWithOptional,
   expectGitSha,
+  expectNonEmptyString,
   expectNullable,
   expectRecord,
   expectTimestamp,
@@ -32,8 +35,17 @@ import { parseWorkRecordV1 } from "../contracts/work-record.ts";
 import { parseVpsReleaseRecordV1 } from "../contracts/vps-release.ts";
 import { parseTargetCapabilityV1 } from "../contracts/target-capability.ts";
 import type { GitSha } from "../contracts/brands.ts";
+import { parseRepositoryIdentity } from "../contracts/shared.ts";
+import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 
 export type StateKind = "repair" | "release";
+
+/** Compact discovery only: no cold record content or accounting. */
+export interface RepairTierDirectoryV1 {
+  repositories: RepositoryIdentityV1[];
+  workIds: string[];
+  openReleaseRequests: number;
+}
 
 export interface StateManifestV1 {
   version: "v1";
@@ -41,6 +53,8 @@ export interface StateManifestV1 {
   sequence: number;
   updatedAt: number;
   stateHead: GitSha | null;
+  /** Trusted tier writer owns this directory; ordinary writes carry it. */
+  repairTier?: RepairTierDirectoryV1;
 }
 
 export const MANIFEST_KEYS = [
@@ -61,7 +75,12 @@ export function parseStateManifest(
   kind: StateKind,
 ): StateManifestV1 {
   const obj = expectRecord(input, path);
-  expectExactKeys(obj, MANIFEST_KEYS, path);
+  expectExactKeysWithOptional(
+    obj,
+    MANIFEST_KEYS,
+    kind === "repair" ? ["repairTier"] : [],
+    path,
+  );
   expectVersion(obj.version, path);
   if (obj.kind !== MANIFEST_KIND[kind]) {
     fail(path, "invalid_lifecycle", "manifest kind does not match the ref");
@@ -72,6 +91,59 @@ export function parseStateManifest(
     sequence: expectCount(obj.sequence, `${path}.sequence`),
     updatedAt: expectTimestamp(obj.updatedAt, `${path}.updatedAt`),
     stateHead: expectNullable(obj.stateHead, `${path}.stateHead`, expectGitSha),
+    ...(Object.hasOwn(obj, "repairTier")
+      ? {
+        repairTier: parseRepairTierDirectory(
+          obj.repairTier,
+          `${path}.repairTier`,
+        ),
+      }
+      : {}),
+  };
+}
+
+function parseRepairTierDirectory(
+  input: unknown,
+  path: string,
+): RepairTierDirectoryV1 {
+  const obj = expectRecord(input, path);
+  expectExactKeys(
+    obj,
+    ["repositories", "workIds", "openReleaseRequests"],
+    path,
+  );
+  const repositories = expectArray(
+    obj.repositories,
+    `${path}.repositories`,
+    10_000,
+    parseRepositoryIdentity,
+  );
+  const keys = repositories.map((r) =>
+    `${r.owner}/${r.name}#${r.installationId}`
+  );
+  if (keys.some((key, i) => i > 0 && key <= keys[i - 1])) {
+    fail(
+      path,
+      "invalid_lifecycle",
+      "tier repositories must be unique and sorted",
+    );
+  }
+  const workIds = expectArray(
+    obj.workIds,
+    `${path}.workIds`,
+    10_000,
+    (value, at) => expectNonEmptyString(value, at, 256),
+  );
+  if (workIds.some((id, i) => i > 0 && id <= workIds[i - 1])) {
+    fail(path, "invalid_lifecycle", "cold work ids must be unique and sorted");
+  }
+  return {
+    repositories,
+    workIds,
+    openReleaseRequests: expectCount(
+      obj.openReleaseRequests,
+      `${path}.openReleaseRequests`,
+    ),
   };
 }
 

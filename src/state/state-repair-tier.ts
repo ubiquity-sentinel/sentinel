@@ -11,6 +11,13 @@
  * prior one. Nothing is rewritten, refunded, regenerated or dropped.
  */
 
+import {
+  nextTierDirectory,
+  readRepairManifest,
+  readRepairTierDirectory,
+  tierDirectoryMessage,
+  tierNeedsPromotion,
+} from "./state-repair-tier-directory.ts";
 import { canonicalStringify } from "../contracts/canonical.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import type { BudgetReservationV1 } from "../contracts/budget-reservation.ts";
@@ -126,6 +133,12 @@ export async function readRepairTieredView(
   if (!catalog.ok) return catalog;
   const cold = await readColdTier(io, op, catalog.value);
   if (!cold.ok) return cold;
+  const manifest = await readRepairManifest(io, op, head);
+  if (!manifest.ok) return manifest;
+  if (manifest.value.repairTier !== undefined) {
+    const message = tierDirectoryMessage(manifest.value.repairTier, cold.value);
+    if (message !== null) return portError("invalid", message);
+  }
   const overlap = validateTierDisjoint(hot, cold.value);
   if (overlap !== null) return portError("invalid", overlap);
   return portOk({ hot, cold: cold.value });
@@ -259,45 +272,25 @@ export async function buildRepairTierCommit(
     } & RepairTierReleaseMovesV1)
   >
 > {
+  const directory = await readRepairTierDirectory(io, op, head);
+  if (!directory.ok) return directory;
+  const demotable = policy.promoteAll === true
+    ? []
+    : planRepairDemotions(prior, policy);
+  const needsCold = tierNeedsPromotion(
+    directory.value.directory,
+    prior,
+    policy,
+  );
+  const pending = takeDemotionBudget(demotable, policy.demotionBudget);
+  if (!directory.value.legacy && !needsCold && pending.demote.length === 0) {
+    return portOk({ status: "unchanged", deferred: pending.deferred });
+  }
   const catalog = await readColdCatalog(io, op, head);
   if (!catalog.ok) return catalog;
   const priorTree = await listAll(io, op, head);
   if (!priorTree.ok) return priorTree;
-
-  // Promotion needs cold content only when an open issue names a cold family
-  // (or a hot record depends on one); the common pass reads no cold blob.
-  const coldNames = new Set(catalog.value.entries.map((entry) => entry.path));
-  let needsCold = policy.promoteAll === true &&
-    catalog.value.entries.length > 0;
-  const wanted = [
-    ...policy.openIssueWorkIds,
-    ...prior.work.flatMap((row) => row.dependencies),
-  ];
-  for (const id of wanted) {
-    const path = `${REPAIR_COLD_PREFIX}/work/${await sha256Hex(id)}.json`;
-    if (coldNames.has(path)) {
-      needsCold = true;
-      break;
-    }
-  }
-  // With the release path enabled, release-deferred families return hot; the
-  // cold request rows alone decide whether any open one is there.
-  if (!needsCold && policy.releasePath === "enabled") {
-    const requestPrefix = `${REPAIR_COLD_PREFIX}/releaseRequests/`;
-    const requestEntries = catalog.value.entries.filter((entry) =>
-      entry.path.startsWith(requestPrefix)
-    );
-    if (requestEntries.length > 0) {
-      const requests = await readColdTier(io, op, {
-        tree: catalog.value.tree,
-        entries: requestEntries,
-      }, { partial: true });
-      if (!requests.ok) return requests;
-      needsCold = requests.value.releaseRequests.some((row) =>
-        row.status === "open"
-      );
-    }
-  }
+  let promotedPlan: RepairTierMoveV1[] = [];
   let promoted: ResolvedMove[] = [];
   let releaseDeferred = 0;
   let promotedOpenReleaseRequestIds: string[] = [];
@@ -313,6 +306,7 @@ export async function buildRepairTierCommit(
       policy,
       release.seeds,
     );
+    promotedPlan = plan;
     const openCold = new Set(
       cold.value.releaseRequests.filter((row) => row.status === "open").map((
         row,
@@ -364,10 +358,6 @@ export async function buildRepairTierCommit(
   }
 
   const families: RepairTierMoveV1[][] = [];
-  // A promote-all transition (rollback preparation) never demotes.
-  const demotable = policy.promoteAll === true
-    ? []
-    : planRepairDemotions(prior, policy);
   const resolvedFamilies = new Map<RepairTierMoveV1[], ResolvedMove[]>();
   for (const family of demotable) {
     const resolved = await resolveMoves(family, priorTree.value, "demote");
@@ -395,16 +385,29 @@ export async function buildRepairTierCommit(
       move.from === "releaseRequests" && openHot.has(move.id)
     ).length;
   const deferred = budgeted.deferred + releaseDeferred;
-  if (promoted.length === 0 && demoted.length === 0) {
+  if (
+    promoted.length === 0 && demoted.length === 0 && !directory.value.legacy
+  ) {
     return portOk({ status: "unchanged", deferred });
   }
 
+  const coldAfter = catalog.value.entries.length - promoted.length +
+    demoted.length;
+  const repairTier = nextTierDirectory(
+    directory.value.directory,
+    prior,
+    takenFamilies.flat(),
+    promotedPlan,
+    directory.value.directory.openReleaseRequests + releaseRequestsMovedToCold -
+      promotedOpenReleaseRequestIds.length,
+  );
   const manifest: StateManifestV1 = {
     version: "v1",
     kind: MANIFEST_KIND.repair,
     sequence: prior.sequence + 1,
     updatedAt: Math.max(prior.updatedAt, policy.now),
     stateHead: head,
+    ...(coldAfter > 0 ? { repairTier } : {}),
   };
   const manifestBlob = await io.git(op, ["hash-object", "-w", "--stdin"], {
     stdin: new TextEncoder().encode(`${canonicalStringify(manifest)}\n`),
@@ -420,8 +423,6 @@ export async function buildRepairTierCommit(
   ]);
   lines.push(`100644 ${manifestSha}\tmanifest.json`);
   // The layout marker exists exactly while the cold tier holds a record.
-  const coldAfter = catalog.value.entries.length - promoted.length +
-    demoted.length;
   if (catalog.value.tree === null && coldAfter > 0) {
     const marker = await io.git(op, ["hash-object", "-w", "--stdin"], {
       stdin: new TextEncoder().encode(REPAIR_COLD_LAYOUT_TEXT),

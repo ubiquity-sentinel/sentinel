@@ -28,7 +28,10 @@ import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import { workItemIdForIssue } from "../repair/keys.ts";
 import { isGatewayVpsRepository } from "../repair/vps-delivery.ts";
 import { repositoryTierKey } from "../state/state-repair-tier-plan.ts";
-import type { RepairTierStore } from "../state/state-repair-tier-store.ts";
+import type {
+  RepairTierHotReadV1,
+  RepairTierStore,
+} from "../state/state-repair-tier-store.ts";
 
 export interface RepairTierMaintenanceDepsV1 {
   /** The trusted repair-role store (never a model-worker capability). */
@@ -36,8 +39,8 @@ export interface RepairTierMaintenanceDepsV1 {
     readRepair(): Promise<
       PortResultV1<StateReadResultV1<RepairStateSnapshotV1>>
     >;
-    /** Read only with release enabled, to find wholly cold repositories. */
-    readRepairTiered?: RepairTierStore["readRepairTiered"];
+    /** Hot read plus the compact discovery directory (no archive walk). */
+    readRepairForTiering?: () => Promise<PortResultV1<RepairTierHotReadV1>>;
   };
   /** Complete open-issue numbers of one repository, or a typed failure. */
   listOpenIssueNumbers(
@@ -104,26 +107,6 @@ async function observeReleasePath(
   }
 }
 
-/** Repositories that exist only in the cold tier (release-deferred). */
-async function coldRepositories(
-  deps: RepairTierMaintenanceDepsV1,
-): Promise<RepositoryIdentityV1[]> {
-  if (deps.store.readRepairTiered === undefined) return [];
-  try {
-    const read = await deps.store.readRepairTiered();
-    if (!read.ok || read.value.status !== "found") return [];
-    const cold = read.value.view.cold;
-    return [
-      ...cold.work.map((row) => row.repository),
-      ...cold.releaseRequests.filter((row) => row.status === "open").map((
-        row,
-      ) => row.target.repository),
-    ];
-  } catch {
-    return [];
-  }
-}
-
 function describe(
   out: RepairTierMaintenanceResultV1,
   releasePath: "disabled" | "enabled" | undefined,
@@ -175,7 +158,9 @@ export async function runRepairTierMaintenance(
     if (deps.clock.now() >= deps.deadlineAt) {
       return result("deferred", { reason: "deadline" });
     }
-    const read = await deps.store.readRepair();
+    const read: PortResultV1<RepairTierHotReadV1> = await (
+      deps.store.readRepairForTiering?.() ?? deps.store.readRepair()
+    );
     if (!read.ok) return result("deferred", { reason: read.error.kind });
     if (read.value.status !== "found") return result("absent");
     const snapshot = read.value.snapshot;
@@ -190,10 +175,8 @@ export async function runRepairTierMaintenance(
     for (const row of snapshot.releaseRequests) {
       addRepository(row.target.repository);
     }
-    if (releasePath === "enabled") {
-      for (const repository of await coldRepositories(deps)) {
-        addRepository(repository);
-      }
+    for (const repository of read.value.tierRepositories ?? []) {
+      addRepository(repository);
     }
     const listed: RepositoryIdentityV1[] = [];
     const openIssueWorkIds = new Set<string>();
