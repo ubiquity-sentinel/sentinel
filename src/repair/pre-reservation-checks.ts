@@ -24,6 +24,7 @@ import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { admittedImplementationWork } from "../budget/budget-state.ts";
 import { sameLogicalIdentity } from "../budget/budget-rolling.ts";
 import { normalizeProtectedPaths } from "../github/snapshot-git-wire.ts";
+import { normalizePathPrefix } from "./loop-records.ts";
 import {
   PUBLICATION_BINARY_DETAIL,
   PUBLICATION_BOUND_DETAIL,
@@ -140,6 +141,14 @@ const refuse = (
   refused: string,
 ): PreReservationResultV1 => ({ ok: false, refused, check });
 
+function protectedPathsUsable(paths: unknown): boolean {
+  if (!Array.isArray(paths)) return false;
+  if (paths.some((path) => typeof path !== "string")) return false;
+  const normalized = (paths as string[]).map(normalizePathPrefix)
+    .filter((path) => path.length > 0);
+  return normalizeProtectedPaths(normalized) !== null;
+}
+
 function boundsValid(policy: PreReservationTargetPolicyV1): boolean {
   const bound = policy.sessionBound;
   if (bound === null) return false;
@@ -186,7 +195,12 @@ export function preReservationChecks(
   if (!isValidBranchName(liveFacts.candidateRef)) {
     return refuse("candidate_ref", "candidate_ref_invalid");
   }
-  if (normalizeProtectedPaths(targetPolicy.protectedPaths) === null) {
+  // The denylist is read in the runtime's own normalized form (the candidate
+  // path check, `touchesProtected`, accepts `./dir/`, `dir//` and trailing
+  // slashes); only an entry still unsafe after that normalization refuses.
+  // An entry that normalizes to empty protects everything: the post-turn
+  // protected-path park owns it, so it is not a pre-reservation refusal.
+  if (!protectedPathsUsable(targetPolicy.protectedPaths)) {
     return refuse("protected_paths", "protected_paths_malformed");
   }
   if (!boundsValid(targetPolicy)) {

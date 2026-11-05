@@ -99,6 +99,20 @@ Deno.test("pre-checks: a passing record is ok", async () => {
     preReservationChecks(record, policy(), await facts(record, snapshot)),
     { ok: true },
   );
+  // The runtime's own prefix normalization applies first: `./dir/`, `dir//`
+  // and an everything-protecting `./` are usable denylists (their hits are
+  // the post-turn protected-path park, never an admission refusal).
+  for (const paths of [["./src/handler/"], ["src//handler"], ["./"]]) {
+    assert.deepEqual(
+      preReservationChecks(
+        record,
+        policy({ protectedPaths: paths }),
+        await facts(record, snapshot),
+      ),
+      { ok: true },
+      JSON.stringify(paths),
+    );
+  }
 });
 
 Deno.test("pre-checks: each deterministic check refuses with its precise reason code", async () => {
