@@ -50,6 +50,13 @@ export interface RunJobSummaryV1 {
   name: string;
   conclusion: string | null;
   summary: ChildRuntimeSummaryV1 | null;
+  /**
+   * Job wall-clock window from the jobs API (epoch ms), when it was readable.
+   * Read only by the throughput metrics record (#338); the run summary
+   * itself ignores it.
+   */
+  startedAtMs?: number | null;
+  completedAtMs?: number | null;
 }
 
 export interface HostedRuntimeRunSummaryV1 {

@@ -30,7 +30,17 @@ import type { ReplayRuntimeV1 } from "../replay/runtime.ts";
 import { createReleaseStateStore, DenoGitRunner } from "../state/mod.ts";
 import { HostedSupervisorCooldownGate } from "./hosted-cooldown.ts";
 import { createActionsMatrixArtifactTransport } from "./matrix-artifacts.ts";
-import { emitRunSummary, type RunSummaryDepsV1 } from "./run-summary.ts";
+import {
+  emitRunSummary,
+  type HostedRuntimeRunSummaryV1,
+  type RunJobSummaryV1,
+  type RunSummaryDepsV1,
+} from "./run-summary.ts";
+import {
+  type FinalizeMetricsDepsV1,
+  writeFinalizeThroughputMetricsV1,
+} from "./throughput-metrics-finalize.ts";
+import { GitThroughputMetricsStore } from "../state/throughput-metrics-store.ts";
 import type { MatrixArtifactTransportV1 } from "./matrix-artifact-port.ts";
 import {
   parseHostedEnvironment,
@@ -115,6 +125,12 @@ export interface HostedSupervisorHostInputV1 {
     RunSummaryDepsV1,
     "log" | "stepSummaryPath" | "appendFile"
   >;
+  /**
+   * Finalize only (#338): the trusted writer of one throughput metrics
+   * record per cycle on the metrics sidecar ref. Advisory; absent, nothing
+   * is written.
+   */
+  throughputMetrics?: FinalizeMetricsDepsV1;
 }
 
 export interface HostedSupervisorHostResultV1 {
@@ -143,6 +159,7 @@ export async function runHostedSupervisorHost(
   input: HostedSupervisorHostInputV1,
 ): Promise<HostedSupervisorHostResultV1> {
   const job = supervisorJob(input.env.GITHUB_JOB);
+  const hostStartedAtMs = input.clock.now();
   const identity = parseHostedEnvironment(input.env, job);
   const head = await readCleanGitHead(input.process, input.sourceDir);
   if (head !== identity.launcherSha) throw new Error(STATIC_SOURCE_CHECKOUT);
@@ -245,15 +262,34 @@ export async function runHostedSupervisorHost(
     ? await runHostedSupervisorPrepare(core)
     : await runHostedSupervisorFinalize(core);
   if (job === "finalize") {
+    let jobsRead: RunJobSummaryV1[] | null = null;
+    let runSummary: HostedRuntimeRunSummaryV1 | null = null;
     if (input.runSummary !== undefined) {
-      await emitRunSummary({
+      runSummary = await emitRunSummary({
         ...input.runSummary,
-        readJobs: (runId, runAttempt, select) =>
-          client.readRunJobSummaries(runId, runAttempt, select),
+        // The same single job read also feeds the metrics record (#338).
+        readJobs: async (runId, runAttempt, select) => {
+          const read = await client.readRunJobSummaries(
+            runId,
+            runAttempt,
+            select,
+          );
+          if (read.ok) jobsRead = read.value;
+          return read;
+        },
         // The wedge report v0 (C5.5): one bounded advisory repair-state read.
         readRepair: () => input.state.readRepair(),
         now: () => input.clock.now(),
       }, { runId: identity.runId, runAttempt: identity.runAttempt });
+    }
+    if (input.throughputMetrics !== undefined) {
+      await writeFinalizeThroughputMetricsV1(input.throughputMetrics, {
+        cycle: { runId: identity.runId, attempt: identity.runAttempt },
+        finalizeStartedAtMs: hostStartedAtMs,
+        nowMs: input.clock.now(),
+        jobs: jobsRead,
+        runSummary,
+      });
     }
     return {
       job,
@@ -386,6 +422,20 @@ export async function main(): Promise<void> {
   });
   const clock = new SystemClock();
   await ensureHostedReleaseState(state, clock.now());
+  // #338: finalize alone writes the metrics sidecar, with the same self
+  // state credentials and remote as the release state.
+  let throughputMetrics: FinalizeMetricsDepsV1 | undefined;
+  if (job === "finalize") {
+    const metricsScratch = joinPath(sentinelDir, "metrics-scratch");
+    await ensurePrivateDir(metricsScratch);
+    throughputMetrics = {
+      port: new GitThroughputMetricsStore({
+        scratchDir: metricsScratch,
+        remoteUrl: REMOTE_URL,
+        runner: new DenoGitRunner(gitHome, githubGitAuthEnv(selfToken)),
+      }),
+    };
+  }
   const result = await runHostedSupervisorHost({
     env,
     sourceDir,
@@ -398,6 +448,7 @@ export async function main(): Promise<void> {
     runSummary: job === "finalize"
       ? { stepSummaryPath: Deno.env.get(STEP_SUMMARY_ENV) }
       : undefined,
+    throughputMetrics,
   });
   // Bounded trusted result only; no raw error or credential is ever logged.
   console.log(JSON.stringify({

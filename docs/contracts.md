@@ -444,6 +444,59 @@ members onto one exact tip `T` as one octopus commit `C` with parents
   (`verifyTrainLandingV1`). No launcher or runtime path calls them yet;
   `deliveryTrainModeV1` and the launcher phases (WP3.3, WP3.4) are separate.
 
+### ThroughputMetricsRecordV1 (`kind: "throughput_metrics"`)
+
+`src/contracts/throughput-metrics.ts` (#338). This is an advisory record with
+one entry per hosted supervisor cycle. It grants no health, admission,
+accounting or merge authority.
+
+- Shape:
+  `{ version: "v1", kind: "throughput_metrics", cycle: { runId, attempt },
+  startedAtMs, finishedAtMs, phaseMs, counts, plannerRefusal }`.
+  `phaseMs` has exactly `maintenance`, `prepare`, `matrixPlan`,
+  `matrixCellTotal`, `repair`, `finalize` and `bootstrap`. `counts` has exactly
+  `recordsRead`, `recordsStepped`, `recordsSkipped`, `cellsPlanned`,
+  `readyRecordsNotPlanned`, `modelStarts`, `reviewsRequested`, `refreshCommits`,
+  `targetCiRunsTriggered`, `trainsBuilt`, `mergesCompleted`, `ownerNoticesSent`
+  and `releaseRequestsMovedToCold`. Each of these values is a nonnegative safe
+  integer or `null`. `null` means the writer did not observe the value; it never
+  means zero. `plannerRefusal` is `null` or one of `deadline_margin`,
+  `no_ready_records`, `reservation_denied`, `provider_unavailable` or
+  `target_unavailable`. #335 supplies these values.
+- `parseThroughputMetricsRecordV1` rejects unknown and missing keys at every
+  level. It checks that `finishedAtMs >= startedAtMs` and that the canonical
+  form is at most 1,024 bytes. Before any structural check it scans the whole
+  input, unknown keys included, and refuses any key or string longer than 32
+  characters or shaped like a URL. A record therefore cannot carry credentials,
+  URLs, bodies or raw diagnostics. `parseThroughputMetricsLineV1` checks the
+  byte bound before it parses JSON, and it requires the canonical spelling.
+- `MetricsCollectorV1` (`createMetricsCollectorV1`, in
+  `throughput-metrics-collector.ts`) is the accumulator that phases fill. It
+  provides `addPhaseMs`, `addCount`, `setPlannerRefusal` and `snapshot`. The
+  first `add*` call on a field replaces its `null`, and later calls add to the
+  value. Invalid input throws.
+- Storage: the record is kept on the sidecar ref
+  `refs/heads/sentinel-state/metrics` (`src/state/throughput-metrics-*.ts`),
+  never in the repair or release snapshot. No step loop, planner or maintenance
+  walk reads that ref. The ref holds at most 2,000 hot records in
+  `throughput/<UTC date>.jsonl`, one canonical line each, ordered by
+  `(finishedAtMs, runId, attempt)`. When an append goes past that bound, the
+  oldest records are folded into the daily rollup `throughput/daily.jsonl`
+  (`ThroughputDailySummaryV1`, `kind: "throughput_metrics_daily"`). For each
+  field the rollup keeps `{ sum, known }` and a count of each refusal reason.
+  The rollup keeps at most 400 days; Git history keeps everything older. Every
+  write is one commit on the exact expected head, pushed without force. A moved
+  ref is a conflict, and the writer re-reads and retries up to three times. A
+  cycle that is already present counts as a `duplicate` and is not written
+  again.
+- Writer: only the finalize job writes this record
+  (`src/host/throughput-metrics-finalize.ts`, called from
+  `runHostedSupervisorHost`). It builds the record from facts it already has:
+  the run attempt's completed job list with its jobs-API windows, and the
+  aggregated run summary. A bootstrap execution's repair-slot time is recorded
+  as `bootstrap`. Fields that finalize cannot observe stay `null`. The write is
+  limited to 60 seconds, never throws and never changes the finalize outcome.
+
 ## 5. Ports and result semantics
 
 `src/contracts/ports.ts` declares the operational interfaces. Every method
