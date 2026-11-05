@@ -13,7 +13,10 @@ import { HOSTED_AUTONOMY_RETIRED } from "../../ops/hosted-autonomy-policy.ts";
 import {
   planRepairDemotions,
   planRepairPromotions,
+  retiredPullScanDue,
+  retiredPullScanSeeds,
 } from "../../src/state/state-repair-tier-plan.ts";
+import { RETIRED_PULL_COLD_SCAN_ID } from "../../src/contracts/repair-tier-scan.ts";
 import { REPO, workRecord } from "./helpers.ts";
 import { NOW } from "./repair-tier-fixtures.ts";
 
@@ -124,10 +127,11 @@ Deno.test("retired pull: an unsettled retired record is never demoted; a settled
   ]]);
 });
 
-Deno.test("retired pull: an unsettled retired record already cold is promoted", () => {
-  const moves = planRepairPromotions(snapshot([]), {
+Deno.test("retired pull: cold pending records are seeded only by a due, bounded scan", () => {
+  const cold = {
     work: [
-      retired("w-pending"),
+      retired("w-pending-b"),
+      retired("w-pending-a"),
       parseWorkRecordV1({
         ...retired("w-settled"),
         retiredPullClosure: settledClosure,
@@ -137,6 +141,56 @@ Deno.test("retired pull: an unsettled retired record already cold is promoted", 
     reservationArchive: [],
     reviews: [],
     releaseRequests: [],
-  }, { openIssueWorkIds: new Set() });
-  assert.deepEqual(moves, [{ id: "w-pending", from: "work", to: "work" }]);
+  };
+  // Without the scan's seeds a cold pending record is never promoted.
+  assert.deepEqual(
+    planRepairPromotions(snapshot([]), cold, { openIssueWorkIds: new Set() }),
+    [],
+  );
+  assert.deepEqual(retiredPullScanSeeds(cold.work), {
+    seeds: ["w-pending-a", "w-pending-b"],
+    complete: true,
+  });
+  assert.deepEqual(retiredPullScanSeeds(cold.work, 1), {
+    seeds: ["w-pending-a"],
+    complete: false,
+  });
+  assert.deepEqual(
+    planRepairPromotions(
+      snapshot([]),
+      cold,
+      { openIssueWorkIds: new Set() },
+      retiredPullScanSeeds(cold.work).seeds,
+    ),
+    [
+      { id: "w-pending-a", from: "work", to: "work" },
+      { id: "w-pending-b", from: "work", to: "work" },
+    ],
+  );
+  // Due once per generation; never without one or during promote-all.
+  const marker = {
+    version: "v1" as const,
+    kind: "repair_tier_scan" as const,
+    id: RETIRED_PULL_COLD_SCAN_ID as typeof RETIRED_PULL_COLD_SCAN_ID,
+    generation: 7,
+    scannedAt: NOW,
+  };
+  assert.equal(retiredPullScanDue({}, {}), false);
+  assert.equal(retiredPullScanDue({}, { retiredPullScanGeneration: 7 }), true);
+  assert.equal(
+    retiredPullScanDue({ tierScans: [marker] }, {
+      retiredPullScanGeneration: 7,
+    }),
+    false,
+  );
+  assert.equal(
+    retiredPullScanDue({ tierScans: [marker] }, {
+      retiredPullScanGeneration: 8,
+    }),
+    true,
+  );
+  assert.equal(
+    retiredPullScanDue({}, { retiredPullScanGeneration: 7, promoteAll: true }),
+    false,
+  );
 });
