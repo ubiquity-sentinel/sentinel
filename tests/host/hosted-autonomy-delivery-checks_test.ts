@@ -25,6 +25,7 @@ import {
 } from "../../src/host/target-delivery-checks.ts";
 import { SHA1, T0 } from "../state/helpers.ts";
 import {
+  FOREIGN_PR,
   FOREIGN_REPO,
   FOREIGN_TARGET,
   foreignPullFacts,
@@ -161,7 +162,11 @@ Deno.test("delivery checks: a failed delivery check parks the record, keeps the 
       JSON.stringify(result.actions),
     );
     assert.equal(comments.length, 1);
-    assert.equal(comments[0].issue, 120);
+    assert.equal(
+      comments[0].issue,
+      FOREIGN_PR,
+      "the park comment goes on the merged pull request, not the issue",
+    );
     assert.ok(comments[0].body.includes("<!-- sentinel:progress "));
     assert.ok(comments[0].body.includes("98765432101"));
     // An unchanged park is neither rewritten nor commented again.
