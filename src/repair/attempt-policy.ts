@@ -307,6 +307,15 @@ export function attemptEquivalenceRefusalForRecordV1(input: {
   if (isPassportWorkTrial(input.record.repository)) {
     return { refuse: false, entry: null };
   }
+  // Candidate-input memory is checked against a real Git patch and the latest
+  // findings immediately before reservation. Legacy outcome counts do not bind
+  // those inputs and must not veto a newly distinct candidate attempt upstream.
+  if (
+    input.record.target.head !== null &&
+    input.record.target.attemptFingerprints !== undefined
+  ) {
+    return { refuse: false, entry: null };
+  }
   const purpose = input.purpose ?? "implementation";
   const memory = input.snapshot.attemptMemory.find((candidate) =>
     sameRepository(candidate.repository, input.record.repository) &&
@@ -358,8 +367,18 @@ export function priorAttemptFactsForRecordV1(
     candidate.base === record.target.base &&
     candidate.purpose === purpose
   );
-  if (memory === undefined || memory.entries.length === 0) return [];
-  const facts: PriorAttemptFactV1[] = [];
+  const refused = record.target.attemptFingerprints?.findLast((entry) =>
+    entry.refusedAtMs !== undefined
+  );
+  const facts: PriorAttemptFactV1[] = refused === undefined ? [] : [{
+    detail: "identical_attempt_refused",
+    priorAttemptId: refused.attemptId,
+    stage: "candidate",
+    failureClass: "semantic_no_progress",
+    count: 1,
+    lastAtMs: refused.refusedAtMs!,
+  }];
+  if (memory === undefined || memory.entries.length === 0) return facts;
   for (let index = memory.entries.length - 1; index >= 0; index--) {
     const entry = memory.entries[index];
     if (entry.controllerSha !== runtimeSha) continue;

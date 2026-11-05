@@ -9,6 +9,7 @@ import {
   attemptMemoryIdV1,
   mergeAttemptOutcomeV1,
   parseAttemptMemoryRecordV1,
+  parseCandidateAttemptFingerprintsV1,
   recordAttemptSuccessV1,
 } from "../../src/contracts/attempt-memory.ts";
 import { asWorkItemId } from "../../src/contracts/brands.ts";
@@ -277,4 +278,50 @@ Deno.test("attempt memory: hitting the entry cap folds counts, never silently dr
   const total = record.entries.reduce((sum, entry) => sum + entry.count, 0);
   assert.equal(total, 20);
   assert.deepEqual(parseAttemptMemoryRecordV1(record), record);
+});
+
+Deno.test("attempt memory: candidate fingerprint binds base, patch and findings without changing legacy hashes", async () => {
+  const input = {
+    taskId: TASK,
+    base: BASE,
+    purpose: "implementation" as const,
+    controllerSha: CONTROLLER,
+    detail: "candidate_progress",
+    candidatePatchDigest: "a".repeat(64),
+    reviewFindingsDigest: "b".repeat(64),
+  };
+  const fingerprint = await attemptFingerprintV1(input);
+  assert.equal(fingerprint, await attemptFingerprintV1({ ...input }));
+  for (
+    const changed of [
+      { base: OTHER_BASE },
+      { candidatePatchDigest: "c".repeat(64) },
+      { reviewFindingsDigest: "d".repeat(64) },
+    ]
+  ) {
+    assert.notEqual(
+      fingerprint,
+      await attemptFingerprintV1({ ...input, ...changed }),
+    );
+  }
+  const {
+    candidatePatchDigest: _patch,
+    reviewFindingsDigest: _findings,
+    ...legacy
+  } = input;
+  assert.notEqual(fingerprint, await attemptFingerprintV1(legacy));
+});
+
+Deno.test("candidate attempt memory: strict, bounded reservation identity and refusal fact round-trip", () => {
+  const row = { fingerprint: FINGERPRINT, attemptId: ID, refusedAtMs: 1234 };
+  assert.deepEqual(parseCandidateAttemptFingerprintsV1([row], "$"), [row]);
+  for (
+    const invalid of [
+      [{ ...row, attemptId: "attempt-65" }],
+      [{ ...row, fingerprint: "not-a-digest" }],
+      [{ ...row, refusedAtMs: -1 }],
+      [{ ...row, unexpected: true }],
+      [row, row],
+    ]
+  ) assert.throws(() => parseCandidateAttemptFingerprintsV1(invalid, "$"));
 });

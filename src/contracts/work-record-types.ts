@@ -9,6 +9,7 @@ import type {
   RepositoryIdentityV1,
   SeverityV1,
 } from "./shared.ts";
+import type { CandidateAttemptFingerprintV1 } from "./attempt-memory.ts";
 import type { SelfMergeProofV1 } from "./self-merge.ts";
 
 export type NextStepV1 = "work" | "review" | "delivery" | "blocked" | "done";
@@ -169,6 +170,8 @@ export interface CandidateStateV1 {
 }
 
 export interface WorkTargetV1 {
+  /** Bounded candidate-input memory; absent on legacy records. */
+  attemptFingerprints?: CandidateAttemptFingerprintV1[];
   /** Target base validated at the last action. */
   base: GitSha;
   /** Checkpoint branch name; null when no checkpoint branch exists. */

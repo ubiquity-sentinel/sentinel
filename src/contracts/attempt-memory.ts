@@ -71,6 +71,57 @@ export type AttemptFailureClassV1 =
   | "semantic_no_progress"
   | "unknown";
 
+/** Candidate-input memory bound to its exact durable implementation start. */
+export interface CandidateAttemptFingerprintV1 {
+  fingerprint: string;
+  /** Exact reservation id; never an attempt counter or a newly invented id. */
+  attemptId: string;
+  refusedAtMs?: number;
+}
+
+export function parseCandidateAttemptFingerprintsV1(
+  input: unknown,
+  path: string,
+): CandidateAttemptFingerprintV1[] {
+  const seen = new Set<string>();
+  return expectArray(
+    input,
+    path,
+    MaxItems.attemptEntries,
+    (value, itemPath) => {
+      const obj = expectRecord(value, itemPath);
+      expectExactKeysWithOptional(
+        obj,
+        ["fingerprint", "attemptId"],
+        ["refusedAtMs"],
+        itemPath,
+      );
+      const fingerprint = expectSha256Hex(
+        obj.fingerprint,
+        `${itemPath}.fingerprint`,
+      );
+      if (seen.has(fingerprint)) {
+        fail(
+          itemPath,
+          "invalid_value",
+          "duplicate candidate attempt fingerprint",
+        );
+      }
+      seen.add(fingerprint);
+      return {
+        fingerprint,
+        attemptId: expectSha256Hex(obj.attemptId, `${itemPath}.attemptId`),
+        ...(obj.refusedAtMs === undefined ? {} : {
+          refusedAtMs: expectTimestamp(
+            obj.refusedAtMs,
+            `${itemPath}.refusedAtMs`,
+          ),
+        }),
+      };
+    },
+  );
+}
+
 export interface AttemptMemoryEntryV1 {
   /**
    * Canonical SHA-256 over the attempt-input tuple
@@ -154,16 +205,23 @@ export function attemptMemoryIdV1(
 /**
  * Canonical fingerprint of one attempt's identity-bearing inputs. The closed
  * `detail` constant is part of the tuple, so each distinct failure mode keeps
- * its own count inside the family record.
+ * its own count inside the family record. Candidate progress additionally binds
+ * the patch content and latest findings digests (together); legacy callers keep
+ * their exact historical fingerprint.
  */
 export function attemptFingerprintV1(
-  input: {
-    taskId: WorkItemId;
-    base: GitSha;
-    purpose: AttemptPurposeV1;
-    controllerSha: GitSha;
-    detail: string;
-  },
+  input:
+    & {
+      taskId: WorkItemId;
+      base: GitSha;
+      purpose: AttemptPurposeV1;
+      controllerSha: GitSha;
+      detail: string;
+    }
+    & ({ candidatePatchDigest?: never; reviewFindingsDigest?: never } | {
+      candidatePatchDigest: string;
+      reviewFindingsDigest: string;
+    }),
 ): Promise<string> {
   return canonicalStringifySha256({
     domain: "sentinel.memory.attempt-fingerprint.v1",
@@ -172,6 +230,10 @@ export function attemptFingerprintV1(
     purpose: input.purpose,
     controllerSha: input.controllerSha,
     detail: input.detail,
+    ...(input.candidatePatchDigest === undefined ? {} : {
+      candidatePatchDigest: input.candidatePatchDigest,
+      reviewFindingsDigest: input.reviewFindingsDigest,
+    }),
   });
 }
 

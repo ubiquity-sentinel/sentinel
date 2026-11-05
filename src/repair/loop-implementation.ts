@@ -17,6 +17,10 @@ import {
   repositoryPriorFactsForRecordV1,
   repositoryRegressionFactsV1,
 } from "./attempt-policy.ts";
+import {
+  prepareCandidateAttemptV1,
+  rememberCandidateAttemptV1,
+} from "./attempt-progress.ts";
 import { candidateBranch, implementationIntentKey } from "./keys.ts";
 import {
   CHECK_POLL_MS,
@@ -435,6 +439,13 @@ export async function prepareImplementationStart(
   const findings = conflict !== null
     ? null
     : correctionFindings(context.snapshot, record, ciFinding);
+  const progress = await prepareCandidateAttemptV1(
+    deps,
+    context,
+    record,
+    ciFinding,
+  );
+  if (progress.kind !== "fingerprint") return progress;
   const part = decompositionPartOf(record.id);
   const priorAttempts = priorAttemptFactsForRecordV1(
     context.snapshot,
@@ -601,7 +612,7 @@ export async function prepareImplementationStart(
   if (fresh === null) {
     return { kind: "state_error", detail: "repair state unavailable" };
   }
-  const current = fresh.snapshot.work.find((work) => work.id === record.id);
+  let current = fresh.snapshot.work.find((work) => work.id === record.id);
   if (current === undefined) {
     return {
       kind: "state_error",
@@ -627,6 +638,19 @@ export async function prepareImplementationStart(
     };
   }
 
+  if (progress.fingerprint !== null) {
+    const remembered = await persistWork(
+      deps,
+      fresh,
+      rememberCandidateAttemptV1(
+        current,
+        progress.fingerprint,
+        durable.reservation.id,
+      ),
+    );
+    if (remembered.kind !== "progress") return remembered;
+    current = fresh.snapshot.work.find((work) => work.id === record.id)!;
+  }
   const admittedGuard = await guardQueueOperation(
     deps,
     fresh,

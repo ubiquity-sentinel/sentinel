@@ -1,3 +1,4 @@
+import { parseCandidateAttemptFingerprintsV1 } from "./attempt-memory.ts";
 import type { GitSha } from "./brands.ts";
 import { parseSelfMergeProof } from "./self-merge.ts";
 import {
@@ -63,6 +64,9 @@ export function parseTarget(input: unknown, path: string): WorkTargetV1 {
     obj,
     [
       ...(hasCandidateStateKey ? TARGET_CANDIDATE_KEYS : TARGET_KEYS),
+      ...(Object.prototype.hasOwnProperty.call(obj, "attemptFingerprints")
+        ? ["attemptFingerprints"]
+        : []),
       ...(Object.prototype.hasOwnProperty.call(obj, "selfMerge")
         ? ["selfMerge"]
         : []),
@@ -91,7 +95,15 @@ export function parseTarget(input: unknown, path: string): WorkTargetV1 {
       selfMerge.head !== head || selfMerge.pr !== pr ||
       selfMerge.headRef !== branch)
   ) fail(path, "invalid_lifecycle", "self merge receipt binding mismatch");
-  const receipt = selfMerge === undefined ? {} : { selfMerge };
+  const receipt = {
+    ...(selfMerge === undefined ? {} : { selfMerge }),
+    ...(obj.attemptFingerprints === undefined ? {} : {
+      attemptFingerprints: parseCandidateAttemptFingerprintsV1(
+        obj.attemptFingerprints,
+        `${path}.attemptFingerprints`,
+      ),
+    }),
+  };
   if (!hasCandidateStateKey) {
     return { base, branch, checkpoint, head, pr, ...receipt };
   }

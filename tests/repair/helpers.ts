@@ -254,8 +254,16 @@ export class FakeGithub implements GitHubPort {
   readonly candidatePullRequests = new Map<number, GitHubPullRequestV1>();
   /** Present only when an explicit prepare callback was supplied. */
   prepareBaseRefresh?: NonNullable<GitHubPort["prepareBaseRefresh"]>;
-  /** Present only when a test supplies the carried patch proof. */
-  proveCarriedPatch?: NonNullable<GitHubPort["proveCarriedPatch"]>;
+  /** Simulated content per fake head; equal-content commits opt in to a shared digest. */
+  proveCarriedPatch: GitHubPort["proveCarriedPatch"] = (request) =>
+    Promise.resolve(portOk({
+      reviewedMergeBase: request.reviewedBase,
+      reviewedPatch: request.reviewedHead.padEnd(64, "0"),
+      refreshedMergeBase: request.base,
+      refreshedPatch: request.head.padEnd(64, "0"),
+      refreshedFrom: null,
+      refreshes: 0,
+    }));
   reviewObservations: ReviewObservationV1 | null = null;
   reviewStatus: "pending" | "completed" | "unavailable" = "pending";
   completedReviewAt: number | null = null;

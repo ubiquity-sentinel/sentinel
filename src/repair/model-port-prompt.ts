@@ -146,6 +146,10 @@ export function buildPrompt(
           .map((fact) =>
             `- ${fact.detail} (stage ${fact.stage}, ${fact.failureClass}, ${fact.count} recorded outcome${
               fact.count === 1 ? "" : "s"
+            }${
+              fact.priorAttemptId === undefined
+                ? ""
+                : `; prior attempt id ${fact.priorAttemptId}`
             })`
           )
           .join("\n"),

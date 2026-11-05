@@ -24,6 +24,8 @@ export type ReasoningEffortV1 = "max";
  * equivalent outcomes recorded for this exact failure detail.
  */
 export interface PriorAttemptFactV1 {
+  /** Exact durable start refused as an identical candidate-input replay. */
+  priorAttemptId?: string;
   /** Closed settlement detail constant (sanitized by construction). */
   detail: string;
   stage: AttemptStageV1;
