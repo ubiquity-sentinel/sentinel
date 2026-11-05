@@ -85,6 +85,38 @@ export function isPassportTarget(
   return isPassportWorkTrial(repository);
 }
 
+/** Default-branch delivery shape; never selected by the slug list or worker. */
+export type TargetDeliveryMethodV1 = "squash" | "merge";
+
+// Trusted per-target overrides, alongside commands and protected paths. New
+// targets prefer squash too; the launcher falls back to merge only when the
+// repository explicitly reports that squash merges are disabled.
+const TARGET_DELIVERY_METHODS: Readonly<Record<string, unknown>> = {
+  "ubiquity-sentinel/sentinel": "squash",
+  "ubiquity/ai.ubq.fi": "squash",
+  "ubiquity/passport.ubq.fi": "squash",
+};
+
+export function parseTargetDeliveryMethodV1(
+  value: unknown,
+): TargetDeliveryMethodV1 {
+  if (value !== "squash" && value !== "merge") {
+    throw new TypeError("invalid trusted target delivery method");
+  }
+  return value;
+}
+
+export function targetDeliveryMethodV1(
+  repository: Pick<RepositoryIdentityV1, "owner" | "name">,
+): TargetDeliveryMethodV1 {
+  const slug = `${repository.owner}/${repository.name}`.toLowerCase();
+  return parseTargetDeliveryMethodV1(
+    Object.hasOwn(TARGET_DELIVERY_METHODS, slug)
+      ? TARGET_DELIVERY_METHODS[slug]
+      : "squash",
+  );
+}
+
 /** How a target's own CI workflow is asked to test a Sentinel pull request. */
 export interface PremergeCiPolicyV1 {
   /** Workflow file name under `.github/workflows/` of the target. */

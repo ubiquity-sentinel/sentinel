@@ -164,8 +164,8 @@ export async function historicalMergedPublication(
 }
 
 /**
- * True exactly when the pull's merge commit has the parents [tip, head], in
- * that order, so the merged tree is that tip plus that head (#156). GitHub's
+ * True only for the exact PR head landed on tip: either a merge commit on
+ * [tip, head] or a verified squash commit on [tip]. GitHub's
  * merge API has no compare-and-swap on the base: a merge the pass made after
  * re-reading the tip may still land on a later commit, a tree no CI ran on,
  * which is never booked. A merge made outside the pass is adopted by
@@ -176,8 +176,9 @@ export function mergedExactlyOn(
   tip: string,
   head: string,
 ): boolean {
-  return pull.parents.length === 2 && pull.parents[0] === tip &&
-    pull.parents[1] === head;
+  return pull.headSha === head && pull.parents[0] === tip &&
+    ((pull.mergeMethod === "squash" && pull.parents.length === 1) ||
+      (pull.parents.length === 2 && pull.parents[1] === head));
 }
 
 /** Verified merge facts: the exact revision a foreign record delivered. */
@@ -188,9 +189,9 @@ export interface HostedMergedDeliveryV1 {
 /**
  * The exact merged-delivery evidence a FOREIGN record's closure requires: the
  * pull is merged under a named merge commit, it is authored by a trusted
- * identity, it targets the record's own base branch, that commit has exactly
- * two parents whose second one is the recorded head, the recorded base is
- * either the first parent or a proven ancestor of the merge revision, and the
+ * identity, it targets the record's own base branch, and it has either merge
+ * parents including the recorded head or a verified single-parent squash shape
+ * bound to that PR head. The base is its parent or a proven ancestor, and the
  * revision is integrated into the recorded base branch. Any missing,
  * unreadable or mismatched fact yields null: an ambiguous merge is never
  * evidence.
@@ -200,8 +201,14 @@ export function baseAndHeadAreMerged(
   base: string,
   head: string,
 ): boolean {
-  if (pull.parents.length !== 2 || !pull.parents.includes(head)) return false;
-  if (pull.parents.includes(base)) return true;
+  if (pull.headSha !== head) return false;
+  const squash = pull.mergeMethod === "squash" && pull.parents.length === 1;
+  if (!squash && (pull.parents.length !== 2 || !pull.parents.includes(head))) {
+    return false;
+  }
+  if (pull.parents[0] === base || (!squash && pull.parents[1] === base)) {
+    return true;
+  }
   // The merge may land on a descendant of the reviewed base: the base branch
   // can advance between the reviewed snapshot and a trusted external merge,
   // so bind the recorded base by its own ancestry proof instead of parent

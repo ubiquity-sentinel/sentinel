@@ -67,6 +67,8 @@ export interface HostedAutonomyPullV1 {
   /** Required only when recovering a historical cleared publication. */
   mergedBy?: string | null;
   parents: readonly string[];
+  /** Delivery shape resolved from the merged PR's authoritative commit read. */
+  mergeMethod?: "squash" | "merge";
   revisionOnBaseBranch: boolean;
   /** The pull's own base commit is an ancestor of the merge revision. */
   baseAncestorOfRevision: boolean;
@@ -258,7 +260,8 @@ export interface HostedAutonomyGitHubV1 {
   ): Promise<HostedTreeChangesV1 | null>;
   /**
    * Expected-head merge; null on any refusal. `message`, when given, is the
-   * merge commit's plain evidence text (the carried merge's proof).
+   * merge commit's plain evidence text (the carried merge's proof). Squash
+   * delivery instead uses the PR title and its closing issue line.
    */
   merge(
     number: number,

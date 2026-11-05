@@ -142,6 +142,12 @@ Deno.test(
         return Promise.resolve(new Response("{}", { status: 404 }));
       }
       if (method === "PUT" && url.endsWith(`/pulls/${FOREIGN_PR}/merge`)) {
+        assert.deepEqual(JSON.parse(String(init?.body)), {
+          sha: HEAD,
+          merge_method: "squash",
+          commit_title: FOREIGN_TASK_TITLE,
+          commit_message: `Resolves #${SHARED_ISSUE_NUMBER}`,
+        });
         mergedNow = true;
         return Promise.resolve(jsonResponse({ merged: true, sha: MERGE }));
       }
@@ -172,6 +178,8 @@ Deno.test(
             }
             : {
               state: "open",
+              title: FOREIGN_TASK_TITLE,
+              body: `Resolves #${SHARED_ISSUE_NUMBER}`,
               merged: false,
               merge_commit_sha: null,
               head: { sha: HEAD },
@@ -191,7 +199,7 @@ Deno.test(
           checkRun("verify-artifact", { head_sha: listed }),
         ], 2)
         : url.includes("/commits/")
-        ? { parents: [{ sha: BASE }, { sha: HEAD }] }
+        ? { parents: [{ sha: BASE }] }
         : url.includes("/compare/")
         ? {
           status: "ahead",
@@ -209,7 +217,7 @@ Deno.test(
           title: FOREIGN_TASK_TITLE,
           body: FOREIGN_TASK_BODY,
         }
-        : { default_branch: FOREIGN_BRANCH };
+        : { default_branch: FOREIGN_BRANCH, allow_squash_merge: true };
       return Promise.resolve(jsonResponse(payload));
     }) as typeof fetch;
     try {

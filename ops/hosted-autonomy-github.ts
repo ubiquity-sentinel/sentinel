@@ -49,6 +49,8 @@ import {
   substituteBackupRuns,
 } from "./hosted-autonomy-backup-ci-read.ts";
 import { createMergeBaseTreeChanges } from "./hosted-autonomy-github-trees.ts";
+import { targetDeliveryMethodV1 } from "../src/host/target-policy.ts";
+import { createHostedAutonomyMerge } from "./hosted-autonomy-github-merge.ts";
 import {
   parseHostedAutonomyHeadPulls,
   parseHostedAutonomyPull,
@@ -179,6 +181,7 @@ export function createHostedAutonomyGitHub(
     return {
       ...parsed,
       parents,
+      mergeMethod: parents.length === 1 ? "squash" : "merge",
       revisionOnBaseBranch,
       baseAncestorOfRevision,
     };
@@ -794,21 +797,10 @@ export function createHostedAutonomyGitHub(
         },
       );
     },
-    async merge(number: number, head: string, message?: string) {
-      const response = await request(
-        "PUT",
-        `/repos/${scope}/pulls/${number}/merge`,
-        message === undefined
-          ? { sha: head, merge_method: "merge" }
-          : { sha: head, merge_method: "merge", commit_message: message },
-      );
-      if (response === null || typeof response !== "object") return null;
-      const obj = response as Record<string, unknown>;
-      const sha = obj["sha"];
-      return {
-        merged: obj["merged"] === true,
-        sha: typeof sha === "string" ? sha : null,
-      };
-    },
+    merge: createHostedAutonomyMerge(
+      request,
+      scope,
+      targetDeliveryMethodV1(repository),
+    ),
   };
 }
