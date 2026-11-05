@@ -125,6 +125,13 @@ export interface RepairCycleOptionsV1 {
    * interval to its record. It observes and never changes the pass.
    */
   onStep?: (id: string) => void;
+  /**
+   * Records this pass never selects for a step (issue #328): the trusted
+   * serial pass skips the records a repository cell steps, and a cell skips
+   * its repository's records that were not delegated to it. They stay
+   * visible to every other read of the pass.
+   */
+  excludeRecords?: ReadonlySet<string>;
 }
 
 export type RepairCycleOutcomeV1 =

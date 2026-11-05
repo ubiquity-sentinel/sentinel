@@ -128,7 +128,38 @@ function phaseOf(name: string): ThroughputPhaseV1 | null {
     return "matrixCellTotal";
   }
   if (name === "repair") return "repair";
+  // #328: repository repair cells have no phase slot in the record; their
+  // wall times and finalize's apply time are in the `sentinel_repair_fanout`
+  // log line, and their pass counts join the records counters below.
   return null;
+}
+
+/** True for one repository repair cell job (`repair_cell (<cellId>)`). */
+function isRepairCellJob(name: string): boolean {
+  return name === "repair_cell" || name.startsWith("repair_cell (");
+}
+
+/**
+ * The serial repair pass's counts plus every repository cell's (#328):
+ * stepped and skipped add up (each record is stepped by one side only), the
+ * read is the largest single pass read.
+ */
+function combinedPassCounts(
+  jobs: readonly RunJobSummaryV1[],
+  serial: RepairPassCountsV1 | null,
+): RepairPassCountsV1 | null {
+  const passes = [
+    serial,
+    ...jobs.filter((job) => isRepairCellJob(job.name) && ran(job)).map((job) =>
+      job.summary?.repairPass ?? null
+    ),
+  ].filter((pass): pass is RepairPassCountsV1 => pass !== null);
+  if (passes.length === 0) return null;
+  return {
+    recordsRead: Math.max(...passes.map((pass) => pass.recordsRead)),
+    recordsStepped: passes.reduce((sum, pass) => sum + pass.recordsStepped, 0),
+    recordsSkipped: passes.reduce((sum, pass) => sum + pass.recordsSkipped, 0),
+  };
 }
 
 const ran = (job: RunJobSummaryV1) =>
@@ -165,7 +196,7 @@ export function collectFinalizeMetricsV1(
   collectRecordCounts(
     collector,
     facts.tierCounts ?? null,
-    repairJob?.summary?.repairPass ?? null,
+    combinedPassCounts(jobs, repairJob?.summary?.repairPass ?? null),
   );
   collector.addPhaseMs(
     "finalize",

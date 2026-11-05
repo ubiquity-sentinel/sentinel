@@ -22,6 +22,11 @@ export interface MatrixNativeCarrierV1 {
   planDigest: string;
   /** Native matrix cell selection; absent in the serial aggregate job. */
   cellId?: string;
+  /**
+   * Digest of the run's repository fan-out plan (issue #328), from the same
+   * native outputs; present only when the planner delegated records.
+   */
+  repairPlanDigest?: string;
 }
 export interface ActionsMatrixHostDepsV1 extends ActionsRepairHostDepsV1 {
   carrier?: MatrixNativeCarrierV1;
@@ -37,8 +42,11 @@ export function parseCarrier(
   const record = value as Record<string, unknown>;
   if (
     Object.keys(record).some((key) =>
-      key !== "planDigest" && key !== "cellId"
+      key !== "planDigest" && key !== "cellId" && key !== "repairPlanDigest"
     ) ||
+    (record.repairPlanDigest !== undefined &&
+      (typeof record.repairPlanDigest !== "string" ||
+        !/^[0-9a-f]{64}$/.test(record.repairPlanDigest))) ||
     typeof record.planDigest !== "string" ||
     !/^[0-9a-f]{64}$/.test(record.planDigest) ||
     (record.cellId !== undefined &&

@@ -203,6 +203,11 @@ export interface ActionsTargetCyclesInputV1 {
   modelStartsEnabled: boolean;
   /** The model-disabled bootstrap execution: maintenance and health only. */
   bootstrap?: boolean;
+  /**
+   * Records this run's repository cells step (issue #328); the serial pass
+   * never selects them. Absent: every record is the serial pass's.
+   */
+  excludeRecords?: ReadonlySet<string>;
   externalImplementations?: boolean;
   /** Persist concrete wait causes (#335, `HOSTED_RECORD_WAIT_CAUSES`). */
   recordWaitCauses?: boolean;
@@ -352,7 +357,7 @@ export interface ActionsRepairHostDepsV1 {
   /** Approved private persistence/cache/replay policy; absence keeps capture unavailable. */
   gateway?: import("./gateway-capabilities.ts").TrustedGatewayRuntimeV1;
   /** Native job role selected by the fixed matrix executable, never a product flag. */
-  job?: "matrix_plan" | "matrix_cell";
+  job?: "matrix_plan" | "matrix_cell" | "repair_cell";
   /** Fake external ports/transports for the actual hosted composition checks. */
   http?: HttpTransportV1;
   /** Fake external artifact HTTP boundary; production uses its bounded binary factory. */

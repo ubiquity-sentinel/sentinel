@@ -433,7 +433,8 @@ async function* advanceSerialPass(
       gate.noteWaiting(rank.skipped);
       await gate.prime(
         context.snapshot.work.filter((record) =>
-          rank.ordered.includes(record.id) && !matrixOnly.has(record.id)
+          rank.ordered.includes(record.id) && !matrixOnly.has(record.id) &&
+          options.excludeRecords?.has(record.id) !== true
         ),
       );
     }
@@ -464,7 +465,10 @@ async function* advanceSerialPass(
     let selected: WorkRecordV1 | null = null;
     let cannotFit: string | null = null;
     for (const id of rank.ordered) {
-      if (deferred.has(id) || takeoverRefused.has(id)) continue;
+      if (
+        deferred.has(id) || takeoverRefused.has(id) ||
+        options.excludeRecords?.has(id) === true
+      ) continue;
       // Matrix-only work is the planner's; this pass yields to it instead of
       // stepping (and re-reading) the record.
       if (matrixOnly.has(id)) continue;

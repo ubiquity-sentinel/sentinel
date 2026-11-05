@@ -67,6 +67,38 @@ export function pendingArtifact(
   });
 }
 
+/** A stale step stamp: the record settled once and is delegable. */
+export const OLD_STAMP = { digest: "0".repeat(64), deadline: T0 + 3_600_000 };
+
+/**
+ * A delegable record: an open review on PR 7 whose last step settled (it
+ * carries a stamp) and whose next step is the read-only review observation.
+ */
+export function reviewing(
+  repo: Repo,
+  index: number,
+  extra: Record<string, unknown> = {},
+): WorkRecordV1 {
+  const id = `issue-${repo.name}-${index}`;
+  return workRecord(id, {
+    repository: repo,
+    source: { kind: "issue", id: String(100 + index), revision: SHA1 },
+    related: { incidentId: null, issueNumber: 100 + index },
+    nextStep: "review",
+    target: {
+      base: SHA1,
+      branch: `sentinel/repair/${id}`,
+      checkpoint: null,
+      head: SHA2,
+      pr: 7,
+    },
+    counters: { attempts: 1, retries: 0, reviewRounds: 0 },
+    intent: null,
+    stepInputs: OLD_STAMP,
+    ...extra,
+  });
+}
+
 /** Fake port answering the batched read for every repository asked. */
 export class BatchGithub extends FakeGithub {
   readonly closed = new Set<string>();
@@ -153,7 +185,7 @@ export async function plan(rig: Rig): Promise<{
   plan: RepairFanoutPlanV1;
   binding: Awaited<ReturnType<typeof repairFanoutBindingV1>>;
 }> {
-  const fanout = planRepairFanoutV1({
+  const fanout = await planRepairFanoutV1({
     snapshot: rig.state.repair!,
     head: rig.state.repairHead!,
     configs: rig.configs,

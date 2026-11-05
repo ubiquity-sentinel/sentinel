@@ -1,4 +1,5 @@
 /** Bounded authenticated matrix recovery interleaved with serial delivery. */
+import { delegatedRecordsOfRun } from "./repair-fanout-host.ts";
 import { HOSTED_RECORD_WAIT_CAUSES } from "../repair/loop-wait-cause.ts";
 import { createActionsTargetFlow } from "./actions-target-flow.ts";
 import { matrixDigestV1 } from "../contracts/matrix.ts";
@@ -270,8 +271,12 @@ export async function runActionsMatrixAggregateCycles(
   });
   const consumerUntil = consumer.until;
   const prepared = new Set<string>();
+  // #328: the records this run's repository cells step are never selected by
+  // this serial pass (only the verified plan of this run attempt counts).
+  const excludeRecords = await delegatedRecordsOfRun(input, carrier);
   const flow = createActionsTargetFlow({
     ...input,
+    ...(excludeRecords === undefined ? {} : { excludeRecords }),
     modelStartsEnabled: lifecycleModelStarts,
     externalImplementations: true,
     // #335: the hosted serial aggregate persists wait causes

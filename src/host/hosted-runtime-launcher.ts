@@ -24,6 +24,10 @@ import { tryParse } from "../contracts/validation.ts";
 import type { ReplayCommandResultV1 } from "../replay/runtime.ts";
 import { ensurePrivateDir, joinPath } from "./local.ts";
 import {
+  REPAIR_CELL_CHILD_ENTRYPOINT,
+  resolveRepairCellLauncherResult,
+} from "./hosted-runtime-repair-cell.ts";
+import {
   HOSTED_RUNTIME_CHILD_ENTRYPOINT,
   HOSTED_RUNTIME_DEADLINE_MS,
   HOSTED_RUNTIME_FAILED_DETAIL,
@@ -229,6 +233,8 @@ async function launchHostedRuntime(
         ? joinPath(dirs.launcher, HOSTED_RUNTIME_ROLLBACK_ENTRYPOINT)
         : identity.job === "repair"
         ? HOSTED_RUNTIME_CHILD_ENTRYPOINT
+        : identity.job === "repair_cell"
+        ? REPAIR_CELL_CHILD_ENTRYPOINT
         : "src/host/matrix-actions.ts",
     ],
     ...(childStdin === undefined ? {} : { stdin: childStdin }),
@@ -260,6 +266,9 @@ async function launchHostedRuntime(
   // fabricated to hide it.
   if (!isNonNegativeSafeInteger(finishedAt) || finishedAt < startedAt) {
     return unavailableResult();
+  }
+  if (identity.job === "repair_cell") {
+    return resolveRepairCellLauncherResult(run, execution, stdin);
   }
   if (identity.job === "matrix_plan" || identity.job === "matrix_cell") {
     const matrix = resolveMatrixLauncherResult(

@@ -100,6 +100,7 @@ Deno.test("fan-out summary line: strict, bounded and count-only", () => {
     deltasApplied: 1,
     transitionsApplied: 3,
     deltasRejected: {
+      missing: 0,
       unauthenticated: 0,
       invalid: 0,
       duplicate: 0,

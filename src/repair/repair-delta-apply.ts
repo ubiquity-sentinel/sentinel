@@ -20,7 +20,6 @@ import type { GitSha } from "../contracts/brands.ts";
 import {
   canonicalDigestV1,
   openRepairDeltaV1,
-  type RepairDeltaBindingV1,
   type RepairDeltaV1,
   repairProjectionDigestV1,
 } from "../contracts/repair-delta.ts";
@@ -34,8 +33,14 @@ import type {
 } from "./loop-types.ts";
 import { repairTransitionRefusalV1 } from "./repair-delta-rules.ts";
 import { logFanoutSummary } from "./fanout-summary-line.ts";
+import {
+  repairFanoutBindingV1,
+  type RepairFanoutCellV1,
+  type RepairFanoutPlanV1,
+} from "./repair-fanout-plan.ts";
 
 export type RepairDeltaRejectionV1 =
+  | "missing"
   | "unauthenticated"
   | "invalid"
   | "duplicate"
@@ -43,14 +48,18 @@ export type RepairDeltaRejectionV1 =
   | "transition_refused";
 
 export interface RepairDeltaArtifactV1 {
-  /** The repository the authenticated artifact was planned for. */
-  repository: RepositoryIdentityV1;
-  /** The parsed artifact body (still untrusted until opened). */
+  /** The plan cell whose authenticated producer job uploaded it. */
+  cellId: string;
+  /**
+   * The parsed artifact body (still untrusted until opened); null when the
+   * cell's artifact was absent or failed its authentication.
+   */
   envelope: unknown;
 }
 
 export interface RepairDeltaApplyInputV1 {
-  binding: RepairDeltaBindingV1;
+  /** The run's authenticated fan-out plan. */
+  plan: RepairFanoutPlanV1;
   artifacts: readonly RepairDeltaArtifactV1[];
   /** Shared run deadline: no write starts at or after it. */
   deadline: number;
@@ -85,12 +94,20 @@ function key(repository: RepositoryIdentityV1): string {
   return `${repository.installationId}/${repository.owner}/${repository.name}`;
 }
 
+interface OpenedDeltaV1 {
+  delta: RepairDeltaV1;
+  scope: ReadonlySet<string>;
+}
+
 async function validate(
-  delta: RepairDeltaV1,
+  { delta, scope }: OpenedDeltaV1,
   snapshot: RepairStateSnapshotV1,
 ): Promise<RepairDeltaRejectionV1 | null> {
+  if (delta.transitions.some((row) => !scope.has(row.after.id))) {
+    return "transition_refused";
+  }
   if (
-    await repairProjectionDigestV1(snapshot, delta.repository) !==
+    await repairProjectionDigestV1(snapshot, delta.repository, scope) !==
       delta.baseDigest
   ) return "base_moved";
   for (const transition of delta.transitions) {
@@ -114,25 +131,35 @@ export async function applyRepairDeltas(
 ): Promise<RepairDeltaApplyResultV1> {
   const started = deps.clock.now();
   const rejected: RepairDeltaApplyResultV1["rejected"] = [];
-  const opened: RepairDeltaV1[] = [];
+  const opened: OpenedDeltaV1[] = [];
   const seen = new Set<string>();
+  const binding = await repairFanoutBindingV1(input.plan);
+  const cells = new Map<string, RepairFanoutCellV1>(
+    input.plan.cells.map((cell) => [cell.cellId, cell]),
+  );
   for (const artifact of input.artifacts) {
+    const cell = cells.get(artifact.cellId);
+    if (cell === undefined) continue;
+    if (artifact.envelope === null) {
+      rejected.push({ repository: cell.repository, reason: "missing" });
+      continue;
+    }
     const result = await openRepairDeltaV1(artifact.envelope, {
-      binding: input.binding,
-      repository: artifact.repository,
+      binding,
+      repository: cell.repository,
     });
     if (!result.ok) {
-      rejected.push({ repository: artifact.repository, reason: result.reason });
+      rejected.push({ repository: cell.repository, reason: result.reason });
       continue;
     }
     if (seen.has(key(result.delta.repository))) {
-      rejected.push({ repository: artifact.repository, reason: "duplicate" });
+      rejected.push({ repository: cell.repository, reason: "duplicate" });
       continue;
     }
     seen.add(key(result.delta.repository));
-    opened.push(result.delta);
+    opened.push({ delta: result.delta, scope: new Set(cell.records) });
   }
-  const repositoryWallMs = opened.map((delta) =>
+  const repositoryWallMs = opened.map(({ delta }) =>
     delta.finishedAt - delta.startedAt
   ).sort((left, right) => right - left);
   const finish = (
@@ -161,10 +188,10 @@ export async function applyRepairDeltas(
     const { snapshot, head } = read.value;
     const accepted: RepairDeltaV1[] = [];
     const stale: RepairDeltaApplyResultV1["rejected"] = [];
-    for (const delta of opened) {
-      const refusal = await validate(delta, snapshot);
-      if (refusal === null) accepted.push(delta);
-      else stale.push({ repository: delta.repository, reason: refusal });
+    for (const entry of opened) {
+      const refusal = await validate(entry, snapshot);
+      if (refusal === null) accepted.push(entry.delta);
+      else stale.push({ repository: entry.delta.repository, reason: refusal });
     }
     const rows = accepted.flatMap((delta) =>
       delta.transitions.map((transition) => transition.after)
@@ -211,7 +238,7 @@ export async function applyRepairDeltas(
     "none",
     null,
     [],
-    opened.map((delta) => ({
+    opened.map(({ delta }) => ({
       repository: delta.repository,
       reason: "base_moved" as const,
     })),

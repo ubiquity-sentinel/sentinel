@@ -62,6 +62,10 @@ import {
 } from "./hosted-runtime.ts";
 import type { HostedRuntimeJobV1 } from "./hosted-runtime.ts";
 import { ensurePrivateDir, githubGitAuthEnv, joinPath } from "./local.ts";
+import {
+  REPAIR_PLAN_DIGEST_ENV,
+  repairFanoutHook,
+} from "./repair-fanout-finalize-host.ts";
 import type {
   HostedSupervisorEvidencePortV1,
   HostedSupervisorOutcomeV1,
@@ -149,6 +153,12 @@ export interface HostedSupervisorHostInputV1 {
    * notice. Advisory; absent, the maintenance observation is ignored.
    */
   upkeepDeferral?: FinalizeUpkeepDeferralDepsV1;
+  /**
+   * Finalize only (#328): authenticate and apply the run's repository repair
+   * deltas in one trusted write before the release settlement. Advisory; it
+   * never throws. Absent, the run planned no repository cell.
+   */
+  repairFanout?: () => Promise<unknown>;
 }
 
 export interface HostedSupervisorHostResultV1 {
@@ -276,6 +286,9 @@ export async function runHostedSupervisorHost(
     evidence,
     ownerStartupRecoveryOnly: input.ownerStartupRecoveryOnly,
   };
+  if (job === "finalize" && input.repairFanout !== undefined) {
+    await input.repairFanout();
+  }
   const outcome = job === "prepare"
     ? await runHostedSupervisorPrepare(core)
     : await runHostedSupervisorFinalize(core);
@@ -417,6 +430,7 @@ export async function main(): Promise<void> {
     [UPKEEP_DEFERRAL_ENV]: Deno.env.get(UPKEEP_DEFERRAL_ENV),
     [DELIVERY_COUNTS_ENV]: Deno.env.get(DELIVERY_COUNTS_ENV),
     [TIER_COUNTS_ENV]: Deno.env.get(TIER_COUNTS_ENV),
+    [REPAIR_PLAN_DIGEST_ENV]: Deno.env.get(REPAIR_PLAN_DIGEST_ENV),
   };
   const job = supervisorJob(env.GITHUB_JOB);
   const identity = parseHostedEnvironment(env, job);
@@ -503,6 +517,15 @@ export async function main(): Promise<void> {
       : undefined,
     throughputMetrics,
     upkeepDeferral,
+    repairFanout: repairFanoutHook(job, env, {
+      sentinelDir,
+      gitHome,
+      selfToken,
+      nativeToken,
+      clock,
+      state,
+      identity,
+    }),
   });
   // Bounded trusted result only; no raw error or credential is ever logged.
   console.log(JSON.stringify({
