@@ -49,6 +49,7 @@ import {
   substituteBackupRuns,
 } from "./hosted-autonomy-backup-ci-read.ts";
 import { createMergeBaseTreeChanges } from "./hosted-autonomy-github-trees.ts";
+import { createHostedDeliveryReads } from "./hosted-autonomy-github-delivery.ts";
 import {
   parseHostedAutonomyHeadPulls,
   parseHostedAutonomyPull,
@@ -269,6 +270,7 @@ export function createHostedAutonomyGitHub(
     };
 
   return {
+    ...createHostedDeliveryReads(request, scope),
     mismatchDisposition: createHostedMismatchDispositionObservations(
       token,
       repository,

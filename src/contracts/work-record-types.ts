@@ -39,6 +39,14 @@ export type WorkWaitReasonV1 =
    * binding and retries after the retention window has advanced.
    */
   | "ledger_capacity"
+  /**
+   * Explicit TRANSIENT post-merge delivery state (sentinel #337). The pull
+   * request merged, and the target's trusted `requiredForDelivery` checks on
+   * the merge commit have not all completed yet; the issue is not closed
+   * until they pass. Bounded: `until` is the delivery-check deadline, after
+   * which a still-missing check parks the record.
+   */
+  | "deployment"
   | "backoff"
   | "unavailable"
   | "manual";
