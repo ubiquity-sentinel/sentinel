@@ -33,7 +33,8 @@ import {
 } from "../../src/repair/loop-review-records.ts";
 import { isMatrixImplementationReadyV1 } from "../../src/repair/loop-eligibility.ts";
 import { repairConfigs } from "./helpers.ts";
-import { SHA1, SHA2 } from "../state/helpers.ts";
+import { SHA1, SHA2, SHA3 } from "../state/helpers.ts";
+import type { GitSha } from "../../src/contracts/brands.ts";
 import { acceptanceRig, NOT_FULFILLED } from "./acceptance-fixtures.ts";
 import {
   acceptedObservation,
@@ -184,7 +185,11 @@ Deno.test("B6: every live round shape keeps correcting (576, 653, 660, 611, 1127
 });
 
 Deno.test("B6a: a third not-fulfilled verdict keeps correcting; the spent count never parks", async () => {
-  const rig = await acceptanceRig("b6a-cap", 2);
+  // Each correction session produces a NEW candidate: an identical replay of
+  // the same head, base and findings is refused before reservation (#334).
+  const rig = await acceptanceRig("b6a-cap", 2, false, {
+    heads: [SHA3, "5".repeat(40), "6".repeat(40), "7".repeat(40)] as GitSha[],
+  });
   try {
     await rig.run();
     const corrected = await rig.snapshot();
@@ -208,24 +213,19 @@ Deno.test("B6a: a third not-fulfilled verdict keeps correcting; the spent count 
     await rig.run();
     const state = await rig.snapshot();
     const continued = state.work[0]!;
-    // No park: the record keeps correcting. The rolling budget's own bounded
-    // wait (`budget_cap`, with an `until`) is the only pause, and the record
-    // leaves it on its own; the spent round count is unchanged accounting.
-    assert.equal(continued.nextStep, "work");
+    // No park: the record keeps correcting past its spent third round. The
+    // new candidate is reviewed in a fourth round; the spent count is
+    // accounting and never refuses it.
+    assert.equal(continued.nextStep, "review");
     assert.equal(continued.blocker, null);
-    assert.equal(continued.wait?.reason, "budget_cap");
-    assert.ok(continued.wait?.until !== null);
-    assert.equal(continued.counters.reviewRounds, 3);
-    assert.ok(rig.model.requests.length >= 2, "corrections continue");
-    assert.equal(
-      rig.github.reviewRequestIdentities.length,
-      1,
-      "no review is bought while the budget waits",
-    );
+    assert.equal(continued.wait?.reason, "review_pending");
+    assert.equal(continued.counters.reviewRounds, 4);
+    assert.equal(rig.model.requests.length, 2, "corrections continue");
+    assert.equal(rig.github.reviewRequestIdentities.length, 2);
     assert.equal(
       state.reservations.filter((row) => row.purpose === "review_request")
         .length,
-      3,
+      4,
     );
     assert.equal(
       state.reservations.some((row) =>

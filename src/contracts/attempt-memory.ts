@@ -22,6 +22,8 @@ import { asWorkItemId } from "./brands.ts";
 import type { GitSha, WorkItemId } from "./brands.ts";
 import { canonicalStringifySha256 } from "./canonical.ts";
 import { parseRepositoryIdentity } from "./shared.ts";
+import { parseAttemptInputsV1 } from "./attempt-input.ts";
+import type { AttemptInputV1 } from "./attempt-input.ts";
 import type { RepositoryIdentityV1 } from "./shared.ts";
 import {
   expectArray,
@@ -121,6 +123,12 @@ export interface AttemptMemoryRecordV1 {
   successes?: number;
   lastSuccessAtMs?: number | null;
   lastSuccessRevision?: GitSha | null;
+  /**
+   * Optional input fingerprints of attempts in this family that produced an
+   * outcome (`AttemptInputV1`, see attempt-input.ts). ABSENT is the exact
+   * legacy shape, never injected, and matches no input fingerprint.
+   */
+  inputs?: AttemptInputV1[];
 }
 
 /**
@@ -226,6 +234,7 @@ const RECORD_OPTIONAL_KEYS = [
   "successes",
   "lastSuccessAtMs",
   "lastSuccessRevision",
+  "inputs",
 ] as const;
 
 const ENTRY_KEYS = [
@@ -308,6 +317,9 @@ export function parseAttemptMemoryRecordV1(
       expectGitSha,
     );
   }
+  const inputs = obj.inputs === undefined
+    ? undefined
+    : parseAttemptInputsV1(obj.inputs, "$.inputs");
   return {
     version: "v1",
     kind: "attempt_memory",
@@ -324,6 +336,7 @@ export function parseAttemptMemoryRecordV1(
         lastSuccessRevision: lastSuccessRevision ?? null,
       }
       : {}),
+    ...(inputs === undefined ? {} : { inputs }),
   };
 }
 

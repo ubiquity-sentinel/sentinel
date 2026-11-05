@@ -36,9 +36,11 @@ export async function acceptanceRig(
   prefix: string,
   rounds: number,
   hosted = false,
+  model?: Parameters<typeof makeRig>[1]["model"],
 ) {
   const rig = await makeRig(prefix, {
     summaries: false,
+    ...(model === undefined ? {} : { model }),
     github: {
       candidateLifecycle: {
         ...positiveLifecycle(),

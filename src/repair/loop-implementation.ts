@@ -13,10 +13,17 @@ import type { ModelRunRequestV1 } from "../contracts/ports.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import {
+  MAX_PRIOR_ATTEMPT_FACTS,
   priorAttemptFactsForRecordV1,
   repositoryPriorFactsForRecordV1,
   repositoryRegressionFactsV1,
 } from "./attempt-policy.ts";
+import {
+  identicalAttemptRefusalFactV1,
+  identicalAttemptRefusalMessage,
+  identicalAttemptRefusalMutationV1,
+  identicalAttemptRefusalV1,
+} from "./identical-attempt.ts";
 import { candidateBranch, implementationIntentKey } from "./keys.ts";
 import {
   CHECK_POLL_MS,
@@ -442,11 +449,40 @@ export async function prepareImplementationStart(
     ? null
     : correctionFindings(context.snapshot, record, ciFinding);
   const part = decompositionPartOf(record.id);
-  const priorAttempts = priorAttemptFactsForRecordV1(
+  // #334: an attempt whose base tip, candidate patch, review findings and
+  // runtime equal an attempt that already produced an outcome is refused
+  // here, before any reservation, naming the exact prior attempt.
+  const identical = identicalAttemptRefusalV1(
     context.snapshot,
     record,
     deps.controllerSha,
   );
+  if (identical !== null) {
+    const refused = markBlocked(
+      record,
+      "other",
+      identicalAttemptRefusalMessage(identical),
+      now,
+    );
+    const counted = identicalAttemptRefusalMutationV1(identical, now);
+    return persistTransition(deps, context, (draft) => {
+      replaceWorkMutation(refused)(draft);
+      counted(draft);
+    });
+  }
+  const refusalFact = identicalAttemptRefusalFactV1(
+    context.snapshot,
+    record,
+    deps.controllerSha,
+  );
+  const priorAttempts = [
+    ...(refusalFact === null ? [] : [refusalFact]),
+    ...priorAttemptFactsForRecordV1(
+      context.snapshot,
+      record,
+      deps.controllerSha,
+    ),
+  ].slice(0, MAX_PRIOR_ATTEMPT_FACTS);
   const repositoryLessons = repositoryPriorFactsForRecordV1(
     context.snapshot,
     record,

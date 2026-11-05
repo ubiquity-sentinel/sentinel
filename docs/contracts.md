@@ -389,6 +389,32 @@ claimed to be the snapshot's own content commit hash. Enabling strict
 expected-head CAS. Duplicate work/reservation/release (and incident/evidence/
 review/replay/request) ids are rejected instead of collapsing to last-wins maps.
 
+### AttemptMemoryRecordV1 input fingerprints (`inputs`, optional)
+
+`AttemptMemoryRecordV1.inputs` (`src/contracts/attempt-input.ts`) records the
+input fingerprint of each implementation attempt that proved what its inputs
+produce (an accepted candidate or a `semantic_no_progress` failure), written by
+the trusted settlement/success mutations in the same state commit. Absent is the
+exact legacy shape, never injected, and matches nothing. Digest domains are
+distinct and never compared with each other or with the family/failure
+fingerprints (`sentinel.memory.attempt-family.v1`,
+`sentinel.memory.attempt-fingerprint.v1`):
+
+| Field            | Domain                                | Canonical payload                                                              |
+| ---------------- | ------------------------------------- | ------------------------------------------------------------------------------ |
+| `patchDigest`    | `sentinel.memory.attempt-patch.v1`    | `{base, head}` of the candidate the attempt continues (`head: null` when none) |
+| `findingsDigest` | `sentinel.memory.attempt-findings.v1` | sorted `{severity, path, message}` of the latest persisted review findings     |
+| `fingerprint`    | `sentinel.memory.attempt-input.v1`    | `{taskId, purpose, controllerSha, baseTip, patchDigest, findingsDigest}`       |
+
+Each is SHA-256 over the canonical serialization. Admission
+(`prepareImplementationStart`) refuses an attempt whose input fingerprint equals
+a recorded row before any reservation: the record is blocked with
+`identical_attempt_refused: prior attempt <reservation id> ...` and the row's
+`refusals`/`lastRefusedAtMs` grow; the prior charge is never refunded or
+rewritten. A changed base tip, candidate head, findings set or runtime revision
+is a distinct attempt; its prompt carries the newest refusal as a prior-attempt
+fact whose detail starts `identical attempt refused:`.
+
 ### ReleaseStateSnapshotV1 (`kind: "release_state_snapshot"`)
 
 The single JSON document on `sentinel-state/release`:
