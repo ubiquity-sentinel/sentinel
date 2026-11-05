@@ -219,3 +219,40 @@ export function createHostedBaseRepairIssues(
     create: (input) => followUps.create(input),
   };
 }
+
+/**
+ * The owner-action capability issue writes (`hosted-autonomy-target-capability.ts`):
+ * the follow-up create without a label, and one edit of title and body. An
+ * edit is confirmed only when GitHub answers with this repository's
+ * App-created issue echoing the exact text; the state is never changed.
+ */
+export function createHostedCapabilityIssues(
+  request: ReturnType<typeof createHostedAutonomyRequest>,
+  repository: RepositoryIdentityV1,
+): {
+  create(input: { title: string; body: string }): Promise<number | null>;
+  update(
+    number: number,
+    input: { title: string; body: string },
+  ): Promise<boolean>;
+} {
+  const scope = `${repository.owner}/${repository.name}`;
+  const repositoryUrl = `${API_BASE}/repos/${scope}`;
+  const followUps = createHostedFollowUpIssues(request, repository);
+  return {
+    create: (input) => followUps.create(input),
+    async update(number, input) {
+      if (!Number.isSafeInteger(number) || number <= 0) return false;
+      const raw = await request("PATCH", `/repos/${scope}/issues/${number}`, {
+        title: input.title,
+        body: input.body,
+      });
+      const item = parseIssueItem(raw, repositoryUrl);
+      const updated = record(raw);
+      return item !== null && updated !== null && item.number === number &&
+        !item.pullRequest &&
+        item.author === HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR &&
+        updated["title"] === input.title && updated["body"] === input.body;
+    },
+  };
+}

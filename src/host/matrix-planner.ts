@@ -17,6 +17,7 @@ import type { GitHubPort } from "../contracts/ports.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import { implementationIntentKey } from "../repair/keys.ts";
 import {
   createRunBounds,
@@ -64,6 +65,7 @@ import {
   NO_CI_AND_NO_LOCAL_VERIFY_BLOCKER,
   NO_CI_AND_NO_LOCAL_VERIFY_DETAIL,
 } from "./target-policy-generic.ts";
+import { targetCapabilityRefusesV1 } from "../repair/target-capability.ts";
 
 export interface MatrixPlanOptionsV1 {
   waveId: string;
@@ -253,7 +255,7 @@ export function explainMatrixNotReady(
   }
   // The target's own evidence policy is the reason it is never planned, with
   // or without a retained intent; report it before the intent/round filters.
-  if (isNoTestEvidenceConfig(config)) {
+  if (noTestEvidence(config, snapshot, record)) {
     return NO_CI_AND_NO_LOCAL_VERIFY_BLOCKER;
   }
   if (!roundLeftForStart(snapshot, record, ciRouteOpen, cutoff)) {
@@ -298,6 +300,20 @@ function isNoTestEvidenceConfig(config: RepositoryConfigV1): boolean {
 }
 
 /**
+ * No merge test evidence for this record's target: by its loaded policy, or
+ * by the trusted launcher's cached capability verdict (issue #332), which
+ * refuses admission before any reservation until a re-check clears it.
+ */
+function noTestEvidence(
+  config: RepositoryConfigV1,
+  snapshot: Pick<RepairStateSnapshotV1, "targetCapabilities">,
+  record: Pick<WorkRecordV1, "repository">,
+): boolean {
+  return isNoTestEvidenceConfig(config) ||
+    targetCapabilityRefusesV1(snapshot, record.repository);
+}
+
+/**
  * Trusted planner-side park for a target with no merge test evidence. Such a
  * record must never become a matrix cell: its admission would park it before
  * any carrier exists, failing the cell and the whole supervisor run. The park
@@ -329,7 +345,9 @@ async function parkNoTestEvidenceRecords(
       record.intent !== null && !isStaleImplementationIntent(record.intent, now)
     ) continue;
     const config = configForRepository(deps, record.repository);
-    if (config === null || !isNoTestEvidenceConfig(config)) continue;
+    if (config === null || !noTestEvidence(config, context.snapshot, record)) {
+      continue;
+    }
     if (
       !isMatrixImplementationReadyV1(
         record,
@@ -627,7 +645,8 @@ export async function planMatrixWave(
         return false;
       }
       const config = configForRepository(deps, record.repository);
-      return config !== null && !isNoTestEvidenceConfig(config) &&
+      return config !== null &&
+        !noTestEvidence(config, context.snapshot, record) &&
         isMatrixImplementationReadyV1(
           record,
           context.snapshot,
@@ -647,7 +666,7 @@ export async function planMatrixWave(
     if (config === null) continue;
     attempted++;
     if (
-      isNoTestEvidenceConfig(config) ||
+      noTestEvidence(config, context.snapshot, record) ||
       !isMatrixImplementationReadyV1(
         record,
         context.snapshot,
