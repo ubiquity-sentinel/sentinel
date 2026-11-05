@@ -66,6 +66,10 @@ import { verifyNoLiveLocalCandidateBranch } from "./loop-local-candidate.ts";
 import { legacyCutoff } from "./loop-review-round-cap.ts";
 import { RETIRED_TARGET_MESSAGE } from "./selection.ts";
 import { observeIssueForModel, readBase } from "./loop-task-context.ts";
+import {
+  preReservationChecks,
+  preReservationRefusalMessage,
+} from "./pre-reservation-checks.ts";
 import type {
   LoopContextV1,
   PreparedImplementationV1,
@@ -366,6 +370,7 @@ export async function prepareImplementationStart(
   if (admissionCooling.kind === "deferred") {
     return { kind: "deferred", detail: admissionCooling.detail };
   }
+  let observedBase: GitSha | undefined;
   // Queued issue work has no saved candidate, checkpoint, PR or open intent:
   // its target base is only the development tip captured at intake, so it may
   // have gone stale while the work waited. Refresh it through the same
@@ -381,6 +386,7 @@ export async function prepareImplementationStart(
     record.intent === null
   ) {
     const latestBase = await readBase(deps, record.repository);
+    observedBase = latestBase ?? undefined;
     if (latestBase === null) {
       return persistWork(
         deps,
@@ -521,6 +527,34 @@ export async function prepareImplementationStart(
     failure: conflictMarker(conflict.mergeBase, admissionAt),
   };
   const nextWork = setIntent(attempted, intent, admissionAt);
+  // Every deterministic refusal is decided BEFORE the reservation (#333): a
+  // refused start is never reserved or charged, and its precise check and
+  // reason code are persisted on the record through the trusted work write.
+  const precheck = preReservationChecks(record, config, {
+    issue,
+    ...(observedBase === undefined ? {} : { latestBase: observedBase }),
+    candidateRef: intent.branch,
+    admission: {
+      reservationId,
+      attempt: admission.attempt,
+      purpose: admission.purpose,
+      nextWork,
+      now: admissionAt,
+      snapshot: context.snapshot,
+    },
+  });
+  if (!precheck.ok) {
+    return persistWork(
+      deps,
+      context,
+      markBlocked(
+        record,
+        "unavailable",
+        preReservationRefusalMessage(precheck),
+        now,
+      ),
+    );
+  }
   const reservation = await deps.budget.reserveModelStart({
     ...admission,
     implementationTransition: {

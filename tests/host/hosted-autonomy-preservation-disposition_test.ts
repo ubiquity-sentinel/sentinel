@@ -181,6 +181,21 @@ Deno.test("preservation disposition: a validation refusal re-enters the retry au
   assert.deepEqual(state.snapshot.reservations, before.reservations);
 });
 
+Deno.test("preservation disposition: a check-named validation refusal (#333) is the same REFUSED class", async () => {
+  const { record, charge } = await refusedFixture({
+    message: "candidate preservation validation refused: protected_entry",
+  });
+  const state = new TransitionState(snapshotOf([record], [charge]));
+  const before = structuredClone(state.snapshot);
+  const now = record.blocker!.since + DAY;
+  const first = await runAt(state, {}, now);
+  assert.equal(first.status, "applied", JSON.stringify(first));
+  assert(
+    first.actions.includes(`preservation:${record.id}:unrecoverable:refused`),
+  );
+  assert.deepEqual(state.snapshot.reservations, before.reservations);
+});
+
 for (
   const [name, tip, reason] of [
     ["at the unchanged base", BASE, "base_unchanged"],

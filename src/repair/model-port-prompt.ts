@@ -9,6 +9,11 @@ import {
   MAX_PROMPT_CHARS,
 } from "./model-port-policy.ts";
 import { renderCiEvidenceUnavailable } from "./ci-evidence-render.ts";
+import {
+  MAX_CHANGED_PATHS,
+  MAX_FILE_BYTES,
+  MAX_PROMPT_BYTES,
+} from "../github/snapshot-policy.ts";
 
 /** At most this many protected path prefixes are named in the prompt. */
 export const MAX_PROMPT_PROTECTED_PATHS = 60;
@@ -53,6 +58,20 @@ export function renderProtectedPaths(paths: readonly string[]): string {
     ". Fix the issue without changing them where you can; a candidate that " +
     "changes one is parked for the repository owner to land.";
 }
+
+/**
+ * The trusted publication bounds the candidate must satisfy (#333/#166). They
+ * are the exact constants the trusted preservation validator and review
+ * snapshot enforce after the turn (`snapshot-policy.ts`), stated here so the
+ * model can comply instead of producing a candidate that is refused after
+ * the charged turn. The validator stays the enforcement.
+ */
+export const PUBLICATION_BOUNDS_SENTENCE = " The trusted publication " +
+  `validator refuses a candidate that changes more than ${MAX_CHANGED_PATHS} ` +
+  `paths, any file larger than ${MAX_FILE_BYTES} bytes, more than ` +
+  `${MAX_PROMPT_BYTES} total new bytes, binary, non-UTF-8 or NUL-bearing ` +
+  "content, symlinks, submodules, unsupported file modes, or secret-shaped " +
+  "text; keep the change within these bounds.";
 
 /**
  * The implementer prompt. `ciEvidence` is the trusted host's rendered CI
@@ -218,7 +237,9 @@ export function buildPrompt(
     "rewrite expected test assertions to force success." +
     renderProtectedPaths(protectedPaths) +
     " Keep the change " +
-    "minimal and do not refactor beyond it. Keep every command's " +
+    "minimal and do not refactor beyond it." +
+    PUBLICATION_BOUNDS_SENTENCE +
+    " Keep every command's " +
     "max_output_tokens at or below 2000 and " +
     "keep individual command output bounded: prefer targeted symbol " +
     "searches followed by excerpts of at most 100 lines. Read the " +
