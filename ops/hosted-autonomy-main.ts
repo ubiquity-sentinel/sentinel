@@ -43,6 +43,7 @@ import { createHostedAutonomyGitHub } from "./hosted-autonomy-github.ts";
 import {
   composeBackupCi,
   readBackupCiMode,
+  readBackupCiTargets,
 } from "../src/host/backup-ci-compose.ts";
 import { repeatFailureRouteIdentity } from "./hosted-autonomy-repeat-failure.ts";
 import {
@@ -301,6 +302,9 @@ async function runHostedAutonomyMainResult(
             runner,
           }),
           githubFor,
+          backupCiTargets: (await readBackupCiTargets(Deno.cwd())).map((
+            target,
+          ) => target.repository),
           clock: { now: () => Date.now() },
           queue: createHostedQueueCoordinator({
             queueMode: env("SENTINEL_MERGE_QUEUE"),

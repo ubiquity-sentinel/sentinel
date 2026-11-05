@@ -32,6 +32,7 @@ import {
 } from "./hosted-autonomy-github-listing.ts";
 import {
   createHostedBaseRepairIssues,
+  createHostedCapabilityIssues,
   createHostedFollowUpIssues,
 } from "./hosted-autonomy-github-issues.ts";
 import { createHostedRetryLabel } from "./hosted-autonomy-retry-label.ts";
@@ -49,6 +50,8 @@ import {
   substituteBackupRuns,
 } from "./hosted-autonomy-backup-ci-read.ts";
 import { createMergeBaseTreeChanges } from "./hosted-autonomy-github-trees.ts";
+import { createTargetTreeFactsResolver } from "../src/host/target-tree-facts.ts";
+import { fetchHttpTransport } from "../src/github/http.ts";
 import { createHostedDeliveryReads } from "./hosted-autonomy-github-delivery.ts";
 import {
   hostedMergeBody,
@@ -126,6 +129,11 @@ export function createHostedAutonomyGitHub(
   const jobReads = createHostedActionsJobReads(request, scope);
   const effect = createHostedAutonomyEffect(token);
   const rawRead = createHostedAutonomyRawRead(token);
+  // A commit sha passed as the ref resolves to itself, so every read is exact.
+  const treeFactsAt = createTargetTreeFactsResolver({
+    http: fetchHttpTransport(),
+    token,
+  });
   async function readPull(
     number: number,
     baseBranch: string | null,
@@ -773,6 +781,12 @@ export function createHostedAutonomyGitHub(
     },
     followUpIssues: createHostedFollowUpIssues(request, repository),
     baseRepairIssues: createHostedBaseRepairIssues(request, repository),
+    capabilityIssues: createHostedCapabilityIssues(request, repository),
+    async readTreeFacts(commit: string) {
+      // A commit sha as the ref: every contents read is of exactly that tip.
+      if (!COMMIT_SHA.test(commit)) return null;
+      return await treeFactsAt(repository, commit);
+    },
     retryLabel: createHostedRetryLabel(request, repository),
     ciOutageTracker: createHostedOutageTracker(request, repository),
     async classifyTipStart(tip: string) {
