@@ -1,0 +1,285 @@
+// A record retired because its source issue closed (live ai.ubq.fi #1325-#1327
+// with Sentinel's #1329-#1331 left open) has its OWN open, unmerged pull
+// request closed once, with one comment, and the settlement recorded so the
+// next pass is a no-op. A foreign, merged or already closed pull request is
+// never touched on GitHub.
+import assert from "node:assert/strict";
+import type { WorkItemId } from "../../src/contracts/brands.ts";
+import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
+import {
+  retiredPullMarker,
+  runHostedRetiredPullPass,
+} from "../../ops/hosted-autonomy-retired-pulls.ts";
+import { HOSTED_AUTONOMY_RETIRED } from "../../ops/hosted-autonomy-policy.ts";
+import type {
+  HostedAutonomyDepsV1,
+  HostedAutonomyGitHubV1,
+  HostedAutonomyHeadPullV1,
+} from "../../ops/hosted-autonomy-types.ts";
+import { MemoryState } from "../repair/helpers.ts";
+import { T0 } from "../state/helpers.ts";
+import {
+  BASE,
+  FOREIGN_REPO,
+  foreignRecord,
+  HEAD,
+} from "./hosted-autonomy-fixtures.ts";
+import { repairSnapshot } from "./hosted-autonomy-rig.ts";
+import { createHostedDeliveryReads } from "../../ops/hosted-autonomy-github-delivery.ts";
+
+const ID = "issue-ubiquity-ai.ubq.fi-1327" as WorkItemId;
+const BRANCH = `sentinel/repair/${ID}`;
+const PR = 1331;
+const ISSUE = 1327;
+const CLOSING = "0123456789abcdef0123456789abcdef01234567";
+
+function retiredRecord(overrides: Record<string, unknown> = {}): WorkRecordV1 {
+  return foreignRecord({
+    id: ID,
+    source: { kind: "issue", id: String(ISSUE), revision: HEAD },
+    related: { incidentId: null, issueNumber: ISSUE },
+    nextStep: "blocked",
+    blocker: {
+      kind: "other",
+      message: HOSTED_AUTONOMY_RETIRED,
+      since: T0 + 3000,
+    },
+    evidence: [],
+    target: {
+      base: BASE,
+      branch: BRANCH,
+      checkpoint: null,
+      head: HEAD,
+      pr: PR,
+    },
+    updatedAt: T0 + 3000,
+    ...overrides,
+  });
+}
+
+class FakeSurface {
+  calls: string[] = [];
+  comments: { number: number; body: string }[] = [];
+  issueOpen = false;
+  constructor(public pull: HostedAutonomyHeadPullV1 | null) {}
+  surface(): HostedAutonomyGitHubV1 {
+    return {
+      listPullsByHeadRef: (branch: string) => {
+        this.calls.push(`list:${branch}`);
+        return Promise.resolve(
+          this.pull === null || this.pull.headRef !== branch ? [] : [{
+            ...this.pull,
+          }],
+        );
+      },
+      readIssueClosingCommit: (number: number) => {
+        this.calls.push(`issue:${number}`);
+        return Promise.resolve({
+          open: this.issueOpen,
+          closingCommit: this.issueOpen ? null : CLOSING,
+        });
+      },
+      readIssueOpen: (number: number) => {
+        this.calls.push(`issueOpen:${number}`);
+        return Promise.resolve(this.issueOpen);
+      },
+      closePull: (number: number) => {
+        this.calls.push(`close:${number}`);
+        if (this.pull !== null) this.pull = { ...this.pull, state: "closed" };
+        return Promise.resolve(true);
+      },
+      commentIssue: (number: number, body: string) => {
+        this.calls.push(`comment:${number}`);
+        this.comments.push({ number, body });
+        return Promise.resolve(true);
+      },
+    } as unknown as HostedAutonomyGitHubV1;
+  }
+}
+
+function ownPull(
+  overrides: Partial<HostedAutonomyHeadPullV1> = {},
+): HostedAutonomyHeadPullV1 {
+  return {
+    number: PR,
+    state: "open",
+    merged: false,
+    headSha: HEAD,
+    headRef: BRANCH,
+    baseRef: "main",
+    author: "ubiquity-sentinel[bot]",
+    ...overrides,
+  };
+}
+
+async function rig(record: WorkRecordV1, fake: FakeSurface) {
+  const state = new MemoryState();
+  const seeded = await state.writeRepair(repairSnapshot([record], []), null);
+  assert.ok(seeded.ok && seeded.value.status === "applied");
+  let now = T0 + 10_000;
+  const deps = {
+    state,
+    clock: { now: () => now++ },
+    githubFor: (repository: { name: string }) =>
+      repository.name === FOREIGN_REPO.name ? fake.surface() : null,
+  } as unknown as HostedAutonomyDepsV1;
+  const record0 = async () => {
+    const read = await state.readRepair();
+    assert.ok(read.ok && read.value.status === "found");
+    return read.value.snapshot.work.find((row) => row.id === ID)!;
+  };
+  return { state, deps, record0 };
+}
+
+Deno.test("retired pull: Sentinel's own open unmerged pull is closed once with one comment", async () => {
+  const fake = new FakeSurface(ownPull());
+  const { state, deps, record0 } = await rig(retiredRecord(), fake);
+  const writes = state.repairWrites;
+
+  const first = await runHostedRetiredPullPass(deps);
+  assert.deepEqual(fake.calls, [
+    `list:${BRANCH}`,
+    `issue:${ISSUE}`,
+    `close:${PR}`,
+    `comment:${PR}`,
+  ]);
+  assert.equal(fake.comments.length, 1);
+  const body = fake.comments[0]!.body;
+  assert.ok(body.startsWith(retiredPullMarker(ID)));
+  assert.match(body, /source issue #1327 was closed by commit 0123456789/);
+  assert.match(body, new RegExp(`branch \`${BRANCH}\` is kept`));
+  assert.ok(first.includes(`retired-pull:${ID}:pr=${PR}:closed`), first.join());
+  assert.equal(state.repairWrites, writes + 1);
+  const settled = await record0();
+  assert.equal(settled.retiredPullClosure?.pr, PR);
+  assert.equal(settled.retiredPullClosure?.outcome, "closed");
+  // Lifecycle, blocker and branch binding are unchanged.
+  assert.equal(settled.nextStep, "blocked");
+  assert.equal(settled.blocker?.message, HOSTED_AUTONOMY_RETIRED);
+  assert.equal(settled.target.branch, BRANCH);
+
+  // The second pass reads nothing, writes nothing, comments nothing.
+  fake.calls = [];
+  const second = await runHostedRetiredPullPass(deps);
+  assert.deepEqual(second, []);
+  assert.deepEqual(fake.calls, []);
+  assert.equal(fake.comments.length, 1);
+  assert.equal(state.repairWrites, writes + 1);
+});
+
+for (
+  const [name, pull, outcome] of [
+    ["a foreign author", ownPull({ author: "a-person" }), "not_own"],
+    [
+      "an already merged pull",
+      ownPull({ state: "closed", merged: true }),
+      "merged",
+    ],
+    [
+      "an already closed pull",
+      ownPull({ state: "closed" }),
+      "closed_elsewhere",
+    ],
+    ["no pull on the repair branch", null, "not_own"],
+  ] as const
+) {
+  Deno.test(`retired pull: ${name} is never closed or commented on`, async () => {
+    const fake = new FakeSurface(pull);
+    const { deps, record0 } = await rig(retiredRecord(), fake);
+    const actions = await runHostedRetiredPullPass(deps);
+    assert.deepEqual(fake.calls, [`list:${BRANCH}`]);
+    assert.equal(fake.comments.length, 0);
+    assert.ok(actions.includes(`retired-pull:${ID}:pr=${PR}:${outcome}`));
+    assert.equal((await record0()).retiredPullClosure?.outcome, outcome);
+    fake.calls = [];
+    assert.deepEqual(await runHostedRetiredPullPass(deps), []);
+    assert.deepEqual(fake.calls, []);
+  });
+}
+
+Deno.test("retired pull: a reopened issue keeps its pull open and settles nothing", async () => {
+  const fake = new FakeSurface(ownPull());
+  fake.issueOpen = true;
+  const { state, deps, record0 } = await rig(retiredRecord(), fake);
+  const writes = state.repairWrites;
+  const actions = await runHostedRetiredPullPass(deps);
+  assert.deepEqual(fake.calls, [`list:${BRANCH}`, `issue:${ISSUE}`]);
+  assert.deepEqual(actions, [`retired-pull:${ID}:pr=${PR}:issue_open`]);
+  assert.equal(state.repairWrites, writes);
+  assert.equal((await record0()).retiredPullClosure, undefined);
+});
+
+Deno.test("retired pull: a record retired for any other reason is never read", async () => {
+  const fake = new FakeSurface(ownPull());
+  const { deps } = await rig(
+    retiredRecord({
+      blocker: {
+        kind: "other",
+        message: "PR publication identity mismatch",
+        since: T0,
+      },
+    }),
+    fake,
+  );
+  assert.deepEqual(await runHostedRetiredPullPass(deps), []);
+  assert.deepEqual(fake.calls, []);
+});
+
+Deno.test("retired pull: a discovery view with no pending record reads no guarded state", async () => {
+  const fake = new FakeSurface(ownPull());
+  const { deps } = await rig(retiredRecord(), fake);
+  let guardedReads = 0;
+  const guarded = {
+    ...deps,
+    state: {
+      readRepair: () => {
+        guardedReads++;
+        return deps.state.readRepair();
+      },
+      writeRepair: deps.state.writeRepair.bind(deps.state),
+    },
+  } as unknown as HostedAutonomyDepsV1;
+  const empty = new MemoryState();
+  await empty.writeRepair(repairSnapshot([], []), null);
+  assert.deepEqual(
+    await runHostedRetiredPullPass(guarded, Number.POSITIVE_INFINITY, empty),
+    [],
+  );
+  assert.equal(guardedReads, 0);
+  assert.deepEqual(fake.calls, []);
+  // A discovery view that shows the record runs the pass on the guarded read.
+  const actions = await runHostedRetiredPullPass(
+    guarded,
+    Number.POSITIVE_INFINITY,
+    deps.state,
+  );
+  assert.equal(guardedReads, 1);
+  assert.ok(actions.includes(`retired-pull:${ID}:pr=${PR}:closed`));
+});
+
+Deno.test("retired pull: the GitHub close keeps the branch and proves closed unmerged", async () => {
+  const sent: unknown[] = [];
+  let reply: unknown = { number: PR, state: "closed", merged: false };
+  const request = (method: string, path: string, body?: unknown) => {
+    sent.push([method, path, body]);
+    return Promise.resolve(reply);
+  };
+  const reads = createHostedDeliveryReads(
+    request as Parameters<typeof createHostedDeliveryReads>[0],
+    "ubiquity/ai.ubq.fi",
+  );
+  assert.equal(await reads.closePull(PR), true);
+  // Only the pull request's state is patched: no ref is deleted.
+  assert.deepEqual(sent, [[
+    "PATCH",
+    `/repos/ubiquity/ai.ubq.fi/pulls/${PR}`,
+    { state: "closed" },
+  ]]);
+  reply = { number: PR, state: "closed", merged: true };
+  assert.equal(await reads.closePull(PR), false);
+  reply = { number: PR, state: "open", merged: false };
+  assert.equal(await reads.closePull(PR), false);
+  reply = null;
+  assert.equal(await reads.closePull(PR), false);
+  assert.equal(await reads.closePull(0), false);
+});

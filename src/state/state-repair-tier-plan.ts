@@ -13,6 +13,11 @@
  *   open-issue listing was complete this pass and does not contain it (an
  *   open issue keeps its record hot, because intake skips an issue that
  *   already has a hot record and would otherwise admit a duplicate);
+ * - it is not a record retired because its source issue closed whose own
+ *   pull request is still unsettled (`retiredPullClosurePending`): the hosted
+ *   maintenance pass reads hot records only, so such a record stays hot (and
+ *   an already cold one is promoted) until that pass closes its own open pull
+ *   request or records that there was nothing to close;
  * - no hot record that stays hot depends on it;
  * - every reservation is terminally settled outside the widest rolling
  *   accounting window, so no live accounting, retry or duplicate-detection
@@ -36,6 +41,7 @@ import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { MaxItems } from "../contracts/validation.ts";
+import { retiredPullClosurePending } from "../contracts/work-record-retired-pull.ts";
 import {
   isTerminalReservationV1,
   referencedReservationIdsV1,
@@ -126,6 +132,7 @@ function demotableWork(
   return record.source.kind === "issue" &&
     (settled || releaseDeferred) &&
     record.intent === null &&
+    !retiredPullClosurePending(record) &&
     listed.has(repositoryKey(record.repository)) &&
     !policy.openIssueWorkIds.has(record.id) &&
     !(policy.protectedWorkIds?.has(record.id) ?? false);
@@ -299,7 +306,8 @@ export function takeDemotionBudget(
 
 /**
  * Plans the promotions of one pass: every cold family whose issue is open
- * again (or that a hot record depends on) returns hot unchanged, together
+ * again (or that a hot record depends on, or whose retired record's own pull
+ * request is unsettled) returns hot unchanged, together
  * with its cold dependencies. Promotions are never deferred: a reopened issue
  * must be hot before intake, or intake would admit a duplicate record.
  */
@@ -325,6 +333,11 @@ export function planRepairPromotions(
     for (const row of cold.work) visit(row.id);
   }
   for (const id of extraSeeds) visit(id);
+  // A retired record whose own pull request is unsettled returns hot, where
+  // the maintenance pass settles it (it never reads the cold tier).
+  for (const row of cold.work) {
+    if (retiredPullClosurePending(row)) visit(row.id);
+  }
   for (const work of hot.work) {
     for (const dependency of work.dependencies) visit(dependency);
   }
