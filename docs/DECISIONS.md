@@ -4595,3 +4595,20 @@ Sentinel never closes it. When the issue is not delivered the log line is the
 fallback, the finalize line records the adapter, and the run outcome is
 unaffected. A runtime before this revision rejects a version 2 streak file;
 the #340 rollback rule applies.
+
+## 2026-11-05: repository cells widened to read-only waits and verdict reads (#328)
+
+Owner decision (2026-11-05, "delegate more"): a serial step that only
+re-arms a running read wait (`backoff`, `unavailable`, `deployment`,
+`ci_pending`, `review_pending`) of an intent-free record, changing nothing
+but the wait and the no-progress counter, settles like a deferral and is
+stamped, with the stamp deadline equal to the wait's `until`. The existing
+plan rule therefore delegates waiting records and review/CI result reads to
+repository cells. A cell keeps only work-row wait/verdict transitions; a step
+needing a GitHub write, reservation, model start or review receipt is dropped
+and unstamped, so the next plan returns it to the serial path. Deltas carry
+an optional bounded step summary; finalize reports per-kind kept/deferred/
+elapsed counts and the delegated/serial-owned record counts on
+`sentinel_repair_fanout`, and the metrics record carries optional
+`fanoutDelegated`/`serialOwned`. Transition rule, accounting, deadline and
+margin are unchanged.

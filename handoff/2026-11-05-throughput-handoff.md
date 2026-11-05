@@ -10,10 +10,8 @@ this file only says what is left and where to look.
   sixteen #340 children, the throughput watchdog (self-improvement loop with
   the second guardrail set) and the fan-out corrections. Last observed cycle
   with fan-out: supervisor run 42027706441, green end to end.
-- The upkeep-deferral notice as an owner issue is on `development` (`b1ea2a0`
-  or later). One pending worktree delivery may still land from the previous
-  session: wider repository cell delegation (the "delegate more" decision). If
-  it is not on `development`, redo it from the DECISIONS wording.
+- The upkeep-deferral notice as an owner issue and the widened repository
+  cells are both on `development`. No worktree deliveries are pending.
 - Two integration lanes push to `development` (this throughput lane and the
   "hanging-PR" lane). Rule: merge `development` first, validate, push
   fast-forward only; last green installs. Never force-move the launcher.
@@ -42,9 +40,14 @@ this file only says what is left and where to look.
 4. Trains on targets whose CI does not run on `sentinel-trains/**` pushes: add
    a push trigger for that ref pattern in the target's CI workflow, or trains
    wait two hours and fall back to per-record delivery (see #330 entry).
-5. Serial repair wall time (55 min in run 42027706441 against sub-minute
-   cells): continue delegating step kinds to cells per the "delegate more"
-   decision; measure with the `sentinel_repair_fanout` finalize line.
+5. Serial repair wall time. Measured: 82% of the serial pass's stepped time
+   in run 42027706441 is 14 records (13 prospector-chrome-extension, one
+   Sentinel) retrying a failing `candidate_preservation` push every two
+   minutes and ending the run unchanged. Find why that push fails on
+   prospector (ledger entry "Repository cells widened; serial-pass time
+   measured") and bound the re-arm; this is the single biggest remaining
+   wall-time item. Measure with the `sentinel_repair_fanout` line
+   (`stepKinds`, `recordsDelegated`, `recordsSerialOwned`).
 6. `refresh_per_merge` threshold stays `insufficient_data` until a producer
    records `refreshCommits` on the metrics collector (the refresh path in
    `src/repair/loop-carried-delivery.ts` / launcher base-advance).
