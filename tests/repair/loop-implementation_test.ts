@@ -402,6 +402,7 @@ Deno.test("P0 findings trigger a fresh bounded implementation/candidate/replay p
   // 2026-11-05), never parked unpublished and never merged by Sentinel.
   const rig4 = await makeRig("protected", {
     model: { changedPaths: ["src/handler.ts"] },
+    github: { candidateLifecycle: positiveLifecycle() },
   });
   try {
     await rig4.run();
