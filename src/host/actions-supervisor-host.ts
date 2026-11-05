@@ -42,10 +42,14 @@ import {
   type RunJobSummaryV1,
   type RunSummaryDepsV1,
 } from "./run-summary.ts";
+import type { FinalizeMetricsDepsV1 } from "./throughput-metrics-finalize.ts";
 import {
-  type FinalizeMetricsDepsV1,
-  writeFinalizeThroughputMetricsV1,
-} from "./throughput-metrics-finalize.ts";
+  type FinalizeThroughputWatchdogDepsV1,
+  runFinalizeMetricsTailV1,
+  SELF_IMPROVE_ENV,
+} from "./throughput-watchdog-finalize.ts";
+import { createHostedAutonomyRequest } from "../../ops/hosted-autonomy-github-listing.ts";
+import { createHostedWatchdogIssues } from "../../ops/hosted-autonomy-watchdog-issues.ts";
 import { GitThroughputMetricsStore } from "../state/throughput-metrics-store.ts";
 import {
   type FinalizeUpkeepDeferralDepsV1,
@@ -153,6 +157,13 @@ export interface HostedSupervisorHostInputV1 {
    * notice. Advisory; absent, the maintenance observation is ignored.
    */
   upkeepDeferral?: FinalizeUpkeepDeferralDepsV1;
+  /**
+   * Finalize only: the throughput watchdog (self-improvement loop), which
+   * files at most one issue per cycle on the self repository for a missed
+   * threshold. Advisory; absent, or `SENTINEL_SELF_IMPROVE=off`, nothing is
+   * evaluated or filed.
+   */
+  throughputWatchdog?: FinalizeThroughputWatchdogDepsV1;
   /**
    * Finalize only (#328): authenticate and apply the run's repository repair
    * deltas in one trusted write before the release settlement. Advisory; it
@@ -331,8 +342,17 @@ export async function runHostedSupervisorHost(
       });
       if (settled.notified) ownerNoticesSent = 1;
     }
-    if (input.throughputMetrics !== undefined) {
-      await writeFinalizeThroughputMetricsV1(input.throughputMetrics, {
+    // The watchdog evaluates this cycle's exact record before it is
+    // appended, so the record can count the issue the watchdog filed.
+    if (
+      input.throughputMetrics !== undefined ||
+      input.throughputWatchdog !== undefined
+    ) {
+      await runFinalizeMetricsTailV1({
+        metrics: input.throughputMetrics,
+        watchdog: input.throughputWatchdog,
+        selfImprove: input.env[SELF_IMPROVE_ENV],
+      }, {
         cycle: { runId: identity.runId, attempt: identity.runAttempt },
         finalizeStartedAtMs: hostStartedAtMs,
         nowMs: input.clock.now(),
@@ -431,6 +451,7 @@ export async function main(): Promise<void> {
     [DELIVERY_COUNTS_ENV]: Deno.env.get(DELIVERY_COUNTS_ENV),
     [TIER_COUNTS_ENV]: Deno.env.get(TIER_COUNTS_ENV),
     [REPAIR_PLAN_DIGEST_ENV]: Deno.env.get(REPAIR_PLAN_DIGEST_ENV),
+    [SELF_IMPROVE_ENV]: Deno.env.get(SELF_IMPROVE_ENV),
   };
   const job = supervisorJob(env.GITHUB_JOB);
   const identity = parseHostedEnvironment(env, job);
@@ -483,6 +504,7 @@ export async function main(): Promise<void> {
   // state credentials and remote as the release state.
   let throughputMetrics: FinalizeMetricsDepsV1 | undefined;
   let upkeepDeferral: FinalizeUpkeepDeferralDepsV1 | undefined;
+  let throughputWatchdog: FinalizeThroughputWatchdogDepsV1 | undefined;
   if (job === "finalize") {
     const metricsScratch = joinPath(sentinelDir, "metrics-scratch");
     await ensurePrivateDir(metricsScratch);
@@ -492,6 +514,15 @@ export async function main(): Promise<void> {
       runner: new DenoGitRunner(gitHome, githubGitAuthEnv(selfToken)),
     });
     throughputMetrics = { port };
+    // The self App token files the watchdog's issues on the self repository
+    // through the existing trusted issue port; no model worker holds it.
+    throughputWatchdog = {
+      metrics: port,
+      issues: createHostedWatchdogIssues(
+        createHostedAutonomyRequest(selfToken),
+        SUPERVISOR_REPOSITORY,
+      ),
+    };
     const summaryPath = Deno.env.get(STEP_SUMMARY_ENV);
     upkeepDeferral = {
       store: metricsUpkeepStreakStore(port),
@@ -517,6 +548,7 @@ export async function main(): Promise<void> {
       : undefined,
     throughputMetrics,
     upkeepDeferral,
+    throughputWatchdog,
     repairFanout: repairFanoutHook(job, env, {
       sentinelDir,
       gitHome,

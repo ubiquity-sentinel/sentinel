@@ -1011,6 +1011,11 @@ jobs:
           SENTINEL_UPKEEP_DEFERRAL: ${{ needs.maintenance.outputs.upkeepDeferral }}
           SENTINEL_DELIVERY_COUNTS: ${{ needs.maintenance.outputs.deliveryCounts }}
           SENTINEL_TIER_COUNTS: ${{ needs.maintenance.outputs.tierCounts }}
+          # Throughput watchdog (self-improvement): a missed threshold files at
+          # most one issue per cycle on this repository for Sentinel to repair.
+          # Default on; set the repository variable SENTINEL_SELF_IMPROVE to
+          # `off` to stop evaluating and filing.
+          SENTINEL_SELF_IMPROVE: ${{ vars.SENTINEL_SELF_IMPROVE || 'on' }}
           # #328: the fan-out plan digest when repository cells ran; finalize
           # authenticates their deltas and applies them in one trusted write.
           SENTINEL_REPAIR_PLAN_DIGEST: ${{ needs.matrix_plan.outputs.hasRepairCells == 'true' && needs.matrix_plan.outputs.repairPlanDigest || '' }}

@@ -391,6 +391,15 @@ Deno.test("sentinel report CLI reads the metrics ref read-only and prints n/a fo
       stdout,
       /\nMerges per day by repository\nn\/a \(not recorded\)\n/,
     );
+    // The watchdog's own Thresholds table, as of the end of --until.
+    assert.match(
+      stdout,
+      /\nThresholds \(watchdog evaluation as of 2026-11-01 23:59 UTC;[^\n]*\nthreshold +child +verdict/,
+    );
+    assert.match(
+      stdout,
+      /\nmaintenance_repair_median +#324 +insufficient_data +n\/a/,
+    );
     // Read-only: the remote refs are unchanged and the scratch is cleaned.
     assert.equal(
       (await gitRun(root, ["ls-remote", remoteUrl], env)).stdout,
