@@ -129,6 +129,15 @@ export async function runHostedRepairTierStep(
   try {
     if (outcome.recordsRead !== null) {
       deps.metrics?.addCount("recordsRead", outcome.recordsRead);
+      // The same observation the `tier-summary:` action carries.
+      deps.metrics?.addCount("recordsDemoted", outcome.demoted);
+      deps.metrics?.addCount("recordsPromoted", outcome.promoted);
+    }
+    if (outcome.releaseRequestsSuperseded !== null) {
+      deps.metrics?.addCount(
+        "releaseRequestsSuperseded",
+        outcome.releaseRequestsSuperseded,
+      );
     }
     if (outcome.releaseRequestsMovedToCold !== null) {
       deps.metrics?.addCount(

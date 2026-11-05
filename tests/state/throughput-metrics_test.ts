@@ -5,6 +5,8 @@ import {
   parseThroughputMetricsLineV1,
   parseThroughputMetricsRecordV1,
   THROUGHPUT_METRICS_RECORD_MAX_BYTES,
+  THROUGHPUT_OPTIONAL_COUNTERS_V1,
+  THROUGHPUT_WAIT_CAUSE_KEYS,
   type ThroughputMetricsRecordV1,
 } from "../../src/contracts/throughput-metrics.ts";
 import { RecordParseError } from "../../src/contracts/validation.ts";
@@ -64,7 +66,28 @@ Deno.test("throughput record parser is strict, nullable and byte bounded", () =>
   max.cycle = { runId: Number.MAX_SAFE_INTEGER, attempt: 99 };
   max.startedAtMs = 0;
   max.finishedAtMs = Number.MAX_SAFE_INTEGER;
-  parseThroughputMetricsRecordV1(max);
+  // Every optional key at its widest too: all additive counters and a full
+  // wait-cause histogram with the longest keys.
+  const counts = max.counts as Record<string, unknown>;
+  for (const key of THROUGHPUT_OPTIONAL_COUNTERS_V1) {
+    counts[key] = Number.MAX_SAFE_INTEGER;
+  }
+  max.waitCauses = Object.fromEntries(
+    Array.from(
+      { length: THROUGHPUT_WAIT_CAUSE_KEYS },
+      (
+        _,
+        i,
+      ) => [`abcdefg:abcdefg:abcdefghijklmno${i}`, Number.MAX_SAFE_INTEGER],
+    ),
+  );
+  const widest = parseThroughputMetricsRecordV1(max);
+  const bytes = new TextEncoder().encode(canonicalStringify(widest)).length;
+  assert(
+    bytes > 1024 && bytes <= THROUGHPUT_METRICS_RECORD_MAX_BYTES,
+    `${bytes}`,
+  );
+  assert.equal(THROUGHPUT_METRICS_RECORD_MAX_BYTES, 2048);
 
   rejects({ ...value, extra: 1 }, "unknown_key");
   rejects(

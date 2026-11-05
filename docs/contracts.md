@@ -521,11 +521,14 @@ accounting or merge authority.
   revision wrote.
 - `parseThroughputMetricsRecordV1` rejects unknown and missing keys at every
   level. It checks that `finishedAtMs >= startedAtMs` and that the canonical
-  form is at most 1,024 bytes. Before any structural check it scans the whole
-  input, unknown keys included, and refuses any key or string longer than 32
-  characters or shaped like a URL. A record therefore cannot carry credentials,
-  URLs, bodies or raw diagnostics. `parseThroughputMetricsLineV1` checks the
-  byte bound before it parses JSON, and it requires the canonical spelling.
+  form is at most 2,048 bytes. The bound was raised from 1,024 because a
+  realistic full record measured 1,011 bytes; a record using every key at the
+  largest safe integer fits, at about 1,350 bytes. The daily rollup keeps its
+  own 4,096-byte bound. Before any structural check it scans the whole input,
+  unknown keys included, and refuses any key or string longer than 32 characters
+  or shaped like a URL. A record therefore cannot carry credentials, URLs,
+  bodies or raw diagnostics. `parseThroughputMetricsLineV1` checks the byte
+  bound before it parses JSON, and it requires the canonical spelling.
 - `MetricsCollectorV1` (`createMetricsCollectorV1`, in
   `throughput-metrics-collector.ts`) is the accumulator that phases fill. It
   provides `addPhaseMs`, `addCount`, `setPlannerRefusal`, `addWaitCause` and

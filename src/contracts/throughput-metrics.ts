@@ -148,7 +148,7 @@ export interface ThroughputMetricsRecordV1 {
 }
 
 /** Byte bound of one canonical record line (without its newline). */
-export const THROUGHPUT_METRICS_RECORD_MAX_BYTES = 1024;
+export const THROUGHPUT_METRICS_RECORD_MAX_BYTES = 2048;
 /** Largest string the raw pre-scan admits anywhere in a metrics input. */
 export const THROUGHPUT_METRICS_MAX_STRING = 32;
 

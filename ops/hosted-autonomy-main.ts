@@ -72,6 +72,7 @@ import {
   createHostedHistoricalMatrixQuarantine,
 } from "./hosted-autonomy-matrix-adapters.ts";
 import { createHostedOpenIssueLister } from "./hosted-autonomy-open-issues.ts";
+import { createMetricsCollectorV1 } from "../src/contracts/throughput-metrics-collector.ts";
 
 export const GIT_SHA_PATTERN = /^[0-9a-f]{40}$/;
 
@@ -363,6 +364,10 @@ async function runHostedAutonomyMainResult(
               tokenFor: () => apiToken,
             }),
           },
+          // #338: the pass's in-process collector, filled by the delivery and
+          // tier steps. It is not persisted from here: the step outputs
+          // (deliveryCounts, tierCounts) carry the counts to finalize.
+          metrics: createMetricsCollectorV1(),
           // The same trusted repair writer moves rows between hot and cold.
           repairTiers: {
             store: state,
