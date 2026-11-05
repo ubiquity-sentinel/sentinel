@@ -23,7 +23,7 @@ export function noChangeIssue(record: WorkRecordV1): boolean {
 function exactNoChangeFailure(record: WorkRecordV1): boolean {
   if (record.blocker?.message === ATTEMPT_DETAIL_NO_CHANGE) return true;
   const prefix =
-    /^repeated identical failure; owner action required \(close or edit the issue, or change the model route\): [0-9]{1,9}x [a-z_]{1,32}\|[0-9a-f]{16} issue=(?:[0-9a-f]{12}|none) route=[0-9a-f]{12}: /;
+    /^repeated identical failure; owner action required \(close or edit the issue, or change the model route\): [0-9]{1,9}x [a-z_]{1,32}\|[0-9a-f]{16} issue=(?:[0-9a-f]{12}|none) route=[0-9a-f]{12}(?: rev=[0-9a-f]{12})?: /;
   return record.blocker?.kind === "other" &&
     record.blocker.message.replace(prefix, "") === ATTEMPT_DETAIL_NO_CHANGE;
 }

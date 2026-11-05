@@ -39,6 +39,12 @@
  *   streak by construction. An identical failure after a re-arm re-parks at
  *   once: the change did not alter the outcome. Age, generation or a base
  *   move alone never re-arm.
+ * - Runtime re-arm: a park records (` rev=`) the 12-hex prefix of the
+ *   installed runtime revision it was written under. A pass under a
+ *   different installed revision re-arms it once (`runtime_changed`); a
+ *   legacy park without ` rev=` counts as an older revision. The re-armed
+ *   record's next identical outcome re-parks at once under the current
+ *   revision, which that revision then never re-arms again.
  *
  * Charged reservations stay charged: nothing here settles, refunds or
  * deletes a charge, and parking only withholds a new one.
@@ -75,7 +81,7 @@ const MAX_BLOCKER_MESSAGE = MaxText.message;
 const PARK_PATTERN = new RegExp(
   `^${
     REPEAT_FAILURE_PARK_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-  }(\\d{1,9})x ([a-z_]{1,32}\\|[0-9a-f]{16}) issue=([0-9a-f]{12}|none) route=([0-9a-f]{12}): `,
+  }(\\d{1,9})x ([a-z_]{1,32}\\|[0-9a-f]{16}) issue=([0-9a-f]{12}|none) route=([0-9a-f]{12})(?: rev=([0-9a-f]{12}))?: `,
 );
 
 function sha256Hex(text: string): string {
@@ -208,6 +214,17 @@ export interface RepeatFailureParkV1 {
   issue: string;
   /** The launcher route identity at park time. */
   route: string;
+  /**
+   * 12 hex of the installed runtime revision at park time; absent on a
+   * legacy park, which counts as parked under an older revision.
+   */
+  revision?: string;
+}
+
+/** The park's revision identity of an exact runtime revision. */
+export function repeatFailureRevisionIdentity(runtime: string): string | null {
+  const value = runtime.toLowerCase();
+  return /^[0-9a-f]{40}$/.test(value) ? value.slice(0, 12) : null;
 }
 
 /** The explicit owner-gated blocker message; it keeps the original detail. */
@@ -215,7 +232,8 @@ export function repeatFailureParkMessage(
   park: RepeatFailureParkV1,
   original: string,
 ): string {
-  return `${REPEAT_FAILURE_PARK_PREFIX}${park.count}x ${park.signature} issue=${park.issue} route=${park.route}: ${original}`
+  const revision = park.revision === undefined ? "" : ` rev=${park.revision}`;
+  return `${REPEAT_FAILURE_PARK_PREFIX}${park.count}x ${park.signature} issue=${park.issue} route=${park.route}${revision}: ${original}`
     .slice(0, MAX_BLOCKER_MESSAGE);
 }
 
@@ -231,6 +249,7 @@ export function parseRepeatFailurePark(
     signature: match[2],
     issue: match[3],
     route: match[4],
+    ...(match[5] === undefined ? {} : { revision: match[5] }),
   };
 }
 
@@ -244,6 +263,11 @@ export interface RepeatFailureContextV1 {
    * could not be read.
    */
   issueDigests: ReadonlyMap<string, string | null>;
+  /**
+   * The exact installed runtime revision this pass runs under. Absent, no
+   * runtime re-arm happens and a park records no revision.
+   */
+  runtime?: string;
 }
 
 export type RepeatFailureVerdictV1 =
@@ -256,7 +280,11 @@ export type RepeatFailureVerdictV1 =
   | {
     kind: "rearm";
     park: RepeatFailureParkV1;
-    trigger: "issue_edited" | "route_changed" | "passport_trial";
+    trigger:
+      | "issue_edited"
+      | "route_changed"
+      | "runtime_changed"
+      | "passport_trial";
   };
 
 function issueBaseline(
@@ -289,9 +317,15 @@ export function repeatFailureVerdict(
       : { kind: "parked", park: parked };
   }
   const route = context?.route ?? REPEAT_FAILURE_DEFAULT_ROUTE;
+  const revision = context?.runtime === undefined
+    ? null
+    : repeatFailureRevisionIdentity(context.runtime);
   if (parked !== null) {
     if (context !== undefined && parked.route !== route) {
       return { kind: "rearm", park: parked, trigger: "route_changed" };
+    }
+    if (revision !== null && parked.revision !== revision) {
+      return { kind: "rearm", park: parked, trigger: "runtime_changed" };
     }
     const issue = issueBaseline(record, context);
     if (
@@ -304,11 +338,12 @@ export function repeatFailureVerdict(
   if (streak === null || !repeatFailureDue(streak)) return { kind: "none" };
   const issue = issueBaseline(record, context);
   if (issue === null) return { kind: "unverified", streak };
-  const park = {
+  const park: RepeatFailureParkV1 = {
     count: streak.count,
     signature: streak.signature,
     issue,
     route,
+    ...(revision === null ? {} : { revision }),
   };
   return {
     kind: "park",

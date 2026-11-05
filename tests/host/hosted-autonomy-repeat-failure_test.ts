@@ -674,6 +674,12 @@ Deno.test(
       const record = workOf(after, AI_300);
       assert.equal(record.nextStep, "blocked");
       assert.ok(record.blocker!.message.startsWith(REPEAT_FAILURE_PARK_PREFIX));
+      // The park records the installed revision it was written under, so
+      // this revision never re-arms it (the second pass below only names it).
+      assert.equal(
+        parseRepeatFailurePark(record.blocker)?.revision,
+        R80.slice(0, 12),
+      );
       assert.equal(after.reservations.length, LIVE.reservations.length);
       // The sentinel rows were re-granted in the same write.
       for (const id of [S152, S155, S156]) {

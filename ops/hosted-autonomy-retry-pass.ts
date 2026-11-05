@@ -499,6 +499,9 @@ export async function runHostedRetryPass(
       repeatFailure: {
         route: deps.modelRoute ?? REPEAT_FAILURE_DEFAULT_ROUTE,
         issueDigests,
+        // The authenticated installed revision: a park written under an
+        // older one re-arms once under this one.
+        runtime: runtimeSha,
       },
       onRepeatFailurePark: (park) => {
         if (!settled(park.id)) parks.push(park);

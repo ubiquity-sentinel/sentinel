@@ -53,6 +53,8 @@ function parkedRecord() {
           signature: "other|ba872ff9154d4db3",
           issue: "none",
           route: REPEAT_FAILURE_DEFAULT_ROUTE,
+          // Parked under the rig's installed runtime: never re-armed by it.
+          revision: SHA1.slice(0, 12),
         },
         "model run failed (unavailable)",
       ),
