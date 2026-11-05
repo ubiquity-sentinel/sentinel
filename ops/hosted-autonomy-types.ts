@@ -125,7 +125,37 @@ export interface HostedAutonomyHeadRunV1 {
   workflowId?: number | null;
 }
 
+/**
+ * One post-merge delivery observation on an exact commit (sentinel #337): a
+ * check run (`id` is its check-run id) or a commit status (`id` is its
+ * status id), with GitHub's own name/context, status and conclusion. A commit
+ * status maps `pending` to an incomplete status and `error`/`failure` to a
+ * failed conclusion. `startedAt` is epoch milliseconds, null when unknown.
+ */
+export interface HostedDeliveryCheckV1 {
+  readonly name: string;
+  readonly status: string;
+  readonly conclusion: string | null;
+  readonly id: number;
+  readonly startedAt: number | null;
+}
+
 export interface HostedAutonomyGitHubV1 {
+  /**
+   * Post-merge delivery read (sentinel #337): every check run and commit
+   * status on exactly `commit`, read from complete listings bound to that
+   * commit, or null when either cannot be proven complete. Optional: a surface
+   * without it never satisfies a non-empty `requiredForDelivery` policy, so
+   * such a record waits and never closes on merge alone.
+   */
+  readDeliveryChecks?(
+    commit: string,
+  ): Promise<readonly HostedDeliveryCheckV1[] | null>;
+  /**
+   * One trusted progress comment on the source issue; true when GitHub
+   * created it. Optional: a surface without it parks without a comment.
+   */
+  commentIssue?(number: number, body: string): Promise<boolean>;
   /**
    * The repository's own default branch, or null when it cannot be read. Only
    * a foreign repository consults this; the self scope keeps its recorded
@@ -494,6 +524,12 @@ export interface HostedAutonomyDepsV1 {
    */
   githubFor(repository: RepositoryIdentityV1): HostedAutonomyGitHubV1 | null;
   clock: { now(): number };
+  /**
+   * Trusted post-merge delivery-check names for one repository (sentinel
+   * #337), for tests. Production never sets it and uses the host-authored
+   * `targetDeliveryCheckPolicyV1`.
+   */
+  requiredForDelivery?(repository: RepositoryIdentityV1): readonly string[];
   /** Present on protected maintenance; rejection-only, before retry/delivery. */
   historicalMatrix?: HistoricalMatrixQuarantineDepsV1;
   closedMatrix?: (
