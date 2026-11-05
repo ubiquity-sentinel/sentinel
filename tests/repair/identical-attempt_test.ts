@@ -22,6 +22,7 @@ import {
   ATTEMPT_DETAIL_INCOMPLETE,
   ATTEMPT_DETAIL_PROVIDER_THROTTLED,
   attemptMemorySettlementMutationV1,
+  attemptMemorySuccessMutationV1,
 } from "../../src/repair/attempt-policy.ts";
 import {
   attemptInputsForRecordV1,
@@ -353,6 +354,51 @@ Deno.test("only proven outcomes record the admitted attempt's inputs", async () 
     transient.attemptMemory[0]!.inputs,
     undefined,
     "a transient failure proves nothing about its inputs",
+  );
+});
+
+Deno.test("a new accepted candidate records no inputs, so its loss never refuses the fresh attempt", async () => {
+  const intent = {
+    kind: "implementation" as const,
+    key: "implementation:x",
+    startedAt: T0,
+    branch: BRANCH,
+    expectedHead: null,
+    observedBase: SHA1,
+    pr: null,
+    requestId: PRIOR_ATTEMPT,
+    resultId: null,
+  };
+  // A fresh implementation (no candidate yet) and a correction of HEAD.
+  const fresh = workRecord("issue-fresh", { intent }) as WorkRecordV1;
+  const correction = { ...loopedRecord(), intent } as WorkRecordV1;
+  const succeed = async (record: WorkRecordV1, producedHead: typeof SHA3) => {
+    const draft = seededSnapshot([record], { reviews: [rejection("fix it")] });
+    const mutation = await attemptMemorySuccessMutationV1({
+      record,
+      now: T0,
+      runtimeSha: SHA1,
+      producedHead,
+    });
+    mutation(draft);
+    return draft;
+  };
+  // The candidate is new: nothing recorded. When it later goes missing the
+  // record returns to these exact inputs and the fresh attempt is admitted.
+  const produced = await succeed(fresh, SHA3);
+  assert.equal(produced.attemptMemory[0]!.inputs, undefined);
+  assert.equal(produced.attemptMemory[0]!.successes, 1);
+  assert.equal(identicalAttemptRefusalV1(produced, fresh, SHA1), null);
+  assert.equal(
+    (await succeed(correction, SHA3)).attemptMemory[0]!.inputs,
+    undefined,
+  );
+  // A correction that reproduced the exact head it started from is judged.
+  const reproduced = await succeed(correction, HEAD);
+  assert.equal(reproduced.attemptMemory[0]!.inputs?.length, 1);
+  assert.notEqual(
+    identicalAttemptRefusalV1(reproduced, correction, SHA1),
+    null,
   );
 });
 

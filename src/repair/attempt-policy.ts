@@ -497,6 +497,8 @@ export async function attemptMemorySuccessMutationV1(input: {
   now: number;
   /** Authenticated producing runtime of this accepted attempt. */
   runtimeSha: GitSha;
+  /** The accepted candidate head; omitted when not a plain candidate. */
+  producedHead?: GitSha | null;
 }): Promise<(draft: RepairStateSnapshotV1) => void> {
   const runtimeSha = requireAttemptRuntime(input.runtimeSha);
   const purpose: AttemptPurposeV1 = "implementation";
@@ -521,15 +523,24 @@ export async function attemptMemorySuccessMutationV1(input: {
         entries: [],
       }
       : draft.attemptMemory[index];
-    // The accepted attempt's exact inputs are recorded with the success, so
-    // an identical replay is refused before its reservation (#334).
-    const next = recordAttemptInputs(
-      recordAttemptSuccessV1(existing, input.now, runtimeSha),
-      draft,
-      input.record,
-      runtimeSha,
-      input.now,
-    );
+    // #334: an accepted attempt records its inputs only when it reproduced
+    // the exact candidate it started from (`producedHead` equals the input
+    // head): that outcome is judged, and an identical replay can only
+    // reproduce it again. A NEW candidate is never recorded: when it later
+    // goes missing (positive absence) or is otherwise dropped, the record
+    // returns to the same inputs and the fresh attempt must be admitted.
+    const succeeded = recordAttemptSuccessV1(existing, input.now, runtimeSha);
+    const next = input.producedHead !== undefined &&
+        input.producedHead !== null &&
+        input.producedHead === input.record.target.head
+      ? recordAttemptInputs(
+        succeeded,
+        draft,
+        input.record,
+        runtimeSha,
+        input.now,
+      )
+      : succeeded;
     const sorted = [...draft.attemptMemory];
     if (index === -1) {
       sorted.push(next);

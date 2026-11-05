@@ -7,7 +7,10 @@
  * every such replay is a charged model start.
  *
  * - Recorded inputs: only attempts that PROVED what their inputs produce are
- *   recorded (an accepted candidate, or a `semantic_no_progress` failure). A
+ *   recorded: a `semantic_no_progress` failure, or an accepted candidate
+ *   that reproduced the exact head it started from. A NEW accepted candidate
+ *   is not recorded: if it later goes missing or is dropped, the record
+ *   returns to the same inputs and its fresh attempt is legitimate. A
  *   transient-infrastructure or unknown failure proves nothing about the
  *   inputs and keeps the existing bounded equivalence/decay allowance.
  * - Refusal: the first identical replay is refused with
