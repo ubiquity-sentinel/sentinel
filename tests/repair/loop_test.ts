@@ -443,8 +443,8 @@ Deno.test(
   "protected directory prefixes are normalized before candidate path checks",
   async () => {
     const rig = await makeRig("protectedprefix", {
-      configOverrides: { protectedPaths: ["./src/handler/"] },
-      model: { changedPaths: ["src/handler/file.ts"] },
+      configOverrides: { protectedPaths: ["./.github/workflows/"] },
+      model: { changedPaths: [".github/workflows/file.yml"] },
     });
     try {
       const outcome = await rig.run();

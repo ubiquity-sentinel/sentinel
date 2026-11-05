@@ -43,6 +43,7 @@ import {
 } from "./loop-eligibility.ts";
 import { recoverClosedExistingHead } from "./loop-existing-head-continuation.ts";
 import { executeMerge, reconcileMergeIntent } from "./loop-merge.ts";
+import { ownerLandingDelivery } from "./loop-owner-landing.ts";
 import { executeCandidatePreservation } from "./loop-preservation.ts";
 import { executePublishStep } from "./loop-publication.ts";
 import { configFor, releaseRequestMatchesDelivery } from "./loop-records.ts";
@@ -425,6 +426,11 @@ export async function executeDeliveryStep(
     // An existing release request is delivery bookkeeping: a base movement
     // never replaces or duplicates it.
     return observeReleaseAcceptance(deps, context, record, existingRequest);
+  }
+  // An owner-landing record is never merged or refreshed by Sentinel: its
+  // owner merges it (or updates its branch), and that merge completes it.
+  if (record.ownerLanding !== undefined) {
+    return ownerLandingDelivery(deps, context, record);
   }
   const refresh = await refreshMovedBaseBeforeMerge(deps, context, record);
   if (refresh !== null) return refresh;

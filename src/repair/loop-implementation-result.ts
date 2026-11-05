@@ -37,7 +37,11 @@ import {
   preserveConflictMerge,
 } from "./loop-conflict-resolution.ts";
 import { verifiedPublishedHead } from "./loop-preservation.ts";
-import { targetTouchesProtectedV1 } from "../host/target-policy-generic.ts";
+import {
+  ownerLandingTouch,
+  withoutOwnerLanding,
+  withOwnerLanding,
+} from "./owner-landing.ts";
 import {
   loadSnapshot,
   persistTransition,
@@ -255,9 +259,10 @@ export async function handleModelReceipt(
       config,
     );
   }
-  const protectedHit = candidate!.changedPaths.some((path) =>
-    targetTouchesProtectedV1(config, path)
-  );
+  // A protected change is published for its owner to merge (never merged by
+  // Sentinel) unless it touches a CI-executable path, which never publishes.
+  const touch = ownerLandingTouch(config, candidate!.changedPaths);
+  const protectedHit = touch.kind === "unpublishable";
   // The verified prior published head: retained from existing V1 candidate
   // state, or proved by an ACTUAL owned-branch observation of the exact prior
   // target head for a legacy record. Model output never establishes it. It is
@@ -338,15 +343,22 @@ export async function handleModelReceipt(
   // legitimate predecessor ref once reads recover. Its publication re-observes
   // the branch through the legacy path from the same local checkout, and its
   // next candidate retries the observation.
-  const withCandidate = priorPublished.kind === "unavailable"
+  const candidateRecord = priorPublished.kind === "unavailable"
     ? noted
     : setCandidateState(noted, {
       preserved: null,
       publishedHead: priorPublished.head,
     }, now);
+  const withCandidate = touch.kind === "owner"
+    ? withOwnerLanding(candidateRecord, touch.paths, now)
+    : candidateRecord;
   if (protectedHit) {
+    // An unpublished park carries no owner-landing flag, so the owner's
+    // `sentinel:retry` exit still recognizes its fresh shape.
     const blocked = markBlocked(
-      withCandidate,
+      withCandidate.target.pr === null
+        ? withoutOwnerLanding(withCandidate)
+        : withCandidate,
       "other",
       "candidate touches a protected path",
       now,

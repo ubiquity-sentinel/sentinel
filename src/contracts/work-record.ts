@@ -1,3 +1,4 @@
+import { parseOwnerLandingV1 } from "./owner-landing.ts";
 import {
   asIncidentFingerprint,
   asSourceSnapshotDigest,
@@ -103,7 +104,11 @@ const COUNTERS_KEYS = ["attempts", "retries", "reviewRounds"] as const;
 /** Additive counter keys absent from rows written before they existed. */
 const COUNTERS_OPTIONAL_KEYS = ["stalled", "timeouts"] as const;
 /** Additive record keys absent from rows written before they existed. */
-const OPTIONAL_KEYS = ["stepInputs", "retiredPullClosure"] as const;
+const OPTIONAL_KEYS = [
+  "stepInputs",
+  "retiredPullClosure",
+  "ownerLanding",
+] as const;
 const RETIRED_PULL_CLOSURE_KEYS = ["pr", "outcome", "at"] as const;
 const STEP_INPUTS_KEYS = ["digest", "deadline"] as const;
 
@@ -405,6 +410,9 @@ export function parseWorkRecordV1(input: unknown): WorkRecordV1 {
         obj.retiredPullClosure,
         "$.retiredPullClosure",
       ),
+    }),
+    ...(obj.ownerLanding === undefined ? {} : {
+      ownerLanding: parseOwnerLandingV1(obj.ownerLanding, "$.ownerLanding"),
     }),
   };
 }

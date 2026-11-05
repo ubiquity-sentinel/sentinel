@@ -11,6 +11,7 @@ import type {
   SeverityV1,
 } from "./shared.ts";
 import type { SelfMergeProofV1 } from "./self-merge.ts";
+import type { OwnerLandingV1 } from "./owner-landing.ts";
 
 export type NextStepV1 = "work" | "review" | "delivery" | "blocked" | "done";
 export type WorkWaitReasonV1 =
@@ -297,4 +298,10 @@ export interface WorkRecordV1 {
   stepInputs?: StepInputsStampV1;
   /** Optional settlement of a retired record's own pull request. */
   retiredPullClosure?: RetiredPullClosureV1;
+  /**
+   * Optional owner-landing flag: the published candidate changes a protected
+   * path, so Sentinel never merges it (see `OwnerLandingV1`). Absent on
+   * legacy records and never defaulted.
+   */
+  ownerLanding?: OwnerLandingV1;
 }

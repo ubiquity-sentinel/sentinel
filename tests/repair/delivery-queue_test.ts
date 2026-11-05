@@ -316,3 +316,20 @@ Deno.test("delivery queue: records that cannot take the tip hold nobody", () => 
     null,
   );
 });
+
+Deno.test("delivery queue: an owner-landing record on the tip holds nobody", () => {
+  const me = reviewed(5);
+  const waiting = onTip(9, {
+    wait: { reason: "manual", since: T0, until: NOW + 900_000 },
+  });
+  assert.equal(
+    deliveryQueueAhead(snapshotOf([me, waiting]), me, TIP, NOW)?.id,
+    waiting.id,
+    "the same record without the flag holds the line",
+  );
+  const owner = {
+    ...waiting,
+    ownerLanding: { paths: ["src/auth/"], since: T0 },
+  };
+  assert.equal(deliveryQueueAhead(snapshotOf([me, owner]), me, TIP, NOW), null);
+});
