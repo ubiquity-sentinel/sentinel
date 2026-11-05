@@ -292,15 +292,58 @@ Deno.test("a head check that only concluded cancelled never spends a charged rou
 });
 
 // Owner directive 2026-10-24: a job the target's own CI skipped or marked
-// neutral is a green check, never a failure. Such a head is neither corrected
-// (no charged round) nor blocked: it is delivered.
+// neutral is never a failure, so such a head is neither corrected (no charged
+// round) nor blocked. Since 2026-11-05 (DECISIONS: a review bot's check run is
+// not CI evidence) a head is green only with at least one completed `success`
+// check: a head whose only check concluded skipped or neutral is not merged and
+// waits `ci_pending`; next to a successful check it is delivered.
 for (const conclusion of ["skipped", "neutral"] as const) {
-  Deno.test(`a head check that only concluded ${conclusion} is green: delivered without a correction, a block or a charge`, async () => {
+  Deno.test(`a head check that only concluded ${conclusion} is no CI evidence: it waits ci_pending without a merge, a correction, a block or a charge`, async () => {
+    const { rig, charges, writes } = await ciRig(
+      `ci-headlone-${conclusion}`,
+      {
+        checks: {
+          [SHA3]: [check("validate", SHA3, conclusion)],
+          [SHA1]: [check("validate", SHA1, "success")],
+        },
+      },
+    );
+    try {
+      const outcome = await rig.run();
+      assert.equal(outcome.status, "idle", JSON.stringify(outcome));
+      assert.equal(rig.model.requests.length, 0, "no correction session");
+      const after = await rig.snapshot();
+      const work = after.work[0];
+      assert.equal(work.nextStep, "delivery");
+      assert.equal(work.blocker, null, `${conclusion} is never a block`);
+      assert.equal(
+        work.wait?.reason,
+        "ci_pending",
+        `a lone ${conclusion} check waits for positive CI evidence`,
+      );
+      assert.equal(
+        rig.github.calls.includes("merge"),
+        false,
+        "a head without a successful check is never merged",
+      );
+      assert.equal(work.target.head, SHA3);
+      assert.equal(work.counters.reviewRounds, 1, "no review round spent");
+      assert.deepEqual(after.reservations, charges, "nothing charged");
+      assertGeneration76Shapes(writes);
+    } finally {
+      await rig.ctx.cleanup();
+    }
+  });
+
+  Deno.test(`a head check that concluded ${conclusion} next to a successful check is green: delivered without a correction, a block or a charge`, async () => {
     const { rig, charges, writes } = await ciRig(
       `ci-headgreen-${conclusion}`,
       {
         checks: {
-          [SHA3]: [check("validate", SHA3, conclusion)],
+          [SHA3]: [
+            check("validate", SHA3, "success"),
+            check("verify-artifact", SHA3, conclusion),
+          ],
           [SHA1]: [check("validate", SHA1, "success")],
         },
       },
