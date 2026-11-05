@@ -36,7 +36,7 @@ import type {
   AttemptFailureClassV1,
   AttemptMemoryRecordV1,
 } from "../contracts/attempt-memory.ts";
-import type { GitSha } from "../contracts/brands.ts";
+import { type GitSha, isGitSha } from "../contracts/brands.ts";
 import type { PriorAttemptFactV1 } from "../contracts/ports.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
@@ -239,4 +239,37 @@ export function identicalAttemptRefusalFactV1(
     count: refused.refusals,
     lastAtMs: refusedAt,
   };
+}
+
+/** Retry-table prefix of a record refused for an identical replay. */
+export const IDENTICAL_ATTEMPT_REFUSED_PREFIX =
+  `${IDENTICAL_ATTEMPT_REFUSED}:` as const;
+
+/**
+ * The launcher re-grant verdict for a record blocked by this refusal (pure).
+ * The record is evaluated as the granted attempt would start: a base tip that
+ * moved past `target.base` is the base it runs against (the runtime refreshes
+ * to it), so a moved base, changed findings, a new candidate head or a new
+ * runtime revision re-grants; an unchanged fingerprint never does. Any other
+ * blocker is `not_refused`.
+ */
+export function identicalAttemptRegrantVerdictV1(
+  snapshot: RepairStateSnapshotV1,
+  record: WorkRecordV1,
+  runtimeSha: GitSha,
+  /** The observed base tip; anything but an exact Git SHA is no move. */
+  baseTip: string | null,
+): "not_refused" | "regrant" | "unchanged" {
+  const blocker = record.blocker;
+  if (
+    record.nextStep !== "blocked" || blocker === null ||
+    !blocker.message.startsWith(IDENTICAL_ATTEMPT_REFUSED_PREFIX)
+  ) return "not_refused";
+  const probe = baseTip !== null && isGitSha(baseTip) &&
+      baseTip !== record.target.base
+    ? { ...record, target: { ...record.target, base: baseTip } }
+    : record;
+  return identicalAttemptRefusalV1(snapshot, probe, runtimeSha) === null
+    ? "regrant"
+    : "unchanged";
 }
