@@ -30,6 +30,7 @@ import {
 } from "../contracts/validation.ts";
 import { parseWorkRecordV1 } from "../contracts/work-record.ts";
 import { parseVpsReleaseRecordV1 } from "../contracts/vps-release.ts";
+import { parseTargetCapabilityV1 } from "../contracts/target-capability.ts";
 import type { GitSha } from "../contracts/brands.ts";
 
 export type StateKind = "repair" | "release";
@@ -165,6 +166,12 @@ export const RECORD_COLLECTIONS: Record<StateKind, RecordCollection[]> = {
       directory: "lessons",
       kind: "memory_lessons",
       parse: parseMemoryLessonsRecordV1,
+      rows: [],
+    },
+    {
+      directory: "targetCapabilities",
+      kind: "target_capability",
+      parse: parseTargetCapabilityV1,
       rows: [],
     },
   ],

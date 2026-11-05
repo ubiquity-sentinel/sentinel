@@ -85,6 +85,7 @@ export function recordFiles(
     add("github_cooldown", repair.githubCooldowns);
     add("attempt_memory", repair.attemptMemory);
     add("memory_lessons", repair.lessons);
+    add("target_capability", repair.targetCapabilities ?? []);
   } else {
     const release = next as ReleaseStateSnapshotV1;
     const add = (recordKind: string, rows: readonly unknown[]) => {
@@ -384,6 +385,9 @@ export async function readCommitTree(
         lessons: orderRecords(
           records.lessons,
         ) as MemoryLessonsRecordV1[],
+        ...(records.targetCapabilities.length === 0 ? {} : {
+          targetCapabilities: orderRecords(records.targetCapabilities),
+        }),
       };
       snapshot = parseRepairStateSnapshotV1(repair);
     } else {
