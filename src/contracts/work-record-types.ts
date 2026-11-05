@@ -9,6 +9,7 @@ import type {
   RepositoryIdentityV1,
   SeverityV1,
 } from "./shared.ts";
+import type { DeliveryReceiptV1 } from "./delivery-checks.ts";
 import type { SelfMergeProofV1 } from "./self-merge.ts";
 
 export type NextStepV1 = "work" | "review" | "delivery" | "blocked" | "done";
@@ -31,6 +32,7 @@ export type WorkWaitReasonV1 =
    * `review_pending`) and the next turn re-observes. Never blocks by itself;
    * a failed check transitions to a terminal blocker instead.
    */
+  | "deployment"
   | "ci_pending"
   /**
    * Explicit TRANSIENT reservation-ledger capacity state. The trusted state
@@ -243,6 +245,8 @@ export interface WorkRecordV1 {
   blocker: WorkBlockerV1 | null;
   counters: WorkCountersV1;
   evidence: EvidenceRefV1[];
+  /** Exact successful required-for-delivery checks, persisted before closure. */
+  deliveryReceipt?: DeliveryReceiptV1;
   intent: IncompleteOperationV1 | null;
   /** Source first seen (incident) / issue creation; null when unknown. */
   firstSeenAt: number | null;

@@ -1,3 +1,4 @@
+import { gateHostedDeliveryChecks } from "./hosted-autonomy-delivery-checks.ts";
 import type {
   PortResultV1,
   StateWriteResultV1,
@@ -163,6 +164,8 @@ async function persistGatewayDelivery(
     readback.value.head !== write.value.head ||
     canonicalStringify(readback.value.snapshot) !== canonicalStringify(next)
   ) return failed("readback_unverified", observedHead, actions);
+  context.snapshot = readback.value.snapshot;
+  context.observedHead = readback.value.head;
   return {
     kind: "hosted_autonomy",
     status: "applied",
@@ -234,6 +237,7 @@ export async function runHostedClosurePass(
   const { deps, actions, revisions, scopeFor, readPull } = context;
   if (deps.queueCustody?.ready === false) return null;
   let { snapshot, observedHead } = context;
+  let deliveryProgress: HostedAutonomyResultV1 | null = null;
   const { closedIssues, foreignMerged } = context;
   // A record an earlier write of this pass touched waits for the next pass.
   const settled = (id: string) => context.settled?.has(id) === true;
@@ -571,10 +575,11 @@ export async function runHostedClosurePass(
   );
   if (closures.length > 0) {
     for (const plan of closures) {
-      const record = closureSnapshot.work.find((item) =>
+      const found = closureSnapshot.work.find((item) =>
         item.id === plan.id && sameRepository(item.repository, plan.repository)
       );
-      if (record === undefined) continue;
+      if (found === undefined) continue;
+      let record = found;
       const scope = await scopeFor(plan.repository);
       if (isGatewayVpsRepository(record.repository)) {
         const pull = await readPull(scope, record.target.pr!);
@@ -611,6 +616,17 @@ export async function runHostedClosurePass(
         actions.push(`close:${plan.id}:issue=${plan.issueNumber}:refused`);
         continue;
       }
+      const delivery = await gateHostedDeliveryChecks(
+        context,
+        record,
+        scope.surface,
+        (next) => persistGatewayDelivery(context, next),
+      );
+      if (delivery.stop) return delivery.result;
+      if (delivery.result !== null) deliveryProgress = delivery.result;
+      record = delivery.record;
+      ({ snapshot, observedHead } = context);
+      if (recovered.has(record.id)) recovered.set(record.id, record);
       if (!isHostedSelf(record.repository)) {
         if (recovered.has(record.id)) {
           const pull = await readPull(scope, record.target.pr!);
@@ -808,6 +824,5 @@ export async function runHostedClosurePass(
     }
   }
 
-  if (retirementResult !== null) return retirementResult;
-  return null;
+  return deliveryProgress ?? retirementResult;
 }

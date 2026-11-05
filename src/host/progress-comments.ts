@@ -51,7 +51,10 @@ export function progressMarker(recordId: string, key: string): string {
 
 /** No SHA longer than 10 characters and no raw field dumps in the words. */
 function plain(text: string): string {
-  const short = text.replace(/\b[0-9a-f]{11,64}\b/g, (sha) => sha.slice(0, 10))
+  const short = text.replace(
+    /\b(?:run \d+|[0-9a-f]{11,64})\b/g,
+    (token) => token.startsWith("run ") ? token : token.slice(0, 10),
+  )
     .replace(/\s+/g, " ").trim();
   return short.length > 200 ? `${short.slice(0, 197)}...` : short;
 }
@@ -67,6 +70,7 @@ function hashKey(text: string): string {
 }
 
 const WAIT_WORDS: Record<string, string> = {
+  deployment: "waiting for deployment checks",
   ci_pending: "waiting for CI on it",
   review_pending: "waiting for its review",
   review_quota: "waiting for a review slot",
@@ -105,6 +109,13 @@ export function progressStage(record: WorkRecordV1): ProgressStageV1 | null {
     };
   }
   if (record.nextStep === "delivery") {
+    if (record.wait?.reason === "deployment") {
+      return {
+        key: `deployment:${pr}`,
+        words:
+          `Merged in #${pr}; waiting for required deployment checks before closing this issue.`,
+      };
+    }
     return pr === null ? null : {
       key: `delivery:${pr}`,
       words: `The review passed; Sentinel is merging pull request #${pr}.`,

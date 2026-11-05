@@ -466,6 +466,14 @@ export async function makeRig(
     },
     hasSuccessfulCheck: () => Promise.resolve(options.checkGreen ?? true),
     hasAllChecksGreen: () => Promise.resolve(options.foreignCheckGreen ?? true),
+    readDeliveryChecks: (head, names) =>
+      Promise.resolve(names.map((name) => ({
+        name,
+        runId: 1,
+        head: head as GitSha,
+        status: "completed",
+        conclusion: options.foreignCheckGreen === false ? "failure" : "success",
+      }))),
     readPull: () =>
       Promise.resolve(
         mergedNow && options.afterMerge !== undefined

@@ -1,3 +1,4 @@
+import { asGitSha } from "../src/contracts/brands.ts";
 import {
   checkReviewTaskStatement,
   reviewTaskStatementDigest,
@@ -306,6 +307,30 @@ export function createHostedAutonomyGitHub(
         run["status"] === "completed" &&
         run["conclusion"] === "success"
       );
+    },
+    async readDeliveryChecks(head: string, names: readonly string[]) {
+      const runs = await readCompleteCheckRuns(head, false);
+      if (runs === null || !/^[0-9a-f]{40}$/.test(head)) return null;
+      const selected = runs.filter((run) =>
+        names.includes(String(run["name"]))
+      );
+      if (
+        selected.some((run) =>
+          !Number.isSafeInteger(run["id"]) || Number(run["id"]) <= 0
+        )
+      ) return null;
+      return selected.map((run) => ({
+        name: String(run["name"]),
+        runId: Number(run["id"]),
+        head: asGitSha(head),
+        status: String(run["status"]),
+        conclusion: run["conclusion"] as string | null,
+      }));
+    },
+    async commentDeliveryProgress(issue: number, message: string) {
+      return await request("POST", `/repos/${scope}/issues/${issue}/comments`, {
+        body: message,
+      }) !== null;
     },
     async hasAllChecksGreen(head: string, base?: string) {
       const complete = await readCompleteCheckRuns(head);

@@ -332,7 +332,17 @@ export function parseCheckRunWire(input: unknown, path: string): GitHubCheckV1 {
     obj.completed_at,
     `${path}.completed_at`,
   );
-  return { name, status, conclusion, head, startedAt, completedAt };
+  return {
+    name,
+    status,
+    conclusion,
+    head,
+    startedAt,
+    completedAt,
+    ...(obj.id === undefined
+      ? {}
+      : { runId: expectPositiveInt(obj.id, `${path}.id`) }),
+  };
 }
 
 /**

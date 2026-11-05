@@ -1,3 +1,4 @@
+import { parseDeliveryReceiptV1 } from "./delivery-checks.ts";
 import {
   asIncidentFingerprint,
   asSourceSnapshotDigest,
@@ -100,7 +101,7 @@ const COUNTERS_OPTIONAL_KEYS = ["stalled", "timeouts"] as const;
 
 export function parseWorkRecordV1(input: unknown): WorkRecordV1 {
   const obj = expectRecord(input, "$");
-  expectExactKeys(obj, KEYS, "$");
+  expectExactKeysWithOptional(obj, KEYS, ["deliveryReceipt"], "$");
   expectVersion(obj.version, "$.version");
   expectEnum(obj.kind, ["work"], "$.kind");
 
@@ -384,6 +385,14 @@ export function parseWorkRecordV1(input: unknown): WorkRecordV1 {
     blocker,
     counters,
     evidence,
+    ...(Object.hasOwn(obj, "deliveryReceipt")
+      ? {
+        deliveryReceipt: parseDeliveryReceiptV1(
+          obj.deliveryReceipt,
+          "$.deliveryReceipt",
+        ),
+      }
+      : {}),
     intent,
     firstSeenAt,
     createdAt,
@@ -406,6 +415,7 @@ function parseWait(input: unknown, path: string): WorkWaitV1 {
       "review_pending",
       "review_quota",
       "ci_pending",
+      "deployment",
       "ledger_capacity",
       "backoff",
       "unavailable",

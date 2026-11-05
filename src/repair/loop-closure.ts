@@ -1,3 +1,4 @@
+import { gateRequiredDeliveryChecks } from "./loop-delivery-checks.ts";
 import { guardQueueOperation } from "./loop-queue-guard.ts";
 import { guardQueueDelivery } from "./loop-queue-guard.ts";
 /** Repair loop internals: closure. */
@@ -247,6 +248,8 @@ export async function retryClosure(
       ),
     );
   }
+  const delivery = await gateRequiredDeliveryChecks(deps, context, record);
+  if (delivery !== null) return delivery;
   // The revalidation read is awaited wall-clock time: it may have crossed the
   // total deadline, and the closure mutation must not start then. The closure
   // intent stays durable; the next run revalidates and closes once.

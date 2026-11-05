@@ -160,6 +160,16 @@ export interface HostedAutonomyGitHubV1 {
    * Only true is green; null is no evidence either way, never red.
    */
   hasAllChecksGreen(head: string, base?: string): Promise<boolean | null>;
+  /** Native runs only; never the merge-gate subset or backup-CI stand-ins. */
+  readDeliveryChecks?(
+    head: string,
+    names: readonly string[],
+  ): Promise<
+    | readonly import("../src/contracts/delivery-checks.ts").DeliveryCheckV1[]
+    | null
+  >;
+  /** Best-effort progress after a durable delivery failure park. */
+  commentDeliveryProgress?(issue: number, message: string): Promise<boolean>;
   /**
    * Base-repair read: the names of the check runs on the exact commit whose
    * latest run of that name completed with one of `conclusions`, leaving out

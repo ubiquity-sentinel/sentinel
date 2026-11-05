@@ -75,6 +75,8 @@ export type GitHubReviewDecisionV1 =
   | "none";
 
 export interface GitHubCheckV1 {
+  /** Native check-run identity, retained for the post-merge delivery receipt. */
+  runId?: number;
   name: string;
   status: "queued" | "in_progress" | "completed";
   conclusion:

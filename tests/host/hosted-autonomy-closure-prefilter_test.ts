@@ -38,6 +38,13 @@ function passportRecord(issue = 120, pullRequest = FOREIGN_PR): WorkRecordV1 {
     repository: PASSPORT,
     source: { kind: "issue", id: String(issue), revision: SHA1 },
     related: { incidentId: null, issueNumber: issue },
+    // These receipt-filter cases start delivery-verified; the delivery gate's
+    // missing/failing/first-success paths have their own lifecycle regression.
+    deliveryReceipt: {
+      head: HEAD,
+      observedAt: T0,
+      checks: [{ name: "deploy-standby", runId: 1, conclusion: "success" }],
+    },
     target: {
       base: BASE,
       branch: candidateBranch(id),
