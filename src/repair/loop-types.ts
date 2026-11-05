@@ -17,6 +17,7 @@ import type {
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import type { PendingStepInputsV1 } from "./step-inputs.ts";
 
 export interface RepairCycleDepsV1 {
   clock: Clock;
@@ -146,6 +147,12 @@ export interface LoopContextV1 {
    * loaded); absent or null means no record is legacy.
    */
   legacyReviewCutoff?: number | null;
+  /**
+   * The serial pass's settled step stamps not yet written (issue #326). Every
+   * trusted write of this context folds them into the records they still
+   * describe; absent outside the serial pass (planner, ingester).
+   */
+  pendingStepInputs?: Map<string, PendingStepInputsV1>;
 }
 
 /** Effective run bounds: caller deadline clamped by the fixed ceiling. */

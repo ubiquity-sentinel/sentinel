@@ -17,6 +17,7 @@ import {
   buildMemoryLessonsV1,
   memoryLessonsSourceDigestV1,
 } from "./memory-lessons.ts";
+import { foldStepInputs } from "./step-inputs.ts";
 import { noteExecution } from "./transitions.ts";
 
 /**
@@ -252,6 +253,10 @@ async function persistTransitionOnce(
     lessons: [...base.lessons],
   };
   mutate(draft);
+  // Settled step stamps of this pass ride along in this write (issue #326):
+  // only on records the mutation left untouched and whose content is still
+  // exactly the content they settled with.
+  const folded = foldStepInputs(base, draft, context.pendingStepInputs);
   // Canonical array order: the state store's read path orders every collection
   // by record id, so the in-memory snapshot keeps the same order to stay
   // byte-equal with read-back state for every custody/equality consumer.
@@ -278,6 +283,7 @@ async function persistTransitionOnce(
   if (written.ok && written.value.status === "applied") {
     context.snapshot = parsed;
     context.head = written.value.head;
+    for (const id of folded) context.pendingStepInputs?.delete(id);
     return { kind: "progress" };
   }
   // A lost compare-and-swap whose authoritative head provably moved is

@@ -38,6 +38,10 @@ import type {
   WriteOutcomeV1,
 } from "../contracts/ports.ts";
 import type { GitHubIssueV1, GitHubPullRequestV1 } from "../contracts/ports.ts";
+import type {
+  LiveInputsRequestV1,
+  LiveInputsV1,
+} from "../contracts/live-inputs.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import { GitHubApiClient } from "./client.ts";
 import type { GitExecutorV1 } from "./git-executor.ts";
@@ -195,6 +199,13 @@ export abstract class GitHubPortBase {
     options?: GitHubChecksReadOptionsV1,
   ): Promise<PortResultV1<GitHubChecksV1>> {
     return this.client.readChecks(head, names, options);
+  }
+
+  /** Batched live inputs of this port's own repository (issue #326). */
+  readLiveInputs(
+    request: LiveInputsRequestV1,
+  ): Promise<PortResultV1<LiveInputsV1>> {
+    return this.client.readLiveInputs(request);
   }
 
   readCheckSuites(head: GitSha): Promise<PortResultV1<GitHubCheckSuitesV1>> {
