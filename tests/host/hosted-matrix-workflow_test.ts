@@ -35,7 +35,7 @@ Deno.test("protected matrix workflow preserves verification, fanout, credentials
   assert.match(repair, /needs.prepare.outputs.modelStartsEnabled != 'true'/);
   assert.match(
     finalize,
-    /needs: \[prepare, matrix_plan, matrix_cell, repair\]/,
+    /needs: \[maintenance, prepare, matrix_plan, matrix_cell, repair\]/,
   );
   assert.match(cell, /contents: read/);
   assert.ok(!cell.includes("contents: write"));

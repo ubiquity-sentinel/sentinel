@@ -42,6 +42,8 @@ export interface FinalizeMetricsFactsV1 {
   jobs: readonly RunJobSummaryV1[] | null;
   /** The aggregated run summary finalize printed, or null. */
   runSummary: HostedRuntimeRunSummaryV1 | null;
+  /** Owner notices this finalize claimed and published (#327). */
+  ownerNoticesSent?: number;
 }
 
 function phaseOf(name: string): ThroughputPhaseV1 | null {
@@ -90,6 +92,9 @@ export function collectFinalizeMetricsV1(
       jobs.filter((job) => phaseOf(job.name) === "matrixCellTotal" && ran(job))
         .length,
     );
+  }
+  if (facts.ownerNoticesSent !== undefined && facts.ownerNoticesSent > 0) {
+    collector.addCount("ownerNoticesSent", facts.ownerNoticesSent);
   }
   const modelStarts = facts.runSummary?.modelStarts ?? null;
   if (modelStarts !== null) collector.addCount("modelStarts", modelStarts);
