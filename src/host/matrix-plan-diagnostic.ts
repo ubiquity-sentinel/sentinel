@@ -15,6 +15,10 @@
  */
 import type { MatrixPlanDiagnosticV1 } from "./matrix-planner.ts";
 import { MaxItems } from "../contracts/validation.ts";
+import {
+  type MatrixPlanRefusalV1,
+  parseMatrixPlanRefusalV1,
+} from "./matrix-plan-refusal.ts";
 
 export const MATRIX_PLAN_DIAGNOSTIC_KIND = "sentinel_matrix_plan_diagnostic";
 
@@ -153,6 +157,9 @@ export interface MatrixPlanDiagnosticLineV1 {
   deferredByReason: Record<string, number>;
   totalRecords: number | null;
   repositories: MatrixPlanRepositoryLineV1[];
+  /** #335 (optional: an older child omits both). */
+  plannerRefusal?: MatrixPlanRefusalV1["reason"];
+  readyUnplanned?: number | null;
 }
 
 /** The launcher's re-emitted advisory: only re-parsed, closed content. */
@@ -168,6 +175,9 @@ export interface HostedMatrixPlanDiagnosticV1 {
   deferredByReason: Record<string, number>;
   totalRecords: number | null;
   repositories: MatrixPlanRepositoryLineV1[];
+  /** #335: present only when the child line carried a valid refusal. */
+  plannerRefusal?: MatrixPlanRefusalV1["reason"];
+  readyUnplanned?: number | null;
 }
 
 const LINE_KEYS = [
@@ -181,6 +191,8 @@ const LINE_KEYS = [
   "totalRecords",
   "waveId",
 ];
+/** Optional #335 keys; a line carries both or neither. */
+const REFUSAL_KEYS = ["plannerRefusal", "readyUnplanned"];
 const REPOSITORY_KEYS = ["notReadyByReason", "repository", "skippedByReason"];
 const MAX_LINE_CHARS = 16_384;
 const MAX_REPOSITORIES = 32;
@@ -212,6 +224,7 @@ export function matrixPlanDiagnosticLineOf(input: {
   deferredByReason?: Record<string, number>;
   cause: MatrixPlanDiagnosticCauseV1;
   diagnostic?: MatrixPlanDiagnosticV1;
+  refusal?: MatrixPlanRefusalV1;
 }): MatrixPlanDiagnosticLineV1 {
   const byRepository = input.diagnostic?.byRepository ?? {};
   return {
@@ -237,6 +250,10 @@ export function matrixPlanDiagnosticLineOf(input: {
         planNotReadyKey,
       ),
     })),
+    ...(input.refusal === undefined ? {} : {
+      plannerRefusal: input.refusal.reason,
+      readyUnplanned: input.refusal.readyUnplanned,
+    }),
   };
 }
 
@@ -269,8 +286,16 @@ function parseLine(
   value: Record<string, unknown>,
   waveId: string,
 ): HostedMatrixPlanDiagnosticV1 | null {
+  const refusal = Object.hasOwn(value, "plannerRefusal")
+    ? parseMatrixPlanRefusalV1(value.plannerRefusal, value.readyUnplanned)
+    : undefined;
   if (
-    !exactKeys(value, LINE_KEYS) || value.waveId !== waveId ||
+    !exactKeys(
+      value,
+      refusal === undefined
+        ? LINE_KEYS
+        : [...LINE_KEYS, ...REFUSAL_KEYS].sort(),
+    ) || refusal === null || value.waveId !== waveId ||
     (value.cause !== "planner" && value.cause !== "queue_custody_idle") ||
     !isCount(value.prepared, MaxItems.snapshotRecords) ||
     !isCount(value.attempted, MaxItems.snapshotRecords) ||
@@ -308,7 +333,47 @@ function parseLine(
     deferredByReason,
     totalRecords: value.totalRecords as number | null,
     repositories,
+    ...(refusal === undefined ? {} : {
+      plannerRefusal: refusal.reason,
+      readyUnplanned: refusal.readyUnplanned,
+    }),
   };
+}
+
+/**
+ * The planner refusal of one job log's launcher-re-emitted plan diagnostic
+ * (#335), or null when the log carries none, several or a malformed one.
+ * Actions prefixes each line with a timestamp; only the JSON object is read.
+ */
+export function scanPlanRefusalFromLog(
+  log: string,
+): MatrixPlanRefusalV1 | null {
+  let found: MatrixPlanRefusalV1 | null = null;
+  let count = 0;
+  for (const line of log.split("\n")) {
+    if (
+      line.length > MAX_LINE_CHARS + 64 ||
+      !line.includes(MATRIX_PLAN_DIAGNOSTIC_KIND)
+    ) continue;
+    const start = line.indexOf("{");
+    if (start < 0) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(line.slice(start));
+    } catch {
+      continue;
+    }
+    // Only the launcher's re-parsed advisory, never the raw child line.
+    if (
+      !isRecord(value) || value.kind !== MATRIX_PLAN_DIAGNOSTIC_KIND ||
+      value.advisory !== true
+    ) continue;
+    count += 1;
+    found = Object.hasOwn(value, "plannerRefusal")
+      ? parseMatrixPlanRefusalV1(value.plannerRefusal, value.readyUnplanned)
+      : null;
+  }
+  return count === 1 ? found : null;
 }
 
 /**

@@ -29,6 +29,10 @@ import {
 } from "../repair/loop.ts";
 import { attemptEquivalenceRefusalForRecordV1 } from "../repair/attempt-policy.ts";
 import { planDeferredKey } from "./matrix-plan-diagnostic.ts";
+import {
+  classifyMatrixPlanRefusalV1,
+  type MatrixPlanRefusalV1,
+} from "./matrix-plan-refusal.ts";
 import { ciCorrectionRouteOpen } from "../repair/ci-rejection.ts";
 import { preReviewCiFixRouteOpen } from "../repair/ci-first-policy.ts";
 import {
@@ -105,6 +109,8 @@ export interface MatrixPlanReportV1 {
    * plan.
    */
   memoryRefused: number;
+  /** Closed refusal reason and ready-unplanned count of this pass (#335). */
+  refusal?: MatrixPlanRefusalV1;
 
   /**
    * Diagnostic breakdown of why records were filtered. Present when the
@@ -492,6 +498,9 @@ export async function planMatrixWave(
   let lastDiagnostic: MatrixPlanDiagnosticV1 | null = null;
   let memoryRefused = 0;
   let noTestEvidenceParked = 0;
+  // #335: why ready records stayed unplanned (see matrix-plan-refusal.ts).
+  let stoppedByDeadline = false;
+  let lastReadyIds: string[] | null = null;
   // A CI correction is granted only where its cell survives a rollback
   // (`ciCorrectionRouteOpen`): in process, and in hosted runs from generation
   // 78, whose rollback target isolates the cell.
@@ -515,11 +524,17 @@ export async function planMatrixWave(
         readAt + config.sessionBound.maxDurationMs + OPERATION_MARGIN_MS <
           bounds.runDeadline
       )
-    ) break;
+    ) {
+      stoppedByDeadline = true;
+      break;
+    }
     const context = await loadRepairContext(deps, bounds);
     if (context === null) break;
     const now = deps.clock.now();
-    if (now >= bounds.modelCutoff || now >= bounds.runDeadline) break;
+    if (now >= bounds.modelCutoff || now >= bounds.runDeadline) {
+      stoppedByDeadline = true;
+      break;
+    }
     const takeover = await reconcileExistingPrs(
       deps,
       context,
@@ -614,8 +629,7 @@ export async function planMatrixWave(
     attempted += parkOutcome.parked;
     noTestEvidenceParked += parkOutcome.parked;
     if (parkOutcome.stateError) break;
-    const nextId = ranked.ordered.find((id) => {
-      if (attemptedIds.has(id) || takeoverRefused.has(id)) return false;
+    const isReady = (id: string) => {
       const record = context.snapshot.work.find((work) => work.id === id);
       if (record === undefined) return false;
       if (
@@ -638,7 +652,11 @@ export async function planMatrixWave(
           preReviewRouteOpen,
           context.legacyReviewCutoff ?? null,
         );
-    });
+    };
+    lastReadyIds = ranked.ordered.filter(isReady);
+    const nextId = ranked.ordered.find((id) =>
+      !attemptedIds.has(id) && !takeoverRefused.has(id) && isReady(id)
+    );
     if (nextId === undefined) break;
     attemptedIds.add(nextId);
     const record = context.snapshot.work.find((work) => work.id === nextId);
@@ -803,6 +821,15 @@ export async function planMatrixWave(
       }
       : {}),
     memoryRefused,
+    refusal: classifyMatrixPlanRefusalV1({
+      prepared: cells.length,
+      readyIds: lastReadyIds,
+      plannedTaskIds: new Set(cells.map((cell) => cell.taskId as string)),
+      stoppedByDeadline,
+      modelStartsDisabled: bounds.modelCutoff === Number.NEGATIVE_INFINITY,
+      deferredByReason,
+      memoryRefused,
+    }),
   };
 }
 

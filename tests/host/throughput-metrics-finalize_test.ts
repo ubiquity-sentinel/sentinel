@@ -138,6 +138,7 @@ Deno.test("finalize persists one exact throughput record for a fake pass", async
       releaseRequestsMovedToCold: null,
     },
     plannerRefusal: null,
+    waitCauses: null,
   };
   assert.equal(
     files.get("throughput/2026-11-05.jsonl"),

@@ -30,6 +30,7 @@ import {
   MaxItems,
   MaxText,
 } from "./validation.ts";
+import { parseWorkWaitCauseV1 } from "./work-wait-cause.ts";
 import type {
   SelectionUrgencyV1,
   WorkBlockerV1,
@@ -93,6 +94,8 @@ const URGENCY_KEYS = [
 ] as const;
 const CONTROLLER_KEYS = ["sha"] as const;
 const WAIT_KEYS = ["reason", "since", "until"] as const;
+/** Additive wait key absent from waits written before it existed (#335). */
+const WAIT_OPTIONAL_KEYS = ["cause"] as const;
 const BLOCKER_KEYS = ["kind", "message", "since"] as const;
 const COUNTERS_KEYS = ["attempts", "retries", "reviewRounds"] as const;
 /** Additive counter keys absent from rows written before they existed. */
@@ -398,7 +401,7 @@ function expectPriority(value: unknown, path: string): number {
 
 function parseWait(input: unknown, path: string): WorkWaitV1 {
   const obj = expectRecord(input, path);
-  expectExactKeys(obj, WAIT_KEYS, path);
+  expectExactKeysWithOptional(obj, WAIT_KEYS, WAIT_OPTIONAL_KEYS, path);
   const reason = expectEnum(
     obj.reason,
     [
@@ -422,7 +425,13 @@ function parseWait(input: unknown, path: string): WorkWaitV1 {
       "wait until cannot precede since",
     );
   }
-  return { reason, since, until };
+  // Absent stays absent so an older row re-serializes byte for byte.
+  return obj.cause === undefined ? { reason, since, until } : {
+    reason,
+    since,
+    until,
+    cause: parseWorkWaitCauseV1(obj.cause, `${path}.cause`),
+  };
 }
 
 function parseBlocker(input: unknown, path: string): WorkBlockerV1 {

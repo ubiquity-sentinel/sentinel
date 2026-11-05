@@ -21,6 +21,7 @@ import {
   reviewTaskStatementDigest,
 } from "../contracts/review-receipt.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
+import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import { HostedSupervisorGitHubClient } from "./actions-supervisor-install-api.ts";
 import { hostedOrdinaryAdmitted } from "../contracts/hosted-supervisor-verification.ts";
 import { fetchHttpTransport } from "../github/http.ts";
@@ -264,6 +265,8 @@ export async function runHostedSupervisorHost(
   if (job === "finalize") {
     let jobsRead: RunJobSummaryV1[] | null = null;
     let runSummary: HostedRuntimeRunSummaryV1 | null = null;
+    // The same advisory state read also feeds the wait-cause histogram (#335).
+    let repairRead: RepairStateSnapshotV1 | null = null;
     if (input.runSummary !== undefined) {
       runSummary = await emitRunSummary({
         ...input.runSummary,
@@ -278,7 +281,13 @@ export async function runHostedSupervisorHost(
           return read;
         },
         // The wedge report v0 (C5.5): one bounded advisory repair-state read.
-        readRepair: () => input.state.readRepair(),
+        readRepair: async () => {
+          const read = await input.state.readRepair();
+          if (read.ok && read.value.status === "found") {
+            repairRead = read.value.snapshot;
+          }
+          return read;
+        },
         now: () => input.clock.now(),
       }, { runId: identity.runId, runAttempt: identity.runAttempt });
     }
@@ -289,6 +298,7 @@ export async function runHostedSupervisorHost(
         nowMs: input.clock.now(),
         jobs: jobsRead,
         runSummary,
+        repair: repairRead,
       });
     }
     return {

@@ -18,6 +18,8 @@ import type {
   ThroughputMetricsRecordV1,
   ThroughputPhaseV1,
 } from "../contracts/throughput-metrics.ts";
+import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
+import { waitCauseKeyV1 } from "../contracts/work-wait-cause.ts";
 import { createDeadline } from "../github/http.ts";
 import {
   appendThroughputMetricsV1,
@@ -42,6 +44,30 @@ export interface FinalizeMetricsFactsV1 {
   jobs: readonly RunJobSummaryV1[] | null;
   /** The aggregated run summary finalize printed, or null. */
   runSummary: HostedRuntimeRunSummaryV1 | null;
+  /**
+   * The repair state the run summary's advisory read returned (#335), or
+   * null/absent when it was not read; feeds the wait-cause histogram.
+   */
+  repair?: RepairStateSnapshotV1 | null;
+}
+
+/** Records waiting in `backoff`/`unavailable`, by cause key (#335). */
+function collectWaitCauses(
+  collector: MetricsCollectorV1,
+  repair: RepairStateSnapshotV1,
+): void {
+  // An observed state with no such wait is an empty histogram, not null.
+  collector.addWaitCause("legacy:none:backoff", 0);
+  for (const record of repair.work) {
+    const wait = record.wait;
+    if (wait === null) continue;
+    if (wait.reason !== "backoff" && wait.reason !== "unavailable") continue;
+    collector.addWaitCause(
+      wait.cause === undefined
+        ? `legacy:none:${wait.reason}`
+        : waitCauseKeyV1(wait.cause),
+    );
+  }
 }
 
 function phaseOf(name: string): ThroughputPhaseV1 | null {
@@ -90,6 +116,20 @@ export function collectFinalizeMetricsV1(
       jobs.filter((job) => phaseOf(job.name) === "matrixCellTotal" && ran(job))
         .length,
     );
+  }
+  // The planner's refusal reason and ready-unplanned count (#335), from the
+  // matrix_plan job's launcher-re-emitted plan diagnostic.
+  const refusal = plan?.conclusion === "success"
+    ? plan.summary?.plannerRefusal
+    : undefined;
+  if (refusal !== undefined) {
+    collector.setPlannerRefusal(refusal.reason);
+    if (refusal.readyUnplanned !== null) {
+      collector.addCount("readyRecordsNotPlanned", refusal.readyUnplanned);
+    }
+  }
+  if (facts.repair !== undefined && facts.repair !== null) {
+    collectWaitCauses(collector, facts.repair);
   }
   const modelStarts = facts.runSummary?.modelStarts ?? null;
   if (modelStarts !== null) collector.addCount("modelStarts", modelStarts);
