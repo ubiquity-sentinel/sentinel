@@ -41,6 +41,23 @@ export const SENTINEL_SKIP_MARKER = "<!-- sentinel:skip -->";
 export const TARGET_CAPABILITY_ISSUE_MARKER =
   "<!-- sentinel:target-capability -->";
 
+/** Launcher-only owner-action issue reads/writes in ONE target repository. */
+export interface TargetCapabilityIssuesV1 {
+  /**
+   * The lowest-numbered OPEN App-created issue carrying both markers
+   * (`{number: null}` when none), from one complete listing; null when the
+   * listing cannot be proven complete.
+   */
+  findExisting?(): Promise<{ number: number | null } | null>;
+  /** The created issue's number, or null when unproven. */
+  create(input: { title: string; body: string }): Promise<number | null>;
+  /** True only when GitHub confirms the exact new title and body. */
+  update(
+    number: number,
+    input: { title: string; body: string },
+  ): Promise<boolean>;
+}
+
 /** The capability verdict derived from one tip's facts. */
 export interface TargetCapabilityVerdictV1 {
   capable: boolean;

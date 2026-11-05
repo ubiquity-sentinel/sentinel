@@ -19,6 +19,7 @@ import {
   expectCount,
   expectEnum,
   expectExactKeys,
+  expectExactKeysWithOptional,
   expectNullable,
   expectPattern,
   expectPositiveInt,
@@ -71,6 +72,41 @@ export const PLANNER_REFUSAL_REASONS_V1 = [
 ] as const;
 export type PlannerRefusalReasonV1 = typeof PLANNER_REFUSAL_REASONS_V1[number];
 
+/**
+ * Wait-cause histogram (#335): records waiting in `backoff`/`unavailable` at
+ * the cycle's end, keyed `port:status:code` (the record's `wait.cause`) or
+ * `legacy:none:<reason>` for a wait written without one. At most
+ * `THROUGHPUT_WAIT_CAUSE_KEYS` keys; the rest fold into `other:none:other`.
+ */
+export type ThroughputWaitCausesV1 = Record<string, number>;
+export const THROUGHPUT_WAIT_CAUSE_KEYS = 6;
+export const THROUGHPUT_WAIT_CAUSE_OTHER = "other:none:other";
+const WAIT_CAUSE_KEY = /^[a-z]{1,7}:[a-z0-9]{1,7}:[a-z0-9_]{1,16}$/;
+export function isThroughputWaitCauseKeyV1(key: string): boolean {
+  return WAIT_CAUSE_KEY.test(key);
+}
+
+/** Add `n` under `key`, keeping one slot for the fold key (mutates). */
+export function addWaitCauseCountV1(
+  causes: ThroughputWaitCausesV1,
+  key: string,
+  n: number,
+): void {
+  if (n === 0) return;
+  const named =
+    Object.keys(causes).filter((existing) =>
+      existing !== THROUGHPUT_WAIT_CAUSE_OTHER
+    ).length;
+  const slot = Object.hasOwn(causes, key) ||
+      key === THROUGHPUT_WAIT_CAUSE_OTHER ||
+      named < THROUGHPUT_WAIT_CAUSE_KEYS - 1
+    ? key
+    : THROUGHPUT_WAIT_CAUSE_OTHER;
+  const total = (causes[slot] ?? 0) + n;
+  if (!Number.isSafeInteger(total)) throw new Error("wait cause overflow");
+  causes[slot] = total;
+}
+
 export interface ThroughputCycleIdV1 {
   runId: number;
   attempt: number;
@@ -85,6 +121,11 @@ export interface ThroughputMetricsRecordV1 {
   phaseMs: Record<ThroughputPhaseV1, number | null>;
   counts: Record<ThroughputCounterV1, number | null>;
   plannerRefusal: PlannerRefusalReasonV1 | null;
+  /**
+   * Additive (#335): absent on records written before it existed; `null`
+   * when finalize did not observe the repair state.
+   */
+  waitCauses?: ThroughputWaitCausesV1 | null;
 }
 
 /** Byte bound of one canonical record line (without its newline). */
@@ -102,6 +143,7 @@ const RECORD_KEYS = [
   "counts",
   "plannerRefusal",
 ] as const;
+const RECORD_OPTIONAL_KEYS = ["waitCauses"] as const;
 const URL_LIKE = /[a-z][a-z0-9+.-]*:\/\/|^www\.|[a-z0-9-]+\.[a-z]{2,}\//i;
 
 /**
@@ -158,13 +200,33 @@ function parseNullableCounts<K extends string>(
   return out;
 }
 
+/** A bounded `port:status:code` histogram with positive counts. */
+export function parseThroughputWaitCausesV1(
+  input: unknown,
+  path: string,
+): ThroughputWaitCausesV1 {
+  const obj = expectRecord(input, path);
+  const keys = Object.keys(obj);
+  if (keys.length > THROUGHPUT_WAIT_CAUSE_KEYS) {
+    fail(path, "bound_exceeded", "too many wait cause keys");
+  }
+  const out: ThroughputWaitCausesV1 = {};
+  for (const key of keys.sort()) {
+    if (!WAIT_CAUSE_KEY.test(key)) {
+      fail(`${path}.<key>`, "invalid_pattern", "invalid wait cause key");
+    }
+    out[key] = expectPositiveInt(obj[key], `${path}.${key}`);
+  }
+  return out;
+}
+
 /** Strict parser: exact keys at every level, closed enums, bounded size. */
 export function parseThroughputMetricsRecordV1(
   input: unknown,
 ): ThroughputMetricsRecordV1 {
   scanThroughputMetricsStringsV1(input);
   const obj = expectRecord(input, "$");
-  expectExactKeys(obj, RECORD_KEYS, "$");
+  expectExactKeysWithOptional(obj, RECORD_KEYS, RECORD_OPTIONAL_KEYS, "$");
   expectVersion(obj.version, "$.version");
   if (obj.kind !== "throughput_metrics") {
     fail("$.kind", "invalid_enum", 'expected kind "throughput_metrics"');
@@ -201,6 +263,14 @@ export function parseThroughputMetricsRecordV1(
       "$.plannerRefusal",
       (value, path) => expectEnum(value, PLANNER_REFUSAL_REASONS_V1, path),
     ),
+    // Absent stays absent so an older line re-serializes byte for byte.
+    ...(obj.waitCauses === undefined ? {} : {
+      waitCauses: expectNullable(
+        obj.waitCauses,
+        "$.waitCauses",
+        parseThroughputWaitCausesV1,
+      ),
+    }),
   };
   if (
     utf8Length(canonicalStringify(record)) >
@@ -252,6 +322,8 @@ export interface ThroughputDailySummaryV1 {
   phaseMs: Record<ThroughputPhaseV1, ThroughputSumV1>;
   counts: Record<ThroughputCounterV1, ThroughputSumV1>;
   plannerRefusals: Record<PlannerRefusalReasonV1, number>;
+  /** Additive (#335): summed record histograms; absent until one had it. */
+  waitCauses?: ThroughputWaitCausesV1;
 }
 
 export const THROUGHPUT_DAILY_SUMMARY_MAX_BYTES = 4096;
@@ -301,7 +373,7 @@ export function parseThroughputDailySummaryV1(
 ): ThroughputDailySummaryV1 {
   scanThroughputMetricsStringsV1(input);
   const obj = expectRecord(input, "$");
-  expectExactKeys(obj, DAILY_KEYS, "$");
+  expectExactKeysWithOptional(obj, DAILY_KEYS, RECORD_OPTIONAL_KEYS, "$");
   expectVersion(obj.version, "$.version");
   if (obj.kind !== "throughput_metrics_daily") {
     fail("$.kind", "invalid_enum", 'expected kind "throughput_metrics_daily"');
@@ -345,6 +417,9 @@ export function parseThroughputDailySummaryV1(
     phaseMs: parseSums(obj.phaseMs, THROUGHPUT_PHASES_V1, records, "$.phaseMs"),
     counts: parseSums(obj.counts, THROUGHPUT_COUNTERS_V1, records, "$.counts"),
     plannerRefusals,
+    ...(obj.waitCauses === undefined ? {} : {
+      waitCauses: parseThroughputWaitCausesV1(obj.waitCauses, "$.waitCauses"),
+    }),
   };
   if (
     utf8Length(canonicalStringify(summary)) > THROUGHPUT_DAILY_SUMMARY_MAX_BYTES
@@ -384,6 +459,13 @@ export function foldThroughputRecordV1(
     plannerRefusals[reason] = (summary?.plannerRefusals[reason] ?? 0) +
       (record.plannerRefusal === reason ? 1 : 0);
   }
+  let waitCauses = summary?.waitCauses;
+  if (record.waitCauses !== undefined && record.waitCauses !== null) {
+    waitCauses = { ...waitCauses };
+    for (const [key, n] of Object.entries(record.waitCauses)) {
+      addWaitCauseCountV1(waitCauses, key, n);
+    }
+  }
   return {
     version: "v1",
     kind: "throughput_metrics_daily",
@@ -400,6 +482,7 @@ export function foldThroughputRecordV1(
     phaseMs: sums(THROUGHPUT_PHASES_V1, summary?.phaseMs, record.phaseMs),
     counts: sums(THROUGHPUT_COUNTERS_V1, summary?.counts, record.counts),
     plannerRefusals,
+    ...(waitCauses === undefined ? {} : { waitCauses }),
   };
 }
 

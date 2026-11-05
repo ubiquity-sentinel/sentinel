@@ -317,6 +317,12 @@ export interface HostedAutonomyGitHubV1 {
     head: string,
     message?: string,
   ): Promise<{ merged: boolean; sha: string | null } | null>;
+  /**
+   * The tree of one exact commit of THIS repository, or null when it cannot
+   * be read. Optional: a surface without it verifies no delivery-train
+   * landing (sentinel #330), so no train merges over it.
+   */
+  readCommitTree?(sha: string): Promise<string | null>;
   /** Idempotent issue closure: true when the issue ends closed. */
   closeIssue(number: number): Promise<boolean>;
   /**
@@ -361,6 +367,21 @@ export interface HostedAutonomyGitHubV1 {
    * base-repair issue in THIS repository. Absent means none is filed.
    */
   baseRepairIssues?: HostedBaseRepairIssuesV1;
+  /**
+   * Optional trusted launcher capability: the owner-action capability issue
+   * of THIS repository (`ops/hosted-autonomy-target-capability.ts`).
+   */
+  capabilityIssues?:
+    import("../src/repair/target-capability.ts").TargetCapabilityIssuesV1;
+  /**
+   * The target tree facts at exactly this commit
+   * (`src/host/target-tree-facts.ts`), or null when unreadable.
+   */
+  readTreeFacts?(
+    commit: string,
+  ): Promise<
+    import("../src/host/target-policy-generic.ts").TargetTreeFactsV1 | null
+  >;
 
   /**
    * Optional trusted launcher capability: the owner's `sentinel:retry` label
@@ -560,6 +581,11 @@ export interface HostedAutonomyDepsV1 {
    * borrows another repository's surface.
    */
   githubFor(repository: RepositoryIdentityV1): HostedAutonomyGitHubV1 | null;
+  /**
+   * `owner/name` of every committed backup CI target
+   * (`sentinel.backup-ci-targets.json`); absent means none.
+   */
+  backupCiTargets?: readonly string[];
   clock: { now(): number };
   /**
    * Trusted post-merge delivery-check names for one repository (sentinel
@@ -589,6 +615,19 @@ export interface HostedAutonomyDepsV1 {
    * sets it and uses HOSTED_AUTONOMY_CONFLICT_RESOLUTION_RUNTIMES.
    */
   conflictResolutionRuntimes?: readonly HostedRefreshRearmRuntimeV1[];
+  /**
+   * Delivery trains (sentinel #330): the durable train ledger and each
+   * repository's deterministic composer. Absent: no train is built and the
+   * delivery pass merges one exact-tip record at a time, as before.
+   */
+  deliveryTrain?:
+    import("./hosted-autonomy-train-types.ts").HostedDeliveryTrainDepsV1;
+  /**
+   * The cycle's throughput collector (#338); the delivery pass adds
+   * `trainsBuilt`, `targetCiRunsTriggered` and `mergesCompleted` to it.
+   */
+  metrics?:
+    import("../src/contracts/throughput-metrics-collector.ts").MetricsCollectorV1;
   /**
    * The moved-base spent merge (decision D3) for tests of its gate.
    * Production never sets it and uses HOSTED_AUTONOMY_SPENT_MOVED_BASE_MERGE.

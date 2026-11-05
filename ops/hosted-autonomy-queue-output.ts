@@ -1,7 +1,7 @@
 import {
   isUpkeepDeferralReason,
   type UpkeepDeferralReasonV1,
-} from "../src/host/upkeep-deferral-streak.ts";
+} from "../src/contracts/upkeep-deferral-streak.ts";
 
 /** Native workflow gate, deliberately outside the R80 stdout protocol. */
 export async function writeQueueCustodyOutput(

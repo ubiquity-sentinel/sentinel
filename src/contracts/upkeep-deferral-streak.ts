@@ -49,12 +49,13 @@ export interface UpkeepDeferralNoticeV1 {
 
 /** Trusted expected-head store for the streak; never a model worker. */
 export interface UpkeepDeferralStreakStoreV1 {
+  /** `head` is null while the surface does not exist yet. */
   read(): Promise<
-    { head: string; streak: UpkeepDeferralStreakV1 | null } | null
+    { head: string | null; streak: UpkeepDeferralStreakV1 | null } | null
   >;
   write(
     next: UpkeepDeferralStreakV1,
-    expectedHead: string,
+    expectedHead: string | null,
   ): Promise<"applied" | "conflict" | "unavailable">;
 }
 

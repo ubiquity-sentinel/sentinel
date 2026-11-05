@@ -458,7 +458,7 @@ function touchesTargetProtected(
  * always lists files; a fixture surface without that read skips the check.
  * A failed or incomplete listing refuses.
  */
-async function protectedPathRefusal(
+export async function protectedPathRefusal(
   surface: HostedAutonomyGitHubV1,
   repository: RepositoryIdentityV1,
   pull: number,

@@ -22,6 +22,10 @@ import {
   throughputDateV1,
   type ThroughputMetricsRecordV1,
 } from "../contracts/throughput-metrics.ts";
+import {
+  parseUpkeepDeferralStreakV1,
+  type UpkeepDeferralStreakV1,
+} from "../contracts/upkeep-deferral-streak.ts";
 
 /** The metrics sidecar ref; no repair/release snapshot reader touches it. */
 export const THROUGHPUT_METRICS_REF = "refs/heads/sentinel-state/metrics";
@@ -29,6 +33,9 @@ export const THROUGHPUT_HOT_MAX_RECORDS = 2000;
 export const THROUGHPUT_DAILY_MAX_SUMMARIES = 400;
 export const THROUGHPUT_DIR = "throughput";
 export const THROUGHPUT_DAILY_PATH = `${THROUGHPUT_DIR}/daily.jsonl`;
+/** Consecutive deferred upkeep passes (#327), one small canonical file. */
+export const THROUGHPUT_UPKEEP_STREAK_PATH =
+  `${THROUGHPUT_DIR}/upkeep-streak.json`;
 const HOT_PATH = /^throughput\/(\d{4}-\d{2}-\d{2})\.jsonl$/;
 
 export interface ThroughputMetricsLedgerV1 {
@@ -36,6 +43,8 @@ export interface ThroughputMetricsLedgerV1 {
   records: ThroughputMetricsRecordV1[];
   /** Daily rollups ordered by date, one per date. */
   daily: ThroughputDailySummaryV1[];
+  /** Present once finalize recorded an upkeep deferral observation. */
+  upkeepStreak?: UpkeepDeferralStreakV1;
 }
 
 export const EMPTY_THROUGHPUT_LEDGER: ThroughputMetricsLedgerV1 = {
@@ -75,7 +84,16 @@ export function appendThroughputRecordV1(
   const kept = [...daily.values()].sort((a, b) =>
     a.date < b.date ? -1 : a.date > b.date ? 1 : 0
   ).slice(-THROUGHPUT_DAILY_MAX_SUMMARIES);
-  return { status: "appended", ledger: { records, daily: kept } };
+  return {
+    status: "appended",
+    ledger: {
+      records,
+      daily: kept,
+      ...(ledger.upkeepStreak === undefined
+        ? {}
+        : { upkeepStreak: ledger.upkeepStreak }),
+    },
+  };
 }
 
 /** The exact files of the surface: canonical JSON, one value per line. */
@@ -93,6 +111,14 @@ export function encodeThroughputLedgerV1(
     files.set(
       THROUGHPUT_DAILY_PATH,
       ledger.daily.map((row) => `${canonicalStringify(row)}\n`).join(""),
+    );
+  }
+  if (ledger.upkeepStreak !== undefined) {
+    const streak = parseUpkeepDeferralStreakV1(ledger.upkeepStreak);
+    if (streak === null) throw new Error("upkeep streak is malformed");
+    files.set(
+      THROUGHPUT_UPKEEP_STREAK_PATH,
+      `${canonicalStringify(streak)}\n`,
     );
   }
   return files;
@@ -115,7 +141,19 @@ export function decodeThroughputLedgerV1(
 ): ThroughputMetricsLedgerV1 {
   const records: ThroughputMetricsRecordV1[] = [];
   let daily: ThroughputDailySummaryV1[] = [];
+  let upkeepStreak: UpkeepDeferralStreakV1 | undefined;
   for (const [path, text] of [...files.entries()].sort()) {
+    if (path === THROUGHPUT_UPKEEP_STREAK_PATH) {
+      const [line, ...rest] = lines(text, path);
+      const streak = rest.length === 0
+        ? parseUpkeepDeferralStreakV1(JSON.parse(line))
+        : null;
+      if (streak === null || canonicalStringify(streak) !== line) {
+        throw new Error("upkeep streak is not one canonical value");
+      }
+      upkeepStreak = streak;
+      continue;
+    }
     if (path === THROUGHPUT_DAILY_PATH) {
       daily = lines(text, path).map((line) => {
         const summary = parseThroughputDailySummaryV1(JSON.parse(line));
@@ -158,5 +196,7 @@ export function decodeThroughputLedgerV1(
   ) {
     throw new Error("metrics surface exceeds its retention bound");
   }
-  return { records, daily };
+  return upkeepStreak === undefined
+    ? { records, daily }
+    : { records, daily, upkeepStreak };
 }

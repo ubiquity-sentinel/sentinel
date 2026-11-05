@@ -125,7 +125,15 @@ export async function tierRepairOp(
       deferred: built.value.deferred,
     });
   }
-  const { commit, demoted, promoted, deferred } = built.value;
+  const {
+    commit,
+    demoted,
+    promoted,
+    deferred,
+    releaseRequestsMovedToCold,
+    promotedOpenReleaseRequestIds,
+    releaseRequestsSuperseded,
+  } = built.value;
   let pushed: PushedCandidateV1;
   try {
     pushed = await hooks.push(op, commit);
@@ -142,5 +150,8 @@ export async function tierRepairOp(
     demoted,
     promoted,
     deferred,
+    releaseRequestsMovedToCold,
+    promotedOpenReleaseRequestIds,
+    releaseRequestsSuperseded,
   });
 }

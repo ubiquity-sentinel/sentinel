@@ -65,6 +65,13 @@ export interface RepairCycleDepsV1 {
   /** Matrix-owned implementations settle only through authenticated artifact ingestion. */
   externalImplementations?: boolean;
   /**
+   * Persist `wait.cause` on the waits that know it (#335). Off by default:
+   * every rollback target's strict parser must accept the state this runtime
+   * writes, so the trusted host turns it on only once the installed rollback
+   * target parses the optional key.
+   */
+  recordWaitCauses?: boolean;
+  /**
    * The one-time legacy review class's cutoff (`review-round-cap.ts`): the
    * one instant no later than the first CI-first runtime's activation
    * (`LEGACY_REVIEW_CUTOFF`), handed over by the launcher to runs of a pinned

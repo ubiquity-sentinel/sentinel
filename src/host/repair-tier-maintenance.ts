@@ -9,6 +9,16 @@
  * passed deadline skips the write, and a state conflict, ambiguity or error
  * defers the step to the next pass. Its outcome carries counts only (no
  * URLs, bodies or credentials).
+ *
+ * Release-deferred families (Sentinel #325): with the release path observed
+ * disabled, a family holding an open release request moves cold unchanged
+ * and the pass counts the moved requests (`releaseRequestsMovedToCold`).
+ * With it observed enabled, the target tips are read first, those families
+ * are promoted unchanged within the budget, and each promoted open request
+ * whose candidate is no longer its target tip is recorded as a terminal
+ * supersession IN THE SAME tier commit (`releaseRequestsSuperseded`). A
+ * failed write therefore leaves the family cold, and the next pass re-reads
+ * the tip and re-evaluates it, every pass, until the supersession is recorded.
  */
 
 import type { GitSha } from "../contracts/brands.ts";
@@ -16,6 +26,8 @@ import type { PortResultV1, StateReadResultV1 } from "../contracts/ports.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import { workItemIdForIssue } from "../repair/keys.ts";
+import { isGatewayVpsRepository } from "../repair/vps-delivery.ts";
+import { repositoryTierKey } from "../state/state-repair-tier-plan.ts";
 import type { RepairTierStore } from "../state/state-repair-tier-store.ts";
 
 export interface RepairTierMaintenanceDepsV1 {
@@ -24,11 +36,22 @@ export interface RepairTierMaintenanceDepsV1 {
     readRepair(): Promise<
       PortResultV1<StateReadResultV1<RepairStateSnapshotV1>>
     >;
+    /** Read only with release enabled, to find wholly cold repositories. */
+    readRepairTiered?: RepairTierStore["readRepairTiered"];
   };
   /** Complete open-issue numbers of one repository, or a typed failure. */
   listOpenIssueNumbers(
     repository: RepositoryIdentityV1,
   ): Promise<PortResultV1<readonly number[]>>;
+  /** Current target (default-branch) tip; read only with release enabled. */
+  readTargetTip?(
+    repository: RepositoryIdentityV1,
+  ): Promise<PortResultV1<GitSha | null>>;
+  /**
+   * Release path from the positively read release ref (`releasePathDisabled`).
+   * Absent or unreadable: no release-deferred family moves either way.
+   */
+  releasePath?(): Promise<PortResultV1<"disabled" | "enabled">>;
   clock: { now(): number };
   /** No listing starts and no tier write is offered at or after this time. */
   deadlineAt: number;
@@ -49,6 +72,10 @@ export interface RepairTierMaintenanceResultV1 {
   demoted: number;
   promoted: number;
   deferred: number;
+  /** Open release requests moved cold this pass; null when not observed. */
+  releaseRequestsMovedToCold: number | null;
+  /** Promoted open requests recorded superseded; null when not observed. */
+  releaseRequestsSuperseded: number | null;
   beforeHead: GitSha | null;
   appliedHead: GitSha | null;
   /** The exact hot snapshot the transition started from. */
@@ -65,13 +92,62 @@ export function hotRecordCount(snapshot: RepairStateSnapshotV1): number {
   return count;
 }
 
-function repositoryKey(repository: RepositoryIdentityV1): string {
-  return `${repository.owner}/${repository.name}#${repository.installationId}`;
+async function observeReleasePath(
+  deps: RepairTierMaintenanceDepsV1,
+): Promise<"disabled" | "enabled" | undefined> {
+  if (deps.releasePath === undefined) return undefined;
+  try {
+    const read = await deps.releasePath();
+    return read.ok ? read.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Repositories that exist only in the cold tier (release-deferred). */
+async function coldRepositories(
+  deps: RepairTierMaintenanceDepsV1,
+): Promise<RepositoryIdentityV1[]> {
+  if (deps.store.readRepairTiered === undefined) return [];
+  try {
+    const read = await deps.store.readRepairTiered();
+    if (!read.ok || read.value.status !== "found") return [];
+    const cold = read.value.view.cold;
+    return [
+      ...cold.work.map((row) => row.repository),
+      ...cold.releaseRequests.filter((row) => row.status === "open").map((
+        row,
+      ) => row.target.repository),
+    ];
+  } catch {
+    return [];
+  }
+}
+
+function describe(
+  out: RepairTierMaintenanceResultV1,
+  releasePath: "disabled" | "enabled" | undefined,
+): string {
+  if (out.status === "deferred") {
+    return `repair-tier:deferred:${out.reason ?? "unknown"}`;
+  }
+  if (out.status === "absent") return "repair-tier:absent";
+  const base = out.status === "applied"
+    ? `repair-tier:promoted:${out.promoted}:demoted:${out.demoted}` +
+      `:deferred:${out.deferred}`
+    : `repair-tier:unchanged:deferred:${out.deferred}`;
+  const release = releasePath === undefined
+    ? ""
+    : `:release-${releasePath}:moved-cold:${
+      out.releaseRequestsMovedToCold ?? 0
+    }:superseded:${out.releaseRequestsSuperseded ?? 0}`;
+  return `${base}:read:${out.recordsRead ?? 0}${release}`;
 }
 
 export async function runRepairTierMaintenance(
   deps: RepairTierMaintenanceDepsV1,
 ): Promise<RepairTierMaintenanceResultV1> {
+  let releasePath: "disabled" | "enabled" | undefined;
   const result = (
     status: RepairTierMaintenanceResultV1["status"],
     fields: Partial<RepairTierMaintenanceResultV1> = {},
@@ -83,18 +159,15 @@ export async function runRepairTierMaintenance(
       demoted: 0,
       promoted: 0,
       deferred: 0,
+      releaseRequestsMovedToCold: null,
+      releaseRequestsSuperseded: null,
       beforeHead: null,
       appliedHead: null,
       before: null,
       action: "",
       ...fields,
     };
-    out.action = status === "deferred"
-      ? `repair-tier:deferred:${out.reason ?? "unknown"}`
-      : status === "absent"
-      ? "repair-tier:absent"
-      : `repair-tier:${status}:read:${out.recordsRead ?? 0}:promoted:` +
-        `${out.promoted}:demoted:${out.demoted}:deferred:${out.deferred}`;
+    out.action = describe(out, releasePath);
     return out;
   };
   let recordsRead: number | null = null;
@@ -108,20 +181,42 @@ export async function runRepairTierMaintenance(
     const snapshot = read.value.snapshot;
     const head = read.value.head;
     recordsRead = hotRecordCount(snapshot);
+    releasePath = await observeReleasePath(deps);
 
     const repositories = new Map<string, RepositoryIdentityV1>();
-    for (const row of snapshot.work) {
-      repositories.set(repositoryKey(row.repository), row.repository);
+    const addRepository = (repository: RepositoryIdentityV1) =>
+      repositories.set(repositoryTierKey(repository), repository);
+    for (const row of snapshot.work) addRepository(row.repository);
+    for (const row of snapshot.releaseRequests) {
+      addRepository(row.target.repository);
+    }
+    if (releasePath === "enabled") {
+      for (const repository of await coldRepositories(deps)) {
+        addRepository(repository);
+      }
     }
     const listed: RepositoryIdentityV1[] = [];
     const openIssueWorkIds = new Set<string>();
+    const tips = new Map<string, GitSha>();
     for (const repository of repositories.values()) {
       if (deps.clock.now() >= deps.deadlineAt) break;
       const issues = await deps.listOpenIssueNumbers(repository);
-      if (!issues.ok) continue;
-      listed.push(repository);
-      for (const number of issues.value) {
-        openIssueWorkIds.add(workItemIdForIssue(repository, number));
+      if (issues.ok) {
+        listed.push(repository);
+        for (const number of issues.value) {
+          openIssueWorkIds.add(workItemIdForIssue(repository, number));
+        }
+      }
+      if (releasePath !== "enabled" || deps.readTargetTip === undefined) {
+        continue;
+      }
+      try {
+        const tip = await deps.readTargetTip(repository);
+        if (tip.ok && tip.value !== null) {
+          tips.set(repositoryTierKey(repository), tip.value);
+        }
+      } catch {
+        // An unread tip only defers that repository's release promotions.
       }
     }
     if (deps.clock.now() >= deps.deadlineAt) {
@@ -138,15 +233,23 @@ export async function runRepairTierMaintenance(
         protectedReservationIds: protectedIds.reservationIds,
       }),
       demotionBudget: deps.demotionBudget,
+      ...(releasePath === undefined ? {} : {
+        releasePath,
+        releaseDeferredDeliveryExcluded: isGatewayVpsRepository,
+        releaseTargetTips: tips,
+      }),
     });
     if (!tier.ok) {
       return result("deferred", { reason: tier.error.kind, recordsRead });
     }
     const value = tier.value;
+    const observed = releasePath !== undefined;
     if (value.status === "unchanged") {
       return result("unchanged", {
         recordsRead,
         deferred: value.deferred,
+        releaseRequestsMovedToCold: observed ? 0 : null,
+        releaseRequestsSuperseded: observed ? 0 : null,
         beforeHead: head,
         before: snapshot,
       });
@@ -157,6 +260,12 @@ export async function runRepairTierMaintenance(
         demoted: value.demoted,
         promoted: value.promoted,
         deferred: value.deferred,
+        releaseRequestsMovedToCold: observed
+          ? value.releaseRequestsMovedToCold
+          : null,
+        releaseRequestsSuperseded: observed
+          ? value.releaseRequestsSuperseded
+          : null,
         beforeHead: head,
         appliedHead: value.head,
         before: snapshot,
@@ -167,3 +276,6 @@ export async function runRepairTierMaintenance(
     return result("deferred", { reason: "exception", recordsRead });
   }
 }
+
+/** The #325 name for the same step (one implementation). */
+export const runRepairTierMaintenanceSummary = runRepairTierMaintenance;

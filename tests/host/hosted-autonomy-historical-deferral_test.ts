@@ -5,7 +5,7 @@ import {
   settleUpkeepDeferralStreak,
   type UpkeepDeferralNoticeV1,
   type UpkeepDeferralStreakV1,
-} from "../../src/host/upkeep-deferral-streak.ts";
+} from "../../src/contracts/upkeep-deferral-streak.ts";
 import { historicalMalformedRig } from "./hosted-autonomy-historical-fixtures.ts";
 
 /**

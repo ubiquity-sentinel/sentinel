@@ -11,6 +11,8 @@
  */
 
 import {
+  addWaitCauseCountV1,
+  isThroughputWaitCauseKeyV1,
   parseThroughputMetricsRecordV1,
   PLANNER_REFUSAL_REASONS_V1,
   type PlannerRefusalReasonV1,
@@ -29,6 +31,12 @@ export interface MetricsCollectorV1 {
   addCount(counter: ThroughputCounterV1, n: number): void;
   /** Record the planner's refusal reason; the last call wins. */
   setPlannerRefusal(reason: PlannerRefusalReasonV1 | null): void;
+  /**
+   * Count one waiting record under its `port:status:code` key (#335); the
+   * first call turns `waitCauses` from `null` into a histogram. Keys past the
+   * bound fold into `other:none:other`.
+   */
+  addWaitCause(key: string, n?: number): void;
   /** The strict record for one cycle; throws if the facts are invalid. */
   snapshot(input: {
     cycle: ThroughputCycleIdV1;
@@ -52,6 +60,7 @@ export function createMetricsCollectorV1(): MetricsCollectorV1 {
     THROUGHPUT_COUNTERS_V1.map((key) => [key, null]),
   ) as Record<ThroughputCounterV1, number | null>;
   let plannerRefusal: PlannerRefusalReasonV1 | null = null;
+  let waitCauses: Record<string, number> | null = null;
   return {
     addPhaseMs(phase, ms) {
       if (!THROUGHPUT_PHASES_V1.includes(phase)) {
@@ -77,6 +86,14 @@ export function createMetricsCollectorV1(): MetricsCollectorV1 {
       }
       plannerRefusal = reason;
     },
+    addWaitCause(key, n = 1) {
+      nonnegative(n, "wait cause count");
+      if (!isThroughputWaitCauseKeyV1(key)) {
+        throw new Error("invalid wait cause key");
+      }
+      // One slot stays reserved for the fold key, so at most the bound.
+      addWaitCauseCountV1(waitCauses ??= {}, key, n);
+    },
     snapshot({ cycle, startedAtMs, finishedAtMs }) {
       return parseThroughputMetricsRecordV1({
         version: "v1",
@@ -87,6 +104,7 @@ export function createMetricsCollectorV1(): MetricsCollectorV1 {
         phaseMs: { ...phaseMs },
         counts: { ...counts },
         plannerRefusal,
+        waitCauses: waitCauses === null ? null : { ...waitCauses },
       });
     },
   };

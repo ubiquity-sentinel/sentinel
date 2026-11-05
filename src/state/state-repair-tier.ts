@@ -37,8 +37,13 @@ import type {
 import {
   planRepairDemotions,
   planRepairPromotions,
+  repositoryTierKey,
   takeDemotionBudget,
 } from "./state-repair-tier-plan.ts";
+import {
+  planReleasePromotions,
+  supersedeReleaseRequest,
+} from "./state-repair-tier-release.ts";
 import type {
   RepairTierMoveV1,
   RepairTierPolicyV1,
@@ -51,15 +56,30 @@ export interface RepairTieredSnapshotV1 {
   cold: RepairColdTierV1;
 }
 
+/** Release-deferred movement of one pass (Sentinel #325). */
+export interface RepairTierReleaseMovesV1 {
+  /** Open release requests moved cold (release path disabled). */
+  releaseRequestsMovedToCold: number;
+  /** Ids of open release requests promoted hot (release path enabled). */
+  promotedOpenReleaseRequestIds: string[];
+  /**
+   * Promoted open requests recorded superseded IN THE SAME tier commit (their
+   * candidate is no longer the target tip read this pass). Atomic with the
+   * promotion: a failed write leaves the family cold, so the next pass
+   * re-reads the tip and re-evaluates it until the supersession is recorded.
+   */
+  releaseRequestsSuperseded: number;
+}
+
 export type RepairTierResultV1 =
   | { status: "unchanged"; head: GitSha; deferred: number }
-  | {
+  | ({
     status: "applied";
     head: GitSha;
     demoted: number;
     promoted: number;
     deferred: number;
-  }
+  } & RepairTierReleaseMovesV1)
   | { status: "conflict"; currentHead: GitSha | null }
   | { status: "ambiguous"; currentHead: GitSha | null };
 
@@ -184,6 +204,8 @@ async function resolveMoves(
 function preservationMessage(
   prior: ReadonlyMap<string, string>,
   next: ReadonlyMap<string, string>,
+  /** Logical paths whose new blob is a recorded supersession (exact ids). */
+  superseded: ReadonlyMap<string, string> = new Map(),
 ): string | null {
   const logical = (tree: ReadonlyMap<string, string>) => {
     const out = new Map<string, string>();
@@ -206,7 +228,8 @@ function preservationMessage(
     return "a tier transition cannot add or drop a record";
   }
   for (const [key, sha] of before) {
-    if (after.get(key) !== sha) {
+    const expected = superseded.get(key) ?? sha;
+    if (after.get(key) !== expected) {
       return "a tier transition must move records byte-for-byte";
     }
   }
@@ -227,13 +250,13 @@ export async function buildRepairTierCommit(
 ): Promise<
   PortResultV1<
     | { status: "unchanged"; deferred: number }
-    | {
+    | ({
       status: "candidate";
       commit: GitSha;
       demoted: number;
       promoted: number;
       deferred: number;
-    }
+    } & RepairTierReleaseMovesV1)
   >
 > {
   const catalog = await readColdCatalog(io, op, head);
@@ -257,17 +280,79 @@ export async function buildRepairTierCommit(
       break;
     }
   }
+  // With the release path enabled, release-deferred families return hot; the
+  // cold request rows alone decide whether any open one is there.
+  if (!needsCold && policy.releasePath === "enabled") {
+    const requestPrefix = `${REPAIR_COLD_PREFIX}/releaseRequests/`;
+    const requestEntries = catalog.value.entries.filter((entry) =>
+      entry.path.startsWith(requestPrefix)
+    );
+    if (requestEntries.length > 0) {
+      const requests = await readColdTier(io, op, {
+        tree: catalog.value.tree,
+        entries: requestEntries,
+      }, { partial: true });
+      if (!requests.ok) return requests;
+      needsCold = requests.value.releaseRequests.some((row) =>
+        row.status === "open"
+      );
+    }
+  }
   let promoted: ResolvedMove[] = [];
+  let releaseDeferred = 0;
+  let promotedOpenReleaseRequestIds: string[] = [];
+  const superseded = new Map<string, string>();
   if (needsCold) {
     const cold = await readColdTier(io, op, catalog.value);
     if (!cold.ok) return cold;
+    const release = planReleasePromotions(cold.value, policy);
+    releaseDeferred = release.deferred;
+    const plan = planRepairPromotions(
+      prior,
+      cold.value,
+      policy,
+      release.seeds,
+    );
+    const openCold = new Set(
+      cold.value.releaseRequests.filter((row) => row.status === "open").map((
+        row,
+      ) => row.id),
+    );
+    promotedOpenReleaseRequestIds = plan.filter((move) =>
+      move.from === "releaseRequests" && openCold.has(move.id)
+    ).map((move) => move.id).sort();
     const resolved = await resolveMoves(
-      planRepairPromotions(prior, cold.value, policy),
+      plan,
       priorTree.value,
       "promote",
     );
     if (resolved === null) {
       return portError("invalid", "a cold family could not be resolved");
+    }
+    // A promoted open request whose candidate is no longer the target tip
+    // read this pass is recorded superseded in this same commit.
+    const tips = policy.releaseTargetTips ?? new Map<string, GitSha>();
+    for (const id of promotedOpenReleaseRequestIds) {
+      const request = cold.value.releaseRequests.find((row) => row.id === id)!;
+      const tip = tips.get(repositoryTierKey(request.target.repository));
+      const next = tip === undefined
+        ? null
+        : supersedeReleaseRequest(request, tip);
+      if (next === null) continue;
+      const blob = await io.git(op, ["hash-object", "-w", "--stdin"], {
+        stdin: new TextEncoder().encode(`${canonicalStringify(next)}\n`),
+      });
+      const blobSha = blob.stdout.trim();
+      if (!blob.ok || !/^[0-9a-f]{40}$/.test(blobSha)) {
+        return portError("unavailable", "could not form the supersession");
+      }
+      const path = `releaseRequests/${await sha256Hex(id)}.json`;
+      const move = resolved.find((row) => row.to === path);
+      if (move === undefined) {
+        return portError("invalid", "a cold family could not be resolved");
+      }
+      move.sha = blobSha;
+      superseded.set(logicalPath(path), blobSha);
     }
     if (
       policy.promoteAll === true &&
@@ -294,13 +379,24 @@ export async function buildRepairTierCommit(
   const taken = new Set(
     budgeted.demote.map((move) => `${move.from}:${move.id}`),
   );
-  const demoted = families
-    .filter((family) =>
-      family.every((move) => taken.has(`${move.from}:${move.id}`))
-    )
-    .flatMap((family) => resolvedFamilies.get(family)!);
+  const takenFamilies = families.filter((family) =>
+    family.every((move) => taken.has(`${move.from}:${move.id}`))
+  );
+  const demoted = takenFamilies.flatMap((family) =>
+    resolvedFamilies.get(family)!
+  );
+  const openHot = new Set(
+    prior.releaseRequests.filter((row) => row.status === "open").map((row) =>
+      row.id
+    ),
+  );
+  const releaseRequestsMovedToCold =
+    takenFamilies.flat().filter((move) =>
+      move.from === "releaseRequests" && openHot.has(move.id)
+    ).length;
+  const deferred = budgeted.deferred + releaseDeferred;
   if (promoted.length === 0 && demoted.length === 0) {
-    return portOk({ status: "unchanged", deferred: budgeted.deferred });
+    return portOk({ status: "unchanged", deferred });
   }
 
   const manifest: StateManifestV1 = {
@@ -359,7 +455,11 @@ export async function buildRepairTierCommit(
   // Re-read the exact candidate before it can be offered for a push.
   const nextTree = await listAll(io, op, commitSha);
   if (!nextTree.ok) return nextTree;
-  const preserved = preservationMessage(priorTree.value, nextTree.value);
+  const preserved = preservationMessage(
+    priorTree.value,
+    nextTree.value,
+    superseded,
+  );
   if (preserved !== null) return portError("invalid", preserved);
   const hot = await io.readHotTree(op, commitSha);
   if (!hot.ok) return hot;
@@ -370,6 +470,9 @@ export async function buildRepairTierCommit(
     commit: commitSha as GitSha,
     demoted: demoted.length,
     promoted: promoted.length,
-    deferred: budgeted.deferred,
+    deferred,
+    releaseRequestsMovedToCold,
+    promotedOpenReleaseRequestIds,
+    releaseRequestsSuperseded: superseded.size,
   });
 }

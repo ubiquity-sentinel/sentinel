@@ -1,4 +1,5 @@
 /** Bounded authenticated matrix recovery interleaved with serial delivery. */
+import { HOSTED_RECORD_WAIT_CAUSES } from "../repair/loop-wait-cause.ts";
 import { createActionsTargetFlow } from "./actions-target-flow.ts";
 import { matrixDigestV1 } from "../contracts/matrix.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
@@ -273,6 +274,9 @@ export async function runActionsMatrixAggregateCycles(
     ...input,
     modelStartsEnabled: lifecycleModelStarts,
     externalImplementations: true,
+    // #335: the hosted serial aggregate persists wait causes
+    // (`HOSTED_RECORD_WAIT_CAUSES`, installed rollback-target rule).
+    recordWaitCauses: HOSTED_RECORD_WAIT_CAUSES,
     // The trusted host alone posts progress comments; a model-disabled
     // bootstrap is not a delivery pass and posts none.
     progressComments: bootstrap ? undefined : input.progressComments,

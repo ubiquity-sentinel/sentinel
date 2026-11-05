@@ -489,6 +489,36 @@ accounting or merge authority.
   means zero. `plannerRefusal` is `null` or one of `deadline_margin`,
   `no_ready_records`, `reservation_denied`, `provider_unavailable` or
   `target_unavailable`. #335 supplies these values.
+- Additive `waitCauses` (#335): absent on records written before it existed,
+  `null` when finalize did not read the repair state, otherwise a histogram of
+  the records waiting in `backoff`/`unavailable` at the cycle's end. Keys are
+  `port:status:code` from the record's `wait.cause`, or `legacy:none:<reason>`
+  for a wait written without one. It has at most six keys; further keys fold
+  into `other:none:other`. The daily rollup sums it per key under the same bound
+  (absent until a folded record carried it).
+- Planner refusal (#335): `planMatrixWave` classifies each pass
+  (`src/host/matrix-plan-refusal.ts`) and reports a `refusal` with a `reason`
+  and a `readyUnplanned` count. `readyUnplanned` counts the ready records of the
+  last state read that got no cell, or is `null` when the pass stopped before
+  any read. The planner child adds optional `plannerRefusal`/`readyUnplanned`
+  keys to its `sentinel_matrix_plan_diagnostic` line, now printed on every
+  planner pass. The launcher re-parses and re-emits them. Finalize reads them
+  from the `matrix_plan` job log and sets `plannerRefusal` and
+  `counts.readyRecordsNotPlanned`.
+- Wait cause (#335, `src/contracts/work-wait-cause.ts`): `WorkWaitV1` has an
+  optional `cause: { port, status, code }`. `port` is one of `github`, `model`,
+  `budget`, `queue`, `state`, `ci` or `runtime`. `status` is one of `none`,
+  `4xx`, `429`, `5xx`, `network` or `unknown`. `code` is a short closed code
+  that matches `[a-z0-9_]{1,16}`. The trusted step loop writes it on its queue
+  holds, issue prerequisite and base-read waits and admission-unavailable waits.
+  It never stores bodies, URLs or raw text. The work-record parser accepts waits
+  with or without it. A wait without a cause serializes exactly as it did
+  before. Writes are gated by `recordWaitCauses`, which the hosted hosts set
+  from `HOSTED_RECORD_WAIT_CAUSES` (on) under the installed rollback-target
+  rule. A new revision installs with a model-disabled bootstrap that writes no
+  record (#336), and automatic rollback happens only when that bootstrap fails.
+  A runtime that cannot parse `cause` therefore never reads a state this
+  revision wrote.
 - `parseThroughputMetricsRecordV1` rejects unknown and missing keys at every
   level. It checks that `finishedAtMs >= startedAtMs` and that the canonical
   form is at most 1,024 bytes. Before any structural check it scans the whole
@@ -498,9 +528,9 @@ accounting or merge authority.
   byte bound before it parses JSON, and it requires the canonical spelling.
 - `MetricsCollectorV1` (`createMetricsCollectorV1`, in
   `throughput-metrics-collector.ts`) is the accumulator that phases fill. It
-  provides `addPhaseMs`, `addCount`, `setPlannerRefusal` and `snapshot`. The
-  first `add*` call on a field replaces its `null`, and later calls add to the
-  value. Invalid input throws.
+  provides `addPhaseMs`, `addCount`, `setPlannerRefusal`, `addWaitCause` and
+  `snapshot`. The first `add*` call on a field replaces its `null`, and later
+  calls add to the value. Invalid input throws.
 - Storage: the record is kept on the sidecar ref
   `refs/heads/sentinel-state/metrics` (`src/state/throughput-metrics-*.ts`),
   never in the repair or release snapshot. No step loop, planner or maintenance

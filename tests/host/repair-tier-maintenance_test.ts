@@ -52,6 +52,9 @@ Deno.test("repair tier maintenance: only complete listings bound demotion and fa
           demoted: 12,
           promoted: 3,
           deferred: 40,
+          releaseRequestsMovedToCold: 0,
+          promotedOpenReleaseRequestIds: ["release-1"],
+          releaseRequestsSuperseded: 1,
         }));
       },
     },
@@ -72,8 +75,10 @@ Deno.test("repair tier maintenance: only complete listings bound demotion and fa
   const applied = await runRepairTierMaintenance(deps);
   assert.equal(
     applied.action,
-    "repair-tier:applied:read:2:promoted:3:demoted:12:deferred:40",
+    "repair-tier:promoted:3:demoted:12:deferred:40:read:2",
   );
+  assert.equal(applied.releaseRequestsMovedToCold, null, "release unobserved");
+  assert.equal(seen[0].releasePath, undefined);
   assert.equal(applied.recordsRead, 2);
   assert.equal(applied.appliedHead, HEAD);
   assert.equal(seen[0].expectedHead, HEAD);
@@ -83,6 +88,24 @@ Deno.test("repair tier maintenance: only complete listings bound demotion and fa
   assert.deepEqual([...seen[0].openIssueWorkIds], [workItemIdForIssue(AI, 4)]);
   assert.deepEqual([...seen[0].protectedWorkIds!], ["a-1"]);
   assert.deepEqual([...seen[0].protectedReservationIds!], ["r-1"]);
+
+  // Release enabled: tips are read per listed repository and handed to the
+  // tier writer, which records supersessions in its own commit.
+  const tip = "6dc35d06e757107b91eb58232bd15e5f671d79b4" as GitSha;
+  const enabled = await runRepairTierMaintenance({
+    ...deps,
+    releasePath: () => Promise.resolve(portOk("enabled" as const)),
+    readTargetTip: (repository: typeof AI) =>
+      Promise.resolve(portOk(repository.name === AI.name ? tip : null)),
+  });
+  assert.equal(
+    enabled.action,
+    "repair-tier:promoted:3:demoted:12:deferred:40:read:2" +
+      ":release-enabled:moved-cold:0:superseded:1",
+  );
+  assert.equal(enabled.releaseRequestsSuperseded, 1);
+  assert.equal(seen.at(-1)!.releasePath, "enabled");
+  assert.deepEqual([...seen.at(-1)!.releaseTargetTips!.values()], [tip]);
 
   outcome = "conflict";
   assert.equal(

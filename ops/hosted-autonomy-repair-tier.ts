@@ -9,6 +9,9 @@
  * counts for the throughput metrics collector.
  */
 
+import type { GitSha } from "../src/contracts/brands.ts";
+import { portError, portOk } from "../src/contracts/ports.ts";
+import { releasePathDisabled } from "../src/repair/vps-delivery.ts";
 import { CLOSED_C_WAVE } from "../src/host/modern-matrix-recovery.ts";
 import {
   type RepairTierMaintenanceResultV1,
@@ -63,9 +66,32 @@ export async function runHostedRepairTierStep(
     store: {
       readRepair: () => deps.state.readRepair(),
       tierRepair: (input) => tiers.store.tierRepair(input),
+      readRepairTiered: () => tiers.store.readRepairTiered(),
     },
     listOpenIssueNumbers: (repository) =>
       tiers.listOpenIssueNumbers(repository),
+    // #325: the release path from the positively read release ref.
+    releasePath: async () => {
+      const read = await deps.state.readRelease();
+      if (!read.ok) return read;
+      if (read.value.status !== "found") {
+        return portError("unavailable", "release state absent");
+      }
+      return portOk(
+        releasePathDisabled(read.value.snapshot) ? "disabled" : "enabled",
+      );
+    },
+    // #325: the target tip from the default-branch ref read.
+    readTargetTip: async (repository) => {
+      const surface = deps.githubFor(repository);
+      if (surface === null) return portOk(null);
+      const branch = await surface.readDefaultBranch();
+      if (branch === null) return portOk(null);
+      const tip = await surface.readBaseTip(branch);
+      return portOk(
+        tip !== null && /^[0-9a-f]{40}$/.test(tip) ? tip as GitSha : null,
+      );
+    },
     clock: deps.clock,
     // The same point after which no continued phase may start.
     deadlineAt: startedAt + HOSTED_AUTONOMY_PASS_DEADLINE_MS -
@@ -91,7 +117,24 @@ export async function runHostedRepairTierStep(
     demoted: outcome.demoted,
     promoted: outcome.promoted,
     deferred: outcome.deferred,
+    releaseRequestsMovedToCold: outcome.releaseRequestsMovedToCold,
+    releaseRequestsSuperseded: outcome.releaseRequestsSuperseded,
   }));
+  // The cycle collector's existing counters (#338); demoted/promoted and
+  // superseded have no counter yet and travel only in the line above.
+  try {
+    if (outcome.recordsRead !== null) {
+      deps.metrics?.addCount("recordsRead", outcome.recordsRead);
+    }
+    if (outcome.releaseRequestsMovedToCold !== null) {
+      deps.metrics?.addCount(
+        "releaseRequestsMovedToCold",
+        outcome.releaseRequestsMovedToCold,
+      );
+    }
+  } catch {
+    // Advisory metrics never change the pass.
+  }
   if (
     outcome.status !== "applied" || outcome.beforeHead === null ||
     outcome.appliedHead === null

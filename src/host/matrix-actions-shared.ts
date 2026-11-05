@@ -1,4 +1,5 @@
 /** Native carrier validation, trusted host composition and bounded artifact IO. */
+import { HOSTED_RECORD_WAIT_CAUSES } from "../repair/loop-wait-cause.ts";
 import { canonicalStringify } from "../contracts/canonical.ts";
 import {
   type MatrixCellGrantV1,
@@ -95,6 +96,8 @@ export function targetDeps(
     model: input.model,
     budget: input.budget,
     externalImplementations: true,
+    // #335: hosted cells and ingest persist wait causes.
+    recordWaitCauses: input.recordWaitCauses ?? HOSTED_RECORD_WAIT_CAUSES,
     legacyReviewCutoff: input.legacyReviewCutoff ?? null,
   };
 }

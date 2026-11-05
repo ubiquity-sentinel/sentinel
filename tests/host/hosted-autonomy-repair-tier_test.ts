@@ -7,6 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { GitStateStore } from "../../src/state/mod.ts";
+import { createMetricsCollectorV1 } from "../../src/contracts/throughput-metrics-collector.ts";
 import { portOk } from "../../src/contracts/ports.ts";
 import type { RepositoryIdentityV1 } from "../../src/contracts/shared.ts";
 import type { HostedAutonomyDepsV1 } from "../../ops/hosted-autonomy-types.ts";
@@ -85,7 +86,8 @@ Deno.test("hosted maintenance pass: 731-record surface demotes under budget, def
       },
     };
 
-    const first = await pass(rig, github, extra);
+    const metrics = createMetricsCollectorV1();
+    const first = await pass(rig, github, { ...extra, metrics });
     assert.notEqual(
       first.result.status,
       "failed",
@@ -99,15 +101,28 @@ Deno.test("hosted maintenance pass: 731-record surface demotes under budget, def
     );
     assert.equal(first.summary.recordsRead, FIXTURE_RECORDS);
     assert.equal(first.summary.promoted, 0);
+    // The rig's release ref has no VPS release: the path is observed disabled.
+    assert.equal(first.summary.releaseRequestsMovedToCold, 0);
+    assert.equal(first.summary.releaseRequestsSuperseded, 0);
     // Whole families only: 1,200 rows fit exactly, 2,024 eligible rows wait.
     assert.equal(first.summary.demoted, 1_200);
     assert.equal(first.summary.deferred, 2_024);
     assert.ok(
       first.result.actions.some((action) =>
-        action.startsWith("repair-tier:applied:read:")
+        action ===
+          "repair-tier:promoted:0:demoted:1200:deferred:2024:read:4962" +
+            ":release-disabled:moved-cold:0:superseded:0"
       ),
       JSON.stringify(first.result.actions),
     );
+
+    const record = metrics.snapshot({
+      cycle: { runId: 1, attempt: 1 },
+      startedAtMs: NOW,
+      finishedAtMs: NOW + 1,
+    });
+    assert.equal(record.counts.recordsRead, FIXTURE_RECORDS);
+    assert.equal(record.counts.releaseRequestsMovedToCold, 0);
 
     // The next pass reads exactly the rows the first one left hot and keeps
     // draining under the same budget, never failing.
