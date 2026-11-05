@@ -57,7 +57,26 @@ export const THROUGHPUT_COUNTERS_V1 = [
   "ownerNoticesSent",
   "releaseRequestsMovedToCold",
 ] as const;
-export type ThroughputCounterV1 = typeof THROUGHPUT_COUNTERS_V1[number];
+export type ThroughputRequiredCounterV1 = typeof THROUGHPUT_COUNTERS_V1[number];
+
+/**
+ * Additive counters (#324 tier step): present only when observed, so a cycle
+ * that did not observe them keeps the shape (and bytes) of older records.
+ * Never `null` when present.
+ */
+export const THROUGHPUT_OPTIONAL_COUNTERS_V1 = [
+  "recordsDemoted",
+  "recordsPromoted",
+  "releaseRequestsSuperseded",
+] as const;
+export type ThroughputOptionalCounterV1 =
+  typeof THROUGHPUT_OPTIONAL_COUNTERS_V1[number];
+export type ThroughputCounterV1 =
+  | ThroughputRequiredCounterV1
+  | ThroughputOptionalCounterV1;
+export type ThroughputCountsV1 =
+  & Record<ThroughputRequiredCounterV1, number | null>
+  & Partial<Record<ThroughputOptionalCounterV1, number>>;
 
 /**
  * Closed planner refusal reasons (#335 fills them; `null` until then and
@@ -119,7 +138,7 @@ export interface ThroughputMetricsRecordV1 {
   startedAtMs: number;
   finishedAtMs: number;
   phaseMs: Record<ThroughputPhaseV1, number | null>;
-  counts: Record<ThroughputCounterV1, number | null>;
+  counts: ThroughputCountsV1;
   plannerRefusal: PlannerRefusalReasonV1 | null;
   /**
    * Additive (#335): absent on records written before it existed; `null`
@@ -200,6 +219,27 @@ function parseNullableCounts<K extends string>(
   return out;
 }
 
+/** Required nullable counters plus the optional ones that are present. */
+function parseCounts(input: unknown, path: string): ThroughputCountsV1 {
+  const obj = expectRecord(input, path);
+  expectExactKeysWithOptional(
+    obj,
+    THROUGHPUT_COUNTERS_V1,
+    THROUGHPUT_OPTIONAL_COUNTERS_V1,
+    path,
+  );
+  const out = {} as ThroughputCountsV1;
+  for (const key of THROUGHPUT_COUNTERS_V1) {
+    out[key] = expectNullable(obj[key], `${path}.${key}`, expectCount);
+  }
+  for (const key of THROUGHPUT_OPTIONAL_COUNTERS_V1) {
+    if (obj[key] !== undefined) {
+      out[key] = expectCount(obj[key], `${path}.${key}`);
+    }
+  }
+  return out;
+}
+
 /** A bounded `port:status:code` histogram with positive counts. */
 export function parseThroughputWaitCausesV1(
   input: unknown,
@@ -253,11 +293,7 @@ export function parseThroughputMetricsRecordV1(
       THROUGHPUT_PHASES_V1,
       "$.phaseMs",
     ),
-    counts: parseNullableCounts(
-      obj.counts,
-      THROUGHPUT_COUNTERS_V1,
-      "$.counts",
-    ),
+    counts: parseCounts(obj.counts, "$.counts"),
     plannerRefusal: expectNullable(
       obj.plannerRefusal,
       "$.plannerRefusal",
@@ -320,7 +356,10 @@ export interface ThroughputDailySummaryV1 {
   firstStartedAtMs: number;
   lastFinishedAtMs: number;
   phaseMs: Record<ThroughputPhaseV1, ThroughputSumV1>;
-  counts: Record<ThroughputCounterV1, ThroughputSumV1>;
+  /** Optional counters appear once a folded record observed them. */
+  counts:
+    & Record<ThroughputRequiredCounterV1, ThroughputSumV1>
+    & Partial<Record<ThroughputOptionalCounterV1, ThroughputSumV1>>;
   plannerRefusals: Record<PlannerRefusalReasonV1, number>;
   /** Additive (#335): summed record histograms; absent until one had it. */
   waitCauses?: ThroughputWaitCausesV1;
@@ -345,16 +384,22 @@ export function throughputDateV1(atMs: number): string {
   return new Date(atMs).toISOString().slice(0, 10);
 }
 
-function parseSums<K extends string>(
+function parseSums<K extends string, O extends string = never>(
   input: unknown,
   keys: readonly K[],
   records: number,
   path: string,
-): Record<K, ThroughputSumV1> {
+  optional: readonly O[] = [],
+): Record<K, ThroughputSumV1> & Partial<Record<O, ThroughputSumV1>> {
   const obj = expectRecord(input, path);
-  expectExactKeys(obj, keys, path);
-  const out = {} as Record<K, ThroughputSumV1>;
-  for (const key of keys) {
+  expectExactKeysWithOptional(obj, keys, optional, path);
+  const out = {} as Record<string, ThroughputSumV1>;
+  for (
+    const key of [
+      ...keys,
+      ...optional.filter((k) => obj[k] !== undefined),
+    ]
+  ) {
     const at = `${path}.${key}`;
     const row = expectRecord(obj[key], at);
     expectExactKeys(row, ["sum", "known"], at);
@@ -365,7 +410,9 @@ function parseSums<K extends string>(
     }
     out[key] = { sum, known };
   }
-  return out;
+  return out as
+    & Record<K, ThroughputSumV1>
+    & Partial<Record<O, ThroughputSumV1>>;
 }
 
 export function parseThroughputDailySummaryV1(
@@ -415,7 +462,13 @@ export function parseThroughputDailySummaryV1(
     firstStartedAtMs,
     lastFinishedAtMs,
     phaseMs: parseSums(obj.phaseMs, THROUGHPUT_PHASES_V1, records, "$.phaseMs"),
-    counts: parseSums(obj.counts, THROUGHPUT_COUNTERS_V1, records, "$.counts"),
+    counts: parseSums(
+      obj.counts,
+      THROUGHPUT_COUNTERS_V1,
+      records,
+      "$.counts",
+      THROUGHPUT_OPTIONAL_COUNTERS_V1,
+    ),
     plannerRefusals,
     ...(obj.waitCauses === undefined ? {} : {
       waitCauses: parseThroughputWaitCausesV1(obj.waitCauses, "$.waitCauses"),
@@ -480,10 +533,36 @@ export function foldThroughputRecordV1(
       record.finishedAtMs,
     ),
     phaseMs: sums(THROUGHPUT_PHASES_V1, summary?.phaseMs, record.phaseMs),
-    counts: sums(THROUGHPUT_COUNTERS_V1, summary?.counts, record.counts),
+    counts: {
+      ...sums(THROUGHPUT_COUNTERS_V1, summary?.counts, record.counts),
+      ...optionalSums(summary?.counts, record.counts),
+    },
     plannerRefusals,
     ...(waitCauses === undefined ? {} : { waitCauses }),
   };
+}
+
+/** Optional counter sums: present once any folded record observed them. */
+function optionalSums(
+  prior:
+    | Partial<Record<ThroughputOptionalCounterV1, ThroughputSumV1>>
+    | undefined,
+  values: ThroughputCountsV1,
+): Partial<Record<ThroughputOptionalCounterV1, ThroughputSumV1>> {
+  const out: Partial<Record<ThroughputOptionalCounterV1, ThroughputSumV1>> = {};
+  for (const key of THROUGHPUT_OPTIONAL_COUNTERS_V1) {
+    const base = prior?.[key];
+    const value = values[key];
+    if (value === undefined) {
+      if (base !== undefined) out[key] = { ...base };
+      continue;
+    }
+    out[key] = {
+      sum: (base?.sum ?? 0) + value,
+      known: (base?.known ?? 0) + 1,
+    };
+  }
+  return out;
 }
 
 function utf8Length(text: string): number {

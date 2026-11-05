@@ -27,6 +27,7 @@ import {
   DELIVERY_COUNTS_ENV,
   parseDeliveryCounts,
 } from "./delivery-counts-output.ts";
+import { parseTierCounts, TIER_COUNTS_ENV } from "./tier-counts-output.ts";
 import { hostedOrdinaryAdmitted } from "../contracts/hosted-supervisor-verification.ts";
 import { fetchHttpTransport } from "../github/http.ts";
 import type { HttpTransportV1 } from "../github/http.ts";
@@ -326,6 +327,7 @@ export async function runHostedSupervisorHost(
         runSummary,
         ownerNoticesSent,
         deliveryCounts: parseDeliveryCounts(input.env[DELIVERY_COUNTS_ENV]),
+        tierCounts: parseTierCounts(input.env[TIER_COUNTS_ENV]),
         repair: repairRead,
       });
     }
@@ -414,6 +416,7 @@ export async function main(): Promise<void> {
     [COOLDOWN_MODE_ENV]: Deno.env.get(COOLDOWN_MODE_ENV),
     [UPKEEP_DEFERRAL_ENV]: Deno.env.get(UPKEEP_DEFERRAL_ENV),
     [DELIVERY_COUNTS_ENV]: Deno.env.get(DELIVERY_COUNTS_ENV),
+    [TIER_COUNTS_ENV]: Deno.env.get(TIER_COUNTS_ENV),
   };
   const job = supervisorJob(env.GITHUB_JOB);
   const identity = parseHostedEnvironment(env, job);

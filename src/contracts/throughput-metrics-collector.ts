@@ -17,8 +17,10 @@ import {
   PLANNER_REFUSAL_REASONS_V1,
   type PlannerRefusalReasonV1,
   THROUGHPUT_COUNTERS_V1,
+  THROUGHPUT_OPTIONAL_COUNTERS_V1,
   THROUGHPUT_PHASES_V1,
   type ThroughputCounterV1,
+  type ThroughputCountsV1,
   type ThroughputCycleIdV1,
   type ThroughputMetricsRecordV1,
   type ThroughputPhaseV1,
@@ -58,7 +60,7 @@ export function createMetricsCollectorV1(): MetricsCollectorV1 {
   ) as Record<ThroughputPhaseV1, number | null>;
   const counts = Object.fromEntries(
     THROUGHPUT_COUNTERS_V1.map((key) => [key, null]),
-  ) as Record<ThroughputCounterV1, number | null>;
+  ) as unknown as ThroughputCountsV1;
   let plannerRefusal: PlannerRefusalReasonV1 | null = null;
   let waitCauses: Record<string, number> | null = null;
   return {
@@ -72,9 +74,15 @@ export function createMetricsCollectorV1(): MetricsCollectorV1 {
       );
     },
     addCount(counter, n) {
-      if (!THROUGHPUT_COUNTERS_V1.includes(counter)) {
+      if (
+        !(THROUGHPUT_COUNTERS_V1 as readonly string[]).includes(counter) &&
+        !(THROUGHPUT_OPTIONAL_COUNTERS_V1 as readonly string[]).includes(
+          counter,
+        )
+      ) {
         throw new Error("unknown metrics counter");
       }
+      // An optional counter appears in the record only once observed.
       counts[counter] = nonnegative(
         (counts[counter] ?? 0) + nonnegative(n, "metrics count"),
         "metrics count",
