@@ -642,14 +642,25 @@ export class GitStateStore extends StateGitTransport implements StateStore {
 // write capability and vice versa).
 // ---------------------------------------------------------------------------
 
+/**
+ * The consumer-facing repair capability. The hot/cold tier methods are
+ * optional here: only the trusted maintenance tier step needs them, and it
+ * takes the concrete `RepairTieredGitStateStore` the factory returns, so a
+ * host or fake that never wires tiers stays a valid repair store.
+ */
 export interface RepairGitStateStore
-  extends StateReadView, RepairStateWriter, RepairTierStore {}
+  extends StateReadView, RepairStateWriter, Partial<RepairTierStore> {}
+/** The production repair store: the ordinary capability plus its tiers. */
+export type RepairTieredGitStateStore =
+  & StateReadView
+  & RepairStateWriter
+  & RepairTierStore;
 export interface ReleaseGitStateStore
   extends StateReadView, ReleaseStateWriter {}
 
 export function createRepairStateStore(
   options: Omit<GitStateStoreOptions, "role">,
-): RepairGitStateStore {
+): RepairTieredGitStateStore {
   return new GitStateStore({ ...options, role: "repair" });
 }
 
