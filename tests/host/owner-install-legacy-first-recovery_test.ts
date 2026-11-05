@@ -158,6 +158,11 @@ Deno.test("legacy first recovery actual maintenance: retained R81 health permits
       runtimeMigrationOnly: "false",
       runtimeMigrationRevision: "",
       runtimeMigrationGeneration: "",
+      // #327/#330/#338: maintenance publishes the finalize inputs even when
+      // nothing was observed.
+      upkeepDeferral: "none",
+      deliveryCounts: "none",
+      tierCounts: "none",
     });
     assert.deepEqual(await rig.current(), before);
     assert.deepEqual(await rig.repair.readRepair(), repairBefore);
