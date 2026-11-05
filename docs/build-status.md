@@ -1,5 +1,36 @@
 # Build status
 
+## Throughput plan #340 integrated candidate (2026-11-05 04:42 UTC)
+
+Sixteen child issues of [#340](https://github.com/ubiquity-sentinel/sentinel/issues/340) were implemented by isolated workers in separate worktrees and integrated by the primary integration owner on `codex/throughput-20261105-g340` from development `89cfde8`. Integrated candidate: ``8de3d8c` (code head; this ledger commit sits directly on top of it)`. Policy changes are recorded in `docs/DECISIONS.md` under "2026-11-05: throughput plan implementation (#340)". No PR was opened for the development integration; the branch was pushed directly under the 2026-10-20 owner grant.
+
+Per-issue disposition (local evidence on the integrated candidate, Deno 2.9.8 with type checking; every command bounded at 300 s):
+
+| Issue | Change | Local evidence | Open hosted assertion |
+| --- | --- | --- | --- |
+| #324 | hot/cold repair tiers, `repair-archive/` with `LAYOUT` marker, wired into the maintenance pass; full-ledger readers switched | tests/state/repair-tier, tests/host/hosted-autonomy-repair-tier (731-record fixture: 1,200 demoted per pass under budget) | 30 cycles with maintenance+repair ≤ 8 min median |
+| #325 | release-deferred families go cold while release is disabled; promoted unchanged, superseded on moved tip | tests/repair/release-deferred-cold, tests/state/repair-tier-release | zero open release requests in the hot read |
+| #326 | one GraphQL batch per repository; `stepInputs` stamp; unchanged-input skip | tests/repair/loop-input-gate (74 records / 3 repos), tests/github/client-live-inputs | repair phase ≤ 5 min median |
+| #327 | missing-input quarantine refusals defer (exit 0); streak + one notice on third deferral via finalize | tests/host/hosted-autonomy-historical-deferral (Nov 3 shape), upkeep-deferral-finalize | forced incomplete pass still plans and delivers |
+| #328 | per-repository `repair_cell` matrix job on the planned fan-out, sealed deltas authenticated by Actions artifact identity, applied by finalize in one expected-head write; serial repair skips delegated records | tests/repair/repository-pass, repair-delta-contract; tests/host/repair-fanout-finalize (two authenticated deltas applied, tampered rejected), repair-cell-host | repair wall ≤ max per-repo + finalize |
+| #329 | head-of-line refresh only; line oldest-first | tests/repair/delivery-head-of-line (5 records, 3 base moves, 1 refresh) | refreshes per merged PR ≤ 1 / week |
+| #330 | one validated train per repository per pass; train ledger ref; composer; runtime hold; ref cleanup | tests/host/hosted-autonomy-delivery-train (5 PRs → 1 CI run, 5 merges; red drops newest, lands 4) | one live Passport/Prospector train |
+| #331 | per-target `mergeMethod`, default squash where allowed; squash landing verified by parent+tree | tests/github/merge-squash, tests/host/hosted-autonomy-squash-delivery | one Sentinel PR landed by squash |
+| #332 | target capability cached per tip/generation; one marker owner issue; readmission | tests/repair/target-capability, tests/host/hosted-autonomy-target-capability(-wiring) | first owner issues on CI-less targets |
+| #333 | deterministic pre-reservation checks; prompt carries denylist and bounds | tests/repair/pre-reservation-checks | weekly refused counts → 0 |
+| #334 | attempt input fingerprint; `identical_attempt_refused`; re-grant on changed inputs | tests/repair/identical-attempt, tests/host/hosted-autonomy-identical-attempt | no record > 3 identical attempts / week |
+| #335 | planner refusal reason + unplanned count; wait causes on (hosted) | tests/host/matrix-plan-refusal, tests/repair/loop-wait-cause | 10 cycles explaining every unplanned ready record |
+| #336 | bootstrap is a health pass; steps no record | tests/host/bootstrap-health-pass (700 records, step port never called) | bootstrap ≤ 5 min on next 3 installs |
+| #337 | `requiredForDelivery` post-merge gate; reopen-once; table empty pending owner check names | tests/host/hosted-autonomy-delivery-checks | one Passport delivery with deploy check |
+| #338 | per-cycle `ThroughputMetricsRecordV1` on `sentinel-state/metrics` | tests/state/throughput-metrics, tests/host/throughput-metrics-finalize | 10 consecutive cycles with a record |
+| #339 | `sentinel report --since` | tests/state/throughput-report | one real-week report vs GitHub counts |
+
+Module sweeps on the integrated candidate: tests/contracts 195, tests/state 88, tests/github 622, tests/budget 45, tests/model 12, all 159 tests/repair files and all 466 tests/host files pass on the integrated head, run in bounded chunks and re-run file by file where a chunk hit the 300 s bound. Four regressions found by the sweeps were fixed at their cause before this entry (#333 denylist normalisation, #334 inputs recorded only for judged outcomes and conflict-resolution base tip, #327 C63 harness, one stale output pin). The only remaining failures are environment-only and fail identically on base `89cfde8`: `hosted-app-mint`, `hosted-app-principal-native`, `hosted-runtime-bootstrap`, `hosted-self-dependencies`, `self-dependency-preparation` and `actions-self-dependencies` (this container lacks the App-token action `node_modules` and the required Node version). `deno task check`, `deno fmt --check`, `deno lint` and `deno task size:check` are clean. Codex development review per the 2026-10-20 preference remains to be requested on the development push.
+
+Owner items surfaced by this work (not blocking integration): exact `requiredForDelivery` check names for Passport and the router (#337); ntfy topic/secret for the deferral notice adapter (#327); targets whose CI does not run on `sentinel-trains/**` pushes need a push trigger or dispatch capability (#330); the installed `sentinel` CLI's declared permissions do not yet cover `report` (#339); rollback past this revision requires `tierRepair({promoteAll: true})` first (#324).
+
+Hosted: development is fast-forwarded to this candidate under the 2026-10-20 owner grant; CI on the exact SHA is the next gate. The candidate changes `.github/workflows/supervisor.yml` (maintenance outputs, finalize needs, `repair_cell` job), so dispatcher auto-follow defers it and one manual advance of `sentinel-supervisor` to the CI-green SHA is required; the model-disabled bootstrap at generation+1 is then a health pass (#336). Every per-issue hosted assertion above stays open until observed on scheduled cycles.
+
 ## Passport work trial accepted and observed (2026-10-30 12:35 UTC)
 
 Exact bfb133a74f679b1010dd03438f8a2e573e870c72 passed native round3/source task acceptance and canonical CI41047035907/all7jobs, then automatic follow/dispatch41048603291 installed it at generation130. Bootstrap41048672234/1 has accepted journal/no pointer intent and native job124041312148/logbd33eaffc97511d607eaed767cfcdb6c8affe8e5c1b8ccb44dc3c01ac71f7462 matching healthy/startupReady/settled proof; exact prior0e31428d/g129 is verified and no rollback was needed. Source installation and the subsequent real trial observation are separate from the initial14-of18 local projection.
