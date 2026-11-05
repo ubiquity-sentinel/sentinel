@@ -398,15 +398,17 @@ Deno.test("P0 findings trigger a fresh bounded implementation/candidate/replay p
     await rig3.ctx.cleanup();
   }
 
-  // Protected path: candidate blocked before any publication.
+  // Protected path: published for the owner to merge (owner-landing policy,
+  // 2026-11-05), never parked unpublished and never merged by Sentinel.
   const rig4 = await makeRig("protected", {
     model: { changedPaths: ["src/handler.ts"] },
   });
   try {
     await rig4.run();
     const state4 = await rig4.snapshot();
-    assert.equal(state4.work[0].nextStep, "blocked");
-    assert.equal(rig4.github.pushes.length, 0);
+    assert.notEqual(state4.work[0].nextStep, "blocked");
+    assert.deepEqual(state4.work[0].ownerLanding?.paths, ["src/handler.ts"]);
+    assert.equal(rig4.github.pushes.length, 1);
     assert.equal(state4.reservations[0].outcome, "submitted", "charged");
   } finally {
     await rig4.ctx.cleanup();
