@@ -37,6 +37,7 @@ import {
   planRepairPromotions,
   takeDemotionBudget,
 } from "./state-repair-tier-plan.ts";
+import { planReleasePromotions } from "./state-repair-tier-release.ts";
 import type {
   RepairTierMoveV1,
   RepairTierPolicyV1,
@@ -49,15 +50,23 @@ export interface RepairTieredSnapshotV1 {
   cold: RepairColdTierV1;
 }
 
+/** Release-deferred movement of one pass (Sentinel #325). */
+export interface RepairTierReleaseMovesV1 {
+  /** Open release requests moved cold (release path disabled). */
+  releaseRequestsMovedToCold: number;
+  /** Ids of open release requests promoted hot (release path enabled). */
+  promotedOpenReleaseRequestIds: string[];
+}
+
 export type RepairTierResultV1 =
   | { status: "unchanged"; head: GitSha; deferred: number }
-  | {
+  | ({
     status: "applied";
     head: GitSha;
     demoted: number;
     promoted: number;
     deferred: number;
-  }
+  } & RepairTierReleaseMovesV1)
   | { status: "conflict"; currentHead: GitSha | null }
   | { status: "ambiguous"; currentHead: GitSha | null };
 
@@ -223,13 +232,13 @@ export async function buildRepairTierCommit(
 ): Promise<
   PortResultV1<
     | { status: "unchanged"; deferred: number }
-    | {
+    | ({
       status: "candidate";
       commit: GitSha;
       demoted: number;
       promoted: number;
       deferred: number;
-    }
+    } & RepairTierReleaseMovesV1)
   >
 > {
   const catalog = await readColdCatalog(io, op, head);
@@ -252,12 +261,48 @@ export async function buildRepairTierCommit(
       break;
     }
   }
+  // With the release path enabled, release-deferred families return hot; the
+  // cold request rows alone decide whether any open one is there.
+  if (!needsCold && policy.releasePath === "enabled") {
+    const requestPrefix = `${REPAIR_COLD_PREFIX}/releaseRequests/`;
+    const requestEntries = catalog.value.entries.filter((entry) =>
+      entry.path.startsWith(requestPrefix)
+    );
+    if (requestEntries.length > 0) {
+      const requests = await readColdTier(io, op, {
+        tree: catalog.value.tree,
+        entries: requestEntries,
+      }, { partial: true });
+      if (!requests.ok) return requests;
+      needsCold = requests.value.releaseRequests.some((row) =>
+        row.status === "open"
+      );
+    }
+  }
   let promoted: ResolvedMove[] = [];
+  let releaseDeferred = 0;
+  let promotedOpenReleaseRequestIds: string[] = [];
   if (needsCold) {
     const cold = await readColdTier(io, op, catalog.value);
     if (!cold.ok) return cold;
+    const release = planReleasePromotions(cold.value, policy);
+    releaseDeferred = release.deferred;
+    const plan = planRepairPromotions(
+      prior,
+      cold.value,
+      policy,
+      release.seeds,
+    );
+    const openCold = new Set(
+      cold.value.releaseRequests.filter((row) => row.status === "open").map((
+        row,
+      ) => row.id),
+    );
+    promotedOpenReleaseRequestIds = plan.filter((move) =>
+      move.from === "releaseRequests" && openCold.has(move.id)
+    ).map((move) => move.id).sort();
     const resolved = await resolveMoves(
-      planRepairPromotions(prior, cold.value, policy),
+      plan,
       priorTree.value,
       "promote",
     );
@@ -279,13 +324,24 @@ export async function buildRepairTierCommit(
   const taken = new Set(
     budgeted.demote.map((move) => `${move.from}:${move.id}`),
   );
-  const demoted = families
-    .filter((family) =>
-      family.every((move) => taken.has(`${move.from}:${move.id}`))
-    )
-    .flatMap((family) => resolvedFamilies.get(family)!);
+  const takenFamilies = families.filter((family) =>
+    family.every((move) => taken.has(`${move.from}:${move.id}`))
+  );
+  const demoted = takenFamilies.flatMap((family) =>
+    resolvedFamilies.get(family)!
+  );
+  const openHot = new Set(
+    prior.releaseRequests.filter((row) => row.status === "open").map((row) =>
+      row.id
+    ),
+  );
+  const releaseRequestsMovedToCold =
+    takenFamilies.flat().filter((move) =>
+      move.from === "releaseRequests" && openHot.has(move.id)
+    ).length;
+  const deferred = budgeted.deferred + releaseDeferred;
   if (promoted.length === 0 && demoted.length === 0) {
-    return portOk({ status: "unchanged", deferred: budgeted.deferred });
+    return portOk({ status: "unchanged", deferred });
   }
 
   const manifest: StateManifestV1 = {
@@ -340,6 +396,8 @@ export async function buildRepairTierCommit(
     commit: commitSha as GitSha,
     demoted: demoted.length,
     promoted: promoted.length,
-    deferred: budgeted.deferred,
+    deferred,
+    releaseRequestsMovedToCold,
+    promotedOpenReleaseRequestIds,
   });
 }

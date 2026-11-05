@@ -41,6 +41,8 @@ Deno.test("repair tier maintenance: only complete listings bound demotion and fa
         demoted: 12,
         promoted: 3,
         deferred: 40,
+        releaseRequestsMovedToCold: 0,
+        promotedOpenReleaseRequestIds: [],
       }));
     },
   };

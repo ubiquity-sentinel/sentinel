@@ -678,8 +678,14 @@ export {
 } from "./state-repair-tier.ts";
 export type {
   RepairTieredSnapshotV1,
+  RepairTierReleaseMovesV1,
   RepairTierResultV1,
 } from "./state-repair-tier.ts";
+export { repositoryTierKey } from "./state-repair-tier-plan.ts";
+export {
+  RELEASE_SUPERSEDED_REASON,
+  supersedeReleaseRequest,
+} from "./state-repair-tier-release.ts";
 export type {
   RepairTieredReadV1,
   RepairTierStore,
