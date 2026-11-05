@@ -7,8 +7,9 @@
  * cooldown), the repository is reported `unavailable` — never an empty
  * success — and each record's inputs come from the existing per-record reads
  * instead (`readIssue`, `readPullRequest`, `readChecks`, `readRef`), at most
- * once per record per pass. A record whose inputs cannot be read has no inputs
- * (`null`): it is stepped as before, never skipped.
+ * once per record per pass, with bounded read concurrency. A record whose
+ * inputs cannot be read has no inputs (`null`): it is stepped as before, never
+ * skipped.
  *
  * These are advisory scheduling inputs: they decide only whether a record
  * whose inputs are unchanged needs another step. A stepped record still
@@ -68,10 +69,16 @@ function pullNumber(record: WorkRecordV1): number | null {
   return record.target.pr ?? record.intent?.pr ?? null;
 }
 
+// Advisory reads only; stepping and all effects remain serial.
+const FALLBACK_READ_CONCURRENCY = 4;
+
 export class PassLiveInputs {
   private readonly repositories = new Map<string, RepositoryReadV1>();
   private readonly records = new Map<string, RecordLiveInputsV1 | null>();
-  private readonly fallbackTips = new Map<string, GitSha | null | "failed">();
+  private readonly fallbackTips = new Map<
+    string,
+    Promise<GitSha | null | "failed">
+  >();
   readonly metrics: LiveInputMetricsV1 = {
     batchReads: 0,
     batchUnavailable: 0,
@@ -99,8 +106,29 @@ export class PassLiveInputs {
       groups.set(key, group);
     }
     for (const [key, group] of groups) {
-      this.repositories.set(key, await this.readRepository(group));
+      const read = await this.readRepository(group);
+      this.repositories.set(key, read);
+      if (read.status === "unavailable") await this.primeFallback(group);
     }
+  }
+
+  /** Avoid a repository-sized chain of REST latency after a failed batch. */
+  private async primeFallback(group: readonly WorkRecordV1[]): Promise<void> {
+    let next = 0;
+    const worker = async () => {
+      while (next < group.length) {
+        if (this.deps.clock.now() >= this.bounds.runDeadline) return;
+        // Claim synchronously before awaiting so each record is read once.
+        const record = group[next++];
+        await this.inputsFor(record);
+      }
+    };
+    await Promise.all(
+      Array.from(
+        { length: Math.min(FALLBACK_READ_CONCURRENCY, group.length) },
+        worker,
+      ),
+    );
   }
 
   private async readRepository(
@@ -246,15 +274,18 @@ export class PassLiveInputs {
     }
   }
 
-  private async fallbackTip(
+  private fallbackTip(
     record: WorkRecordV1,
     branch: string,
   ): Promise<GitSha | null | "failed"> {
     const key = `${repositoryKey(record.repository)}#${branch}`;
     const cached = this.fallbackTips.get(key);
     if (cached !== undefined) return cached;
-    const read = await this.deps.github.readRef(`refs/heads/${branch}`);
-    const tip = read.ok ? read.value?.sha ?? null : "failed";
+    // Cache the in-flight read too: concurrent workers share one base read.
+    const tip = this.deps.github.readRef(`refs/heads/${branch}`).then(
+      (read) => read.ok ? read.value?.sha ?? null : "failed" as const,
+      () => "failed" as const,
+    );
     this.fallbackTips.set(key, tip);
     return tip;
   }

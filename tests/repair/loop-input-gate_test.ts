@@ -28,6 +28,7 @@ import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import { DurableGitHubCooldownGate } from "../../src/repair/github-cooldown.ts";
 import { runRepairCycle } from "../../src/repair/loop.ts";
+import { PassLiveInputs } from "../../src/repair/loop-live-inputs.ts";
 import { PASS_SUMMARY_LINE_KIND } from "../../src/repair/pass-summary-line.ts";
 import { STEP_INPUTS_MAX_SKIP_MS } from "../../src/repair/step-inputs.ts";
 import { STEP_LINE_KIND } from "../../src/repair/step-line.ts";
@@ -324,7 +325,7 @@ Deno.test("input gate: a failed batch falls back to per-record reads and is repo
     rig.github.calls.filter((call) => call.startsWith("readIssue")).length;
   const fallback = await pass(rig);
   // Unavailable is never an empty success: the batch stamps do not match the
-  // per-record inputs, so every record is stepped, read one by one.
+  // per-record inputs, so every record is still stepped.
   assert.equal(fallback.summary.batchUnavailable, 3);
   assert.equal(fallback.summary.batchReads, 0);
   assert.equal(fallback.summary.recordsRead, 12);
@@ -352,4 +353,181 @@ Deno.test("input gate: a historical record without a stamp still parses and is s
   assert.equal(stamp.deadline, T0 + STEP_INPUTS_MAX_SKIP_MS);
   // The stamp never moves the record's update time.
   assert.equal(rig.state.repair!.work[0].updatedAt, legacy.updatedAt);
+});
+
+Deno.test("input gate: failed-batch reads at 60 records stay bounded and concurrent", async () => {
+  const work = Array.from(
+    { length: 60 },
+    (_, index) => pendingArtifact(REPOS[0], index),
+  );
+  const rig = makeRig(work);
+  rig.github.failBatch = true;
+  const readIssue = rig.github.readIssue.bind(rig.github);
+  const pending: (() => void)[] = [];
+  let active = 0;
+  let peak = 0;
+  let waves = 0;
+  // Resolve each concurrent wave together after 18 seconds of injected time;
+  // this exercises latency without a real timer, network or model call.
+  rig.github.readIssue = async (number) => {
+    active++;
+    peak = Math.max(peak, active);
+    await new Promise<void>((resolve) => {
+      pending.push(resolve);
+      if (pending.length === 1) {
+        queueMicrotask(() => {
+          waves++;
+          rig.clock.advance(18_000);
+          for (const ready of pending.splice(0)) ready();
+        });
+      }
+    });
+    active--;
+    return readIssue(number);
+  };
+
+  const started = rig.clock.now();
+  const first = await pass(rig);
+  assert.ok(
+    rig.clock.now() - started <= 5 * MINUTE,
+    `60 fallback reads took ${rig.clock.now() - started} ms in ${waves} waves`,
+  );
+  assert.ok(peak > 1 && peak <= 4, `bounded read concurrency: ${peak}`);
+  assert.equal(first.summary.recordsRead, 60);
+  assert.equal(first.summary.batchUnavailable, 1);
+  assert.equal(new Set(first.stepped).size, 60);
+  assert.equal(stamped(rig), 60);
+  assert.equal(
+    rig.github.calls.filter((call) => call.startsWith("readRef")).length,
+    1,
+    "concurrent fallback reads share the repository base tip",
+  );
+
+  rig.clock.advance(MINUTE);
+  const head = rig.state.repairHead;
+  const second = await pass(rig);
+  assert.deepEqual(second.stepped, []);
+  assert.equal(second.summary.recordsRead, 60);
+  assert.equal(second.summary.recordsSkipped, 60);
+  assert.equal(second.summary.batchUnavailable, 1);
+  assert.equal(
+    rig.state.repairHead,
+    head,
+    "unchanged inputs need no state write",
+  );
+  assert.equal(
+    rig.github.calls.filter((call) => call.startsWith("readIssue")).length,
+    120,
+    "each pass reads each record exactly once",
+  );
+});
+
+Deno.test("input gate: failed per-record reads are unavailable, never unchanged", async () => {
+  const work = Array.from(
+    { length: 4 },
+    (_, index) => pendingArtifact(REPOS[0], index),
+  );
+  const rig = makeRig(work);
+  rig.github.failBatch = true;
+  await pass(rig);
+  assert.equal(stamped(rig), 4);
+  const readIssue = rig.github.readIssue.bind(rig.github);
+  rig.github.readIssue = (number) => {
+    if (number === work[0].related.issueNumber) {
+      return Promise.resolve(
+        portError("unavailable", "issue read unavailable"),
+      );
+    }
+    if (number === work[1].related.issueNumber) {
+      return Promise.reject(new Error("issue read failed"));
+    }
+    return readIssue(number);
+  };
+
+  rig.clock.advance(MINUTE);
+  const next = await pass(rig);
+  assert.deepEqual(
+    [...next.stepped].sort(),
+    work.slice(0, 2).map((row) => row.id),
+  );
+  assert.equal(next.summary.recordsRead, 2);
+  assert.equal(next.summary.recordsSkipped, 2);
+  assert.equal(next.summary.batchUnavailable, 1);
+});
+
+Deno.test("live fallback: concurrent readers share an unavailable base read", async () => {
+  for (const throws of [false, true]) {
+    const work = Array.from(
+      { length: 8 },
+      (_, index) => pendingArtifact(REPOS[0], index),
+    );
+    const rig = makeRig(work);
+    rig.github.failBatch = true;
+    let refs = 0;
+    rig.github.readRef = () => {
+      refs++;
+      return throws
+        ? Promise.reject(new Error("base read failed"))
+        : Promise.resolve(portError("unavailable", "base read unavailable"));
+    };
+    const live = new PassLiveInputs(rig.deps, {
+      runDeadline: T0 + MINUTE,
+      modelCutoff: T0 + MINUTE,
+    });
+    await live.prime(work);
+    assert.equal(refs, 1);
+    assert.equal(live.metrics.recordsRead, 0);
+    for (const record of work) assert.equal(await live.inputsFor(record), null);
+    assert.equal(
+      rig.github.calls.length,
+      0,
+      "no issue read after a failed base",
+    );
+  }
+});
+
+Deno.test("live fallback: the deadline and cooldown stop queued record reads", async () => {
+  for (const stop of ["deadline", "cooldown"]) {
+    const work = Array.from(
+      { length: 60 },
+      (_, index) => pendingArtifact(REPOS[0], index),
+    );
+    const rig = makeRig(work);
+    rig.github.failBatch = true;
+    let cooling = false;
+    const beforeRequest = rig.deps.githubCooldown.beforeRequest.bind(
+      rig.deps.githubCooldown,
+    );
+    rig.deps.githubCooldown.beforeRequest = (installation) =>
+      cooling
+        ? Promise.resolve(portError("rate_limited", "installation cooling"))
+        : beforeRequest(installation);
+    const readIssue = rig.github.readIssue.bind(rig.github);
+    const pending: (() => void)[] = [];
+    rig.github.readIssue = async (number) => {
+      await new Promise<void>((resolve) => {
+        pending.push(resolve);
+        if (pending.length === 1) {
+          queueMicrotask(() => {
+            if (stop === "deadline") rig.clock.advance(MINUTE);
+            else cooling = true;
+            for (const ready of pending.splice(0)) ready();
+          });
+        }
+      });
+      return readIssue(number);
+    };
+    const live = new PassLiveInputs(rig.deps, {
+      runDeadline: T0 + MINUTE,
+      modelCutoff: T0 + MINUTE,
+    });
+    await live.prime(work);
+    assert.equal(live.metrics.recordsRead, 4, stop);
+    assert.equal(
+      rig.github.calls.filter((call) => call.startsWith("readIssue")).length,
+      4,
+      "only the already-active wave can finish",
+    );
+    assert.equal(await live.inputsFor(work.at(-1)!), null);
+  }
 });
