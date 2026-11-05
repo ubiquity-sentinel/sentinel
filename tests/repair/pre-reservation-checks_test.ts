@@ -26,6 +26,8 @@ import { candidateBranch } from "../../src/repair/keys.ts";
 import {
   isPreservationRefusalMessage,
   isValidBranchName,
+  POST_INFERENCE_CHECK_NAMES,
+  PRE_RESERVATION_REFUSALS,
   PRE_RESERVATION_REFUSED_PREFIX,
   preReservationChecks,
   type PreReservationLiveFactsV1,
@@ -428,4 +430,23 @@ Deno.test("admission: a passing record proceeds to the reservation as before", a
   assert.equal(snapshot.reservations.length, 1);
   assert.equal(snapshot.reservations[0]!.taskId, record.id);
   assert.equal(snapshot.reservations[0]!.outcome, "reserved");
+});
+
+Deno.test("the census refusal list is exactly the refusals the source can return", async () => {
+  const source = await Deno.readTextFile(
+    new URL("../../src/repair/pre-reservation-checks.ts", import.meta.url),
+  );
+  const written = [
+    ...source.matchAll(/refuse\("([a-z_]+)", "([a-z_]+)"\)/g),
+  ].map((match) => `${match[1]}:${match[2]}`).sort();
+  assert.deepEqual(
+    PRE_RESERVATION_REFUSALS.map((r) => `${r.check}:${r.refused}`).sort(),
+    written,
+  );
+  assert.ok(POST_INFERENCE_CHECK_NAMES.includes("protected_entry"));
+  assert.ok(POST_INFERENCE_CHECK_NAMES.includes("unclassified"));
+  assert.equal(
+    new Set(POST_INFERENCE_CHECK_NAMES).size,
+    POST_INFERENCE_CHECK_NAMES.length,
+  );
 });

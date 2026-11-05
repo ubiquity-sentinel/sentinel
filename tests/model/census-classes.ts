@@ -42,6 +42,11 @@ import {
   W,
 } from "./census-shapes.ts";
 import { LATE_CLASSES } from "./census-classes-late.ts";
+import {
+  POST_INFERENCE_CHECK_NAMES,
+  PRE_RESERVATION_REFUSALS,
+  preReservationRefusalMessage,
+} from "../../src/repair/pre-reservation-checks.ts";
 
 export type { ParkClassV1, TriggerV1, VariantV1 };
 
@@ -188,6 +193,23 @@ export const PARK_CLASSES: ParkClassV1[] = [
     trigger: "pipeline",
     variants: [NO_INTENT],
   },
+  // #333: deterministic refusals decided before any reservation (uncharged).
+  ...PRE_RESERVATION_REFUSALS.map((refusal): ParkClassV1 => ({
+    id: `impl.pre_reservation.${refusal.check}.${refusal.refused}`,
+    message: preReservationRefusalMessage(refusal),
+    kind: "unavailable",
+    writer: W(
+      IMPL_START,
+      "preReservationRefusalMessage(precheck),",
+      "w.impl.pre_reservation",
+    ),
+    trigger: refusal.check === "opt_out_marker"
+      ? "human"
+      : refusal.check === "source_freshness"
+      ? "pipeline"
+      : "contradiction",
+    variants: [NO_INTENT],
+  })),
   {
     id: "impl.historical_not_started",
     message: HISTORICAL_NOT_STARTED_DETAIL,
@@ -310,6 +332,15 @@ export const PARK_CLASSES: ParkClassV1[] = [
     trigger: "pipeline",
     variants: [{ tag: "noted", candidate: "noted", intent: "none" }],
   },
+  // #333: the same refusal now names the post-inference check it needed.
+  ...POST_INFERENCE_CHECK_NAMES.map((check): ParkClassV1 => ({
+    id: `pres.validation_refused.${check}`,
+    message: `${PRESERVATION_VALIDATION_REFUSED}: ${check}`,
+    kind: "other",
+    writer: "w.pres.validation_refused",
+    trigger: "pipeline",
+    variants: [{ tag: "noted", candidate: "noted", intent: "none" }],
+  })),
   {
     id: "pres.matrix_uncertainty",
     message: MATRIX_PRESERVATION_UNCERTAINTY_DETAIL,
