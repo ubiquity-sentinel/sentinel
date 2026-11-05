@@ -292,13 +292,12 @@ Deno.test("a head check that only concluded cancelled never spends a charged rou
 });
 
 // Owner directive 2026-10-24: a job the target's own CI skipped or marked
-// neutral is never a failure, so such a head is neither corrected (no charged
-// round) nor blocked. Since 2026-11-05 (DECISIONS: a review bot's check run is
-// not CI evidence) a head is green only with at least one completed `success`
-// check: a head whose only check concluded skipped or neutral is not merged and
-// waits `ci_pending`; next to a successful check it is delivered.
+// neutral is a green check, never a failure. Such a head is neither corrected
+// (no charged round) nor blocked: it is delivered, alone or next to a
+// successful check. Only a check from another app (a review bot) is no CI
+// evidence (DECISIONS 2026-11-05), whatever its conclusion.
 for (const conclusion of ["skipped", "neutral"] as const) {
-  Deno.test(`a head check that only concluded ${conclusion} is no CI evidence: it waits ci_pending without a merge, a correction, a block or a charge`, async () => {
+  Deno.test(`a head check that only concluded ${conclusion} is green: delivered without a correction, a block or a charge`, async () => {
     const { rig, charges, writes } = await ciRig(
       `ci-headlone-${conclusion}`,
       {
@@ -317,14 +316,9 @@ for (const conclusion of ["skipped", "neutral"] as const) {
       assert.equal(work.nextStep, "delivery");
       assert.equal(work.blocker, null, `${conclusion} is never a block`);
       assert.equal(
-        work.wait?.reason,
-        "ci_pending",
-        `a lone ${conclusion} check waits for positive CI evidence`,
-      );
-      assert.equal(
-        rig.github.calls.includes("merge"),
-        false,
-        "a head without a successful check is never merged",
+        rig.github.calls.filter((call) => call === "merge").length,
+        1,
+        `a lone ${conclusion} check of the target's own CI merges`,
       );
       assert.equal(work.target.head, SHA3);
       assert.equal(work.counters.reviewRounds, 1, "no review round spent");
@@ -370,6 +364,36 @@ for (const conclusion of ["skipped", "neutral"] as const) {
     }
   });
 }
+
+Deno.test("a lone skipped check from a review-bot app is no CI evidence: it waits ci_pending without a merge, a correction, a block or a charge", async () => {
+  const { rig, charges, writes } = await ciRig("ci-headlone-reviewbot", {
+    checks: {
+      [SHA3]: [{ ...check("CodeRabbit", SHA3, "skipped"), app: "coderabbit" }],
+      [SHA1]: [check("validate", SHA1, "success")],
+    },
+  });
+  try {
+    const outcome = await rig.run();
+    assert.equal(outcome.status, "idle", JSON.stringify(outcome));
+    assert.equal(rig.model.requests.length, 0, "no correction session");
+    const after = await rig.snapshot();
+    const work = after.work[0];
+    assert.equal(work.nextStep, "delivery");
+    assert.equal(work.blocker, null, "a skipped review bot is never a block");
+    assert.equal(work.wait?.reason, "ci_pending");
+    assert.equal(
+      rig.github.calls.includes("merge"),
+      false,
+      "a head no CI ran on is never merged",
+    );
+    assert.equal(work.target.head, SHA3);
+    assert.equal(work.counters.reviewRounds, 1, "no review round spent");
+    assert.deepEqual(after.reservations, charges, "nothing charged");
+    assertGeneration76Shapes(writes);
+  } finally {
+    await rig.ctx.cleanup();
+  }
+});
 
 Deno.test("a base check still running is awaited before any attribution", async () => {
   const { rig, charges, writes } = await ciRig("ci-basepending", {

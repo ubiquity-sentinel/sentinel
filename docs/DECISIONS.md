@@ -15,9 +15,11 @@ candidate recorded in the build ledger. Policy consequences:
   wait was ever written, so the dispatch-based pre-merge CI never fired, and
   PRs #1348, #1353 and #1354 merged with no CI run on their heads (post-merge
   Gateway CI then failed on `development`). A head is now green only on positive
-  evidence: at least one completed `success` check from the GitHub Actions app
-  (the target's own or dispatched workflow), from no app (legacy shape), or a
-  verified backup-CI stand-in, and nothing failed. Checks from any other app
+  evidence: at least one completed check concluded `success`, `skipped` or
+  `neutral` from the GitHub Actions app (the target's own or dispatched
+  workflow, whose skipped/neutral jobs are a CI decision per the 2026-10-24
+  directive), from no app (legacy shape), or a verified backup-CI stand-in, and
+  nothing failed. Checks from any other app
   (review bots, scanners, deploy previews) never make a head green; a failed
   one still blocks. A head with only such checks waits `ci_pending`, which is
   what makes the dispatch-based pre-merge CI fire; the launcher reads it as

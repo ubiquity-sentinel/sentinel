@@ -10,6 +10,7 @@ import {
 } from "../src/repair/ci-coverage.ts";
 import { isGatewayVpsRepository } from "../src/repair/vps-delivery.ts";
 import {
+  isCiEvidenceConclusion,
   isCiEvidenceSource,
   isPassportDeployCheck,
 } from "../src/repair/merge-gate-checks.ts";
@@ -257,12 +258,16 @@ export function createHostedAutonomyGitHub(
     );
 
   /**
-   * One raw run is positive CI evidence: completed `success` from GitHub
-   * Actions, from no app (legacy/fixture shape) or a verified backup stand-in
-   * (`sentinel_backup`), the runtime's `isCiEvidenceCheck` over the wire.
+   * One raw run is positive CI evidence: completed `success`, `skipped` or
+   * `neutral` from GitHub Actions, from no app (legacy/fixture shape) or a
+   * verified backup stand-in (`sentinel_backup`), the runtime's
+   * `isCiEvidenceCheck` over the wire.
    */
   const isCiEvidenceRun = (run: Record<string, unknown>) => {
-    if (run["status"] !== "completed" || run["conclusion"] !== "success") {
+    if (
+      run["status"] !== "completed" ||
+      !isCiEvidenceConclusion(run["conclusion"])
+    ) {
       return false;
     }
     if (run[SENTINEL_BACKUP_FIELD] !== undefined) return true;
