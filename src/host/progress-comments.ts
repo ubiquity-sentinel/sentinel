@@ -20,6 +20,7 @@ import type { HttpResponseV1, HttpTransportV1 } from "../github/http.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { classifyGitHubRateLimit } from "../github/rate-limit.ts";
+import { ownerLandingWords, ownerMergeReady } from "../repair/owner-landing.ts";
 
 /** One stage of a record in plain words, with its stable change key. */
 export interface ProgressStageV1 {
@@ -113,12 +114,23 @@ export function progressStage(record: WorkRecordV1): ProgressStageV1 | null {
     const message = record.blocker?.message ?? "no reason recorded";
     // A record retired because its issue closed says nothing on that issue.
     if (message.startsWith(SOURCE_CLOSED_PREFIX)) return null;
+    // The protected candidate is complete but is never published or merged
+    // by Sentinel (`loop-implementation-result.ts`): say who lands it.
     const person = message.startsWith("candidate touches a protected path")
-      ? " A person needs to fix this one."
+      ? " The fix changes a protected path, which Sentinel never merges; " +
+        "the repository owner needs to land this change."
       : "";
     return {
       key: `blocked:${hashKey(message)}`,
       words: `Parked: ${plain(message)}.${person}`,
+    };
+  }
+  if (record.nextStep === "delivery" && record.ownerLanding !== undefined) {
+    // Sentinel never merges a protected-path change: one owner comment per
+    // reviewed, CI-green head, and no "merging" claim before it.
+    return pr === null || !ownerMergeReady(record) ? null : {
+      key: `owner_merge:${pr}:${record.target.head}`,
+      words: ownerLandingWords(record.ownerLanding.paths),
     };
   }
   if (record.nextStep === "delivery") {

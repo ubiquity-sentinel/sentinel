@@ -332,7 +332,26 @@ export function parseCheckRunWire(input: unknown, path: string): GitHubCheckV1 {
     obj.completed_at,
     `${path}.completed_at`,
   );
-  return { name, status, conclusion, head, startedAt, completedAt };
+  const app = checkRunAppSlug(obj.app);
+  return app === undefined
+    ? { name, status, conclusion, head, startedAt, completedAt }
+    : { name, status, conclusion, head, startedAt, completedAt, app };
+}
+
+/**
+ * The reporting app's slug, read tolerantly (never a parse failure, so every
+ * listing that parsed before still parses): a missing or null `app` is no app
+ * information; an `app` present without a readable slug is an unidentified
+ * app (`unknown`), which can never pass for GitHub Actions.
+ */
+function checkRunAppSlug(input: unknown): string | undefined {
+  if (input === undefined || input === null) return undefined;
+  if (typeof input !== "object" || Array.isArray(input)) return "unknown";
+  const slug = (input as Record<string, unknown>).slug;
+  return typeof slug === "string" && slug.length > 0 &&
+      slug.length <= MaxText.label
+    ? slug
+    : "unknown";
 }
 
 /**

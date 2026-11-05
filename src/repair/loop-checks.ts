@@ -10,6 +10,7 @@ import {
   readCiChecks,
 } from "./ci-rejection.ts";
 import {
+  isCiEvidenceCheck,
   isPassportDeployCheck,
   selectMergeGateChecksV1,
 } from "./merge-gate-checks.ts";
@@ -44,7 +45,11 @@ const SELF_AGGREGATE_CHECK = "test-local";
  * A Passport deployment check is retained in the observation as evidence but
  * never judged here (owner directive 2026-10-30): only its own CI jobs gate.
  * A target with no CI check left after that selection is "wait" (a deployment
- * observation alone is no evidence CI ran), never "proceed".
+ * observation alone is no evidence CI ran), never "proceed"; so is a head
+ * with no positive CI evidence (`isCiEvidenceCheck`: a GitHub Actions,
+ * app-less or backup stand-in check concluded success, skipped or neutral). A check from any other app (a
+ * review bot, scanner or deploy preview) is judged (a failure still blocks,
+ * a pending one still waits) but never counts as CI evidence.
  *
  * It judges only the checks that exist: GitHub creates a `needs:` job's
  * check run only once its dependencies finish. The CI-first review gate and
@@ -73,6 +78,10 @@ export function decideCiGate(
   }
   const pending = deduped.some(checkPending);
   if (pending) return "wait";
+  // Positive evidence only: a head whose green checks all come from other
+  // apps (the gateway's lone skipped `CodeRabbit`, a scanner or a preview,
+  // before any `Gateway CI` run) waits exactly like a head with no checks.
+  if (!deduped.some(isCiEvidenceCheck)) return "wait";
   return "proceed";
 }
 

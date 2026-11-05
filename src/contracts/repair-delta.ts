@@ -408,3 +408,51 @@ export function decodeRepairDeltaArtifactV1(bytes: Uint8Array): unknown {
     return null;
   }
 }
+
+/**
+ * The bounded `result.json` of a repository cell that could not produce a
+ * delta (issue #328): its plan was unreadable, its cell was not planned, its
+ * base state was unavailable, its pass failed, or (written by the workflow
+ * itself) the cell's setup failed before its child ran. It carries no state
+ * and grants nothing: finalize only counts it and hands the cell's records
+ * back to the trusted serial pass.
+ */
+export const REPAIR_CELL_REFUSAL_KIND = "repair_cell_refusal";
+export const REPAIR_CELL_REFUSAL_REASONS = [
+  "plan_unavailable",
+  "cell_unplanned",
+  "base_unavailable",
+  "pass_failed",
+  "cell_unavailable",
+] as const;
+export type RepairCellRefusalReasonV1 =
+  typeof REPAIR_CELL_REFUSAL_REASONS[number];
+
+export interface RepairCellRefusalV1 {
+  version: "v1";
+  kind: typeof REPAIR_CELL_REFUSAL_KIND;
+  cellId: string;
+  reason: RepairCellRefusalReasonV1;
+}
+
+/** The strictly parsed refusal, or null for anything else. */
+export function parseRepairCellRefusalV1(
+  value: unknown,
+): RepairCellRefusalV1 | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const row = value as Record<string, unknown>;
+  if (
+    Object.keys(row).sort().join() !== "cellId,kind,reason,version" ||
+    row.version !== "v1" || row.kind !== REPAIR_CELL_REFUSAL_KIND ||
+    typeof row.cellId !== "string" || !/^[0-9a-f]{64}$/.test(row.cellId) ||
+    !(REPAIR_CELL_REFUSAL_REASONS as readonly unknown[]).includes(row.reason)
+  ) return null;
+  return {
+    version: "v1",
+    kind: REPAIR_CELL_REFUSAL_KIND,
+    cellId: row.cellId,
+    reason: row.reason as RepairCellRefusalReasonV1,
+  };
+}

@@ -11,6 +11,7 @@
 
 import type { GitSha } from "../src/contracts/brands.ts";
 import { portError, portOk } from "../src/contracts/ports.ts";
+import { HOSTED_RUNTIME_ID } from "../src/contracts/hosted-supervisor.ts";
 import { releasePathDisabled } from "../src/repair/vps-delivery.ts";
 import { CLOSED_C_WAVE } from "../src/host/modern-matrix-recovery.ts";
 import { tierSummaryAction } from "../src/host/tier-counts-output.ts";
@@ -83,6 +84,20 @@ export async function runHostedRepairTierStep(
       return portOk(
         releasePathDisabled(read.value.snapshot) ? "disabled" : "enabled",
       );
+    },
+    // The installed runtime generation: one retired-pull cold scan each.
+    runtimeGeneration: async () => {
+      const read = await deps.state.readRelease();
+      if (!read.ok) return read;
+      if (read.value.status !== "found") {
+        return portError("unavailable", "release state absent");
+      }
+      const runtime = read.value.snapshot.hostedRuntimes.find((row) =>
+        row.id === HOSTED_RUNTIME_ID
+      );
+      return runtime === undefined
+        ? portError("unavailable", "runtime generation absent")
+        : portOk(runtime.generation);
     },
     // #325: the target tip from the default-branch ref read.
     readTargetTip: async (repository) => {

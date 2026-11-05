@@ -45,8 +45,13 @@ import {
   planRepairDemotions,
   planRepairPromotions,
   repositoryTierKey,
+  retiredPullScanDue,
   takeDemotionBudget,
 } from "./state-repair-tier-plan.ts";
+import {
+  planRetiredPullScan,
+  TIER_SCAN_DIRECTORY,
+} from "./state-repair-tier-scan.ts";
 import {
   planReleasePromotions,
   supersedeReleaseRequest,
@@ -223,7 +228,11 @@ function preservationMessage(
   const logical = (tree: ReadonlyMap<string, string>) => {
     const out = new Map<string, string>();
     for (const [path, sha] of tree) {
-      if (path === "manifest.json" || path === REPAIR_COLD_LAYOUT_PATH) {
+      // The scan row is tier-transition memory, not a moved record.
+      if (
+        path === "manifest.json" || path === REPAIR_COLD_LAYOUT_PATH ||
+        path.startsWith(`${TIER_SCAN_DIRECTORY}/`)
+      ) {
         continue;
       }
       const key = logicalPath(path);
@@ -277,19 +286,28 @@ export async function buildRepairTierCommit(
   const demotable = policy.promoteAll === true
     ? []
     : planRepairDemotions(prior, policy);
-  const needsCold = tierNeedsPromotion(
+  let needsCold = tierNeedsPromotion(
     directory.value.directory,
     prior,
     policy,
   );
+  const scanDue = directory.value.directory.workIds.length > 0 &&
+    retiredPullScanDue(prior, policy);
   const pending = takeDemotionBudget(demotable, policy.demotionBudget);
-  if (!directory.value.legacy && !needsCold && pending.demote.length === 0) {
+  if (
+    !directory.value.legacy && !needsCold && !scanDue &&
+    pending.demote.length === 0
+  ) {
     return portOk({ status: "unchanged", deferred: pending.deferred });
   }
   const catalog = await readColdCatalog(io, op, head);
   if (!catalog.ok) return catalog;
   const priorTree = await listAll(io, op, head);
   if (!priorTree.ok) return priorTree;
+  // The once-per-generation scan is owed even when no issue reopened.
+  const scan = await planRetiredPullScan(io, op, catalog.value, prior, policy);
+  if (!scan.ok) return scan;
+  needsCold ||= scan.value.seeds.length > 0;
   let promotedPlan: RepairTierMoveV1[] = [];
   let promoted: ResolvedMove[] = [];
   let releaseDeferred = 0;
@@ -304,7 +322,7 @@ export async function buildRepairTierCommit(
       prior,
       cold.value,
       policy,
-      release.seeds,
+      [...release.seeds, ...scan.value.seeds],
     );
     promotedPlan = plan;
     const openCold = new Set(
@@ -385,8 +403,10 @@ export async function buildRepairTierCommit(
       move.from === "releaseRequests" && openHot.has(move.id)
     ).length;
   const deferred = budgeted.deferred + releaseDeferred;
+  const scanMarker = scan.value.marker;
   if (
-    promoted.length === 0 && demoted.length === 0 && !directory.value.legacy
+    promoted.length === 0 && demoted.length === 0 && scanMarker === null &&
+    !directory.value.legacy
   ) {
     return portOk({ status: "unchanged", deferred });
   }
@@ -422,6 +442,9 @@ export async function buildRepairTierCommit(
     `100644 ${move.sha}\t${move.to}`,
   ]);
   lines.push(`100644 ${manifestSha}\tmanifest.json`);
+  if (scanMarker !== null) {
+    lines.push(`100644 ${scanMarker.sha}\t${scanMarker.path}`);
+  }
   // The layout marker exists exactly while the cold tier holds a record.
   if (catalog.value.tree === null && coldAfter > 0) {
     const marker = await io.git(op, ["hash-object", "-w", "--stdin"], {

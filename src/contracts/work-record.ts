@@ -1,3 +1,4 @@
+import { parseOwnerLandingV1 } from "./owner-landing.ts";
 import {
   asIncidentFingerprint,
   asSourceSnapshotDigest,
@@ -32,6 +33,8 @@ import {
 } from "./validation.ts";
 import { parseWorkWaitCauseV1 } from "./work-wait-cause.ts";
 import type {
+  PullProbeV1,
+  RetiredPullClosureV1,
   SelectionUrgencyV1,
   StepInputsStampV1,
   WorkBlockerV1,
@@ -102,7 +105,14 @@ const COUNTERS_KEYS = ["attempts", "retries", "reviewRounds"] as const;
 /** Additive counter keys absent from rows written before they existed. */
 const COUNTERS_OPTIONAL_KEYS = ["stalled", "timeouts"] as const;
 /** Additive record keys absent from rows written before they existed. */
-const OPTIONAL_KEYS = ["stepInputs"] as const;
+const OPTIONAL_KEYS = [
+  "stepInputs",
+  "retiredPullClosure",
+  "ownerLanding",
+  "pullProbe",
+] as const;
+const RETIRED_PULL_CLOSURE_KEYS = ["pr", "outcome", "at"] as const;
+const PULL_PROBE_KEYS = ["pr", "at"] as const;
 const STEP_INPUTS_KEYS = ["digest", "deadline"] as const;
 
 export function parseWorkRecordV1(input: unknown): WorkRecordV1 {
@@ -398,6 +408,44 @@ export function parseWorkRecordV1(input: unknown): WorkRecordV1 {
     ...(obj.stepInputs === undefined
       ? {}
       : { stepInputs: parseStepInputs(obj.stepInputs, "$.stepInputs") }),
+    ...(obj.retiredPullClosure === undefined ? {} : {
+      retiredPullClosure: parseRetiredPullClosure(
+        obj.retiredPullClosure,
+        "$.retiredPullClosure",
+      ),
+    }),
+    ...(obj.ownerLanding === undefined ? {} : {
+      ownerLanding: parseOwnerLandingV1(obj.ownerLanding, "$.ownerLanding"),
+    }),
+    ...(obj.pullProbe === undefined
+      ? {}
+      : { pullProbe: parsePullProbe(obj.pullProbe, "$.pullProbe") }),
+  };
+}
+
+function parsePullProbe(input: unknown, path: string): PullProbeV1 {
+  const obj = expectRecord(input, path);
+  expectExactKeys(obj, PULL_PROBE_KEYS, path);
+  return {
+    pr: expectPositiveInt(obj.pr, `${path}.pr`),
+    at: expectTimestamp(obj.at, `${path}.at`),
+  };
+}
+
+function parseRetiredPullClosure(
+  input: unknown,
+  path: string,
+): RetiredPullClosureV1 {
+  const obj = expectRecord(input, path);
+  expectExactKeys(obj, RETIRED_PULL_CLOSURE_KEYS, path);
+  return {
+    pr: expectPositiveInt(obj.pr, `${path}.pr`),
+    outcome: expectEnum(
+      obj.outcome,
+      ["closed", "merged", "closed_elsewhere", "not_own", "reopened"],
+      `${path}.outcome`,
+    ),
+    at: expectTimestamp(obj.at, `${path}.at`),
   };
 }
 
@@ -520,6 +568,8 @@ export type {
   IncompleteOpKindV1,
   NextStepV1,
   OperationFailureV1,
+  PullProbeV1,
+  RetiredPullClosureV1,
   SelectionUrgencyV1,
   StepInputsStampV1,
   TaskSourceKindV1,

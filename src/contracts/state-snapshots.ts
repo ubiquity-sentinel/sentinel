@@ -39,6 +39,10 @@ import { parseReviewReceiptV1 } from "./review-receipt.ts";
 import type { ReviewReceiptV1 } from "./review-receipt.ts";
 import { parseWorkRecordV1 } from "./work-record.ts";
 import {
+  parseRepairTierScanV1,
+  type RepairTierScanV1,
+} from "./repair-tier-scan.ts";
+import {
   parseTargetCapabilityV1,
   type StoredTargetCapabilityV1,
 } from "./target-capability.ts";
@@ -106,6 +110,11 @@ export interface RepairStateSnapshotV1 {
    * the trusted launcher rewrites, never an accounting or history record.
    */
   targetCapabilities?: StoredTargetCapabilityV1[];
+  /**
+   * Repair-tier scan memory (`repair-tier-scan.ts`): at most the one row of
+   * the retired-pull cold scan. Present only after the first complete scan.
+   */
+  tierScans?: RepairTierScanV1[];
 }
 
 export interface ReleaseStateSnapshotV1 {
@@ -176,6 +185,7 @@ export function parseRepairStateSnapshotV1(
         "ownerSuccessorReviews",
         "reservationArchive",
         "targetCapabilities",
+        "tierScans",
       ].filter((key) => Object.hasOwn(obj, key)),
     ],
     "$",
@@ -336,6 +346,16 @@ export function parseRepairStateSnapshotV1(
     }
     expectUniqueIds(targetCapabilities, "$.targetCapabilities");
   }
+  const tierScans = Object.hasOwn(obj, "tierScans")
+    ? expectArray(obj.tierScans, "$.tierScans", 1, parseRepairTierScanV1)
+    : undefined;
+  if (tierScans !== undefined && tierScans.length === 0) {
+    fail(
+      "$.tierScans",
+      "invalid_lifecycle",
+      "a tier scan collection must retain its record",
+    );
+  }
   expectUniqueIds(replays, "$.replays");
   expectUniqueIds(releaseRequests, "$.releaseRequests");
   expectUniqueIds(attemptMemory, "$.attemptMemory");
@@ -362,6 +382,7 @@ export function parseRepairStateSnapshotV1(
     attemptMemory,
     lessons,
     ...(targetCapabilities === undefined ? {} : { targetCapabilities }),
+    ...(tierScans === undefined ? {} : { tierScans }),
   };
 }
 

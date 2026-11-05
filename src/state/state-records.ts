@@ -34,6 +34,7 @@ import {
 import { parseWorkRecordV1 } from "../contracts/work-record.ts";
 import { parseVpsReleaseRecordV1 } from "../contracts/vps-release.ts";
 import { parseTargetCapabilityV1 } from "../contracts/target-capability.ts";
+import { parseRepairTierScanV1 } from "../contracts/repair-tier-scan.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import { parseRepositoryIdentity } from "../contracts/shared.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
@@ -244,6 +245,12 @@ export const RECORD_COLLECTIONS: Record<StateKind, RecordCollection[]> = {
       directory: "targetCapabilities",
       kind: "target_capability",
       parse: parseTargetCapabilityV1,
+      rows: [],
+    },
+    {
+      directory: "tierScans",
+      kind: "repair_tier_scan",
+      parse: parseRepairTierScanV1,
       rows: [],
     },
   ],

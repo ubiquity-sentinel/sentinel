@@ -10,6 +10,8 @@ Deno.test("entrypoint: post-drain applies the drained review after an unrelated 
   postDrainTaskScenario("unbound-intent"));
 Deno.test("entrypoint: post-drain on a base that moved after the review persists the refresh instead of merging", () =>
   postDrainTaskScenario("moved-base"));
+Deno.test("entrypoint: post-drain on a moved base waits for the owner of an owner-landing record, never pushing or merging", () =>
+  postDrainTaskScenario("owner-landing-moved-base"));
 Deno.test("entrypoint: post-drain foreign-only key collision never reaches the configured observation port", () =>
   postDrainTaskScenario("foreign-only"));
 Deno.test("entrypoint: post-drain foreign-first key collision advances only the configured target", () =>

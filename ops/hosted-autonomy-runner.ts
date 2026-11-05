@@ -46,6 +46,7 @@ import { runHostedFollowUpPass } from "./hosted-autonomy-follow-up-pass.ts";
 import { runHostedBaseRepairPass } from "./hosted-autonomy-base-repair.ts";
 import { runHostedTargetCapabilityPass } from "./hosted-autonomy-target-capability.ts";
 import { runHostedCiResumePass } from "./hosted-autonomy-ci-resume.ts";
+import { runHostedRetiredPullPass } from "./hosted-autonomy-retired-pulls.ts";
 import { runHostedOutageObservationPass } from "./hosted-autonomy-outage-observation.ts";
 import { runHostedQueueCustody } from "./hosted-autonomy-queue-pass.ts";
 import { protectQueueState } from "./hosted-autonomy-queue-state.ts";
@@ -237,7 +238,7 @@ export async function runHostedAutonomy(
         finish();
       }
     }
-    // Target capability (#332): the one state-writing pass after the chain,
+    // Target capability (#332): a state-writing pass after the chain,
     // over the guarded state (never the shared read-only view), bounded by
     // the same deadline. It only appends actions and never fails the run.
     const finishCapability = beginMaintenanceProgress("target_capability");
@@ -252,6 +253,25 @@ export async function runHostedAutonomy(
       ];
     } finally {
       finishCapability();
+    }
+    // Retired pull requests: close Sentinel's own open pull request of a
+    // record retired because its source issue closed. Writes over the
+    // guarded state, shares the deadline and only appends actions.
+    const finishRetiredPulls = beginMaintenanceProgress("retired_pulls");
+    try {
+      followUps = [
+        ...followUps,
+        ...await runHostedRetiredPullPass(
+          scoped,
+          startedAt + HOSTED_AUTONOMY_PASS_DEADLINE_MS,
+          readOnly.state,
+          // A record this pass retired is settled from the next pass, so
+          // its retirement stays the cycle's one write for it.
+          startedAt,
+        ),
+      ];
+    } finally {
+      finishRetiredPulls();
     }
     await deps.onQueueCustodyReady?.(followUpComplete && !degraded);
     return followUps.length === 0
