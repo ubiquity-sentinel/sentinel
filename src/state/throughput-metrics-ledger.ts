@@ -27,8 +27,8 @@ import {
   type UpkeepDeferralStreakV1,
 } from "../contracts/upkeep-deferral-streak.ts";
 import {
-  parseThroughputWatchdogStateV1,
-  type ThroughputWatchdogStateV1,
+  parseThroughputWatchdogState,
+  type ThroughputWatchdogStateV2,
 } from "../contracts/throughput-watchdog-state.ts";
 
 /** The metrics sidecar ref; no repair/release snapshot reader touches it. */
@@ -40,7 +40,7 @@ export const THROUGHPUT_DAILY_PATH = `${THROUGHPUT_DIR}/daily.jsonl`;
 /** Consecutive deferred upkeep passes (#327), one small canonical file. */
 export const THROUGHPUT_UPKEEP_STREAK_PATH =
   `${THROUGHPUT_DIR}/upkeep-streak.json`;
-/** The throughput watchdog's filings and cooldowns, one canonical file. */
+/** The throughput watchdog's filings and outcome checks, one canonical file. */
 export const THROUGHPUT_WATCHDOG_PATH = `${THROUGHPUT_DIR}/watchdog.json`;
 const HOT_PATH = /^throughput\/(\d{4}-\d{2}-\d{2})\.jsonl$/;
 
@@ -52,7 +52,7 @@ export interface ThroughputMetricsLedgerV1 {
   /** Present once finalize recorded an upkeep deferral observation. */
   upkeepStreak?: UpkeepDeferralStreakV1;
   /** Present once the throughput watchdog recorded an evaluation. */
-  watchdog?: ThroughputWatchdogStateV1;
+  watchdog?: ThroughputWatchdogStateV2;
 }
 
 export const EMPTY_THROUGHPUT_LEDGER: ThroughputMetricsLedgerV1 = {
@@ -131,7 +131,7 @@ export function encodeThroughputLedgerV1(
     );
   }
   if (ledger.watchdog !== undefined) {
-    const watchdog = parseThroughputWatchdogStateV1(ledger.watchdog);
+    const watchdog = parseThroughputWatchdogState(ledger.watchdog);
     if (watchdog === null) throw new Error("watchdog state is malformed");
     files.set(THROUGHPUT_WATCHDOG_PATH, `${canonicalStringify(watchdog)}\n`);
   }
@@ -170,14 +170,23 @@ export function decodeThroughputLedgerV1(
   const records: ThroughputMetricsRecordV1[] = [];
   let daily: ThroughputDailySummaryV1[] = [];
   let upkeepStreak: UpkeepDeferralStreakV1 | undefined;
-  let watchdog: ThroughputWatchdogStateV1 | undefined;
+  let watchdog: ThroughputWatchdogStateV2 | undefined;
   for (const [path, text] of [...files.entries()].sort()) {
     if (path === THROUGHPUT_UPKEEP_STREAK_PATH) {
       upkeepStreak = singleValue(text, path, parseUpkeepDeferralStreakV1);
       continue;
     }
     if (path === THROUGHPUT_WATCHDOG_PATH) {
-      watchdog = singleValue(text, path, parseThroughputWatchdogStateV1);
+      // The line must be canonical as written: a historical version 1 file
+      // is lifted to version 2 by the reader, so the parsed value's
+      // encoding differs from the line by design.
+      const [line, ...rest] = lines(text, path);
+      const raw = rest.length === 0 ? JSON.parse(line) : null;
+      const value = raw === null ? null : parseThroughputWatchdogState(raw);
+      if (value === null || canonicalStringify(raw) !== line) {
+        throw new Error(`${path} is not one canonical value`);
+      }
+      watchdog = value;
       continue;
     }
     if (path === THROUGHPUT_DAILY_PATH) {

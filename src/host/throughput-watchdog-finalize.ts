@@ -4,8 +4,8 @@
  * Trusted finalize stage only. It reads the metrics sidecar, evaluates the
  * threshold table over the stored records plus this cycle's record, lists
  * the self repository's open issues and pull requests once, files or edits
- * at most what `planThroughputWatchdogV1` allows through the trusted App
- * issue port, and records the filings and cooldowns in
+ * what `planThroughputWatchdogV1` allows through the trusted App issue port,
+ * and records the filings, outcome checks and daily count in
  * `throughput/watchdog.json` with the metrics port's expected-head write.
  * Off when `SENTINEL_SELF_IMPROVE` is `off`.
  *
@@ -17,7 +17,11 @@ import type {
   ThroughputCycleIdV1,
   ThroughputMetricsRecordV1,
 } from "../contracts/throughput-metrics.ts";
-import type { ThroughputWatchdogStateV1 } from "../contracts/throughput-watchdog-state.ts";
+import {
+  parseThroughputWatchdogRuntimeV2,
+  type ThroughputWatchdogRuntimeV2,
+  type ThroughputWatchdogStateV2,
+} from "../contracts/throughput-watchdog-state.ts";
 import type {
   ThroughputAppendResultV1,
   ThroughputMetricsPortV1,
@@ -29,11 +33,12 @@ import {
   writeFinalizeThroughputMetricsV1,
 } from "./throughput-metrics-finalize.ts";
 import { evaluateThroughputWatchdogV1 } from "./throughput-watchdog.ts";
+import type { ThroughputWatchdogIssuesV1 } from "./throughput-watchdog-issue.ts";
 import {
   planThroughputWatchdogV1,
-  type ThroughputWatchdogIssuesV1,
+  type ThroughputWatchdogBlockV1,
   type ThroughputWatchdogPlanV1,
-} from "./throughput-watchdog-issue.ts";
+} from "./throughput-watchdog-plan.ts";
 import {
   THROUGHPUT_WATCHDOG_THRESHOLDS,
   type ThroughputThresholdV1,
@@ -72,8 +77,11 @@ export interface ThroughputWatchdogResultV1 {
   /** The recording write's outcome, or null when none was attempted. */
   stateWrite: "applied" | "conflict" | "unavailable" | null;
   createBlocked: ThroughputWatchdogPlanV1["createBlocked"];
+  /** Per missed, unfiled threshold: why it was not filed. */
+  blocked: Record<string, ThroughputWatchdogBlockV1>;
   missed: string[];
-  issue: number | null;
+  /** Issue numbers filed this cycle, in table order. */
+  issues: number[];
 }
 
 const sameCycle = (
@@ -86,6 +94,7 @@ async function settle(
   input: {
     cycle: ThroughputCycleIdV1;
     record: ThroughputMetricsRecordV1 | null;
+    runtime: ThroughputWatchdogRuntimeV2 | null;
     nowMs: number;
   },
   progress: ThroughputWatchdogResultV1,
@@ -125,17 +134,21 @@ async function settle(
     state: ledger.watchdog ?? null,
     listing,
     cycle: input.cycle,
+    runtime: input.runtime,
     nowMs: input.nowMs,
   });
   progress.createBlocked = plan.createBlocked;
-  const state: ThroughputWatchdogStateV1 = structuredClone(plan.state);
+  progress.blocked = plan.blocked;
+  const state: ThroughputWatchdogStateV2 = structuredClone(plan.state);
   progress.filed = 0;
+  let filed = 0;
   for (const action of plan.actions) {
     if (action.kind === "edit") {
       if (await deps.issues.update(action.number, action)) {
         progress.edited++;
-        state.thresholds[action.thresholdId].measuredMilli =
-          action.measuredMilli;
+        const entry = state.thresholds[action.thresholdId];
+        entry.measuredMilli = action.measuredMilli;
+        entry.cyclesSinceText = 0;
       }
       continue;
     }
@@ -143,15 +156,18 @@ async function settle(
     // finds a landed issue by its marker and adopts it.
     progress.filed = null;
     const number = await deps.issues.create(action);
-    progress.filed = number === null ? 0 : 1;
-    if (number === null) continue;
-    progress.issue = number;
-    state.thresholds[action.thresholdId] = {
-      issue: number,
-      measuredMilli: action.measuredMilli,
-      filedAtMs: input.nowMs,
-      closedAtMs: null,
-    };
+    if (number !== null) {
+      filed++;
+      progress.issues.push(number);
+      state.thresholds[action.thresholdId] = {
+        issue: number,
+        measuredMilli: action.measuredMilli,
+        filedAtMs: input.nowMs,
+        cyclesSinceText: 0,
+        closed: null,
+      };
+    }
+    progress.filed = filed;
   }
   progress.status = "evaluated";
   // Only finalize writes this file; a lost race re-reads and keeps every
@@ -187,6 +203,8 @@ export async function runFinalizeThroughputWatchdogV1(
   input: {
     cycle: ThroughputCycleIdV1;
     record: ThroughputMetricsRecordV1 | null;
+    /** The runtime this cycle ran on; null/absent when unknown. */
+    runtime?: ThroughputWatchdogRuntimeV2 | null;
     nowMs: number;
     enabled: boolean;
   },
@@ -198,15 +216,18 @@ export async function runFinalizeThroughputWatchdogV1(
     edited: 0,
     stateWrite: null,
     createBlocked: null,
+    blocked: {},
     missed: [],
-    issue: null,
+    issues: [],
   };
   if (input.enabled) {
     const deadline = createDeadline(
       deps.budgetMs ?? FINALIZE_WATCHDOG_BUDGET_MS,
     );
     try {
-      await deadline.race(settle(deps, input, progress));
+      await deadline.race(
+        settle(deps, { ...input, runtime: input.runtime ?? null }, progress),
+      );
     } catch {
       progress.status = deadline.fired() ? "timeout" : "failed";
     } finally {
@@ -222,12 +243,24 @@ export async function runFinalizeThroughputWatchdogV1(
     status: result.status,
     filed: result.filed,
     edited: result.edited,
-    issue: result.issue,
+    issues: result.issues,
     stateWrite: result.stateWrite,
     createBlocked: result.createBlocked,
+    blocked: result.blocked,
     missed: result.missed,
   }));
   return result;
+}
+
+/** The runtime a run summary names, or null unless both parts are exact. */
+export function watchdogRuntimeOfV1(
+  summary: FinalizeMetricsFactsV1["runSummary"],
+): ThroughputWatchdogRuntimeV2 | null {
+  if (summary === null) return null;
+  return parseThroughputWatchdogRuntimeV2({
+    generation: summary.generation,
+    sha: summary.runtimeSha,
+  });
 }
 
 /**
@@ -257,6 +290,7 @@ export async function runFinalizeMetricsTailV1(
     watchdog = await runFinalizeThroughputWatchdogV1(deps.watchdog, {
       cycle: facts.cycle,
       record,
+      runtime: watchdogRuntimeOfV1(facts.runSummary),
       nowMs: facts.nowMs,
       enabled: selfImproveEnabled(deps.selfImprove),
     });

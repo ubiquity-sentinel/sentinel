@@ -68,7 +68,7 @@ export const THROUGHPUT_OPTIONAL_COUNTERS_V1 = [
   "recordsDemoted",
   "recordsPromoted",
   "releaseRequestsSuperseded",
-  /** Throughput watchdog issues this cycle filed (0 or 1; absent when off). */
+  /** Throughput watchdog issues this cycle filed (absent when off). */
   "watchdogIssuesFiled",
 ] as const;
 export type ThroughputOptionalCounterV1 =

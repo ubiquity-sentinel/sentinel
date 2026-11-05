@@ -50,7 +50,7 @@ export interface FinalizeMetricsFactsV1 {
   /** Owner notices this finalize claimed and published (#327). */
   ownerNoticesSent?: number;
   /**
-   * Throughput watchdog issues this finalize filed (0 or 1); null/absent
+   * Throughput watchdog issues this finalize filed (0..3); null/absent
    * when the watchdog was off or its outcome is unknown.
    */
   watchdogIssuesFiled?: number | null;

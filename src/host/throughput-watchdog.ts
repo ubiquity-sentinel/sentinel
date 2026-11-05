@@ -372,7 +372,7 @@ export function renderThroughputThresholdsV1(
       .trimEnd();
   return [
     `Thresholds (watchdog evaluation as of ${iso(nowMs)} UTC; ` +
-    "a missed, non-informational threshold files one Sentinel issue)",
+    "a missed, non-informational threshold files a Sentinel issue)",
     line(header),
     ...rows.map(line),
   ];
