@@ -4541,3 +4541,24 @@ evaluation as a Thresholds table. Kill switch: repository variable
 `SENTINEL_SELF_IMPROVE=off` (default on). Review, CI, P0, task-acceptance,
 accounting, custody and auto-follow gates are unchanged; the watchdog has no
 model access and no state authority beyond the metrics sidecar.
+
+## 2026-11-05: throughput watchdog guardrails, second set
+
+Owner decision (2026-11-05, "improve"): the first guardrail set in the entry
+above is superseded. Guardrails now: one issue per missed threshold, several
+in one cycle; none while that threshold's watchdog issue is open or an open
+PR references it (per threshold, not global); after its issue is observed
+closed, finalize records the measurement and the runtime (generation and SHA)
+installed at close and does not re-file that threshold until 10 cycles ran on
+a runtime newer than that one (later generation, different SHA) and it is
+still missed, or at once if the measurement is more than 10% worse than at
+close; an open issue is edited only when its window advanced 10 cycles; at
+most 3 watchdog issues per UTC day (attempts counted, `createBlocked:
+"daily_bound"` logged). State is `throughput/watchdog.json` version 2 on the
+metrics ref, written by the same expected-head, non-force finalize writer;
+the reader lifts the historical version 1 file with an unknown runtime at
+close, so the next known runtime becomes the baseline. An issue whose
+recording write was lost is adopted by its marker; a repeated finalize of one
+cycle acts once; 60 s bound; never throws into the run; kill switch
+`SENTINEL_SELF_IMPROVE=off`. The 7-day cooldown, the one-issue-per-cycle rule
+and the >10% edit rule are retired.
