@@ -275,6 +275,7 @@ export async function reconcileQueueRecord(
     reentry: state?.stage === "dequeue_complete" ||
       (state?.queueFailures ?? 0) > 0,
     failedQueueAdmissions: state?.queueFailures ?? 0,
+    ownerLanding: record.ownerLanding !== undefined,
   };
   const decision = decideQueuePolicy(facts);
   if (

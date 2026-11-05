@@ -1,4 +1,5 @@
 /** Native matrix planner and cell executable composition. */
+import { HOSTED_RECORD_WAIT_CAUSES } from "../repair/loop-wait-cause.ts";
 import { parseMatrixPlanV1 } from "../contracts/matrix.ts";
 import { QUEUE_CUSTODY_IDLE_DETAIL } from "./actions-queue-custody.ts";
 import type {
@@ -18,6 +19,10 @@ import {
   writeMatrixPlanReport,
 } from "./matrix.ts";
 import { createGitBundleExporter } from "./matrix-git.ts";
+import {
+  noRepairFanoutOutputs,
+  publishRepairFanoutOrNone,
+} from "./repair-fanout-host.ts";
 import {
   matrixPlanDiagnosticLineOf,
   type MatrixPlanDiagnosticLineV1,
@@ -75,6 +80,8 @@ export async function runActionsMatrixHost(
           deadline,
           modelStartsEnabled: false,
           externalImplementations: true,
+          // #335: the planner's intake writes waits too (`HOSTED_RECORD_WAIT_CAUSES`).
+          recordWaitCauses: HOSTED_RECORD_WAIT_CAUSES,
           runCycle: async (deps, options) => {
             const outcome = await prepareMatrixIntakeV1(deps, {
               ...options,
@@ -130,6 +137,15 @@ export async function runActionsMatrixHost(
             "\n",
           { append: true },
         );
+        // #328: the repository fan-out plan on the state the planner left.
+        // It is an optimization: any failure plans no repository cell.
+        await publishRepairFanoutOrNone({
+          state: input.state,
+          configs: pooled.configs,
+          run: host.run,
+          artifactRoot: host.artifactRoot,
+          output,
+        });
         console.log(JSON.stringify(matrixPlanCarrierOf({
           waveId: result.plan.waveId,
           run: host.run,
@@ -138,14 +154,22 @@ export async function runActionsMatrixHost(
           planDigest: result.planDigest,
           prepared: result.prepared,
         })));
-        // A zero-cell plan says why, per repository (C5.1), after the carrier.
-        if (planned.diagnostic !== undefined) {
+        // A zero-cell plan says why, per repository (C5.1), after the carrier;
+        // every pass also carries its refusal reason and count (#335).
+        if (planned.diagnostic !== undefined || planned.refusal !== undefined) {
           printPlanDiagnostic(() =>
             matrixPlanDiagnosticLineOf({
               waveId: planned.plan.waveId,
               prepared: planned.prepared,
+              attempted: planned.attempted,
+              deferred: planned.deferred,
+              // Every pass names its deferrals, not only a zero-cell one.
+              deferredByReason: planned.diagnostic?.deferredByReason ??
+                planned.deferredByReason,
+              deferredRecords: planned.deferredRecords,
               cause: "planner",
               diagnostic: planned.diagnostic,
+              refusal: planned.refusal,
             })
           );
         }
@@ -269,7 +293,7 @@ export async function runActionsMatrixHost(
     await Deno.writeTextFile(
       output,
       'matrix={"include":[]}\nplanDigest=' + result.planDigest +
-        "\nhasCells=false\n",
+        "\nhasCells=false\n" + noRepairFanoutOutputs(),
       { append: true },
     );
     console.log(

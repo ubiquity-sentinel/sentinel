@@ -508,7 +508,8 @@ Deno.test("workflow binds only the protected repository selector and keeps imple
   const modelLines = workflow.split("\n").filter((line) =>
     line.trim().startsWith("SENTINEL_MODEL_ID:")
   );
-  assert.equal(modelLines.length, 4);
+  // maintenance, matrix_plan, matrix_cell, repair_cell (#328) and repair.
+  assert.equal(modelLines.length, 5);
   assert.ok(
     modelLines.every((line) =>
       line.trim() ===

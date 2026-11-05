@@ -329,15 +329,22 @@ assert.equal(artifactHttpCalls, 0);
 // A frozen predecessor has no host prelude; when present, only this complete
 // negative native observation is allowed. Every other HTTP request stays fatal.
 if (queueReads.length > 0) assert.ok(queueReads.every((read) => read === "rules" || read === "queue"));
-assert.ok(github.calls.includes("listOpenIssues"));
-assert.ok(gatewayGithub.calls.includes("listOpenIssues"));
-assert.ok(passportGithub.calls.includes("listOpenIssues"));
-assert.deepEqual(preparedTargets, ["ubiquity-sentinel/sentinel", "ubiquity/ai.ubq.fi", "ubiquity/passport.ubq.fi"]);
-assert.equal(gatewayTransport.requests.length, 1);
-gatewayTransport.assertReadOnly(["/admin/sentinel/incidents"]);
+// #336: bootstrap is a health pass. It prepares no target, polls no source
+// and steps no record; the next ordinary bounded pass owns that walk.
+assert.match(result.outcome.detail, /^bootstrap pass: /);
+assert.ok(!github.calls.includes("listOpenIssues"));
+assert.ok(!gatewayGithub.calls.includes("listOpenIssues"));
+assert.ok(!passportGithub.calls.includes("listOpenIssues"));
+assert.deepEqual(preparedTargets, []);
+assert.equal(gatewayTransport.requests.length, 0);
 gatewayTransport.assertNoWriteEndpoints();
-assert.equal(gatewayTransport.requests[0].headers.get("authorization"), "Bearer synthetic-bootstrap-only-token");
-assert.deepEqual(await Array.fromAsync(Deno.readDir(gatewayRoot + "/retained/entries")), []);
+// The health pass never composes the gateway, so its retention directory may
+// not exist at all; when it does, it must still hold no entry.
+const retained = await Array.fromAsync(Deno.readDir(gatewayRoot + "/retained/entries")).catch((error) => {
+  if (error instanceof Deno.errors.NotFound) return [];
+  throw error;
+});
+assert.deepEqual(retained, []);
 console.log(JSON.stringify({ kind: "bootstrap_fixture", result, modelCalls, httpCalls, queueReads, artifactHttpCalls, preflightCalls }));
 `,
     { mode: 0o600 },

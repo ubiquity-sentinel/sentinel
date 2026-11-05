@@ -71,7 +71,7 @@ export function protectedReadmissionShape(record: WorkRecordV1): boolean {
     target.candidateState !== undefined &&
     target.candidateState.preserved === null &&
     target.candidateState.publishedHead === null &&
-    target.selfMerge === undefined;
+    target.selfMerge === undefined && record.ownerLanding === undefined;
 }
 
 /**

@@ -6,6 +6,7 @@ import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import { parseHostedExecutionIntentV1 } from "../../src/contracts/hosted-supervisor.ts";
 import { portError, portOk } from "../../src/contracts/ports.ts";
 import { DEFAULT_STEP_LIMIT } from "../../src/repair/loop-bounds.ts";
+import { BOOTSTRAP_HEALTH_DETAIL } from "../../src/host/bootstrap-health-pass.ts";
 import {
   parseReleaseStateSnapshotV1,
   parseRepairStateSnapshotV1,
@@ -157,27 +158,24 @@ for (const scenario of ["bootstrap", "ordinary", "failed preflight"] as const) {
       } else {
         const result = await run();
         assert.equal(result.startupReady, true);
-        assert.equal(
-          preserved,
-          purpose === "bootstrap" ? DEFAULT_STEP_LIMIT : count,
-        );
-        assert.equal(
-          result.outcome.status,
-          purpose === "bootstrap" ? "step_limit" : "idle",
-        );
+        // #336: bootstrap is a health pass; the ordinary pass preserves.
+        assert.equal(preserved, purpose === "bootstrap" ? 0 : count);
+        if (purpose === "bootstrap") {
+          assert.deepEqual(result.outcome, {
+            status: "idle",
+            detail: BOOTSTRAP_HEALTH_DETAIL,
+          });
+        } else assert.equal(result.outcome.status, "idle");
       }
-      assert.equal(
-        preserved,
-        purpose === "bootstrap" ? DEFAULT_STEP_LIMIT : count,
-      );
+      assert.equal(preserved, purpose === "bootstrap" ? 0 : count);
       assert.equal(
         artifactScans,
-        1,
-        "initial artifact verification is retained",
+        purpose === "bootstrap" ? 0 : 1,
+        "initial artifact verification is the ordinary pass's",
       );
       assert.equal(
         github.drains.length,
-        1,
+        purpose === "bootstrap" ? 0 : 1,
         "real entrypoint still performs mandatory review drain",
       );
       assert.equal(modelCalls, 0);

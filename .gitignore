@@ -1,4 +1,5 @@
 .codex-worktrees/
+.claude/
 .sentinel/
 .sentinel-artifacts/
 .env

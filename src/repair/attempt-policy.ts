@@ -49,6 +49,7 @@ import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import { isPassportWorkTrial } from "./passport-work-trial.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { CANDIDATE_COMMIT_REFUSAL_DETAILS } from "./model-port-checkout.ts";
+import { recordAttemptInputs } from "./identical-attempt.ts";
 
 /**
  * Closed settlement details the implementation path already produces. These
@@ -64,6 +65,26 @@ export const ATTEMPT_DETAIL_INTERRUPTED_BOUND =
 export const ATTEMPT_DETAIL_LOOP_STOP = "failed_command_loop" as const;
 export const ATTEMPT_DETAIL_ARTIFACT_ONLY =
   "model candidate changed only generated/cache artifacts" as const;
+/**
+ * A completed candidate whose change set is only an unapplied patch/diff file
+ * plus tests (`candidate-shape.ts`): the real file is unchanged, so it is
+ * refused before publication and review. The wording is the instruction the
+ * next attempt's prompt carries as a verified prior fact.
+ */
+export const ATTEMPT_DETAIL_UNAPPLIED_PATCH =
+  "model candidate committed an unapplied patch file instead of the fix; apply the change to the real file in place (even a protected path) and remove the patch file" as const;
+/**
+ * A charged conflict-resolution cell settled LOST (its run completed, or its
+ * evidence expired, without an uploaded artifact; `conflict-lost-cell.ts`).
+ * It is recorded in the attempt-memory family of the conflict's merge base,
+ * so the lost cells of one (task, merge base) are counted durably. It starts
+ * with the launcher's retryable `model run ended without a trusted receipt`
+ * prefix, so a parked loss returns only through the conflict marker's
+ * moved-tip rule, and identical losses across bases feed the repeat-failure
+ * streak (its normal park and re-arms).
+ */
+export const ATTEMPT_DETAIL_LOST_CELL =
+  "model run ended without a trusted receipt: conflict resolution cell lost before upload" as const;
 export const ATTEMPT_DETAIL_UNCERTAIN =
   "implementation outcome uncertain; awaiting authoritative disposition" as const;
 /**
@@ -87,6 +108,18 @@ export const ATTEMPT_DETAIL_PROVIDER_THROTTLED =
  */
 export const ATTEMPT_DETAIL_NO_CHANGE =
   "model run completed without any change to its checkout" as const;
+
+/**
+ * Failed settlements that are JUDGED outcomes of their inputs (#334): the
+ * session completed and its result was evaluated (no change at all, or only
+ * generated/cache artifacts). Only these record an input fingerprint; every
+ * incomplete, interrupted, looped, transient or uncertain run does not.
+ */
+export const JUDGED_ATTEMPT_DETAILS: ReadonlySet<string> = new Set([
+  ATTEMPT_DETAIL_NO_CHANGE,
+  ATTEMPT_DETAIL_ARTIFACT_ONLY,
+  ATTEMPT_DETAIL_UNAPPLIED_PATCH,
+]);
 
 /**
  * The closed settlement detail of one failed implementation port result.
@@ -121,6 +154,10 @@ const DETAIL_CLASSIFICATION: readonly (readonly [
     { stage: "model", failureClass: "transient_infrastructure" },
   ],
   [
+    ATTEMPT_DETAIL_LOST_CELL,
+    { stage: "reservation", failureClass: "transient_infrastructure" },
+  ],
+  [
     ATTEMPT_DETAIL_INCOMPLETE,
     { stage: "model", failureClass: "semantic_no_progress" },
   ],
@@ -139,6 +176,10 @@ const DETAIL_CLASSIFICATION: readonly (readonly [
   [
     ATTEMPT_DETAIL_NO_CHANGE,
     { stage: "model", failureClass: "semantic_no_progress" },
+  ],
+  [
+    ATTEMPT_DETAIL_UNAPPLIED_PATCH,
+    { stage: "candidate", failureClass: "semantic_no_progress" },
   ],
   [
     ATTEMPT_DETAIL_UNCERTAIN,
@@ -512,6 +553,8 @@ export async function attemptMemorySuccessMutationV1(input: {
   now: number;
   /** Authenticated producing runtime of this accepted attempt. */
   runtimeSha: GitSha;
+  /** The accepted candidate head; omitted when not a plain candidate. */
+  producedHead?: GitSha | null;
 }): Promise<(draft: RepairStateSnapshotV1) => void> {
   const runtimeSha = requireAttemptRuntime(input.runtimeSha);
   const purpose: AttemptPurposeV1 = "implementation";
@@ -536,11 +579,24 @@ export async function attemptMemorySuccessMutationV1(input: {
         entries: [],
       }
       : draft.attemptMemory[index];
-    const next = recordAttemptSuccessV1(
-      existing,
-      input.now,
-      runtimeSha,
-    );
+    // #334: an accepted attempt records its inputs only when it reproduced
+    // the exact candidate it started from (`producedHead` equals the input
+    // head): that outcome is judged, and an identical replay can only
+    // reproduce it again. A NEW candidate is never recorded: when it later
+    // goes missing (positive absence) or is otherwise dropped, the record
+    // returns to the same inputs and the fresh attempt must be admitted.
+    const succeeded = recordAttemptSuccessV1(existing, input.now, runtimeSha);
+    const next = input.producedHead !== undefined &&
+        input.producedHead !== null &&
+        input.producedHead === input.record.target.head
+      ? recordAttemptInputs(
+        succeeded,
+        draft,
+        input.record,
+        runtimeSha,
+        input.now,
+      )
+      : succeeded;
     const sorted = [...draft.attemptMemory];
     if (index === -1) {
       sorted.push(next);
@@ -577,9 +633,14 @@ export async function attemptMemorySettlementMutationV1(input: {
     stage: AttemptStageV1;
     failureClass: AttemptFailureClassV1;
   };
+  /**
+   * The family's base when it is not the record's target base: a lost
+   * conflict cell is recorded at the conflict's merge base.
+   */
+  base?: GitSha;
 }): Promise<(draft: RepairStateSnapshotV1) => void> {
   const purpose: AttemptPurposeV1 = "implementation";
-  const base = input.record.target.base;
+  const base = input.base ?? input.record.target.base;
   const controllerSha = requireAttemptRuntime(input.runtimeSha);
   const classification = input.classification ??
     classifyAttemptDetailV1(input.detail);
@@ -610,7 +671,7 @@ export async function attemptMemorySettlementMutationV1(input: {
         entries: [],
       }
       : draft.attemptMemory[index];
-    const merged = mergeAttemptOutcomeV1(existing, {
+    const outcome = mergeAttemptOutcomeV1(existing, {
       fingerprint,
       stage: classification.stage,
       failureClass: classification.failureClass,
@@ -618,6 +679,19 @@ export async function attemptMemorySettlementMutationV1(input: {
       controllerSha,
       atMs: input.now,
     });
+    // Only a JUDGED outcome is recorded as an input fingerprint (#334): a
+    // session that completed and whose result was evaluated. An incomplete,
+    // interrupted, looped, transient or unknown run proves nothing about its
+    // inputs and keeps the bounded equivalence allowance above.
+    const merged = JUDGED_ATTEMPT_DETAILS.has(input.detail)
+      ? recordAttemptInputs(
+        outcome,
+        draft,
+        input.record,
+        controllerSha,
+        input.now,
+      )
+      : outcome;
     if (index === -1) {
       draft.attemptMemory.push(merged);
     } else {

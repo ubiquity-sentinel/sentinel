@@ -48,6 +48,11 @@ export interface GitHubPortOptionsV1 {
    * expected author. When absent, any resolved finding fail closes.
    */
   resolutionVerifier?: HumanResolutionVerifierV1;
+  /**
+   * Trusted per-target delivery policy rows (#331); default the trusted table
+   * `TARGET_DELIVERY_POLICIES`. Host configuration only, never target input.
+   */
+  deliveryPolicies?: Readonly<Record<string, unknown>>;
   /** Paged read bounds. */
   perPage?: number;
   maxPages?: number;
