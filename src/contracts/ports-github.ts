@@ -106,6 +106,12 @@ export interface GitHubPort {
    */
   readCommitParents?(sha: GitSha): Promise<PortResultV1<GitSha[] | null>>;
   /**
+   * Optional exact tree of one commit (null: no such commit). A squash merge
+   * (#331) is proven on exactly [reviewed base] by its tree equal to the
+   * reviewed head's tree; absent, a single-parent merge is never booked.
+   */
+  readCommitTree?(sha: GitSha): Promise<PortResultV1<GitSha | null>>;
+  /**
    * Optional trusted deterministic candidate-base integration capability.
    *
    * When present, it re-observes the exact open trusted-author PR (state,

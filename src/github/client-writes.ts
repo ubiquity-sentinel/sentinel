@@ -13,7 +13,11 @@ import {
 } from "./wire.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import { GitHubClientReads } from "./client-reads.ts";
-import type { CreatePullWireV1, MergePutWireV1 } from "./client-contracts.ts";
+import type {
+  CreatePullWireV1,
+  MergePullShapeV1,
+  MergePutWireV1,
+} from "./client-contracts.ts";
 import { parseWire, repoPath } from "./client-response.ts";
 import {
   type BaseReviewCommentV1,
@@ -107,13 +111,26 @@ export abstract class GitHubClientWrites extends GitHubClientReads {
   async mergePull(
     number: number,
     sha: GitSha,
+    shape?: MergePullShapeV1,
   ): Promise<PortResultV1<MergePutWireV1>> {
+    // The expected head (`sha`) guards every method; a squash call names its
+    // exact commit title and body (#331).
+    const body = shape === undefined
+      ? { sha }
+      : shape.method === "merge"
+      ? { sha, merge_method: "merge" }
+      : {
+        sha,
+        merge_method: "squash",
+        commit_title: shape.title,
+        commit_message: shape.message,
+      };
     const raw = await this.sendCore(
       "PUT",
       `${this.apiBaseUrl}/repos/${
         repoPath(this.repository)
       }/pulls/${number}/merge`,
-      { sha },
+      body,
     );
     if (raw.status === "error") {
       return portError(raw.error.kind, raw.error.detail, raw.error.rateLimit);

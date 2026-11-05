@@ -7,10 +7,7 @@ import type {
 } from "../contracts/ports.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import type { SelfMergeExecutionV1 } from "../contracts/self-merge.ts";
-import {
-  mergedExactlyOnBase,
-  queueMayHaveMerged,
-} from "../repair/merge-off-tip.ts";
+import { mergeLanding, queueMayHaveMerged } from "../repair/merge-off-tip.ts";
 import type { GitHubEffectiveProtectionsV1 } from "./port-contracts.ts";
 import type { TakeoverEffectAuthorization } from "../contracts/existing-pr-takeover.ts";
 import { executeSelfMerge } from "./port-self-merge.ts";
@@ -31,6 +28,7 @@ import { GitHubPortReview } from "./port-review.ts";
 import {
   blocked,
   closingIssueNumber,
+  mergeShapeV1,
   noEffectiveProtections,
   requiredChecksState,
 } from "./port-merge-policy.ts";
@@ -254,6 +252,18 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
       return blocked("review_required", pull.value.head);
     }
     if (conditionalSelf) return native();
+    // 7c. Delivery shape (#331): the trusted per-target method, read before
+    // the base re-read below so that stays the last read before the call.
+    // The reviewed head is still the merge input under the expected-head
+    // guard; only the resulting default-branch commit shape differs.
+    const shape = await mergeShapeV1(
+      this.repository,
+      this.deliveryPolicies,
+      () => this.client.readRepositoryMergeSettings(),
+      pull.value.title,
+      closingIssue,
+    );
+    if (!shape.ok) return shape;
     // 8. Expected-head merge with a base compare-and-swap. GitHub's merge API
     // guards only the head, the pull request's reported base is not updated
     // when the base branch moves, and branch rules no longer gate a merge
@@ -278,6 +288,7 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
     const merged = await this.client.mergePull(
       merge.pullRequestNumber,
       merge.expectedHead,
+      shape.value,
     );
     if (!merged.ok) return merged;
     if (merged.value.status === "merged") {
@@ -343,11 +354,12 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
   }
 
   /**
-   * The bookable outcome of one merge commit: `merged` only when its parents
-   * are exactly [reviewed base, reviewed head] (the REST merge makes a merge
-   * commit, so that is the tree the review and CI saw), `merged_off_tip`
-   * otherwise, and `ambiguous` when the commit cannot be read (the next run
-   * reconciles; never booked unproven). `observed` marks a merge this call did
+   * The bookable outcome of one merge commit: `merged` only when it is the
+   * tree the review and CI saw (a merge commit on exactly [reviewed base,
+   * reviewed head], or a squash commit on exactly [reviewed base] whose tree
+   * is the reviewed head's tree, #331), `merged_off_tip` otherwise, and
+   * `ambiguous` when a commit cannot be read (the next run reconciles; never
+   * booked unproven). `observed` marks a merge this call did
    * not make: one the native queue may have made (`queueMayHaveMerged`) has
    * the queue's parents and keeps its own proof, so it is left as before.
    */
@@ -360,14 +372,25 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
     if (observed && queueMayHaveMerged(this.repository)) {
       return portOk({ outcome: "merged", head, mergeSha });
     }
-    const parents = await this.client.readCommitParents(mergeSha);
-    if (!parents.ok || parents.value === null) {
+    const landing = await mergeLanding(
+      {
+        parents: (sha) => this.client.readCommitParents(sha),
+        tree: (sha) => this.client.readCommitTree(sha),
+      },
+      mergeSha,
+      merge.expectedBase,
+      head,
+    );
+    if (landing === "unavailable") {
       return portOk({ outcome: "ambiguous", head, mergeSha });
     }
     return portOk(
-      mergedExactlyOnBase(parents.value, merge.expectedBase, head)
-        ? { outcome: "merged", head, mergeSha }
-        : { outcome: "merged_off_tip", head, mergeSha, parents: parents.value },
+      landing.kind === "exact" ? { outcome: "merged", head, mergeSha } : {
+        outcome: "merged_off_tip",
+        head,
+        mergeSha,
+        parents: landing.parents,
+      },
     );
   }
 

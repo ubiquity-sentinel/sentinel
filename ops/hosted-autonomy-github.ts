@@ -51,6 +51,10 @@ import {
 import { createMergeBaseTreeChanges } from "./hosted-autonomy-github-trees.ts";
 import { createHostedDeliveryReads } from "./hosted-autonomy-github-delivery.ts";
 import {
+  hostedMergeBody,
+  readSquashTrees,
+} from "./hosted-autonomy-merge-shape.ts";
+import {
   parseHostedAutonomyHeadPulls,
   parseHostedAutonomyPull,
   revisionIntegratedIntoBase,
@@ -149,6 +153,11 @@ export function createHostedAutonomyGitHub(
         ? String((parent as Record<string, unknown>)["sha"] ?? "")
         : ""
     );
+    // A single-parent (squash, #331) merge is proven by its tree equal to
+    // the pull head's tree; a merge commit needs no tree read.
+    const trees = parents.length === 1 && parsed.headSha !== null
+      ? await readSquashTrees(request, scope, commit, parsed.headSha)
+      : null;
     const compare = await request(
       "GET",
       `/repos/${scope}/compare/${mergeCommitSha}...${baseBranch}`,
@@ -182,6 +191,7 @@ export function createHostedAutonomyGitHub(
       parents,
       revisionOnBaseBranch,
       baseAncestorOfRevision,
+      ...(trees === null ? {} : trees),
     };
   }
 
@@ -797,12 +807,19 @@ export function createHostedAutonomyGitHub(
       );
     },
     async merge(number: number, head: string, message?: string) {
+      // The trusted per-target method (#331); null refuses this pass.
+      const body = await hostedMergeBody(
+        request,
+        repository,
+        number,
+        head,
+        message,
+      );
+      if (body === null) return null;
       const response = await request(
         "PUT",
         `/repos/${scope}/pulls/${number}/merge`,
-        message === undefined
-          ? { sha: head, merge_method: "merge" }
-          : { sha: head, merge_method: "merge", commit_message: message },
+        body,
       );
       if (response === null || typeof response !== "object") return null;
       const obj = response as Record<string, unknown>;
