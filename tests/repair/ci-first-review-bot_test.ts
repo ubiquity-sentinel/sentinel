@@ -78,6 +78,68 @@ Deno.test("CI gate: a lone review-bot check is no CI evidence; it is still judge
   assert.ok(typeof red === "object", "a failed bot check still blocks");
 });
 
+/** One check run reported by the GitHub App `app`. */
+function fromApp(
+  name: string,
+  head: GitSha,
+  conclusion: GitHubCheckV1["conclusion"],
+  app: string,
+): GitHubCheckV1 {
+  return { ...check(name, head, conclusion), app };
+}
+
+/** A green security-scanner check: another app, not CI. */
+function scannerOnly(head: GitSha): GitHubCheckV1[] {
+  return [
+    fromApp("GitGuardian Security Checks", head, "success", "gitguardian"),
+  ];
+}
+
+Deno.test("CI gate: positive evidence; a green foreign-app check is neither green nor red", () => {
+  assert.equal(decideCiGate(scannerOnly(SHA3)), "wait");
+  assert.equal(
+    decideCiGate([
+      fromApp(
+        "Cloudflare Pages",
+        SHA3,
+        "skipped",
+        "cloudflare-workers-and-pages",
+      ),
+      fromApp("Socket Security", SHA3, "neutral", "socket-security"),
+    ]),
+    "wait",
+  );
+  const red = decideCiGate([
+    ...scannerOnly(SHA3),
+    fromApp("Socket Security", SHA3, "failure", "socket-security"),
+  ]);
+  assert.ok(typeof red === "object", "a failed foreign-app check blocks");
+  assert.match(red.blocked, /Socket Security\(failure\)/);
+  assert.equal(
+    decideCiGate([
+      ...scannerOnly(SHA3),
+      fromApp("validate", SHA3, "success", "github-actions"),
+    ]),
+    "proceed",
+    "a GitHub Actions success is CI evidence",
+  );
+  assert.equal(
+    decideCiGate([...scannerOnly(SHA3), check("ci", SHA3, "success")]),
+    "proceed",
+    "a legacy check with no app is CI evidence",
+  );
+  assert.equal(
+    decideCiGate([fromApp("validate", SHA3, "skipped", "github-actions")]),
+    "wait",
+    "a skipped Actions job alone is no evidence CI ran",
+  );
+  assert.equal(
+    decideCiGate([fromApp("validate", SHA3, "success", "unknown")]),
+    "wait",
+    "an app with no readable slug never passes for Actions",
+  );
+});
+
 function gatewayConfig(): RepositoryConfigV1 {
   const config = createTargetConfigV1(
     createLocalRepositoryConfig(),
@@ -103,10 +165,14 @@ function grant(): string {
   });
 }
 
-Deno.test("CI first: a head with only a skipped CodeRabbit check waits unreviewed, the pre-merge dispatcher sends its one dispatch, and a green dispatched run lets the review proceed", async () => {
-  const { rig, setChecks } = await ciFirstRig("cf-review-bot", {
+async function waitsThenDispatches(
+  label: string,
+  foreign: (head: GitSha) => GitHubCheckV1[],
+  jobApp: string | undefined,
+): Promise<void> {
+  const { rig, setChecks } = await ciFirstRig(label, {
     hosted: true,
-    checks: { [SHA3]: botOnly(SHA3) },
+    checks: { [SHA3]: foreign(SHA3) },
   });
   try {
     await rig.run();
@@ -182,8 +248,12 @@ Deno.test("CI first: a head with only a skipped CodeRabbit check waits unreviewe
 
     // The dispatched Gateway CI run lands green on the exact head.
     setChecks(SHA3, [
-      ...botOnly(SHA3),
-      ...GATEWAY_JOBS.map((name) => check(name, SHA3, "success")),
+      ...foreign(SHA3),
+      ...GATEWAY_JOBS.map((name) =>
+        jobApp === undefined
+          ? check(name, SHA3, "success")
+          : fromApp(name, SHA3, "success", jobApp)
+      ),
     ]);
     rig.clock.advance(5 * 60_000 + 1);
     await rig.run();
@@ -198,11 +268,38 @@ Deno.test("CI first: a head with only a skipped CodeRabbit check waits unreviewe
   } finally {
     await rig.ctx.cleanup();
   }
+}
+
+Deno.test("CI first: a head with only a skipped CodeRabbit check waits unreviewed, the pre-merge dispatcher sends its one dispatch, and a green dispatched run lets the review proceed", async () => {
+  await waitsThenDispatches("cf-review-bot", botOnly, undefined);
+});
+
+Deno.test("CI first: a head with only a green GitGuardian check waits ci_pending, the dispatch fires, and green GitHub Actions jobs let the review proceed", async () => {
+  await waitsThenDispatches("cf-scanner", scannerOnly, "github-actions");
 });
 
 Deno.test("delivery: a reviewed head whose only check is a skipped CodeRabbit is never merged; it waits on CI", async () => {
   const { rig } = await ciFirstRig("cf-review-bot-merge", {
     checks: { [SHA3]: botOnly(SHA3) },
+    reviewed: true,
+    reviewRounds: 1,
+    nextStep: "delivery",
+  });
+  try {
+    await rig.run();
+    const work = taskRecord(await rig.snapshot());
+    assert.equal(rig.github.calls.includes("merge"), false);
+    assert.equal(work.nextStep, "delivery");
+    assert.equal(work.wait?.reason, "ci_pending");
+    assert.equal(work.blocker, null);
+  } finally {
+    await rig.ctx.cleanup();
+  }
+});
+
+Deno.test("delivery: a reviewed head whose only check is a green GitGuardian scan is never merged; it waits on CI", async () => {
+  const { rig } = await ciFirstRig("cf-scanner-merge", {
+    checks: { [SHA3]: scannerOnly(SHA3) },
     reviewed: true,
     reviewRounds: 1,
     nextStep: "delivery",

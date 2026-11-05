@@ -62,3 +62,68 @@ Deno.test("launcher green read: next to a green Gateway CI job the bot check cha
     true,
   );
 });
+
+const GITGUARDIAN = checkRun("GitGuardian Security Checks", {
+  app: { slug: "gitguardian" },
+  check_suite: { id: 23 },
+});
+
+Deno.test("launcher green read: a lone green foreign-app check is no CI evidence", async () => {
+  const surface = createHostedAutonomyGitHub("fixture-token", AI);
+  assert.equal(
+    await withHeadRuns([GITGUARDIAN], () => surface.hasAllChecksGreen(HEAD)),
+    null,
+  );
+});
+
+Deno.test("launcher green read: a failed foreign-app check is red", async () => {
+  const surface = createHostedAutonomyGitHub("fixture-token", AI);
+  const socket = checkRun("Socket Security", {
+    app: { slug: "socket-security" },
+    conclusion: "failure",
+    check_suite: { id: 24 },
+  });
+  assert.equal(
+    await withHeadRuns(
+      [GITGUARDIAN, socket],
+      () => surface.hasAllChecksGreen(HEAD),
+    ),
+    false,
+  );
+});
+
+Deno.test("launcher green read: a GitHub Actions success next to a foreign app is green", async () => {
+  const surface = createHostedAutonomyGitHub("fixture-token", AI);
+  const validate = checkRun("validate", {
+    app: { slug: "github-actions" },
+    check_suite: { id: 25 },
+  });
+  assert.equal(
+    await withHeadRuns(
+      [GITGUARDIAN, validate],
+      () => surface.hasAllChecksGreen(HEAD),
+    ),
+    true,
+  );
+});
+
+Deno.test("launcher green read: a legacy check with no app is CI evidence", async () => {
+  const surface = createHostedAutonomyGitHub("fixture-token", AI);
+  const ci = checkRun("ci", { check_suite: { id: 26 } });
+  assert.equal(
+    await withHeadRuns(
+      [GITGUARDIAN, ci],
+      () => surface.hasAllChecksGreen(HEAD),
+    ),
+    true,
+  );
+});
+
+Deno.test("launcher green read: an app with no readable slug never passes for Actions", async () => {
+  const surface = createHostedAutonomyGitHub("fixture-token", AI);
+  const odd = checkRun("validate", { app: {}, check_suite: { id: 27 } });
+  assert.equal(
+    await withHeadRuns([odd], () => surface.hasAllChecksGreen(HEAD)),
+    null,
+  );
+});

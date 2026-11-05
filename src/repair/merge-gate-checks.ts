@@ -66,26 +66,56 @@ export function isPassportDeployCheck(
 }
 
 /**
- * Check runs a review bot reports on a pull request head. They are not CI:
- * live, every Sentinel pull request on `ubiquity/ai.ubq.fi` from 2026-10-27
- * carried one `CodeRabbit` check completed `skipped` and nothing else (its
- * `Gateway CI` runs only when dispatched or once the pull request is merged),
- * and that lone skipped check read as green CI, so #1348, #1353 and #1354
- * were reviewed and merged on heads no CI ever ran on. Closed trusted policy
- * keyed by producer name, matched case-insensitively; a repository slug or a
- * candidate cannot add to it.
+ * Check runs a review bot reports on a pull request head. Live, every
+ * Sentinel pull request on `ubiquity/ai.ubq.fi` from 2026-10-27 carried one
+ * `CodeRabbit` check completed `skipped` and nothing else (its `Gateway CI`
+ * runs only when dispatched or once the pull request is merged), and that
+ * lone skipped check read as green CI, so #1348, #1353 and #1354 were
+ * reviewed and merged on heads no CI ever ran on. Since the positive CI
+ * evidence rule (`isCiEvidenceCheck`) this list is a diagnostic label and a
+ * guard for app-less fixtures only: the rule itself does not depend on it.
  */
 const REVIEW_BOT_CHECK_NAMES: ReadonlySet<string> = new Set([
   "coderabbit",
 ]);
 
-/**
- * Whether `name` is a review bot's check (not CI evidence). Such a check is
- * still judged by the gate (its failure stays red); it only never counts as
- * the evidence that CI ran on the head.
- */
+/** Whether `name` is a known review bot's check (diagnostic label). */
 export function isReviewBotCheck(name: string): boolean {
   return REVIEW_BOT_CHECK_NAMES.has(name.trim().toLowerCase());
+}
+
+/** The GitHub App slug of a GitHub Actions workflow job's check run. */
+export const GITHUB_ACTIONS_APP_SLUG = "github-actions";
+
+/**
+ * Whether a check from an app with `appSlug` (undefined: no app information,
+ * the legacy/fixture shape) can be CI evidence at all. Only GitHub Actions
+ * (the target's own workflow jobs, including a dispatched run) or an absent
+ * app can; a review bot, security scanner or deploy preview app never can,
+ * whatever its conclusion. A known review-bot name never can either.
+ */
+export function isCiEvidenceSource(
+  appSlug: string | undefined,
+  name: string,
+): boolean {
+  if (isReviewBotCheck(name)) return false;
+  return appSlug === undefined || appSlug === GITHUB_ACTIONS_APP_SLUG;
+}
+
+/**
+ * Positive CI evidence (P1-2): a completed check concluded `success` that is
+ * either a verified backup-CI stand-in (docs/backup-ci-spec.md §11.1) or
+ * comes from an evidence source (`isCiEvidenceSource`). A gate reads a head
+ * as green only when at least one such check exists and nothing failed;
+ * every other app's check is judged for failure (red still blocks) and
+ * pending, but is never the evidence that CI ran.
+ */
+export function isCiEvidenceCheck(check: GitHubCheckV1): boolean {
+  if (check.status !== "completed" || check.conclusion !== "success") {
+    return false;
+  }
+  return check.backup !== undefined ||
+    isCiEvidenceSource(check.app, check.name);
 }
 
 /** One observation split into the gate set and retained evidence. */
