@@ -44,15 +44,15 @@
  *
  * Just-in-time refresh (sentinel #329): a reviewed head keeps its reviewed
  * base until it is the head of its repository's line. The head of the line in
- * flight (`refreshInFlight`: its refresh intent, or the head it refreshed onto
- * the tip since its latest review, heading for its CI and its review there)
+ * flight (`refreshInFlight`: its refresh intent, or the head it refreshed since
+ * its latest review, even if the tip moves during its CI and review)
  * holds every other record, deliverable or not, until it merges or stops
  * holding (stall, idle, red base): a sibling refreshed onto that tip would be
  * stale again at its merge, so landing k records cost O(k^2) refreshes, CI
  * runs and often reviews. A waiting record's standing is read from the
  * snapshot alone; no refresh commit is made before it is next to land, and the
  * carried bounds (`CARRIED_REFRESH_LIMIT`, `CARRIED_WAIT_BOUND_MS`) apply to
- * head-of-line refreshes only. A `waiting` contender holds nobody. Otherwise the
+ * head-of-line refreshes only. Any other `waiting` contender holds nobody. The
  * step defers: nothing is written, charged, refreshed, pushed or requested,
  * and the next run asks again. Only one record lands at a time, CI runs on its
  * new head before its review or its carried merge, and it merges before the
@@ -189,12 +189,12 @@ export function lineBefore(
 /**
  * True while `other` (a contender standing `standing` against `tip`) is the
  * head of its line in flight: a base refresh intent not yet published, or a
- * head it refreshed onto `tip` since its latest completed review (the review
- * judged another base), heading for its CI and its review there. Such a
+ * head it refreshed since its latest completed review (the review judged
+ * another base), heading for its CI and review even if `tip` moved again. Such a
  * record moves the tip next, so every other record of the repository keeps
  * its reviewed head and base instead of refreshing onto a tip that record's
- * merge is about to move (sentinel #329). A head held by its red base stands
- * `waiting` and holds nobody, as before.
+ * merge is about to move (sentinel #329). The caller releases a head held by
+ * its red base, as before.
  */
 export function refreshInFlight(
   snapshot: Pick<QueueSnapshot, "reviews">,
@@ -203,7 +203,12 @@ export function refreshInFlight(
   standing: DeliveryLineStandingV1,
 ): boolean {
   if (other.intent?.kind === "base_refresh") return true;
-  if (standing !== "re_review" || other.target.base !== tip) return false;
+  // A moved tip must not drop an admitted head still awaiting its review.
+  // Carried heads already standing `ready` keep their oldest-first order.
+  if (
+    standing !== "re_review" &&
+    !(standing === "waiting" && other.target.base !== tip)
+  ) return false;
   const latest = latestPullReview(snapshot, other);
   return latest !== null && latest.pullRequest.head !== other.target.head &&
     latest.pullRequest.base !== other.target.base;
@@ -305,6 +310,13 @@ export function deliveryQueueAhead(
   cutoff?: LegacyCutoff,
 ): WorkRecordV1 | null {
   const deliverable = reviewedHeadCarried(snapshot, record);
+  // The admitted refresh advances ahead of the ready siblings it holds.
+  const refreshing = refreshInFlight(
+    snapshot,
+    record,
+    tip,
+    lineStanding(snapshot, record, tip, now, cutoff),
+  ) && !isRedBaseHold(record.wait, now);
   let ahead: { other: WorkRecordV1; rank: number } | null = null;
   for (const other of snapshot.work) {
     if (
@@ -313,10 +325,12 @@ export function deliveryQueueAhead(
       !contender(snapshot, other, now)
     ) continue;
     const standing = lineStanding(snapshot, other, tip, now, cutoff);
-    const inFlight = refreshInFlight(snapshot, other, tip, standing);
+    const inFlight = refreshInFlight(snapshot, other, tip, standing) &&
+      !isRedBaseHold(other.wait, now);
     const holds = standing === "landing" || inFlight ||
-      (standing === "ready" && (!deliverable || lineBefore(other, record))) ||
-      (!deliverable &&
+      (!refreshing && standing === "ready" &&
+        (!deliverable || lineBefore(other, record))) ||
+      (!refreshing && !deliverable &&
         (standing === "re_review" ||
           (standing === "reviewed" && lineBefore(other, record))));
     if (!holds) continue;

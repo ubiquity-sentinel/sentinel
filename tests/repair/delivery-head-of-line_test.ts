@@ -21,6 +21,11 @@ import {
 } from "../../src/contracts/review-receipt.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import { runRepairCycle } from "../../src/repair/loop.ts";
+import {
+  DELIVERY_QUEUE_IDLE_MS,
+  DELIVERY_QUEUE_STALL_LIMIT,
+  deliveryQueueAhead,
+} from "../../src/repair/delivery-queue.ts";
 import { REPO, reservation, SHA1, T0, workRecord } from "../state/helpers.ts";
 import { APP, queueRig } from "./delivery-queue-rig.ts";
 import { completedReceipt } from "./loop-review-fixtures.ts";
@@ -156,4 +161,100 @@ Deno.test("head of line: after the head merges the next oldest record refreshes 
     assert.equal(refreshesOf(rig, pr), 1, `PR ${pr} refreshed once`);
   }
   assert.equal(rig.github.refreshes, RECORDS);
+});
+
+Deno.test("head of line: a base move during the admitted head's CI does not refresh its siblings", async () => {
+  const rig = await reviewedLine();
+  const original = rig.records[0];
+  let head = original;
+  for (
+    let run = 0;
+    run < 20 && head.target.head === original.target.head;
+    run++
+  ) {
+    await runRepairCycle(rig.deps, {
+      deadline: rig.clock.now() + 60 * MINUTE,
+      stepLimit: 1,
+    });
+    head = (await rig.snapshot()).work.find((row) => row.id === original.id)!;
+    rig.clock.advance(1);
+  }
+  assert.notEqual(
+    head.target.head,
+    original.target.head,
+    "the line's head refreshed",
+  );
+  assert.equal(
+    head.nextStep,
+    "work",
+    "the refreshed head is awaiting CI/review",
+  );
+  rig.github.checksByHead.set(head.target.head!, [{
+    name: "validate",
+    head: head.target.head!,
+    status: "in_progress",
+    conclusion: null,
+    startedAt: rig.clock.now(),
+    completedAt: null,
+  }]);
+  for (const move of [4, 5, 6]) {
+    rig.github.remoteBase = sha(0x7000 + move);
+    await runRepairCycle(rig.deps, {
+      deadline: rig.clock.now() + 60 * MINUTE,
+      stepLimit: 16,
+    });
+    await untouched(rig, [102, 103, 104, 105]);
+    rig.clock.advance(2 * MINUTE);
+  }
+  rig.github.checksByHead.delete(head.target.head!);
+  await driveUntilMerged(rig, 101);
+  await untouched(rig, [102, 103, 104, 105]);
+});
+
+Deno.test("head of line: an admitted refresh keeps priority across tip moves until stalled, idle or held by its red base", async () => {
+  const rig = await reviewedLine();
+  const snapshot = await rig.snapshot();
+  const now = rig.clock.now();
+  const waiting = snapshot.work[0];
+  // This younger record took the line while the older one was not ready.
+  const admitted = snapshot.work[1];
+  const head: WorkRecordV1 = {
+    ...admitted,
+    nextStep: "work",
+    target: { ...admitted.target, head: sha(0x5001), base: sha(0x7002) },
+    wait: { reason: "ci_pending", since: now, until: now + 2 * MINUTE },
+    updatedAt: now,
+  };
+  const view = (replacement: WorkRecordV1) => ({
+    ...snapshot,
+    work: snapshot.work.map((row) => row.id === head.id ? replacement : row),
+  });
+  assert.equal(
+    deliveryQueueAhead(view(head), waiting, rig.github.remoteBase, now)?.id,
+    head.id,
+    "the admitted head holds an older ready sibling on a moved tip",
+  );
+  assert.equal(
+    deliveryQueueAhead(view(head), head, rig.github.remoteBase, now),
+    null,
+    "the admitted head can advance rather than waiting behind its siblings",
+  );
+  const released: WorkRecordV1[] = [
+    {
+      ...head,
+      counters: { ...head.counters, stalled: DELIVERY_QUEUE_STALL_LIMIT },
+    },
+    { ...head, updatedAt: now - DELIVERY_QUEUE_IDLE_MS },
+    {
+      ...head,
+      wait: { reason: "backoff", since: now, until: now + 30 * MINUTE },
+    },
+  ];
+  for (const record of released) {
+    assert.equal(
+      deliveryQueueAhead(view(record), waiting, rig.github.remoteBase, now),
+      null,
+      "existing escape bounds release even a moved-tip refresh",
+    );
+  }
 });
