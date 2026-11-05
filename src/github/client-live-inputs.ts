@@ -1,8 +1,8 @@
 /**
  * Batched live-input GraphQL wire (issue #326).
  *
- * One read-only `repository { ... }` query per chunk of at most
- * `LIVE_INPUTS_CHUNK` items asks, with deterministic aliases, for every
+ * One read-only `repository { ... }` query for the bounded request asks,
+ * with deterministic aliases, for every
  * requested issue's state, every pull request's state/head/base, its last
  * commit's `statusCheckRollup` and its latest review, and every requested
  * branch tip. Chunks are exhaustive: the merged answer covers every requested
@@ -31,8 +31,12 @@ import {
   MaxText,
 } from "../contracts/validation.ts";
 
-/** Items (issues + pulls + branches) one GraphQL request carries at most. */
-export const LIVE_INPUTS_CHUNK = 100;
+/**
+ * Carry the entire accepted request in one query. Counting issues and pulls
+ * separately must not split a normal 74-record repository into two requests.
+ * The shared item bound still refuses oversized requests before any I/O.
+ */
+export const LIVE_INPUTS_CHUNK = MAX_LIVE_INPUT_ITEMS;
 
 const BRANCH = /^[A-Za-z0-9._/-]{1,255}$/;
 const MAX_ISSUE_NUMBER = 2 ** 31 - 1;

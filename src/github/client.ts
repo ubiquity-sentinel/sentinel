@@ -36,7 +36,7 @@ import {
 export class GitHubApiClient extends GitHubClientCiEvidence {
   /**
    * Batched live inputs of this repository's live work records (issue #326):
-   * one read-only GraphQL request per bounded chunk, through the same
+   * one bounded read-only GraphQL request per repository, through the same
    * authenticated gate, deadline, cooldown and typed error mapping as every
    * other GraphQL read. Exhaustive: one failed chunk fails the whole read
    * (never a partial or empty success); no retry loop.

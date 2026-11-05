@@ -4,7 +4,7 @@
  * credentials): one request answers every requested issue, pull request and
  * branch; NOT_FOUND aliases are explicit absences; every other GraphQL error,
  * a missing alias or a foreign repository fails closed instead of producing a
- * partial or empty success; more items than one chunk are read exhaustively.
+ * partial or empty success; the full accepted bound fits one query.
  */
 import assert from "node:assert/strict";
 
@@ -112,6 +112,35 @@ Deno.test("live inputs: one GraphQL request answers issues, pulls and the base t
   }]);
 });
 
+Deno.test("live inputs: 74 live issue/PR pairs use one GraphQL request", async () => {
+  const issues = Array.from({ length: 74 }, (_, index) => index + 1);
+  const pulls = issues.map((number) => number + 100);
+  const repository: Record<string, unknown> = {
+    b0: { target: { oid: BASE } },
+  };
+  for (const [index, number] of issues.entries()) {
+    repository[`i${index}`] = { number, state: "OPEN" };
+    repository[`p${index}`] = pullNode(pulls[index]);
+  }
+  const { client, transport } = makeClient([
+    httpRespond("POST", "/graphql", 200, { data: { repository } }),
+  ]);
+  const result = await client.readLiveInputs({
+    repository: REPO,
+    issues,
+    pulls,
+    branches: ["development"],
+  });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  if (!result.ok) return;
+  assert.equal(transport.requests.length, 1);
+  assert.equal(result.value.issues.length, 74);
+  assert.equal(result.value.pulls.length, 74);
+  const body = JSON.parse(transport.requests[0].body ?? "{}");
+  assert.match(body.query, /p73: pullRequest\(number: 174\)/);
+  assert.match(body.query, /b0: ref/);
+});
+
 Deno.test("live inputs: a rollup of another commit is unbound, none is none", async () => {
   const { client } = makeClient([
     httpRespond("POST", "/graphql", 200, {
@@ -201,9 +230,9 @@ Deno.test("live inputs: GraphQL errors, missing aliases and a foreign repository
   assert.equal(foreign.transport.requests.length, 0);
 });
 
-Deno.test("live inputs: more items than one chunk are read exhaustively", async () => {
+Deno.test("live inputs: the full item bound fits one query and overflow is refused", async () => {
   const issues = Array.from(
-    { length: LIVE_INPUTS_CHUNK + 5 },
+    { length: LIVE_INPUTS_CHUNK - 1 },
     (_, index) => index + 1,
   );
   const chunks = buildLiveInputsChunks({
@@ -213,7 +242,7 @@ Deno.test("live inputs: more items than one chunk are read exhaustively", async 
     branches: ["development"],
   });
   assert.ok(chunks !== null);
-  assert.equal(chunks.length, 2);
+  assert.equal(chunks.length, 1);
   const script = chunks.map((chunk) => {
     const repository: Record<string, unknown> = {};
     for (const item of chunk.items) {
@@ -232,7 +261,7 @@ Deno.test("live inputs: more items than one chunk are read exhaustively", async 
   });
   assert.equal(result.ok, true, JSON.stringify(result));
   if (!result.ok) return;
-  assert.equal(transport.requests.length, 2);
+  assert.equal(transport.requests.length, 1);
   assert.equal(result.value.issues.length, issues.length);
   assert.ok(result.value.issues.every((row) => row.state === "closed"));
   assert.deepEqual(result.value.branches, [{
@@ -240,18 +269,17 @@ Deno.test("live inputs: more items than one chunk are read exhaustively", async 
     tip: BASE,
   }]);
 
-  // The second chunk failing fails the whole read (never a partial success).
-  const partial = makeClient([
-    script[0],
-    httpRespond("POST", "/graphql", 500, {}),
-  ]);
-  const cut = await partial.client.readLiveInputs({
+  // More than the shared bound is refused, never split into extra queries.
+  const overflow = makeClient([]);
+  const refused = await overflow.client.readLiveInputs({
     repository: REPO,
-    issues,
+    issues: [...issues, LIVE_INPUTS_CHUNK],
     pulls: [],
     branches: ["development"],
   });
-  assert.equal(cut.ok, false);
+  assert.equal(refused.ok, false);
+  if (!refused.ok) assert.equal(refused.error.kind, "invalid");
+  assert.equal(overflow.transport.requests.length, 0);
 });
 
 Deno.test("live inputs: an invalid branch or number is refused before any request", async () => {

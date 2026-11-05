@@ -13,16 +13,20 @@
  */
 import assert from "node:assert/strict";
 
+import { GitHubApiClient } from "../../src/github/client.ts";
+import {
+  FakeAuthProvider,
+  FakeCooldownGate,
+  httpRespond,
+  ScriptedHttpTransport,
+} from "../github/helpers.ts";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
 import type {
   LiveInputsRequestV1,
   LiveInputsV1,
+  LivePullInputV1,
 } from "../../src/contracts/live-inputs.ts";
-import {
-  portError,
-  portOk,
-  type PortResultV1,
-} from "../../src/contracts/ports.ts";
+import { portError, type PortResultV1 } from "../../src/contracts/ports.ts";
 import type { RepositoryConfigV1 } from "../../src/contracts/repository-config.ts";
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
@@ -84,25 +88,74 @@ function pendingArtifact(
 class BatchGithub extends FakeGithub {
   readonly batches: string[] = [];
   readonly closed = new Set<string>();
+  readonly queries: string[] = [];
+  readonly pullChanges = new Map<string, Partial<LivePullInputV1>>();
+  baseTip = SHA1;
   failBatch = false;
 
-  readLiveInputs(
+  async readLiveInputs(
     request: LiveInputsRequestV1,
   ): Promise<PortResultV1<LiveInputsV1>> {
-    this.batches.push(request.repository.name);
+    const name = request.repository.name;
+    this.batches.push(name);
     if (this.failBatch) {
-      return Promise.resolve(portError("unavailable", "graphql unavailable"));
+      return portError("unavailable", "graphql unavailable");
     }
-    return Promise.resolve(portOk({
-      issues: request.issues.map((number) => ({
+    const repository: Record<string, unknown> = {};
+    [...new Set(request.issues)].sort((a, b) => a - b).forEach((number, i) => {
+      repository[`i${i}`] = {
         number,
-        state: this.closed.has(`${request.repository.name}#${number}`)
-          ? "closed" as const
-          : "open" as const,
-      })),
-      pulls: request.pulls.map((number) => ({ number, pull: null })),
-      branches: request.branches.map((branch) => ({ branch, tip: SHA1 })),
-    }));
+        state: this.closed.has(`${name}#${number}`) ? "CLOSED" : "OPEN",
+      };
+    });
+    [...new Set(request.pulls)].sort((a, b) => a - b).forEach((number, i) => {
+      const pull = {
+        state: "open",
+        head: SHA2,
+        base: SHA1,
+        baseRef: request.branches[0],
+        checks: "success",
+        latestReview: null,
+        ...this.pullChanges.get(`${name}#${number}`),
+      };
+      repository[`p${i}`] = {
+        number,
+        state: pull.state.toUpperCase(),
+        headRefOid: pull.head,
+        baseRefOid: pull.base,
+        baseRefName: pull.baseRef,
+        commits: {
+          nodes: [{
+            commit: {
+              oid: pull.head,
+              statusCheckRollup: { state: pull.checks.toUpperCase() },
+            },
+          }],
+        },
+        reviews: {
+          nodes: pull.latestReview === null
+            ? []
+            : [{ databaseId: pull.latestReview }],
+        },
+      };
+    });
+    [...new Set(request.branches)].sort().forEach((_, i) => {
+      repository[`b${i}`] = { target: { oid: this.baseTip } };
+    });
+    const transport = new ScriptedHttpTransport([
+      httpRespond("POST", "/graphql", 200, { data: { repository } }),
+    ]);
+    const client = new GitHubApiClient({
+      repository: request.repository,
+      apiBaseUrl: "https://api.github.com",
+      http: transport.fetch.bind(transport),
+      auth: new FakeAuthProvider(),
+      cooldownGate: new FakeCooldownGate(),
+      clock: new FakeClock(T0),
+    });
+    const result = await client.readLiveInputs(request);
+    this.queries.push(...transport.requests.map(() => name));
+    return result;
   }
 
   batchesOf(name: string): number {
@@ -273,6 +326,66 @@ Deno.test("input gate: one batch per repository, then only changed records are s
   assert.deepEqual(third.stepped, []);
   assert.equal(third.summary.recordsSkipped, 74);
   assert.equal(rig.state.repairHead, head, "a skipped record costs no write");
+});
+
+Deno.test("input gate: 74 live PRs consume one real batch and wake on each changed input", async () => {
+  const repo = REPOS[0];
+  const work = Array.from({ length: 74 }, (_, index) => {
+    const record = pendingArtifact(repo, index);
+    return {
+      ...record,
+      target: { ...record.target, head: SHA2, pr: index + 200 },
+    };
+  });
+  const rig = makeRig(work);
+  const first = await pass(rig);
+  assert.equal(first.summary.recordsStepped, 74);
+  assert.deepEqual(rig.github.queries, [repo.name]);
+  const intents = rig.state.repair!.work.map((record) => record.intent);
+
+  rig.clock.advance(5 * MINUTE);
+  const head = rig.state.repairHead;
+  const unchanged = await pass(rig);
+  assert.deepEqual(unchanged.stepped, []);
+  assert.equal(unchanged.summary.recordsSkipped, 74);
+  assert.equal(rig.state.repairHead, head);
+
+  rig.github.closed.add(`${repo.name}#${work[0].related.issueNumber}`);
+  const changes: Partial<LivePullInputV1>[] = [
+    { head: SHA1 },
+    { checks: "failure" },
+    { latestReview: 901 },
+    { base: SHA2 },
+    { state: "closed" },
+  ];
+  changes.forEach((change, i) => {
+    rig.github.pullChanges.set(`${repo.name}#${work[i + 1].target.pr}`, change);
+  });
+  rig.clock.advance(5 * MINUTE);
+  const changed = await pass(rig);
+  assert.deepEqual(
+    [...new Set(changed.stepped)].sort(),
+    work.slice(0, 6).map((record) => record.id).sort(),
+  );
+  assert.equal(changed.summary.recordsSkipped, 68);
+
+  // A configured base tip change wakes every record of this repository.
+  rig.github.baseTip = SHA2;
+  rig.clock.advance(5 * MINUTE);
+  const movedBase = await pass(rig);
+  assert.equal(movedBase.summary.recordsStepped, 74);
+  assert.deepEqual(rig.github.queries, Array(4).fill(repo.name));
+  assert.equal(
+    rig.github.calls.filter((call) =>
+      /^(readIssue|readPullRequest|readChecks|readRef)/.test(call)
+    ).length,
+    0,
+  );
+  assert.equal(rig.state.repair!.reservations.length, 0, "no model charge");
+  assert.deepEqual(
+    rig.state.repair!.work.map((record) => record.intent),
+    intents,
+  );
 });
 
 Deno.test("input gate: the clock passing a wait or stamp deadline steps the record again", async () => {
