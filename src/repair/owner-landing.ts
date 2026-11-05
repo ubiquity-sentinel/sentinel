@@ -10,11 +10,14 @@
  * automation), `.git/`, env files, the act configuration files the backup CI
  * must never read from the target tree, `.npmrc` and the generic target's own
  * `sentinel.protected` list. A candidate touching any of those is never
- * pushed.
+ * pushed. Sentinel's own authority files (`SENTINEL_AUTHORITY_PATHS`, the
+ * 2026-10-30 credential/dispatch/merge-gate/promotion set) are likewise never
+ * published when a target's configuration protects them.
  */
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { WorkRecordV1, WorkWaitV1 } from "../contracts/work-record.ts";
 import type { WorkWaitCauseV1 } from "../contracts/work-wait-cause.ts";
+import { SENTINEL_AUTHORITY_PATHS } from "../host/hosted-authority-protected-paths.ts";
 import { targetTouchesProtectedV1 } from "../host/target-policy-generic.ts";
 import { normalizePathPrefix, touchesProtected } from "./loop-records.ts";
 
@@ -52,6 +55,20 @@ export function ciExecutablePath(path: string): boolean {
   return base.startsWith(".env") || CI_CONFIG_FILES.includes(base);
 }
 
+/**
+ * A Sentinel authority path (or prefix inside one): a configured protected
+ * change to it keeps the pre-publication park. Only a target whose
+ * configuration protects the path is affected (the Sentinel self target).
+ */
+export function authorityPath(path: string): boolean {
+  return touchesProtected(SENTINEL_AUTHORITY_PATHS, normalizePathPrefix(path));
+}
+
+/** A protected path or prefix that is never published. */
+function unpublishablePath(path: string): boolean {
+  return ciExecutablePath(path) || authorityPath(path);
+}
+
 /** How one candidate's change set meets its target's protected paths. */
 export type OwnerLandingTouchV1 =
   | { kind: "none" }
@@ -74,13 +91,13 @@ export function ownerLandingTouch(
   if (hits.length === 0) return { kind: "none" };
   const prefixes = new Set<string>();
   for (const path of hits) {
-    if (ciExecutablePath(path)) return { kind: "unpublishable" };
+    if (unpublishablePath(path)) return { kind: "unpublishable" };
     const covering = config.protectedPaths.filter((prefix) =>
       touchesProtected([prefix], path)
     );
     if (
       covering.length === 0 ||
-      covering.some((prefix) => ciExecutablePath(prefix))
+      covering.some((prefix) => unpublishablePath(prefix))
     ) return { kind: "unpublishable" };
     for (const prefix of covering) prefixes.add(prefix);
   }
@@ -133,7 +150,7 @@ export function withoutOwnerLanding(record: WorkRecordV1): WorkRecordV1 {
 /**
  * The protected paths a publication of this record is validated against:
  * the configured list minus the prefixes its owner-landing flag names. A
- * CI-executable prefix is never removed.
+ * CI-executable or Sentinel authority prefix is never removed.
  */
 export function publicationProtectedPaths(
   protectedPaths: readonly string[],
@@ -141,7 +158,7 @@ export function publicationProtectedPaths(
 ): string[] {
   const named = record?.ownerLanding?.paths ?? [];
   return protectedPaths.filter((prefix) =>
-    ciExecutablePath(prefix) || !named.includes(prefix)
+    unpublishablePath(prefix) || !named.includes(prefix)
   );
 }
 

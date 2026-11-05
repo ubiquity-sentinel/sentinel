@@ -1,5 +1,8 @@
 import { type GitSha, isGitSha } from "../contracts/brands.ts";
-import { HOSTED_AUTHORITY_PROTECTED_PATHS } from "./hosted-authority-protected-paths.ts";
+import {
+  HOSTED_AUTHORITY_PROTECTED_PATHS,
+  LOCAL_AUTHORITY_PROTECTED_PATHS,
+} from "./hosted-authority-protected-paths.ts";
 import {
   parseRepositoryConfigV1,
   type RepositoryConfigV1,
@@ -94,26 +97,7 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
     },
     protectedPaths: [
       ...HOSTED_AUTHORITY_PROTECTED_PATHS,
-      // Every workflow stays owner-authored: a model candidate must never
-      // publish or merge a workflow change on any target.
-      ".github/workflows/",
-      // The unchanged `touchesProtected` predicate itself: a candidate edit
-      // could make the whole boundary return false after merge.
-      "src/repair/loop-records.ts",
-      // This file decides the protected set itself.
-      "src/host/local-config.ts",
-      // The trusted supervisor's exact-revision promotion boundary: the
-      // pointer writer (`active-runtime.json`, compare-and-set under the
-      // supervisor lock), the callers that decide promotion and the receipt
-      // parser they rely on.
-      "src/host/local-release.ts",
-      "src/host/local-supervisor-release.ts",
-      "src/host/actions-supervisor-installation.ts",
-      "src/host/local-supervisor.ts",
-      "src/host/actions-supervisor-source.ts",
-      "src/host/actions-supervisor-controller.ts",
-      "src/host/actions-supervisor-install-api.ts",
-      "src/contracts/local-release.ts",
+      ...LOCAL_AUTHORITY_PROTECTED_PATHS,
     ],
     build: { projectId: null, acceptance: null },
     secretRef: "secret://host/injected/sentinel-local-owner",

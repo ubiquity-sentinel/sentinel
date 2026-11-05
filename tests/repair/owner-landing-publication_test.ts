@@ -20,6 +20,7 @@ import {
 import { exactOpenPr, positiveLifecycle } from "./loop-candidate-fixtures.ts";
 import { deliveryRecord } from "./loop-review-fixtures.ts";
 import { REPO_2 } from "../budget/helpers.ts";
+import { createLocalRepositoryConfig } from "../../src/host/local-config.ts";
 
 const PROTECTED = { protectedPaths: ["src/auth/", ".github/workflows/"] };
 
@@ -212,3 +213,61 @@ Deno.test(
     }
   },
 );
+
+/** The Sentinel self target's protected list plus one non-authority prefix. */
+const SELF_PROTECTED = [
+  ...createLocalRepositoryConfig().protectedPaths,
+  "docs/private/",
+];
+
+for (
+  const [name, path, published] of [
+    [
+      "an authority file parks unpublished",
+      "src/repair/owner-landing.ts",
+      false,
+    ],
+    [
+      "a non-authority protected path publishes for the owner",
+      "docs/private/notes.md",
+      true,
+    ],
+  ] as const
+) {
+  Deno.test(`owner landing: a Sentinel self-candidate touching ${name}`, async () => {
+    const rig = await makeRig(`ownerlandingself${published ? "p" : "a"}`, {
+      configOverrides: {
+        repository: {
+          ...LOCAL_SENTINEL_REPO,
+          installationId: REPO_2.installationId,
+        },
+        protectedPaths: SELF_PROTECTED,
+      },
+      model: { changedPaths: ["src/app.ts", path] },
+      github: { candidateLifecycle: positiveLifecycle() },
+    });
+    try {
+      const outcome = await rig.run();
+      assert.equal(outcome.status, "idle", JSON.stringify(outcome));
+      const work = (await rig.snapshot()).work[0]!;
+      if (published) {
+        assert.equal(work.blocker, null, JSON.stringify(work.blocker));
+        assert.equal(work.nextStep, "review");
+        assert.deepEqual(work.ownerLanding?.paths, ["docs/private/"]);
+        assert.equal(rig.github.pushes.length, 1);
+      } else {
+        assert.equal(work.nextStep, "blocked");
+        assert.equal(
+          work.blocker?.message,
+          "candidate touches a protected path",
+        );
+        assert.equal(work.target.pr, null);
+        assert.equal(work.ownerLanding, undefined);
+        assert.equal(rig.github.pushes.length, 0, "nothing is pushed");
+        assert.ok(!rig.github.calls.includes("createPr"));
+      }
+    } finally {
+      await rig.ctx.cleanup();
+    }
+  });
+}

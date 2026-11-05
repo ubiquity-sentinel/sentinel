@@ -60,3 +60,41 @@ export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
     "src/host/hosted-app-principal.ts",
     "src/contracts/hosted-supervisor-verification.ts",
   ]);
+
+/**
+ * The Sentinel template's remaining authority entries, protected after the
+ * hosted set (`createLocalRepositoryConfig`).
+ */
+export const LOCAL_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
+  .freeze([
+    // Every workflow stays owner-authored: a model candidate must never
+    // publish or merge a workflow change on any target.
+    ".github/workflows/",
+    // The unchanged `touchesProtected` predicate itself: a candidate edit
+    // could make the whole boundary return false after merge.
+    "src/repair/loop-records.ts",
+    // This file decides the protected set itself.
+    "src/host/local-config.ts",
+    // The trusted supervisor's exact-revision promotion boundary: the
+    // pointer writer (`active-runtime.json`, compare-and-set under the
+    // supervisor lock), the callers that decide promotion and the receipt
+    // parser they rely on.
+    "src/host/local-release.ts",
+    "src/host/local-supervisor-release.ts",
+    "src/host/actions-supervisor-installation.ts",
+    "src/host/local-supervisor.ts",
+    "src/host/actions-supervisor-source.ts",
+    "src/host/actions-supervisor-controller.ts",
+    "src/host/actions-supervisor-install-api.ts",
+    "src/contracts/local-release.ts",
+  ]);
+
+/**
+ * Sentinel's own authority (owner decision 2026-10-30): every entry above.
+ * A configured protected change to one of these stays forbidden AND
+ * unpublished; it never becomes an owner-landing publication.
+ */
+export const SENTINEL_AUTHORITY_PATHS: readonly string[] = Object.freeze([
+  ...HOSTED_AUTHORITY_PROTECTED_PATHS,
+  ...LOCAL_AUTHORITY_PROTECTED_PATHS,
+]);
