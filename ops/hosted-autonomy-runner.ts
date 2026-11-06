@@ -27,6 +27,7 @@ import type {
 } from "./hosted-autonomy-types.ts";
 import { runHostedDeliveryPass } from "./hosted-autonomy-delivery-pass.ts";
 import { runHostedMatrixMaintenance } from "./hosted-autonomy-maintenance.ts";
+import { runHostedRepairTierStep } from "./hosted-autonomy-repair-tier.ts";
 import { CurrentMatrixRecoveryIntegrityFailure } from "./hosted-autonomy-producer-recovery.ts";
 import { ClosedCWaveRecoveryIntegrityFailure } from "../src/host/modern-matrix-recovery.ts";
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
@@ -43,7 +44,9 @@ import {
 } from "./hosted-autonomy-continuation.ts";
 import { runHostedFollowUpPass } from "./hosted-autonomy-follow-up-pass.ts";
 import { runHostedBaseRepairPass } from "./hosted-autonomy-base-repair.ts";
+import { runHostedTargetCapabilityPass } from "./hosted-autonomy-target-capability.ts";
 import { runHostedCiResumePass } from "./hosted-autonomy-ci-resume.ts";
+import { runHostedRetiredPullPass } from "./hosted-autonomy-retired-pulls.ts";
 import { runHostedOutageObservationPass } from "./hosted-autonomy-outage-observation.ts";
 import { runHostedQueueCustody } from "./hosted-autonomy-queue-pass.ts";
 import { protectQueueState } from "./hosted-autonomy-queue-state.ts";
@@ -103,7 +106,7 @@ const PHASES: readonly PhaseV1[] = [
 function integrityFault(error: unknown): boolean {
   return error instanceof CurrentMatrixRecoveryIntegrityFailure ||
     error instanceof ClosedCWaveRecoveryIntegrityFailure ||
-    error instanceof HistoricalQuarantineIncomplete;
+    (error instanceof HistoricalQuarantineIncomplete && error.integrity);
 }
 
 /**
@@ -235,6 +238,41 @@ export async function runHostedAutonomy(
         finish();
       }
     }
+    // Target capability (#332): a state-writing pass after the chain,
+    // over the guarded state (never the shared read-only view), bounded by
+    // the same deadline. It only appends actions and never fails the run.
+    const finishCapability = beginMaintenanceProgress("target_capability");
+    try {
+      followUps = [
+        ...followUps,
+        ...await runHostedTargetCapabilityPass(
+          scoped,
+          startedAt + HOSTED_AUTONOMY_PASS_DEADLINE_MS,
+          readOnly.state,
+        ),
+      ];
+    } finally {
+      finishCapability();
+    }
+    // Retired pull requests: close Sentinel's own open pull request of a
+    // record retired because its source issue closed. Writes over the
+    // guarded state, shares the deadline and only appends actions.
+    const finishRetiredPulls = beginMaintenanceProgress("retired_pulls");
+    try {
+      followUps = [
+        ...followUps,
+        ...await runHostedRetiredPullPass(
+          scoped,
+          startedAt + HOSTED_AUTONOMY_PASS_DEADLINE_MS,
+          readOnly.state,
+          // A record this pass retired is settled from the next pass, so
+          // its retirement stays the cycle's one write for it.
+          startedAt,
+        ),
+      ];
+    } finally {
+      finishRetiredPulls();
+    }
     await deps.onQueueCustodyReady?.(followUpComplete && !degraded);
     return followUps.length === 0
       ? result
@@ -327,6 +365,24 @@ async function runHostedAutonomyChain(
     if (before !== null && before.ok && before.value.status === "found") {
       baseline = before.value.snapshot;
     }
+  }
+  // Hot/cold repair tiers (#324): bounded, never fails the pass, and always
+  // before the ordinary phases and the repair job's intake.
+  const finishTier = beginMaintenanceProgress("repair_tier");
+  try {
+    const tier = await runHostedRepairTierStep(
+      deps,
+      startedAt,
+      actions,
+      dedicatedReservations,
+    );
+    if (tier.write !== null) {
+      // A tier move changes no hot record, so nothing counts as settled.
+      baseline ??= tier.before;
+      writes.absorb(tier.write);
+    }
+  } finally {
+    finishTier();
   }
 
   const scopes = createHostedAutonomyScopes(deps);

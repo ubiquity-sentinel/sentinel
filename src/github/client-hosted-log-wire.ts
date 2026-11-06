@@ -3,7 +3,10 @@
 import type { HostedExecutionIntentV1 } from "../contracts/hosted-supervisor.ts";
 import type { PortResultV1 } from "../contracts/ports.ts";
 import type { HostedRuntimeTerminalV1 } from "../contracts/hosted-execution.ts";
-import { HOSTED_ACTIONS_CLOCK_TOLERANCE_MS } from "../contracts/hosted-supervisor.ts";
+import {
+  HOSTED_ACTIONS_CLOCK_TOLERANCE_MS,
+  HOSTED_ACTIONS_POSITIVE_SKEW_MS,
+} from "../contracts/hosted-supervisor.ts";
 import { portError, portOk } from "../contracts/ports.ts";
 import { tryParse } from "../contracts/validation.ts";
 import { parseHostedRuntimeTerminalV1 } from "../contracts/hosted-execution.ts";
@@ -42,6 +45,7 @@ export function parseHostedRuntimeTerminalLog(
   observedAt: number,
 ): PortResultV1<{ terminal: HostedRuntimeTerminalV1; terminalAt: number }> {
   const tolerance = HOSTED_ACTIONS_CLOCK_TOLERANCE_MS;
+  const platformTolerance = tolerance + HOSTED_ACTIONS_POSITIVE_SKEW_MS;
   let found: { terminal: HostedRuntimeTerminalV1; terminalAt: number } | null =
     null;
   for (const line of text.split(/\r?\n/)) {
@@ -94,9 +98,9 @@ export function parseHostedRuntimeTerminalLog(
   }
   const terminal = found.terminal;
   if (
-    terminal.startedAt + tolerance < step.startedAt ||
+    terminal.startedAt + platformTolerance < step.startedAt ||
     terminal.finishedAt > step.completedAt + tolerance ||
-    terminal.startedAt + tolerance < job.startedAt ||
+    terminal.startedAt + platformTolerance < job.startedAt ||
     terminal.finishedAt > job.completedAt + tolerance ||
     // The authenticated log instant must follow the terminal's own finish.
     found.terminalAt + tolerance < terminal.finishedAt ||

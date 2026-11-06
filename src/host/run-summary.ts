@@ -26,6 +26,23 @@ import {
   wedgeSentence,
 } from "./run-summary-wedges.ts";
 import { TARGETS_MAX } from "./targets.ts";
+import { scanPlanRefusalFromLog } from "./matrix-plan-diagnostic.ts";
+import type { MatrixPlanRefusalV1 } from "./matrix-plan-refusal.ts";
+import {
+  parsePassSummaryLine,
+  PASS_SUMMARY_LINE_KIND,
+} from "../repair/pass-summary-line.ts";
+
+/**
+ * #326/#338: the repair passes' re-emitted `sentinel_repair_pass` counts in
+ * one job log: `recordsRead` is the largest pass read, stepped and skipped
+ * are summed over the passes.
+ */
+export interface RepairPassCountsV1 {
+  recordsRead: number;
+  recordsStepped: number;
+  recordsSkipped: number;
+}
 
 /** The fields of one child's `hosted_runtime_summary` this summary reads. */
 export interface ChildRuntimeSummaryV1 {
@@ -44,6 +61,15 @@ export interface ChildRuntimeSummaryV1 {
   prsTouched: { repository: string; number: number; action: string }[];
   outcome: string;
   reasonCode: string;
+  /**
+   * #335: the planner job's re-emitted refusal reason and ready-unplanned
+   * count, read only by the throughput metrics record.
+   */
+  plannerRefusal?: MatrixPlanRefusalV1;
+  /** #326: the job's repair pass counts, read only by the metrics record. */
+  repairPass?: RepairPassCountsV1;
+  /** #336: the launcher's bootstrap child duration, read only by metrics. */
+  bootstrapDurationMs?: number | null;
 }
 
 /** One completed job of the run attempt and its last runtime summary. */
@@ -51,6 +77,13 @@ export interface RunJobSummaryV1 {
   name: string;
   conclusion: string | null;
   summary: ChildRuntimeSummaryV1 | null;
+  /**
+   * Job wall-clock window from the jobs API (epoch ms), when it was readable.
+   * Read only by the throughput metrics record (#338); the run summary
+   * itself ignores it.
+   */
+  startedAtMs?: number | null;
+  completedAtMs?: number | null;
 }
 
 export interface HostedRuntimeRunSummaryV1 {
@@ -139,7 +172,39 @@ export function parseChildRuntimeSummary(
     }),
     outcome: text(value.outcome, 20) ?? "unavailable",
     reasonCode: text(value.reasonCode, 80) ?? "unknown",
+    ...(value.bootstrapDurationMs === undefined
+      ? {}
+      : { bootstrapDurationMs: count(value.bootstrapDurationMs) }),
   };
+}
+
+const MAX_PASS_LINES = 64;
+
+/** The summed launcher-re-emitted repair pass lines of one log, or null. */
+export function scanRepairPassCounts(log: string): RepairPassCountsV1 | null {
+  const total: RepairPassCountsV1 = {
+    recordsRead: 0,
+    recordsStepped: 0,
+    recordsSkipped: 0,
+  };
+  let seen = 0;
+  for (const line of log.split("\n")) {
+    if (line.length > 1024 || !line.includes(PASS_SUMMARY_LINE_KIND)) continue;
+    const start = line.indexOf("{");
+    if (start < 0) continue;
+    let parsed: ReturnType<typeof parsePassSummaryLine>;
+    try {
+      parsed = parsePassSummaryLine(JSON.parse(line.slice(start)));
+    } catch {
+      continue;
+    }
+    if (parsed === null) continue;
+    if (++seen > MAX_PASS_LINES) return null;
+    total.recordsRead = Math.max(total.recordsRead, parsed.recordsRead);
+    total.recordsStepped += parsed.recordsStepped;
+    total.recordsSkipped += parsed.recordsSkipped;
+  }
+  return seen === 0 ? null : total;
 }
 
 /**
@@ -161,6 +226,24 @@ export function lastRuntimeSummary(log: string): ChildRuntimeSummaryV1 | null {
     }
   }
   return null;
+}
+
+/**
+ * The job's last runtime summary plus its planner refusal (#335), when the
+ * log carries exactly one re-emitted plan diagnostic with one.
+ */
+export function runtimeSummaryWithPlanRefusal(
+  log: string,
+): ChildRuntimeSummaryV1 | null {
+  const summary = lastRuntimeSummary(log);
+  if (summary === null) return null;
+  const refusal = scanPlanRefusalFromLog(log);
+  const pass = scanRepairPassCounts(log);
+  return {
+    ...summary,
+    ...(refusal === null ? {} : { plannerRefusal: refusal }),
+    ...(pass === null ? {} : { repairPass: pass }),
+  };
 }
 
 /** The one value every known summary agrees on, else null. */
@@ -365,7 +448,11 @@ export async function emitRunSummary(
   const log = deps.log ?? ((line: string) => console.log(line));
   try {
     const [jobs, wedges] = await Promise.all([
-      deps.readJobs(run.runId, run.runAttempt, lastRuntimeSummary),
+      deps.readJobs(
+        run.runId,
+        run.runAttempt,
+        runtimeSummaryWithPlanRefusal,
+      ),
       readWedges(deps),
     ]);
     const summary = aggregateRunSummary(run, jobs.ok ? jobs.value : [], wedges);

@@ -82,8 +82,24 @@ import {
   acceptanceOwnerGated,
 } from "./hosted-autonomy-acceptance.ts";
 import { retryWritten } from "./hosted-autonomy-retry-actions.ts";
+import { OWNER_MERGE_REQUIRED } from "../src/repair/owner-landing.ts";
+import {
+  finishDeliveryPassCounts,
+  runDeliveryTrains,
+} from "./hosted-autonomy-delivery-train.ts";
 
 export async function runHostedDeliveryPass(
+  context: HostedAutonomyPassContextV1,
+): Promise<HostedAutonomyResultV1 | null> {
+  const from = context.actions.length;
+  try {
+    return await deliveryPass(context);
+  } finally {
+    finishDeliveryPassCounts(context, from);
+  }
+}
+
+async function deliveryPass(
   context: HostedAutonomyPassContextV1,
 ): Promise<HostedAutonomyResultV1 | null> {
   const { deps, actions, revisions, scopeFor, readTip, readPull } = context;
@@ -305,9 +321,23 @@ export async function runHostedDeliveryPass(
     left.createdAt - right.createdAt ||
     (left.id < right.id ? -1 : left.id > right.id ? 1 : 0)
   );
+  // One validated train per foreign repository per pass (sentinel #330): its
+  // members, and every record of a repository whose train is open, are left
+  // alone by the per-record merges below.
+  const trains = await runDeliveryTrains({
+    context,
+    order: deliveryOrder,
+    eligible: (record) => eligible(record) && !strictGateway(record),
+    defer,
+    dropTip: (key) => {
+      deliveryTips.delete(key);
+      tipGreen.delete(key);
+    },
+  });
+  if (trains.stop !== null) return trains.stop;
   for (const record of deliveryOrder) {
     if (hostedPassDeadlineReached(context)) return defer();
-    if (!eligible(record)) continue;
+    if (!eligible(record) || trains.held.has(record.id)) continue;
     const pullRequest = record.target.pr;
     const head = record.target.head;
     const base = record.target.base;
@@ -458,6 +488,11 @@ export async function runHostedDeliveryPass(
     // parked record always, a review/delivery record only onto a moved base.
     let spentMerge = parked;
     if (pull.state === "open" && pull.merged === false) {
+      // A protected-path change is merged only by its repository owner.
+      if (record.ownerLanding !== undefined) {
+        actions.push(`delivery:${record.id}:${OWNER_MERGE_REQUIRED}`);
+        continue;
+      }
       if (hasTakeoverCustody(record)) {
         actions.push(
           `delivery:${record.id}:existing_pr_requires_repair_principal`,

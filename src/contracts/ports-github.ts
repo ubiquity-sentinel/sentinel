@@ -7,6 +7,7 @@ import type { GitSha, WorkItemId } from "./brands.ts";
 import type { SelfMergeExecutionV1 } from "./self-merge.ts";
 import type { GitHubRateLimitV1 } from "./github-cooldown.ts";
 import type { PortResultV1, WriteOutcomeV1 } from "./ports.ts";
+import type { LiveInputsRequestV1, LiveInputsV1 } from "./live-inputs.ts";
 import type {
   AlreadySatisfiedClosureRequestV1,
   CandidatePreservationRequestV1,
@@ -63,6 +64,18 @@ export interface GitHubPort {
     number: number,
   ): Promise<PortResultV1<GitHubPullRequestV1 | null>>;
   /**
+   * Optional batched read of the live inputs of every requested issue, pull
+   * request and branch of `request.repository` (issue #326): one exhaustive
+   * read-only GraphQL request per bounded chunk of items, through the same
+   * authenticated, cooldown-gated client. Another repository is `invalid`; any
+   * transport, GraphQL, truncation or shape failure is a typed error, never a
+   * partial or empty success. Absent, the serial pass falls back to the
+   * per-record reads above.
+   */
+  readLiveInputs?(
+    request: LiveInputsRequestV1,
+  ): Promise<PortResultV1<LiveInputsV1>>;
+  /**
    * The strict check runs and commit statuses of `head`. With `names`, only
    * the runs and statuses carrying one of those exact names are parsed and
    * returned; every other one is skipped unread. A caller attributing given
@@ -105,6 +118,12 @@ export interface GitHubPort {
    * landed off its tip at once (#156); absent, it keeps its bounded wait.
    */
   readCommitParents?(sha: GitSha): Promise<PortResultV1<GitSha[] | null>>;
+  /**
+   * Optional exact tree of one commit (null: no such commit). A squash merge
+   * (#331) is proven on exactly [reviewed base] by its tree equal to the
+   * reviewed head's tree; absent, a single-parent merge is never booked.
+   */
+  readCommitTree?(sha: GitSha): Promise<PortResultV1<GitSha | null>>;
   /**
    * Optional trusted deterministic candidate-base integration capability.
    *

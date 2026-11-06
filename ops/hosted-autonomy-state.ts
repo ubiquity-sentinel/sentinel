@@ -73,10 +73,52 @@ export async function readReleaseSafely(
   }
 }
 
+/**
+ * The historical quarantine upkeep pass stopped before completing. `integrity`
+ * is false only for a fixed pre-write availability refusal (an unavailable
+ * producer or absent custody), which is a bounded deferral that writes nothing
+ * and lets the run continue (DECISIONS: bounded self-upkeep defers). Every
+ * other stop, including changed or conflicting custody, an ambiguous artifact
+ * provenance refusal, an unknown error and any stop after a settlement or
+ * block write began, fails closed.
+ */
 export class HistoricalQuarantineIncomplete extends Error {
-  constructor() {
+  constructor(readonly integrity = true) {
     super("historical matrix quarantine incomplete");
   }
+}
+
+/**
+ * Fixed quarantine refusals raised before any settlement or block write that
+ * report only unavailable or unproven inputs. The closed list keeps the
+ * classification independent of transport or payload text; the 2026-11-03
+ * outage was `historical matrix saved execution unavailable`.
+ */
+const HISTORICAL_QUARANTINE_DEFERRABLE_MESSAGES: ReadonlySet<string> = new Set([
+  "historical matrix not-started admission unproven",
+  "historical matrix state unavailable",
+  "historical matrix selected reservation binding unavailable",
+  "historical matrix release unavailable",
+  "historical matrix current native writers unsettled",
+  "historical matrix current native settlement unavailable",
+  "historical matrix saved custody unavailable",
+  "historical matrix release witness unavailable",
+  "historical matrix verification completion unavailable",
+  "historical matrix verification proof unavailable",
+  "historical matrix saved execution unavailable",
+  "historical matrix native settlement unavailable",
+  "historical matrix native custody unavailable",
+  "historical matrix selected witness rejection unavailable",
+  "historical matrix rejection identity unavailable",
+  "historical matrix custody unavailable",
+  "historical matrix pre-settlement custody unavailable",
+]);
+
+/** True only for a fixed pre-write availability quarantine refusal. */
+export function isDeferrableHistoricalQuarantineMessage(
+  message: string,
+): boolean {
+  return HISTORICAL_QUARANTINE_DEFERRABLE_MESSAGES.has(message);
 }
 
 const MAINTENANCE_PROGRESS_PHASES = [
@@ -92,6 +134,7 @@ const MAINTENANCE_PROGRESS_PHASES = [
   "historical_c63",
   "historical_quarantine",
   "matrix_uncertainty",
+  "repair_tier",
   "context_closure_delivery",
   "closure_delivery",
   "context_retry",
@@ -108,6 +151,8 @@ const MAINTENANCE_PROGRESS_PHASES = [
   "summary_memory",
   "summary_park",
   "artifact_cleanup",
+  "target_capability",
+  "retired_pulls",
 ] as const;
 export type MaintenanceProgressPhase =
   typeof MAINTENANCE_PROGRESS_PHASES[number];
@@ -187,7 +232,11 @@ export function maintenanceFailureCategory(
   return "unexpected_error";
 }
 
-/** The two reasons that mean the helper itself could not run safely. */
+/**
+ * The reasons that mean the helper itself could not run safely. The
+ * historical quarantine reason is reported only for an integrity refusal;
+ * an incomplete-but-intact pass reports `deferred_historical_quarantine`.
+ */
 export function isHardAutonomyFailure(reason: HostedAutonomyReasonV1): boolean {
   return reason === "identity_rejected" || reason === "unexpected_failure" ||
     reason === "historical_quarantine_incomplete";

@@ -111,6 +111,38 @@ Deno.test("self defects: current CI matrix names retain their logical job", () =
   }
 });
 
+Deno.test("self defects: supervisor matrix cell names retain their logical job", () => {
+  for (const id of ["0".repeat(64), "abcdef0123456789".repeat(4)]) {
+    const signature = extractSelfFailureSignature(
+      "Process completed with exit code 1.\n",
+      { ...RUN, workflow: "sentinel-supervisor", job: `matrix_cell (${id})` },
+    );
+    assert.equal(signature.key, "sentinel-supervisor:matrix_cell:exit:1");
+  }
+});
+
+Deno.test("self defects: malformed matrix cell names remain redacted", () => {
+  for (
+    const job of [
+      `matrix_cell (${"a".repeat(63)})`,
+      `matrix_cell (${"a".repeat(65)})`,
+      `matrix_cell (${"A".repeat(64)})`,
+      `matrix_cell (${"g".repeat(64)})`,
+      `matrix_cell (${"a".repeat(64)}) private-value`,
+      `private-value matrix_cell (${"a".repeat(64)})`,
+      "matrix_cell (private-value)",
+      `matrix_cell (${"a".repeat(64)})\n`,
+      "matrix_cell (" + "a".repeat(64) + ")\nprivate-value",
+    ]
+  ) {
+    const signature = extractSelfFailureSignature(
+      "Process completed with exit code 1.\n",
+      { ...RUN, workflow: "sentinel-supervisor", job },
+    );
+    assert.equal(signature.key, "sentinel-supervisor:unknown-job:exit:1");
+  }
+});
+
 Deno.test("self defects: timestamped Actions errors retain their signature", () => {
   const expected = extractSelfFailureSignature("error: Test failed\n", RUN);
   for (

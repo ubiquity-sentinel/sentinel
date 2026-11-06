@@ -4,17 +4,20 @@ import type { HostedRuntimeLauncherResultV1 } from "../../src/host/hosted-runtim
 import { emitHostedRuntimeCliResult } from "../../src/host/hosted-runtime-main.ts";
 import { MemoryState } from "../repair/helpers.ts";
 import {
+  issueRecord,
   makeMemoryRig,
   RelationsFakeGithub,
   seededSnapshot,
 } from "../repair/loop-rig.ts";
 import { httpRespond, makePort } from "../github/helpers.ts";
 import {
+  gitRun,
   REPO,
   reservation,
   SHA1,
   SHA2,
   T0,
+  testGitEnv,
   workRecord,
 } from "../state/helpers.ts";
 import {
@@ -85,6 +88,27 @@ function printed(result: HostedRuntimeLauncherResultV1): {
   );
   return { exit, lines, summary: summaries[0] as HostedRuntimeSummaryV1 };
 }
+
+Deno.test("hosted runtime summary: fixture commit identities use the fixed clock", async () => {
+  const rig = await makeRig();
+  try {
+    for (const dir of [rig.launcherDir, rig.runtimeDir]) {
+      const commit = await gitRun(
+        dir,
+        ["show", "-s", "--format=%at%n%ct", "HEAD"],
+        testGitEnv(dir),
+      );
+      assert.ok(commit.ok, commit.stderr);
+      assert.deepEqual(
+        commit.stdout.trim().split("\n").map(Number),
+        [T0 / 1000, T0 / 1000],
+        "author and committer dates must not vary with the wall clock",
+      );
+    }
+  } finally {
+    await rig.cleanup();
+  }
+});
 
 Deno.test("hosted runtime summary: counts come from durable admission/publication deltas, not child claims", async () => {
   const rig = await makeRig({
@@ -378,4 +402,57 @@ Deno.test("hosted runtime summary: refusal before child startup still prints one
       .length,
     0,
   );
+});
+
+Deno.test("hosted runtime summary: a quarantined work-record parse failure remains healthy and retains its safe reason", async () => {
+  const github = new RelationsFakeGithub({ baseSha: SHA1 });
+  github.listed = [
+    issueRecord(1),
+    issueRecord(2, { createdAt: -1, title: "raw-secret-must-not-escape" }),
+    issueRecord(3),
+  ];
+  const memory = makeMemoryRig(github);
+  const logs: string[] = [];
+  const originalLog = console.log;
+  let outcome;
+  try {
+    console.log = (line: unknown) => logs.push(String(line));
+    outcome = await memory.run(0);
+  } finally {
+    console.log = originalLog;
+  }
+  assert.deepEqual(outcome, { status: "step_limit", steps: 1 });
+  const rig = await makeRig({
+    runtimeFiles: { "sentinel.targets.json": JSON.stringify(TARGETS) },
+  });
+  try {
+    await seedRelease(rig);
+    rig.process.child = exited(
+      [...logs, childLine(rig.execution, { outcome })].join("\n"),
+    );
+    const result = await launch(rig, {
+      state: {
+        readRepair: () => memory.state.readRepair(),
+        readRelease: () => rig.release.readRelease(),
+      },
+    });
+    const output = printed(result);
+    assert.equal(output.exit, 0);
+    assert.equal(result.terminal?.outcome, "healthy");
+    assert.equal(result.childFailure, undefined);
+    assert.deepEqual(output.summary.targets[1], {
+      repository: TARGETS[1],
+      openIssues: 3,
+      admitted: 0,
+      skippedIssues: [{
+        number: 2,
+        code: "record_parse_error",
+        reason: "invalid_timestamp",
+      }],
+    });
+    assert.doesNotMatch(JSON.stringify(output.lines), /raw-secret/);
+    assert.equal(memory.model.requests.length, 0);
+  } finally {
+    await rig.cleanup();
+  }
 });

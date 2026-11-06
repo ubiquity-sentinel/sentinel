@@ -41,6 +41,7 @@ export type HostedAutonomyReasonV1 =
   | "identity_rejected"
   | "historical_quarantine_incomplete"
   | "deferred_matrix_history_budget"
+  | "deferred_historical_quarantine"
   | "deferred_unexpected_error"
   | "unexpected_failure";
 
@@ -67,6 +68,12 @@ export interface HostedAutonomyPullV1 {
   /** Required only when recovering a historical cleared publication. */
   mergedBy?: string | null;
   parents: readonly string[];
+  /**
+   * A single-parent (squash, #331) merge's own tree and the pull head's tree;
+   * read only for that shape, absent or null when unread.
+   */
+  mergeTree?: string | null;
+  headTree?: string | null;
   revisionOnBaseBranch: boolean;
   /** The pull's own base commit is an ancestor of the merge revision. */
   baseAncestorOfRevision: boolean;
@@ -125,7 +132,58 @@ export interface HostedAutonomyHeadRunV1 {
   workflowId?: number | null;
 }
 
+/**
+ * One post-merge delivery observation on an exact commit (sentinel #337): a
+ * check run (`id` is its check-run id) or a commit status (`id` is its
+ * status id), with GitHub's own name/context, status and conclusion. A commit
+ * status maps `pending` to an incomplete status and `error`/`failure` to a
+ * failed conclusion. `startedAt` is epoch milliseconds, null when unknown.
+ */
+export interface HostedDeliveryCheckV1 {
+  readonly name: string;
+  readonly status: string;
+  readonly conclusion: string | null;
+  readonly id: number;
+  readonly startedAt: number | null;
+}
+
 export interface HostedAutonomyGitHubV1 {
+  /**
+   * Post-merge delivery read (sentinel #337): every check run and commit
+   * status on exactly `commit`, read from complete listings bound to that
+   * commit, or null when either cannot be proven complete. Optional: a surface
+   * without it never satisfies a non-empty `requiredForDelivery` policy, so
+   * such a record waits and never closes on merge alone.
+   */
+  readDeliveryChecks?(
+    commit: string,
+  ): Promise<readonly HostedDeliveryCheckV1[] | null>;
+  /**
+   * One trusted progress comment on the source issue; true when GitHub
+   * created it. Optional: a surface without it parks without a comment.
+   */
+  commentIssue?(number: number, body: string): Promise<boolean>;
+  /**
+   * The source issue's state and the commit its LATEST `closed` event names
+   * (GitHub's own closing reference: a merge through `Resolves #N` names the
+   * merge commit; a person's close names none). Null when the issue or its
+   * complete event listing cannot be read. Optional: without it a delivery
+   * park never reopens an issue.
+   */
+  readIssueClosingCommit?(
+    number: number,
+  ): Promise<{ open: boolean; closingCommit: string | null } | null>;
+  /**
+   * Trusted issue write (sentinel #337): reopen one issue with
+   * `state_reason: "reopened"`; true when GitHub reports it open.
+   */
+  reopenIssue?(number: number): Promise<boolean>;
+  /**
+   * Close one pull request without merging it (its branch is kept); true
+   * only when GitHub reports it closed and unmerged. Optional: a surface
+   * without it never closes a retired record's pull request.
+   */
+  closePull?(number: number): Promise<boolean>;
   /**
    * The repository's own default branch, or null when it cannot be read. Only
    * a foreign repository consults this; the self scope keeps its recorded
@@ -265,6 +323,12 @@ export interface HostedAutonomyGitHubV1 {
     head: string,
     message?: string,
   ): Promise<{ merged: boolean; sha: string | null } | null>;
+  /**
+   * The tree of one exact commit of THIS repository, or null when it cannot
+   * be read. Optional: a surface without it verifies no delivery-train
+   * landing (sentinel #330), so no train merges over it.
+   */
+  readCommitTree?(sha: string): Promise<string | null>;
   /** Idempotent issue closure: true when the issue ends closed. */
   closeIssue(number: number): Promise<boolean>;
   /**
@@ -309,6 +373,21 @@ export interface HostedAutonomyGitHubV1 {
    * base-repair issue in THIS repository. Absent means none is filed.
    */
   baseRepairIssues?: HostedBaseRepairIssuesV1;
+  /**
+   * Optional trusted launcher capability: the owner-action capability issue
+   * of THIS repository (`ops/hosted-autonomy-target-capability.ts`).
+   */
+  capabilityIssues?:
+    import("../src/repair/target-capability.ts").TargetCapabilityIssuesV1;
+  /**
+   * The target tree facts at exactly this commit
+   * (`src/host/target-tree-facts.ts`), or null when unreadable.
+   */
+  readTreeFacts?(
+    commit: string,
+  ): Promise<
+    import("../src/host/target-policy-generic.ts").TargetTreeFactsV1 | null
+  >;
 
   /**
    * Optional trusted launcher capability: the owner's `sentinel:retry` label
@@ -483,6 +562,21 @@ export interface HostedAutonomyDepsV1 {
     import("./hosted-autonomy-queue-context.ts").HostedQueueCustodyContext;
   onQueueCustodyReady?(ready: boolean): void | Promise<void>;
   state: StateReadView & RepairStateWriter;
+  /**
+   * Trusted hot/cold repair-tier step (#324). Absent: the pass never moves a
+   * record between tiers. The store is the same trusted repair writer.
+   */
+  repairTiers?: {
+    store: import("../src/state/state-repair-tier-store.ts").RepairTierStore;
+    /** Complete open-issue numbers of one repository, or a typed failure. */
+    listOpenIssueNumbers(
+      repository: RepositoryIdentityV1,
+    ): Promise<
+      import("../src/contracts/ports.ts").PortResultV1<readonly number[]>
+    >;
+    /** Rows one pass may demote (default HOSTED_REPAIR_TIER_BUDGET). */
+    demotionBudget?: number;
+  };
   /** Trusted derived discovery only, never work/charge/settlement authority. */
   currentMatrixIndex?:
     import("../src/contracts/maintenance-index.ts").CurrentMatrixIndexPortV1;
@@ -493,7 +587,18 @@ export interface HostedAutonomyDepsV1 {
    * borrows another repository's surface.
    */
   githubFor(repository: RepositoryIdentityV1): HostedAutonomyGitHubV1 | null;
+  /**
+   * `owner/name` of every committed backup CI target
+   * (`sentinel.backup-ci-targets.json`); absent means none.
+   */
+  backupCiTargets?: readonly string[];
   clock: { now(): number };
+  /**
+   * Trusted post-merge delivery-check names for one repository (sentinel
+   * #337), for tests. Production never sets it and uses the host-authored
+   * `targetDeliveryCheckPolicyV1`.
+   */
+  requiredForDelivery?(repository: RepositoryIdentityV1): readonly string[];
   /** Present on protected maintenance; rejection-only, before retry/delivery. */
   historicalMatrix?: HistoricalMatrixQuarantineDepsV1;
   closedMatrix?: (
@@ -516,6 +621,19 @@ export interface HostedAutonomyDepsV1 {
    * sets it and uses HOSTED_AUTONOMY_CONFLICT_RESOLUTION_RUNTIMES.
    */
   conflictResolutionRuntimes?: readonly HostedRefreshRearmRuntimeV1[];
+  /**
+   * Delivery trains (sentinel #330): the durable train ledger and each
+   * repository's deterministic composer. Absent: no train is built and the
+   * delivery pass merges one exact-tip record at a time, as before.
+   */
+  deliveryTrain?:
+    import("./hosted-autonomy-train-types.ts").HostedDeliveryTrainDepsV1;
+  /**
+   * The cycle's throughput collector (#338); the delivery pass adds
+   * `trainsBuilt`, `targetCiRunsTriggered` and `mergesCompleted` to it.
+   */
+  metrics?:
+    import("../src/contracts/throughput-metrics-collector.ts").MetricsCollectorV1;
   /**
    * The moved-base spent merge (decision D3) for tests of its gate.
    * Production never sets it and uses HOSTED_AUTONOMY_SPENT_MOVED_BASE_MERGE.

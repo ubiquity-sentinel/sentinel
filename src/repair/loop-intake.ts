@@ -3,7 +3,9 @@ import { reconcileExistingPrs } from "./loop-existing-pr.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import { RecordParseError } from "../contracts/validation.ts";
 import type {
+  IssueNotAdmittedReasonV1,
   IssueSourceErrorContextV1,
   SkippedIssueV1,
 } from "../contracts/ports.ts";
@@ -372,14 +374,29 @@ export async function pollIntake(
         error = issueSourceFailureDetail({ ...issues.error, issueSource });
         reportIssues();
       } else {
-        reportIssues();
         const seenIssues = new Set<string>();
         const baseByRepository = new Map<string, GitSha | null>();
+        // Every listed open issue without a record either gets one or a
+        // `not_admitted` row naming why: no non-admission is silent.
+        const notAdmitted = (
+          number: number,
+          reason: IssueNotAdmittedReasonV1,
+        ) => {
+          issueListing?.skippedIssues?.push({
+            number,
+            code: "not_admitted",
+            reason,
+          });
+        };
+        let deadlineReached = false;
         for (const issue of issues.value) {
           if (issue.state !== "open") continue;
           // An App-filed CI outage notice asks the owner for billing; no
           // code change fixes it, so it is never admitted as a task.
-          if (isCiOutageNotice(issue)) continue;
+          if (isCiOutageNotice(issue)) {
+            notAdmitted(issue.number, "ci_outage_notice");
+            continue;
+          }
           const issueKey =
             `${issueRepository.owner}/${issueRepository.name}#${issue.number}`;
           if (seenIssues.has(issueKey)) continue;
@@ -403,10 +420,12 @@ export async function pollIntake(
           // prevents a GraphQL outage from starving the entire intake.
           if (issueOnlyIntake) {
             const relations = issue.relations;
-            if (
-              relations !== undefined &&
-              (relations.subIssueCount > 0 || relations.openBlockers.length > 0)
-            ) {
+            if (relations !== undefined && relations.subIssueCount > 0) {
+              notAdmitted(issue.number, "native_parent");
+              continue;
+            }
+            if (relations !== undefined && relations.openBlockers.length > 0) {
+              notAdmitted(issue.number, "native_open_blockers");
               continue;
             }
           }
@@ -416,19 +435,29 @@ export async function pollIntake(
           let base = baseByRepository.get(repositoryKey);
           if (base === undefined) {
             // The issue read above is awaited wall-clock time: stop before a
-            // new base-ref read after the total deadline. The gate is checked
-            // before every base read; a deferral admits nothing and caches
-            // nothing (the next run re-lists and re-reads).
-            if (deps.clock.now() >= context.bounds.runDeadline) break;
+            // new base-ref read after the total deadline (every later issue
+            // is reported too). The gate is checked before every base read; a
+            // deferral admits nothing and caches nothing (the next run
+            // re-lists and re-reads).
+            if (
+              deadlineReached ||
+              deps.clock.now() >= context.bounds.runDeadline
+            ) {
+              deadlineReached = true;
+              notAdmitted(issue.number, "run_deadline");
+              continue;
+            }
             const baseCooled = await checkGithubCooldown(
               deps,
               issueRepository,
               context.bounds,
             );
             if (baseCooled.kind === "state_error") {
+              reportIssues();
               return intakeFault(baseCooled.detail);
             }
             if (baseCooled.kind === "deferred") {
+              notAdmitted(issue.number, "github_cooldown");
               continue;
             }
             base = await readBase(deps, issueRepository);
@@ -436,21 +465,34 @@ export async function pollIntake(
           }
           if (base === null) {
             error = `base unavailable for ${issueRepository.name}`;
+            notAdmitted(issue.number, "base_unavailable");
             continue;
           }
-          newWork.push(createIssueWork({
-            number: issue.number,
-            title: issue.title,
-            labels: issue.labels,
-            createdAt: issue.createdAt,
-          }, {
-            controllerSha: deps.controllerSha,
-            repository: issueRepository,
-            observedBase: base,
-            now,
-          }));
+          try {
+            newWork.push(createIssueWork({
+              number: issue.number,
+              title: issue.title,
+              labels: issue.labels,
+              createdAt: issue.createdAt,
+            }, {
+              controllerSha: deps.controllerSha,
+              repository: issueRepository,
+              observedBase: base,
+              now,
+            }));
+          } catch (error) {
+            if (!(error instanceof RecordParseError)) throw error;
+            // Quarantine only this issue; never expose raw source/error text.
+            issueListing.skippedIssues?.push({
+              number: issue.number,
+              code: "record_parse_error",
+              reason: error.issues[0]?.code ?? "invalid_value",
+            });
+            continue;
+          }
           changed = true;
         }
+        reportIssues();
       }
     }
   }

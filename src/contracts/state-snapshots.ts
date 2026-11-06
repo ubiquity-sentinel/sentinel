@@ -38,6 +38,14 @@ import type { ReplayResultV1 } from "./replay-result.ts";
 import { parseReviewReceiptV1 } from "./review-receipt.ts";
 import type { ReviewReceiptV1 } from "./review-receipt.ts";
 import { parseWorkRecordV1 } from "./work-record.ts";
+import {
+  parseRepairTierScanV1,
+  type RepairTierScanV1,
+} from "./repair-tier-scan.ts";
+import {
+  parseTargetCapabilityV1,
+  type StoredTargetCapabilityV1,
+} from "./target-capability.ts";
 import type { WorkRecordV1 } from "./work-record.ts";
 import {
   type OwnerSuccessorReviewV1,
@@ -96,6 +104,17 @@ export interface RepairStateSnapshotV1 {
    * never an authority: the source records stay the record of truth.
    */
   lessons: MemoryLessonsRecordV1[];
+  /**
+   * Cached per-target capability verdicts (issue #332,
+   * `target-capability.ts`). Present only after the first verdict; a cache
+   * the trusted launcher rewrites, never an accounting or history record.
+   */
+  targetCapabilities?: StoredTargetCapabilityV1[];
+  /**
+   * Repair-tier scan memory (`repair-tier-scan.ts`): at most the one row of
+   * the retired-pull cold scan. Present only after the first complete scan.
+   */
+  tierScans?: RepairTierScanV1[];
 }
 
 export interface ReleaseStateSnapshotV1 {
@@ -162,9 +181,12 @@ export function parseRepairStateSnapshotV1(
     obj,
     [
       ...REPAIR_KEYS,
-      ...["ownerSuccessorReviews", "reservationArchive"].filter((key) =>
-        Object.hasOwn(obj, key)
-      ),
+      ...[
+        "ownerSuccessorReviews",
+        "reservationArchive",
+        "targetCapabilities",
+        "tierScans",
+      ].filter((key) => Object.hasOwn(obj, key)),
     ],
     "$",
   );
@@ -306,6 +328,34 @@ export function parseRepairStateSnapshotV1(
     }
     expectUniqueIds(ownerSuccessorReviews, "$.ownerSuccessorReviews");
   }
+  const targetCapabilities = Object.hasOwn(obj, "targetCapabilities")
+    ? expectArray(
+      obj.targetCapabilities,
+      "$.targetCapabilities",
+      MaxItems.snapshotRecords,
+      parseTargetCapabilityV1,
+    )
+    : undefined;
+  if (targetCapabilities !== undefined) {
+    if (targetCapabilities.length === 0) {
+      fail(
+        "$.targetCapabilities",
+        "invalid_lifecycle",
+        "a capability collection must retain its first record",
+      );
+    }
+    expectUniqueIds(targetCapabilities, "$.targetCapabilities");
+  }
+  const tierScans = Object.hasOwn(obj, "tierScans")
+    ? expectArray(obj.tierScans, "$.tierScans", 1, parseRepairTierScanV1)
+    : undefined;
+  if (tierScans !== undefined && tierScans.length === 0) {
+    fail(
+      "$.tierScans",
+      "invalid_lifecycle",
+      "a tier scan collection must retain its record",
+    );
+  }
   expectUniqueIds(replays, "$.replays");
   expectUniqueIds(releaseRequests, "$.releaseRequests");
   expectUniqueIds(attemptMemory, "$.attemptMemory");
@@ -331,6 +381,8 @@ export function parseRepairStateSnapshotV1(
     githubCooldowns,
     attemptMemory,
     lessons,
+    ...(targetCapabilities === undefined ? {} : { targetCapabilities }),
+    ...(tierScans === undefined ? {} : { tierScans }),
   };
 }
 

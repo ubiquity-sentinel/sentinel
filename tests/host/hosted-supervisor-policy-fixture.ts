@@ -97,6 +97,9 @@ export interface HostedPolicyGraph {
     typeof import("../../src/host/actions-supervisor-host.ts")
   >;
   runner(): Promise<typeof import("../../ops/hosted-autonomy-runner.ts")>;
+  autonomyState(): Promise<
+    typeof import("../../ops/hosted-autonomy-state.ts")
+  >;
   deliveryPass(): Promise<
     typeof import("../../ops/hosted-autonomy-delivery-pass.ts")
   >;
@@ -205,6 +208,7 @@ export async function withHostedProductionPolicy<T>(
         load("src/host/maintenance-existing-pr-publication.ts"),
       supervisorHost: () => load("src/host/actions-supervisor-host.ts"),
       runner: () => load("ops/hosted-autonomy-runner.ts"),
+      autonomyState: () => load("ops/hosted-autonomy-state.ts"),
       deliveryPass: () => load("ops/hosted-autonomy-delivery-pass.ts"),
       scopes: () => load("ops/hosted-autonomy-scopes.ts"),
       closedIssues: () => load("ops/hosted-autonomy-retry-pass.ts"),
