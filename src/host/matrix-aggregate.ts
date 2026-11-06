@@ -1,3 +1,4 @@
+import { allReservationsV1 } from "../contracts/state-snapshots.ts";
 /** Bounded authenticated matrix recovery interleaved with serial delivery. */
 import { delegatedRecordsOfRun } from "./repair-fanout-host.ts";
 import { HOSTED_RECORD_WAIT_CAUSES } from "../repair/loop-wait-cause.ts";
@@ -178,7 +179,7 @@ export function matrixConsumerProducersV1(
     }];
   });
   const reservedAt = new Map(
-    snapshot.reservations
+    allReservationsV1(snapshot)
       .filter((row) => row.outcome === "reserved")
       .map((row) => [row.id, row.createdAt]),
   );

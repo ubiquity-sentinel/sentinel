@@ -17,6 +17,7 @@ import type { GitSha } from "../src/contracts/brands.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import {
+  allReservationsV1,
   parseRepairStateSnapshotV1,
   type RepairStateSnapshotV1,
 } from "../src/contracts/state-snapshots.ts";
@@ -116,7 +117,7 @@ export function planMatrixRuntimeReadmissions(
   exclude: ReadonlySet<string> = new Set(),
 ): MatrixRuntimeReadmissionV1[] {
   const reservations = new Map(
-    snapshot.reservations.map((row) => [row.id, row]),
+    allReservationsV1(snapshot).map((row) => [row.id, row]),
   );
   const planned: MatrixRuntimeReadmissionV1[] = [];
   for (const record of snapshot.work) {
@@ -203,7 +204,7 @@ export function applyMatrixRuntimeReadmissions(
     work: snapshot.work.map((record) => {
       const readmission = byId.get(record.id);
       if (readmission === undefined) return record;
-      const reservation = snapshot.reservations.find((row) =>
+      const reservation = allReservationsV1(snapshot).find((row) =>
         row.id === record.intent?.requestId
       );
       if (

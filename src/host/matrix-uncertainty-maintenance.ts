@@ -15,7 +15,11 @@ import type {
   StateReadView,
 } from "../contracts/ports.ts";
 import { portOk } from "../contracts/ports.ts";
-import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
+import {
+  allReservationsV1,
+  findReservationV1,
+  type RepairStateSnapshotV1,
+} from "../contracts/state-snapshots.ts";
 import { GitHubApiClient } from "../github/client.ts";
 import {
   fetchHttpTransport,
@@ -500,12 +504,8 @@ export async function runMatrixUncertaintyMaintenance(
       const before = expected.snapshot;
       const row = before.work.find((work) => work.id === activeTask);
       if (!row) refuse();
-      const reservation = before.reservations.find((charge) =>
-        charge.id === activeId
-      );
-      const nextCharge = next.reservations.find((charge) =>
-        charge.id === activeId
-      );
+      const reservation = findReservationV1(before, activeId);
+      const nextCharge = findReservationV1(next, activeId);
       if (
         !reservation || !nextCharge ||
         (activePreservation
@@ -585,20 +585,20 @@ export async function runMatrixUncertaintyMaintenance(
   let quarantined = 0;
   for (const id of binding.reservationIds) {
     if (
-      expected.snapshot.reservations.some((row) =>
+      allReservationsV1(expected.snapshot).some((row) =>
         row.id === id && deps.protectedRecordIds?.has(row.taskId)
       )
     ) continue;
     const source = original.value.snapshot.work.filter((row) =>
       row.intent?.requestId === id
     );
-    const originalCharge = original.value.snapshot.reservations.filter((row) =>
-      row.id === id
-    );
+    const originalCharge = allReservationsV1(original.value.snapshot).filter((
+      row,
+    ) => row.id === id);
     const work = expected.snapshot.work.filter((row) =>
       row.intent?.requestId === id
     );
-    const charge = expected.snapshot.reservations.filter((row) =>
+    const charge = allReservationsV1(expected.snapshot).filter((row) =>
       row.id === id
     );
     if (
@@ -701,9 +701,7 @@ export async function runMatrixUncertaintyMaintenance(
         ),
       )
     ) refuse();
-    const settled = expected.snapshot.reservations.find((charge) =>
-      charge.id === id
-    );
+    const settled = findReservationV1(expected.snapshot, id);
     if (
       !settled || settled.outcome !== "ambiguous" || settled.settledAt === null
     ) refuse();
@@ -711,20 +709,20 @@ export async function runMatrixUncertaintyMaintenance(
   }
   for (const id of preservationIds) {
     if (
-      expected.snapshot.reservations.some((row) =>
+      allReservationsV1(expected.snapshot).some((row) =>
         row.id === id && deps.protectedRecordIds?.has(row.taskId)
       )
     ) continue;
     const source = original.value.snapshot.work.filter((row) =>
       row.intent?.requestId === id
     );
-    const originalCharge = original.value.snapshot.reservations.filter((row) =>
-      row.id === id
-    );
+    const originalCharge = allReservationsV1(original.value.snapshot).filter((
+      row,
+    ) => row.id === id);
     const work = expected.snapshot.work.filter((row) =>
       row.intent?.requestId === id
     );
-    const charge = expected.snapshot.reservations.filter((row) =>
+    const charge = allReservationsV1(expected.snapshot).filter((row) =>
       row.id === id
     );
     if (

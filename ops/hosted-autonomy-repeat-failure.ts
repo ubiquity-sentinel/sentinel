@@ -55,6 +55,7 @@ import { createHash } from "node:crypto";
 import type { AttemptFailureClassV1 } from "../src/contracts/attempt-memory.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
 import {
+  allReservationsV1,
   parseRepairStateSnapshotV1,
   type RepairStateSnapshotV1,
 } from "../src/contracts/state-snapshots.ts";
@@ -312,7 +313,7 @@ export function repeatFailureVerdict(
   const parked = parseRepeatFailurePark(record.blocker);
   if (isPassportWorkTrial(record.repository)) {
     return parked !== null &&
-        passportTrialCanReconsider(record, snapshot.reservations)
+        passportTrialCanReconsider(record, allReservationsV1(snapshot))
       ? { kind: "rearm", park: parked, trigger: "passport_trial" }
       : parked === null
       ? { kind: "none" }

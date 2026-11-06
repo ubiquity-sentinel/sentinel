@@ -2,6 +2,7 @@ import { deriveReservationId } from "../src/budget/mod.ts";
 import type { BudgetReservationV1 } from "../src/contracts/budget-reservation.ts";
 import { canonicalStringifySha256 } from "../src/contracts/canonical.ts";
 import {
+  allReservationsV1,
   parseReleaseStateSnapshotV1,
   parseRepairStateSnapshotV1,
 } from "../src/contracts/state-snapshots.ts";
@@ -121,7 +122,7 @@ export async function planRuntimeMismatchRecovery(
     workIds.add(key);
   }
   const reservationIds = new Set<string>();
-  for (const row of repair.reservations) {
+  for (const row of allReservationsV1(repair)) {
     const key = String(row.id);
     if (reservationIds.has(key)) {
       return { ok: false, refused: "duplicate reservation id", rows };
@@ -139,7 +140,7 @@ export async function planRuntimeMismatchRecovery(
     repair.work.map((record) => [String(record.id), record]),
   );
   const reservationById = new Map<string, BudgetReservationV1>(
-    repair.reservations.map((row) => [String(row.id), row]),
+    allReservationsV1(repair).map((row) => [String(row.id), row]),
   );
 
   const seen = new Set<string>();

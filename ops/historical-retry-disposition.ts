@@ -26,8 +26,9 @@
  *   ... --apply   (refuses while any hosted runtime execution is in flight)
  */
 import type { GitSha } from "../src/contracts/brands.ts";
-import type {
-  RepairStateSnapshotV1,
+import {
+  allReservationsV1,
+  type RepairStateSnapshotV1,
 } from "../src/contracts/state-snapshots.ts";
 import { markBlocked } from "../src/repair/transitions.ts";
 import { createRepairStateStore, DenoGitRunner } from "../src/state/mod.ts";
@@ -180,7 +181,7 @@ export function planHistoricalRetryDisposition(
   for (const entry of binding) {
     if (seen.has(entry.id)) return { ok: false, refused: "duplicate binding" };
     seen.add(entry.id);
-    const reservations = snapshot.reservations.filter((row) =>
+    const reservations = allReservationsV1(snapshot).filter((row) =>
       row.id === entry.reservationId
     );
     if (reservations.length !== 1) {
@@ -378,7 +379,7 @@ export async function runHistoricalRetryDispositionMain(
       .map((record) => record.id),
   );
   const settled = new Set(
-    readback.value.snapshot.reservations
+    allReservationsV1(readback.value.snapshot)
       .filter((row) =>
         planned.transitions.some((entry) => entry.reservationId === row.id) &&
         row.outcome === "ambiguous"

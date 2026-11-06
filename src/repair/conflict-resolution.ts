@@ -1,3 +1,4 @@
+import { allReservationsV1 } from "../contracts/state-snapshots.ts";
 /**
  * Repair loop internals: pure policy of the base-refresh conflict resolution.
  *
@@ -175,7 +176,10 @@ export function conflictResolutionInFlight(
  * its preservation are unchanged.
  */
 export function conflictResolutionsInFlightIds(
-  snapshot: Pick<RepairStateSnapshotV1, "work" | "reservations">,
+  snapshot: Pick<
+    RepairStateSnapshotV1,
+    "work" | "reservations" | "reservationArchive"
+  >,
   now: number,
 ): WorkRecordV1["id"][] {
   return snapshot.work.filter((record) => {
@@ -183,7 +187,7 @@ export function conflictResolutionsInFlightIds(
     return record.nextStep === "work" && intent !== null &&
       conflictResolutionInFlight(intent) !== null &&
       now - intent.startedAt < CONFLICT_CELL_EVIDENCE_EXPIRY_MS &&
-      snapshot.reservations.some((row) =>
+      allReservationsV1(snapshot).some((row) =>
         row.id === intent.requestId && row.taskId === record.id &&
         row.outcome === "reserved"
       );
@@ -192,7 +196,10 @@ export function conflictResolutionsInFlightIds(
 
 /** How many conflict resolutions are in flight in this snapshot at `now`. */
 export function conflictResolutionsInFlight(
-  snapshot: Pick<RepairStateSnapshotV1, "work" | "reservations">,
+  snapshot: Pick<
+    RepairStateSnapshotV1,
+    "work" | "reservations" | "reservationArchive"
+  >,
   now: number,
 ): number {
   return conflictResolutionsInFlightIds(snapshot, now).length;
@@ -204,7 +211,10 @@ export function conflictResolutionsInFlight(
  * one this wave granted so far, fill `HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE`.
  */
 export function conflictResolutionCapReached(
-  snapshot: Pick<RepairStateSnapshotV1, "work" | "reservations">,
+  snapshot: Pick<
+    RepairStateSnapshotV1,
+    "work" | "reservations" | "reservationArchive"
+  >,
   now: number,
 ): boolean {
   return conflictResolutionsInFlight(snapshot, now) >=

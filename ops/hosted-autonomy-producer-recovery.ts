@@ -9,7 +9,10 @@ import {
   isHostedReleaseTerminal,
   parseHostedRunProofV1,
 } from "../src/contracts/hosted-supervisor.ts";
-import type { ReleaseStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
+import {
+  allReservationsV1,
+  type ReleaseStateSnapshotV1,
+} from "../src/contracts/state-snapshots.ts";
 import type { GitSha } from "../src/contracts/brands.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
 import {
@@ -702,7 +705,7 @@ async function recoverProducerWithinBudget(
             read.ok && read.value.status === "found"
           ? await resolvedConflictCandidate(
             fresh,
-            read.value.snapshot.reservations,
+            allReservationsV1(read.value.snapshot),
           )
           : null;
         if (
@@ -833,12 +836,14 @@ async function recoverProducerWithinBudget(
         before.snapshot.work.filter((row) => !selectedTasks.has(row.id)),
       ) ||
     canonicalStringify(
-        after.value.snapshot.reservations.filter((row) =>
+        allReservationsV1(after.value.snapshot).filter((row) =>
           !selected.has(row.id)
         ),
       ) !==
       canonicalStringify(
-        before.snapshot.reservations.filter((row) => !selected.has(row.id)),
+        allReservationsV1(before.snapshot).filter((row) =>
+          !selected.has(row.id)
+        ),
       )
   ) {
     throw integrityFault("current matrix readback incomplete");

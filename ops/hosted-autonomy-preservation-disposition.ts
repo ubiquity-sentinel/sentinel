@@ -46,6 +46,7 @@ import type {
   StateWriteResultV1,
 } from "../src/contracts/ports.ts";
 import {
+  allReservationsV1,
   parseRepairStateSnapshotV1,
   type RepairStateSnapshotV1,
 } from "../src/contracts/state-snapshots.ts";
@@ -98,7 +99,7 @@ function consumedCharge(
   record: WorkRecordV1,
   requestId: string | null,
 ): Charge | null {
-  const rows = snapshot.reservations.filter((row) =>
+  const rows = allReservationsV1(snapshot).filter((row) =>
     row.taskId === record.id &&
     sameRepository(row.repository, record.repository) &&
     (row.purpose === "implementation" || row.purpose === "retry") &&

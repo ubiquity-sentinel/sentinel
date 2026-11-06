@@ -1,3 +1,4 @@
+import { allReservationsV1 } from "../contracts/state-snapshots.ts";
 /** Shared asynchronous principal check. No production principal is minted here. */
 import type {
   ExistingPrTakeoverPort,
@@ -114,7 +115,7 @@ function boundaryMatches(
         intent.branch === record.target.branch &&
         intent.expectedHead === request.expectedHead &&
         intent.observedBase === record.target.base &&
-        request.snapshot.reservations.filter((row) =>
+        allReservationsV1(request.snapshot).filter((row) =>
             row.id === intent.requestId && row.taskId === record.id &&
             same(row.repository, record.repository) &&
             row.purpose === "review_request" && row.outcome === "reserved" &&

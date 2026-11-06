@@ -5,6 +5,7 @@
  * pending record can bind to before any custody read, and the producer pass
  * uses the same rules before it builds any matrix port.
  */
+import { allReservationsV1 } from "../src/contracts/state-snapshots.ts";
 import type { GitSha } from "../src/contracts/brands.ts";
 import type { BudgetReservationV1 } from "../src/contracts/budget-reservation.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
@@ -82,7 +83,7 @@ export async function producerRequests(
   for (const record of snapshot.work) {
     const resolved = await resolvedConflictCandidate(
       record,
-      snapshot.reservations,
+      allReservationsV1(snapshot),
     );
     if (resolved !== null) {
       if (scope === "all" && !dedicated.has(resolved.reservationId)) {
@@ -113,7 +114,7 @@ export async function producerRequests(
       !["implementation", "candidate_preservation"].includes(intent.kind) ||
       dedicated.has(intent.requestId ?? "")
     ) continue;
-    const charge = snapshot.reservations.find((row) =>
+    const charge = allReservationsV1(snapshot).find((row) =>
       row.id === intent.requestId
     );
     if (

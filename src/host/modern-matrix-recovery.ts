@@ -514,12 +514,11 @@ function neededReservations(
   snapshot: RepairStateSnapshotV1,
   binding: ClosedCWaveBindingV1 = CLOSED_C_WAVE,
 ): ReadonlySet<string> {
-  // A wave is actionable only while one of its charges is still live; once
-  // every cell charge has been compacted into the durable archive the wave is
-  // fully terminal and needs no artifact or history IO.
+  // A wave absent from this state is not ours to recover. Archived membership
+  // still identifies it, including a partially missing admission scope.
   if (
     !binding.cells.some((cell) =>
-      snapshot.reservations.some((row) => row.id === cell.reservationId)
+      findReservationV1(snapshot, cell.reservationId) !== undefined
     )
   ) return new Set();
   const handled = closedCWaveHandledReservations(snapshot, binding);
@@ -531,9 +530,7 @@ function neededReservations(
       if (!charge) return true;
       // An archived charge is a terminal settlement the trusted writer already
       // resolved; only a live charge can still need recovery.
-      if (
-        !snapshot.reservations.some((row) => row.id === charge.id)
-      ) return false;
+      if (snapshot.reservationArchive?.includes(charge)) return false;
       if (!handled.has(charge.id)) return true;
       const work = snapshot.work.find((row) =>
         row.id === cell.taskId && sameRepo(row.repository, cell.repository)
@@ -577,12 +574,8 @@ export function closedCWaveChargeReadbackVerified(
       binding.cells.length
   ) return false;
   return binding.cells.every((cell) => {
-    const prior = original.reservations.find((row) =>
-      row.id === cell.reservationId
-    );
-    const charged = current.reservations.find((row) =>
-      row.id === cell.reservationId
-    );
+    const prior = findReservationV1(original, cell.reservationId);
+    const charged = findReservationV1(current, cell.reservationId);
     return prior !== undefined && charged !== undefined &&
       prior.outcome === "reserved" && prior.settledAt === null &&
       prior.proofRef === null &&
@@ -903,11 +896,10 @@ export async function ingestClosedCWave(
   const dispositions = binding.cells.filter((cell) =>
     needed.has(cell.reservationId)
   ).map((cell) => {
-    const prior = before.reservations.find((row) =>
-      row.id === cell.reservationId
-    );
-    const charged = after.repair.snapshot.reservations.find((row) =>
-      row.id === cell.reservationId
+    const prior = findReservationV1(before, cell.reservationId);
+    const charged = findReservationV1(
+      after.repair.snapshot,
+      cell.reservationId,
     );
     const work = after.repair.snapshot.work.find((row) =>
       row.id === cell.taskId && sameRepo(row.repository, cell.repository)

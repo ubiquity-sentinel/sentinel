@@ -11,6 +11,7 @@ import {
 } from "../../src/contracts/state-snapshots.ts";
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import {
+  closedCWaveChargeReadbackVerified,
   closedCWaveHandledReservations,
   closedCWaveNeedsRecovery,
   ClosedCWaveUnrecoverableSkipV1,
@@ -161,4 +162,66 @@ Deno.test("closed C recovery: an unresolvable charge is a typed skip", async () 
   assert.deepEqual(skipped.dispositions, []);
   assert.deepEqual(skipped.reports, []);
   assert.equal(skipped.repairHead, SHA2);
+});
+
+Deno.test("closed C recovery: settlement readback resolves an archived charge", () => {
+  const original = wave(false);
+  const charge = original.reservations[0];
+  const current = parseRepairStateSnapshotV1({
+    ...original,
+    reservations: [],
+    reservationArchive: [{
+      ...charge,
+      outcome: "submitted",
+      settledAt: T0 + 1000,
+    }],
+  });
+  const liveBinding = { ...binding, cells: [binding.cells[1]] };
+  assert.equal(
+    closedCWaveChargeReadbackVerified(original, current, liveBinding),
+    true,
+  );
+  const changed = parseRepairStateSnapshotV1({
+    ...current,
+    reservationArchive: [{ ...current.reservationArchive![0], head: SHA2 }],
+  });
+  assert.equal(
+    closedCWaveChargeReadbackVerified(original, changed, liveBinding),
+    false,
+  );
+});
+
+Deno.test("closed C recovery: missing charges remain reportable without a live cell", async () => {
+  const snapshot = { ...wave(true), reservations: [] };
+  assert.equal(closedCWaveNeedsRecovery(snapshot, binding), true);
+  const skipped = await ingestClosedCWave(depsFor(snapshot));
+  if (!("skipped" in skipped)) assert.fail("expected a typed skip result");
+  assert.deepEqual(skipped.skipped, {
+    reason: "missing_reservation",
+    reservationIds: [LIVE],
+  });
+  assert.deepEqual(skipped.dispositions, []);
+  assert.deepEqual(skipped.reports, []);
+});
+
+Deno.test("closed C recovery: a fully archived wave needs no recovery", () => {
+  const original = wave(true);
+  const snapshot = parseRepairStateSnapshotV1({
+    ...original,
+    reservations: [],
+    reservationArchive: [
+      ...original.reservationArchive!,
+      {
+        ...original.reservations[0],
+        outcome: "submitted",
+        settledAt: T0 + 1000,
+      },
+    ],
+  });
+  assert.equal(closedCWaveNeedsRecovery(snapshot, binding), false);
+  assert.equal(closedCWaveHandledReservations(snapshot, binding).size, 2);
+});
+
+Deno.test("closed C recovery: an unrelated state does not schedule the closed wave", () => {
+  assert.equal(closedCWaveNeedsRecovery(repairSnapshot(), binding), false);
 });

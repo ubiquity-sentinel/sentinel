@@ -2,9 +2,10 @@ import type {
   PortResultV1,
   StateWriteResultV1,
 } from "../src/contracts/ports.ts";
-import type {
-  ReleaseStateSnapshotV1,
-  RepairStateSnapshotV1,
+import {
+  allReservationsV1,
+  type ReleaseStateSnapshotV1,
+  type RepairStateSnapshotV1,
 } from "../src/contracts/state-snapshots.ts";
 import type { GitSha } from "../src/contracts/brands.ts";
 import {
@@ -684,7 +685,7 @@ export async function runHostedRetryPass(
       ) continue;
       const binding = passportTrialCandidateBinding(
         record,
-        snapshot.reservations,
+        allReservationsV1(snapshot),
       );
       const scope = await scopeFor(record.repository);
       let issueOpen: boolean | null = null;

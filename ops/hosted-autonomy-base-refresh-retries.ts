@@ -38,6 +38,7 @@ import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import type { CandidatePreservationV1 } from "../src/contracts/work-record.ts";
 import { passportTrialCanReconsider } from "../src/repair/passport-work-trial.ts";
 import {
+  allReservationsV1,
   parseRepairStateSnapshotV1,
   type RepairStateSnapshotV1,
 } from "../src/contracts/state-snapshots.ts";
@@ -145,7 +146,7 @@ export function planBaseRefreshReadmissions(
   for (const record of snapshot.work) {
     const blocker = record.blocker;
     const trialCount = record.target.pr !== null &&
-      passportTrialCanReconsider(record, snapshot.reservations) &&
+      passportTrialCanReconsider(record, allReservationsV1(snapshot)) &&
       /^base refresh failed (?:[3-9]|[1-9][0-9]+) consecutive times: (?:not_found|unavailable) candidate could not be preserved$/
         .test(blocker?.message ?? "");
     if (

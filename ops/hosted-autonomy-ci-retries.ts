@@ -26,7 +26,10 @@
  * runtime's own unattributed block alike.
  */
 import { hasBlockingSeverity } from "../src/contracts/review-receipt.ts";
-import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
+import {
+  allReservationsV1,
+  type RepairStateSnapshotV1,
+} from "../src/contracts/state-snapshots.ts";
 import { HOSTED_RUNTIME_ROLLOUT } from "../src/host/hosted-runtime-rollout.ts";
 import type { HostedRuntimeRecordV1 } from "../src/contracts/hosted-supervisor.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
@@ -182,7 +185,9 @@ function ciGateParked(
 ): boolean {
   const blocker = record.blocker;
   const trial = isPassportWorkTrial(record.repository);
-  if (trial && !passportTrialCanReconsider(record, snapshot.reservations)) {
+  if (
+    trial && !passportTrialCanReconsider(record, allReservationsV1(snapshot))
+  ) {
     return false;
   }
   const accepted = trial ? [...prefixes, CI_FIX_EXHAUSTED_PREFIX] : prefixes;

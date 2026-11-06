@@ -1,3 +1,4 @@
+import { allReservationsV1 } from "../src/contracts/state-snapshots.ts";
 import type { ClosedCWaveBindingV1 } from "../src/host/modern-matrix-recovery.ts";
 import { queueRecordProtected } from "./hosted-autonomy-queue-context.ts";
 import {
@@ -114,7 +115,7 @@ export async function recoverHostedCurrentMatrix(
     }
     const binding = await resolvedConflictCandidate(
       row,
-      repair.value.snapshot.reservations,
+      allReservationsV1(repair.value.snapshot),
     );
     if (deps.clock.now() >= deadlineAt) {
       onDeferred();
@@ -164,7 +165,7 @@ export async function recoverHostedCurrentMatrix(
     ).map((row) => row.id),
   );
   const excluded = new Set<string>(
-    repair.value.snapshot.reservations.filter((row) =>
+    allReservationsV1(repair.value.snapshot).filter((row) =>
       protectedIds.has(row.taskId)
     ).map((row) => row.id),
   );

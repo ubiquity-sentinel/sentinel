@@ -2,7 +2,10 @@ import type {
   PortResultV1,
   StateWriteResultV1,
 } from "../src/contracts/ports.ts";
-import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
+import {
+  allReservationsV1,
+  type RepairStateSnapshotV1,
+} from "../src/contracts/state-snapshots.ts";
 import type { ReviewTaskStatementV1 } from "../src/contracts/review-receipt.ts";
 import type { GitSha } from "../src/contracts/brands.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
@@ -224,7 +227,7 @@ function gatewayIntentClosable(
 ): boolean {
   // Candidate eligibility only: every gateway closure still needs fresh proof.
   return hasQueueIntentNamespace(record) ||
-    intentClosable(record, context.snapshot.reservations) ||
+    intentClosable(record, allReservationsV1(context.snapshot)) ||
     (isGatewayVpsRepository(record.repository) &&
       context.snapshot.releaseRequests.some((request) =>
         releaseRequestMatchesDelivery(request, record) &&

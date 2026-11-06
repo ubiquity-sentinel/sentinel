@@ -36,9 +36,10 @@
  *   2026-10-30).
  */
 import type { HostedRuntimeRecordV1 } from "../src/contracts/hosted-supervisor.ts";
-import type {
-  ReleaseStateSnapshotV1,
-  RepairStateSnapshotV1,
+import {
+  allReservationsV1,
+  type ReleaseStateSnapshotV1,
+  type RepairStateSnapshotV1,
 } from "../src/contracts/state-snapshots.ts";
 import {
   CI_FIX_EXHAUSTED_PREFIX,
@@ -218,13 +219,19 @@ export function preReviewCiEvidenceCandidate(
 export function preReviewCiParked(
   snapshot:
     & Pick<RepairStateSnapshotV1, "releaseRequests">
-    & Partial<Pick<RepairStateSnapshotV1, "reservations">>,
+    & Partial<
+      Pick<RepairStateSnapshotV1, "reservations" | "reservationArchive">
+    >,
   record: WorkRow,
   prefixes: readonly string[] = CI_PRE_REVIEW_PARK_PREFIXES,
 ): boolean {
+  const { reservations = [], reservationArchive = [] } = snapshot;
   if (
     isPassportWorkTrial(record.repository) &&
-    !passportTrialCanReconsider(record, snapshot.reservations ?? [])
+    !passportTrialCanReconsider(
+      record,
+      allReservationsV1({ reservations, reservationArchive }),
+    )
   ) return false;
   return preReviewCiEvidenceCandidate(snapshot, record, prefixes);
 }

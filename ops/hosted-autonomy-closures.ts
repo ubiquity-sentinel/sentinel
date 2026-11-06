@@ -1,5 +1,6 @@
 import { MATRIX_PRESERVATION_UNCERTAINTY_DETAIL } from "../src/host/matrix-uncertainty-maintenance.ts";
 import {
+  allReservationsV1,
   parseRepairStateSnapshotV1,
   type RepairStateSnapshotV1,
 } from "../src/contracts/state-snapshots.ts";
@@ -118,7 +119,7 @@ export function planHostedClosures(
       ) ===
         null
     ) continue;
-    if (!intentClosable(record, snapshot.reservations)) continue;
+    if (!intentClosable(record, allReservationsV1(snapshot))) continue;
     plans.push({ id: record.id, issueNumber, repository: record.repository });
   }
   return plans;
@@ -219,7 +220,7 @@ export function planHostedRetirements(
     // retirable exactly as before.
     if (
       record.intent !== null && record.intent.kind === "implementation" &&
-      !intentClosable(record, snapshot.reservations)
+      !intentClosable(record, allReservationsV1(snapshot))
     ) continue;
     plans.push({ id: record.id, issueNumber, repository: record.repository });
   }

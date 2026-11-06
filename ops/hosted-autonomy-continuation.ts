@@ -9,7 +9,10 @@
  * aggregate result line.
  */
 import { canonicalStringify } from "../src/contracts/canonical.ts";
-import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
+import {
+  allReservationsV1,
+  type RepairStateSnapshotV1,
+} from "../src/contracts/state-snapshots.ts";
 import type { HostedAutonomyResultV1 } from "./hosted-autonomy-types.ts";
 
 /**
@@ -93,9 +96,9 @@ export function settledSince(
     if (rows.get(row.id) !== lifecycleRow(row)) settled.add(row.id);
   }
   const charges = new Map<string, string>(
-    baseline.reservations.map((row) => [row.id, canonicalStringify(row)]),
+    allReservationsV1(baseline).map((row) => [row.id, canonicalStringify(row)]),
   );
-  for (const row of current.reservations) {
+  for (const row of allReservationsV1(current)) {
     if (charges.get(row.id) !== canonicalStringify(row)) {
       settled.add(row.taskId);
     }

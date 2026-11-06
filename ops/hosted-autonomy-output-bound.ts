@@ -28,7 +28,10 @@ import type {
   MatrixCellPlanV1,
   MatrixCellResultV1,
 } from "../src/contracts/matrix.ts";
-import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
+import {
+  findReservationV1,
+  type RepairStateSnapshotV1,
+} from "../src/contracts/state-snapshots.ts";
 import {
   receiptIdentityMatches,
   sameRepository,
@@ -123,9 +126,8 @@ export function outputBoundCells(
 function heldBy(snapshot: RepairStateSnapshotV1, cell: MatrixCellPlanV1) {
   return {
     record: snapshot.work.find((row) => row.id === cell.taskId) ?? null,
-    charge:
-      snapshot.reservations.find((row) => row.id === cell.reservationId) ??
-        null,
+    charge: findReservationV1(snapshot, cell.reservationId) ??
+      null,
   };
 }
 
