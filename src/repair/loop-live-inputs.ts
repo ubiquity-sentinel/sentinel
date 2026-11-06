@@ -24,8 +24,8 @@ import { checkGithubCooldown } from "./loop-bounds.ts";
 import { configFor } from "./loop-records.ts";
 import type { RepairCycleDepsV1, RunBoundsV1 } from "./loop-types.ts";
 
-/** Read-only fallback records in flight; effects remain serial. */
-const LIVE_INPUT_FALLBACK_CONCURRENCY = 4;
+/** Read-only repository batches or fallback records in flight; effects stay serial. */
+const LIVE_INPUT_READ_CONCURRENCY = 4;
 
 /** One record's normalized live inputs. */
 export interface RecordLiveInputsV1 {
@@ -105,10 +105,40 @@ export class PassLiveInputs {
       group.push(record);
       groups.set(key, group);
     }
-    for (const [key, group] of groups) {
+    const entries = [...groups];
+    let next = 0;
+    // Preserve fallback-first deadline behavior during a GraphQL outage. Once
+    // a batch answers, overlap the remaining independent repository batches.
+    while (next < entries.length) {
+      if (this.deps.clock.now() >= this.bounds.runDeadline) return;
+      const [key, group] = entries[next++];
       const read = await this.readRepository(group);
       this.repositories.set(key, read);
       if (read.status === "unavailable") await this.primeFallback(group);
+      if (read.status === "batch") break;
+    }
+    const remaining = entries.slice(next);
+    const worker = async () => {
+      while (
+        next < entries.length &&
+        this.deps.clock.now() < this.bounds.runDeadline
+      ) {
+        const [key, group] = entries[next++];
+        this.repositories.set(key, await this.readRepository(group));
+      }
+    };
+    await Promise.all(
+      Array.from(
+        { length: Math.min(LIVE_INPUT_READ_CONCURRENCY, remaining.length) },
+        worker,
+      ),
+    );
+    // Keep fallback pools serial across repositories: a partial outage must
+    // not multiply fallback concurrency or interleave their cached tip reads.
+    for (const [key, group] of remaining) {
+      if (this.repositories.get(key)?.status === "unavailable") {
+        await this.primeFallback(group);
+      }
     }
   }
 
@@ -125,7 +155,7 @@ export class PassLiveInputs {
     };
     await Promise.all(
       Array.from(
-        { length: Math.min(LIVE_INPUT_FALLBACK_CONCURRENCY, records.length) },
+        { length: Math.min(LIVE_INPUT_READ_CONCURRENCY, records.length) },
         worker,
       ),
     );
