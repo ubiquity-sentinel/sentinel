@@ -4,6 +4,7 @@
  * unresolvable charge is a typed skip rather than a failed repair pass.
  */
 import assert from "node:assert/strict";
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import { runHostedMatrixMaintenance } from "../../ops/hosted-autonomy-maintenance.ts";
 import type { GitSha, WorkItemId } from "../../src/contracts/brands.ts";
 import { portOk } from "../../src/contracts/ports.ts";
@@ -263,6 +264,7 @@ for (const archived of [false, true]) {
         console.log = (...args: unknown[]) => lines.push(args.join(" "));
         try {
           const result = await runHostedMatrixMaintenance({
+            ciMinutes: INACTIVE_CI_MINUTES,
             state: deps.state,
             clock: deps.clock,
             githubFor: () => null,
