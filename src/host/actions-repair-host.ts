@@ -232,11 +232,8 @@ export async function runActionsRepairHost(
   await ensurePrivateDir(scratch);
   const backupCi = await hostBackupCi(readEnv, sourceDir, stateRoot, clock);
   const controllerSha = await readControllerSha(sourceDir, trustedPath);
-  // The state store uses the same authenticated Git transport as publication,
-  // but its role is fixed to repair. GitHub state never shares an index or
-  // checkout with the source repository. It also reads the open delivery
-  // trains (#330) its head-of-line refresh defers to. Cells get literal read
-  // capabilities and a refusing write adapter (`hostedCellState`).
+  // Native repair/train sidecars stay isolated; cells retain read-only views.
+  let readTrainLanding: CiMinuteTrainLandingReaderV1 | undefined;
   const stateStore = deps.state ?? createHostedRepairStateStore({
     scratch,
     remoteUrl: deps.stateRemoteUrl ?? REMOTE_URL,
@@ -244,6 +241,8 @@ export async function runActionsRepairHost(
       joinPath(scratch, "state-git-home"),
       githubGitAuthEnv(githubToken),
     ),
+    clock,
+    onTrainLandingReader: (reader) => (readTrainLanding = reader),
   });
   const state = isReadOnlyCellJob(deps.job)
     ? hostedCellState(stateStore)
@@ -468,7 +467,7 @@ export async function runActionsRepairHost(
     stateRoot,
     () => isReadOnlyCellJob(deps.job) ? null : takeoverContext,
     deadline,
-    { sourcePathBySlug, trustedPath, gitExecutable },
+    { sourcePathBySlug, trustedPath, gitExecutable, readTrainLanding },
   );
   await ciMinutes.reconcile(deadline);
 
@@ -998,3 +997,4 @@ export async function runActionsRepairHost(
   if (!startupReady) throw new Error(STATIC_PREFLIGHT);
   return result;
 }
+import type { CiMinuteTrainLandingReaderV1 } from "../contracts/ci-minute-budget.ts";

@@ -93,7 +93,7 @@ export async function createPullRequestFor(
   }
   const intent = {
     kind: "pull_request" as const,
-    key: pullRequestIntentKey(head),
+    key: pullRequestIntentKey(head, record.target.retiredOwnPr),
     startedAt: now,
     branch,
     expectedHead: head,
@@ -111,6 +111,9 @@ export async function createPullRequestFor(
       head,
       ref: `refs/heads/${branch}`,
       pr: null,
+      ...(record.target.retiredOwnPr === undefined
+        ? {}
+        : { publicationAfter: record.target.retiredOwnPr }),
     },
   );
   if (ciAdmission !== null) return ciAdmission;

@@ -4,6 +4,7 @@ import { canonicalStringify } from "./canonical.ts";
 import type { GitSha } from "./brands.ts";
 import type { RepositoryIdentityV1 } from "./shared.ts";
 import type { PortResultV1 } from "./ports.ts";
+import type { DeliveryTrainLandingV1 } from "./delivery-train-ledger.ts";
 
 export const CI_MINUTE_REF = "refs/heads/sentinel-state/ci-minutes";
 export const CI_MINUTE_PRIVATE_REMOTE =
@@ -141,6 +142,7 @@ export interface CiEffectV1 {
   pr: number | null;
   runId?: number;
   attempt?: number;
+  publicationAfter?: number;
 }
 
 export interface CiEffectFactsV1 {
@@ -358,7 +360,14 @@ export interface CiMinuteReconcilerInputV1 {
   policy: Readonly<CiMinutePolicyV1>;
   request(path: string, deadline: number): Promise<unknown | null>;
   clock: { now(): number };
+  readVerifiedTrainLanding?: CiMinuteTrainLandingReaderV1;
 }
+
+export type CiMinuteTrainLandingReaderV1 = (
+  effect: Readonly<CiEffectV1>,
+  revision: string,
+  deadline: number,
+) => Promise<Readonly<DeliveryTrainLandingV1> | null>;
 
 export type CiMinuteReconcilerFactoryV1 = (
   input: CiMinuteReconcilerInputV1,
@@ -724,8 +733,18 @@ function validateCiMinuteBinding(value: unknown): void {
   ) {
     throw new Error("invalid private CI binding");
   }
-  keys(value.effect, "repository kind head base ref pr", "runId attempt");
+  keys(
+    value.effect,
+    "repository kind head base ref pr",
+    "runId attempt publicationAfter",
+  );
   const effect = value.effect;
+  if (
+    effect.publicationAfter !== undefined &&
+    (effect.kind !== "pr_open" ||
+      !Number.isSafeInteger(effect.publicationAfter) ||
+      Number(effect.publicationAfter) < 1)
+  ) throw new Error("invalid private CI publication identity");
   keys(effect.repository, "owner name installationId");
   if (
     ![effect.repository.owner, effect.repository.name].every((s) =>

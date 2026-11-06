@@ -45,6 +45,7 @@ import {
 import { repairConfigs } from "./helpers.ts";
 import { baseRefreshIntentKey } from "../../src/repair/keys.ts";
 import { SHA3, T0 } from "../state/helpers.ts";
+import { createCiMinuteReconciler } from "../../ops/ci-minute-reconciliation.ts";
 
 const SHA = "a".repeat(40);
 const PROOF = "b".repeat(64);
@@ -69,6 +70,234 @@ function effect(name = "first", head = SHA): CiEffectV1 {
     pr: 1,
   };
 }
+
+Deno.test("CI round3 new publication executions exclude closed candidates without reassigning known proofs or guessing ambiguous matches", async () => {
+  let now = EPOCH;
+  const policy = {
+    ...proposedCiMinutePolicy(),
+    activated: true,
+    storageAcceptance: PROOF,
+    ceilingQualification: PROOF,
+    targets: [{
+      owner: "fixture",
+      name: "project",
+      repositoryId: 101,
+      ceilingMinutes: 25,
+    }],
+  };
+  const makeEffect = (publicationAfter?: number): CiEffectV1 => ({
+    repository: { owner: "fixture", name: "project", installationId: 1 },
+    kind: "pr_open",
+    head: SHA,
+    base: "b".repeat(40),
+    ref: "refs/heads/task",
+    pr: null,
+    ...(publicationAfter === undefined ? {} : { publicationAfter }),
+  });
+  const id = (e: CiEffectV1) =>
+    ciMinuteDigest({
+      domain: "sentinel-ci-effect-v1",
+      effect: e,
+      workflowBlob: SHA,
+      job: "validation",
+      repositoryId: 101,
+    });
+  const first = makeEffect(), replacement = makeEffect(7);
+  const old: CiMinuteJobProofV1 = {
+    digest: ciMinuteDigest({
+      repositoryId: 101,
+      runId: 1,
+      attempt: 1,
+      jobId: 11,
+    }),
+    identity: { repositoryId: 101, runId: 1, attempt: 1, jobId: 11 },
+    effectDigest: id(first),
+    startedAt: EPOCH - 110000,
+    completedAt: EPOCH - 60000,
+    terminal: true,
+    neverStarted: false,
+    billedDurationMs: 0,
+    conclusion: "success",
+    estimate: {
+      kind: "retained_estimate",
+      minutes: 25,
+      executionMonth: ciMonth(EPOCH).month,
+      terminalProofDigest: "",
+    },
+  };
+  old.estimate!.terminalProofDigest = ciTerminalEstimateDigest(old);
+  const reservation = (e: CiEffectV1, createdAt: number) => ({
+    effectDigest: id(e),
+    policyDigest: ciPolicyDigest(policy),
+    ceilingMinutes: 25,
+    state: "reserved" as const,
+    createdAt,
+    settledAt: null,
+    chargedMinutes: 25,
+    proofDigest: null,
+    binding: {
+      effect: e,
+      repositoryId: 101,
+      workflowBlob: SHA,
+      job: "validation",
+    },
+  });
+  let ledger: CiMinuteLedgerV1 = {
+    version: 1,
+    month: ciMonth(now).month,
+    policyDigest: ciPolicyDigest(policy),
+    updatedAt: now,
+    sequence: 1,
+    baselineMinutes: 0,
+    watermark: null,
+    reservations: [{
+      ...reservation(first, EPOCH - 121000),
+      state: "terminal_estimated",
+      settledAt: EPOCH - 60000,
+      proofDigest: old.estimate!.terminalProofDigest,
+      accounting: {
+        kind: "retained_estimate",
+        executionMonth: ciMonth(EPOCH).month,
+        terminalProofDigest: old.estimate!.terminalProofDigest,
+        startedAt: old.startedAt,
+        completedAt: old.completedAt,
+      },
+    }, reservation(replacement, EPOCH - 1000)],
+    proofs: [old],
+    observed: [{ digest: old.digest, effectDigest: id(first), minutes: 25 }],
+  };
+  let head = "1".repeat(40) as GitSha, sequence = 1;
+  const store: CiMinuteStoreV1 = {
+    read: () =>
+      Promise.resolve(portOk({ head, ledger: structuredClone(ledger) })),
+    readPrior: () => Promise.resolve(portOk({ head, ledger: null })),
+    write(input) {
+      assert.equal(input.expectedHead, head);
+      const next = parseCiMinuteLedger(input.ledger);
+      validateCiMinuteTransition(ledger, next);
+      ledger = next;
+      head = String(++sequence).padStart(40, "0") as GitSha;
+      return Promise.resolve(portOk({ status: "applied" as const, head }));
+    },
+  };
+  const rows = [1, 2].map((runId) => ({
+    id: runId,
+    repository: { id: 101 },
+    head_sha: SHA,
+    run_attempt: 1,
+    status: "completed",
+    created_at: new Date(EPOCH - (runId === 1 ? 120000 : 500)).toISOString(),
+    updated_at: new Date(EPOCH).toISOString(),
+    path: ".github/workflows/ci.yml",
+    event: "pull_request",
+    head_branch: "task",
+  }));
+  const request = (path: string): Promise<unknown | null> => {
+    if (path.includes("/actions/runs?")) {
+      const url = new URL("https://fixture.invalid" + path);
+      const [from, through] = url.searchParams.get("created")!.split("..").map(
+        Date.parse,
+      );
+      const found = rows.filter((row) =>
+        Date.parse(row.created_at) >= from &&
+        Date.parse(row.created_at) <= through
+      );
+      return Promise.resolve({
+        total_count: found.length,
+        workflow_runs: found,
+      });
+    }
+    const runId = Number(/\/runs\/(\d+)/.exec(path)?.[1]),
+      row = rows.find((r) => r.id === runId);
+    if (!row) return Promise.resolve(null);
+    if (path.endsWith("/timing")) {
+      return Promise.resolve({
+        billable: {
+          UBUNTU: {
+            jobs: 1,
+            total_ms: 0,
+            job_runs: [{ job_id: runId * 10 + 1, duration_ms: 0 }],
+          },
+        },
+      });
+    }
+    if (path.includes("/jobs?")) {
+      return Promise.resolve({
+        total_count: 1,
+        jobs: [{
+          id: runId * 10 + 1,
+          run_id: runId,
+          run_attempt: 1,
+          head_sha: SHA,
+          status: "completed",
+          conclusion: "success",
+          runner_id: 1,
+          labels: ["ubuntu-latest"],
+          steps: [{ number: 1, status: "completed" }],
+          started_at: new Date(runId === 1 ? EPOCH - 110000 : now - 400)
+            .toISOString(),
+          completed_at: new Date(runId === 1 ? EPOCH - 60000 : now)
+            .toISOString(),
+        }],
+      });
+    }
+    return Promise.resolve(row);
+  };
+  const controller = () =>
+    new CalendarCiMinutes({
+      policy,
+      clock: { now: () => now },
+      store,
+      authorizePolicy: () => Promise.resolve(true),
+      resolve: () => Promise.resolve(null),
+      observe: createCiMinuteReconciler({
+        policy,
+        clock: { now: () => now },
+        request,
+      }),
+    });
+  assert.equal((await controller().reconcile(now + 60000)).kind, "ready");
+  assert.equal(ledger.reservations[0].effectDigest, id(first));
+  assert.equal(ledger.reservations[0].chargedMinutes, 25);
+  assert.equal(
+    ledger.proofs?.find((proof) => proof.identity?.runId === 1)?.effectDigest,
+    id(first),
+  );
+  assert.equal(
+    ledger.proofs?.find((proof) => proof.identity?.runId === 2)?.effectDigest,
+    id(replacement),
+  );
+  assert.equal(ledger.reservations[1].state, "terminal_estimated");
+  now += 2000;
+  ledger.reservations.push(
+    reservation(makeEffect(8), now),
+    reservation(makeEffect(9), now),
+  );
+  rows.push({
+    ...rows[1],
+    id: 3,
+    created_at: new Date(now + 100).toISOString(),
+    updated_at: new Date(now + 100).toISOString(),
+  });
+  now += 1000;
+  assert.equal((await controller().reconcile(now + 60000)).kind, "ready");
+  assert.equal(
+    ledger.proofs?.find((proof) => proof.identity?.runId === 1)?.effectDigest,
+    id(first),
+  );
+  assert.equal(
+    ledger.proofs?.find((proof) => proof.identity?.runId === 2)?.effectDigest,
+    id(replacement),
+  );
+  assert.equal(
+    ledger.proofs?.find((proof) => proof.identity?.runId === 3)?.effectDigest,
+    null,
+  );
+  assert.deepEqual(
+    ledger.reservations.slice(2).map((row) => [row.state, row.chargedMinutes]),
+    [["reserved", 25], ["reserved", 25]],
+  );
+});
 
 function fixture(limit = 40, now = EPOCH, sourcePolicy?: CiMinutePolicyV1) {
   const policy = sourcePolicy ?? {

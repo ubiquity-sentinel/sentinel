@@ -235,11 +235,27 @@ export const createCiMinuteReconciler: CiMinuteReconcilerFactoryV1 = (
                 Array.isArray(parents) && parents.length === 1 &&
                 row(parents[0])?.sha === effect.base && effect.head !== null
               ) {
-                const original = row(
-                  await request(prefix + "/commits/" + effect.head),
-                );
                 const tree = (v: Row | null) => row(row(v?.commit)?.tree)?.sha;
-                verified = sha(tree(commit)) && tree(commit) === tree(original);
+                const landing = await input.readVerifiedTrainLanding?.(
+                  effect,
+                  merged,
+                  deadline,
+                );
+                if (input.clock.now() >= deadline) return partial();
+                verified = landing !== undefined && landing !== null &&
+                  pull.number === effect.pr && commit?.sha === merged &&
+                  landing.pullRequest === effect.pr &&
+                  landing.head === effect.head &&
+                  landing.landedOn === effect.base &&
+                  landing.revision === merged &&
+                  sha(landing.tree) && tree(commit) === landing.tree;
+                if (!verified) {
+                  const original = row(
+                    await request(prefix + "/commits/" + effect.head),
+                  );
+                  verified = sha(tree(commit)) &&
+                    tree(commit) === tree(original);
+                }
               }
               if (verified) {
                 (progress.aliases ??= []).push({
@@ -572,7 +588,7 @@ function effectBinding(
   progress: CiMinuteProgressV1,
 ): string | null {
   if (run.path !== ".github/workflows/ci.yml") return null;
-  const matches = ledger.reservations.filter((reservation) => {
+  const candidates = ledger.reservations.filter((reservation) => {
     const binding = reservation.binding;
     if (!binding || binding.repositoryId !== repositoryId) return false;
     const effect = binding.effect;
@@ -600,5 +616,24 @@ function effectBinding(
       ? run.event === "workflow_dispatch"
       : run.event === "pull_request";
   });
+  const known = new Set(
+    (ledger.proofs ?? []).filter((proof) =>
+      proof.identity?.repositoryId === repositoryId &&
+      proof.identity.runId === run.id && proof.identity.attempt === attempt &&
+      proof.effectDigest !== null
+    ).map((proof) => proof.effectDigest!),
+  );
+  if (known.size > 0) {
+    const old = [...known];
+    return old.length === 1 &&
+        candidates.some((candidate) => candidate.effectDigest === old[0])
+      ? old[0]
+      : null;
+  }
+  const matches = candidates.filter((reservation) =>
+    !["settled", "terminal_estimated", "confirmed_not_submitted"].includes(
+      reservation.state,
+    )
+  );
   return matches.length === 1 ? matches[0].effectDigest : null;
 }

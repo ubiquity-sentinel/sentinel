@@ -30,6 +30,7 @@ import {
 } from "../src/contracts/hosted-controller-deployment.ts";
 import { runHostedAutonomy } from "./hosted-autonomy-runner.ts";
 import { GitDeliveryTrainStore } from "../src/state/delivery-train-store.ts";
+import { createVerifiedTrainLandingReader } from "../src/host/hosted-repair-state.ts";
 import { verifyCiMinuteSchedulingBasis } from "../src/budget/ci-minutes.ts";
 import {
   ciStateGitArgs,
@@ -442,6 +443,11 @@ async function runHostedAutonomyMainResult(
           deadline: number,
         ) => Promise<PreparedWorkflowBlobV1 | null>
       >();
+      const trainJournal = new GitDeliveryTrainStore({
+        scratchDir: `${scratch}/delivery-trains`,
+        remoteUrl: HOSTED_CONTROLLER_REMOTE,
+        runner,
+      });
       const ciMinutes = composePrivateCiMinutes({
         policy: acceptedCiMinutePolicy(),
         clock: ciClock,
@@ -449,6 +455,10 @@ async function runHostedAutonomyMainResult(
         deadlineAt: nativeTurnDeadline,
         authority: privateCiAuthority,
         billingBasis: verifyCiMinuteSchedulingBasis,
+        readVerifiedTrainLanding: createVerifiedTrainLandingReader(
+          trainJournal,
+          ciClock,
+        ),
         readPreparedWorkflow: (effect, limit) =>
           effect.head === null
             ? Promise.resolve(null)
@@ -513,11 +523,7 @@ async function runHostedAutonomyMainResult(
           // delivery pass); each target's composer is its own git store,
           // fetch and push over the target token.
           deliveryTrain: {
-            journal: new GitDeliveryTrainStore({
-              scratchDir: `${scratch}/delivery-trains`,
-              remoteUrl: HOSTED_CONTROLLER_REMOTE,
-              runner,
-            }),
+            journal: trainJournal,
             composerFor: createTrainComposerFor({
               scratch,
               tokenFor: () => apiToken,

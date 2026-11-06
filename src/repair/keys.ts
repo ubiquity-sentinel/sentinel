@@ -74,8 +74,13 @@ export function pushIntentKey(head: GitSha): string {
 }
 
 /** Operation key for one PR publication (exact head). */
-export function pullRequestIntentKey(head: GitSha): string {
-  return `pull_request:${head}`;
+export function pullRequestIntentKey(
+  head: GitSha,
+  retiredOwnPr?: number,
+): string {
+  return `pull_request:${head}${
+    retiredOwnPr === undefined ? "" : `:after-pr:${retiredOwnPr}`
+  }`;
 }
 
 /**

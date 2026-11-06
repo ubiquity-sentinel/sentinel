@@ -592,7 +592,10 @@ export async function reconcilePublishIntent(
       return persistWork(
         deps,
         afterSettlement,
-        clearIntent(retireClosedPublication(current, now, "work"), now),
+        clearIntent(
+          retireClosedPublication(current, now, "work", prNumber),
+          now,
+        ),
       );
     }
     const withPr = {

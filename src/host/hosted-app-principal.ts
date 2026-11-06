@@ -48,6 +48,7 @@ import type {
   CiMinuteObservationV1,
   CiMinutePolicyV1,
   CiMinuteReconcileDecisionV1,
+  CiMinuteTrainLandingReaderV1,
 } from "../contracts/ci-minute-budget.ts";
 import {
   createCiMinuteController,
@@ -91,6 +92,7 @@ export function composePrivateCiMinutes(input: {
   /** Existing native-turn absolute bound; consumers may only shorten it. */
   deadlineAt?: number;
   authority(deadline: number): Promise<HostedPrivateCiCapabilities | null>;
+  readVerifiedTrainLanding?: CiMinuteTrainLandingReaderV1;
   readPreparedWorkflow?(
     effect: CiEffectV1,
     deadline: number,
@@ -184,6 +186,7 @@ export function composePrivateCiMinutes(input: {
             policy: input.policy,
             request: reads.request,
             clock: input.clock,
+            readVerifiedTrainLanding: input.readVerifiedTrainLanding,
           })(month, limit, ledger).catch(() => null);
           return observation.then((value) =>
             value === null ? null : structuredClone(value)
@@ -804,6 +807,7 @@ export function runtimeCiMinutes(
     sourcePathBySlug: ReadonlyMap<string, string>;
     trustedPath: string;
     gitExecutable: string;
+    readTrainLanding?: CiMinuteTrainLandingReaderV1;
   },
 ): CiMinuteCoordinatorV1 {
   const scratch = stateRoot + "/ci-minutes-private";
@@ -815,6 +819,7 @@ export function runtimeCiMinutes(
     authority: (limit) =>
       createHostedPrivateCiCapabilities(principal(), scratch, limit),
     billingBasis: verifyCiMinuteSchedulingBasis,
+    readVerifiedTrainLanding: prepared.readTrainLanding,
     readPreparedWorkflow: (effect, limit) => {
       const directory = prepared.sourcePathBySlug.get(
         `${effect.repository.owner}/${effect.repository.name}`,

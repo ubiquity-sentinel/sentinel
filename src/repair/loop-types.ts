@@ -98,7 +98,9 @@ export async function guardCiMinuteEffect(
   context: LoopContextV1,
   record: WorkRecordV1,
   kind: CiEffectKindV1,
-  override: Partial<Pick<CiEffectV1, "head" | "base" | "ref" | "pr">> = {},
+  override: Partial<
+    Pick<CiEffectV1, "head" | "base" | "ref" | "pr" | "publicationAfter">
+  > = {},
 ): Promise<StepResultV1 | null> {
   if (deps.ciMinutes === undefined) {
     return { kind: "state_error", detail: "CI admission capability missing" };

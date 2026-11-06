@@ -5,7 +5,12 @@
  * read here and never written (the launcher delivery pass is its only
  * writer).
  */
-import type { DeliveryTrainHoldV1 } from "../contracts/delivery-train-ledger.ts";
+import type {
+  DeliveryTrainHoldV1,
+  DeliveryTrainJournalV1,
+} from "../contracts/delivery-train-ledger.ts";
+import type { CiMinuteTrainLandingReaderV1 } from "../contracts/ci-minute-budget.ts";
+import type { Clock } from "../contracts/ports.ts";
 import {
   portError,
   type PortResultV1,
@@ -25,10 +30,38 @@ export type HostedRepairStateStoreV1 = RepairGitStateStore & {
   >;
 };
 
+/** Only exact producer-verified landing data escapes; no writer or token does. */
+export function createVerifiedTrainLandingReader(
+  journal: Pick<DeliveryTrainJournalV1, "read">,
+  clock: Clock,
+): CiMinuteTrainLandingReaderV1 {
+  return async (effect, revision, deadline) => {
+    if (
+      effect.kind !== "merge" || effect.pr === null || effect.head === null ||
+      effect.base === null || !/^[0-9a-f]{40}$/.test(revision) ||
+      !Number.isSafeInteger(deadline) || clock.now() >= deadline
+    ) return null;
+    let read;
+    try {
+      read = await journal.read(effect.repository);
+    } catch {
+      return null;
+    }
+    if (read === null || clock.now() >= deadline) return null;
+    const matches = read.ledger.landings.filter((landing) =>
+      landing.pullRequest === effect.pr && landing.head === effect.head &&
+      landing.landedOn === effect.base && landing.revision === revision
+    );
+    return matches.length === 1 ? structuredClone(matches[0]) : null;
+  };
+}
+
 export function createHostedRepairStateStore(input: {
   scratch: string;
   remoteUrl: string;
   runner: DenoGitRunner;
+  clock?: Clock;
+  onTrainLandingReader?(reader: CiMinuteTrainLandingReaderV1): void;
 }): HostedRepairStateStoreV1 {
   const store = createRepairStateStore({
     scratchDir: input.scratch,
@@ -40,6 +73,12 @@ export function createHostedRepairStateStore(input: {
     remoteUrl: input.remoteUrl,
     runner: input.runner,
   });
+  input.onTrainLandingReader?.(
+    createVerifiedTrainLandingReader(
+      trains,
+      input.clock ?? { now: () => Date.now() },
+    ),
+  );
   return Object.assign(store, {
     readDeliveryTrainHolds: () => trains.readHolds(),
   });

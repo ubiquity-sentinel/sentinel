@@ -468,6 +468,10 @@ export class CalendarCiMinutes implements CiMinuteCoordinatorV1 {
       typeof effect.ref === "string" && effect.ref.length <= 240 &&
       (effect.pr === null ||
         (Number.isSafeInteger(effect.pr) && effect.pr > 0)) &&
+      (effect.publicationAfter === undefined ||
+        (effect.kind === "pr_open" &&
+          Number.isSafeInteger(effect.publicationAfter) &&
+          effect.publicationAfter > 0)) &&
       (effect.kind !== "rerun" ||
         (Number.isSafeInteger(effect.runId) && Number(effect.runId) > 0 &&
           Number.isSafeInteger(effect.attempt) && Number(effect.attempt) > 1));

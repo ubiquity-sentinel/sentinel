@@ -12,10 +12,18 @@ import type {
   CiMinuteLedgerV1,
 } from "../../src/contracts/ci-minute-budget.ts";
 import {
+  ciMinuteDigest,
   ciMonth,
   ciPolicyDigest,
 } from "../../src/contracts/ci-minute-budget.ts";
-import { createCiMinuteController } from "../../src/budget/ci-minutes.ts";
+import {
+  CalendarCiMinutes,
+  createCiMinuteController,
+  proposedCiMinutePolicy,
+} from "../../src/budget/ci-minutes.ts";
+import { createCiMinuteReconciler } from "../../ops/ci-minute-reconciliation.ts";
+import { createVerifiedTrainLandingReader } from "../../src/host/hosted-repair-state.ts";
+import { GitCiMinuteStore } from "../../src/state/ci-minute-budget-store.ts";
 import { portOk } from "../../src/contracts/ports.ts";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import type { PreparedWorkflowBlobV1 } from "../../src/github/review-snapshot.ts";
@@ -31,7 +39,7 @@ import {
 } from "./delivery-train-rig.ts";
 import { T0 } from "../state/helpers.ts";
 import { GitDeliveryTrainStore } from "../../src/state/delivery-train-store.ts";
-import { FOREIGN_REPO } from "./hosted-autonomy-fixtures.ts";
+import { FOREIGN_BRANCH, FOREIGN_REPO } from "./hosted-autonomy-fixtures.ts";
 import {
   DELIVERY_TRAIN_CI_WAIT_MS,
   type DeliveryTrainLedgerV1,
@@ -107,6 +115,292 @@ function counts(metrics: ReturnType<typeof createMetricsCollectorV1>) {
     }).counts;
   return { trainsBuilt, targetCiRunsTriggered, mergesCompleted };
 }
+
+Deno.test("CI round3 real verified train squash landing closes accounting once with composed tree and keeps unproved evidence carried", async () => {
+  const fixture = await trainPass(
+    "synthetic-train-accounting",
+    FIVE.slice(0, 2),
+    {
+      ledger: "git",
+      clock: { now: () => T0 },
+      baseWorkflow:
+        "on: [push, pull_request]\njobs:\n  validation:\n    runs-on: ubuntu-latest\n    timeout-minutes: 20\n    steps:\n      - run: true\n",
+    },
+  );
+  try {
+    await fixture.once();
+    const landings = (await fixture.world.ledger()).landings;
+    assert.equal(landings.length, 2);
+    const landing = landings[1], completedAt = T0;
+    const originalTree = await git(
+      fixture.world.bare,
+      "rev-parse",
+      `${landing.head}^{tree}`,
+    );
+    assert.notEqual(
+      originalTree,
+      landing.tree,
+      "later member's CI-qualified composition contains earlier members",
+    );
+    const root = fixture.world.bare.slice(
+      0,
+      fixture.world.bare.lastIndexOf("/"),
+    );
+    const blob = await git(
+      fixture.world.bare,
+      "rev-parse",
+      `${fixture.world.base}:.github/workflows/ci.yml`,
+    );
+    for (
+      const mode of [
+        "verified",
+        "missing",
+        "foreign",
+        "parent",
+        "tree",
+        "pull",
+        "ambiguous",
+      ] as const
+    ) {
+      let now = completedAt;
+      const repository = mode === "foreign"
+        ? { ...FOREIGN_REPO, name: "synthetic-other" }
+        : FOREIGN_REPO;
+      const policy = {
+        ...proposedCiMinutePolicy(),
+        activated: true,
+        storageAcceptance: "a".repeat(64),
+        ceilingQualification: "b".repeat(64),
+        targets: [{
+          owner: repository.owner,
+          name: repository.name,
+          repositoryId: 101,
+          ceilingMinutes: 25,
+        }],
+      };
+      const effect: CiEffectV1 = {
+        repository,
+        kind: "merge",
+        head: landing.head,
+        base: landing.landedOn,
+        ref: `refs/heads/${FOREIGN_BRANCH}`,
+        pr: landing.pullRequest,
+      };
+      const effectDigest = ciMinuteDigest({
+        domain: "sentinel-ci-effect-v1",
+        effect,
+        workflowBlob: blob,
+        job: "validation",
+        repositoryId: 101,
+      });
+      const remote = `${root}/ci-${mode}.git`;
+      await git(fixture.world.bare, "init", "-q", "--bare", remote);
+      const store = new GitCiMinuteStore({
+        remoteUrl: remote,
+        scratchDir: `${root}/ci-${mode}-scratch`,
+        storageAcceptance: policy.storageAcceptance,
+      });
+      const ledger: CiMinuteLedgerV1 = {
+        version: 1,
+        month: ciMonth(now).month,
+        policyDigest: ciPolicyDigest(policy),
+        updatedAt: now,
+        sequence: 1,
+        baselineMinutes: 0,
+        watermark: null,
+        reservations: [{
+          effectDigest,
+          policyDigest: ciPolicyDigest(policy),
+          ceilingMinutes: 25,
+          state: "reserved",
+          createdAt: completedAt - 60000,
+          settledAt: null,
+          chargedMinutes: 25,
+          proofDigest: null,
+          binding: {
+            effect,
+            repositoryId: 101,
+            workflowBlob: blob,
+            job: "validation",
+          },
+        }],
+        observed: [],
+      };
+      const seeded = await store.write({ expectedHead: null, ledger });
+      assert.ok(seeded.ok && seeded.value.status === "applied");
+      const journal = mode === "ambiguous"
+        ? {
+          read: async (repo: typeof repository) => {
+            const read = await fixture.world.journal.read(repo);
+            return read === null ? null : {
+              ...read,
+              ledger: {
+                ...read.ledger,
+                landings: [...read.ledger.landings, {
+                  ...landing,
+                  operationId: "f".repeat(24),
+                  recordId: "synthetic-duplicate",
+                }],
+              },
+            };
+          },
+        }
+        : fixture.world.journal;
+      const readLanding = mode === "missing"
+        ? undefined
+        : createVerifiedTrainLandingReader(journal, { now: () => now });
+      const scope = `/repos/${repository.owner}/${repository.name}`;
+      const run = {
+        id: 71,
+        repository: { id: 101 },
+        head_sha: landing.revision,
+        run_attempt: 1,
+        status: "completed",
+        created_at: new Date(completedAt - 59000).toISOString(),
+        updated_at: new Date(completedAt).toISOString(),
+        path: ".github/workflows/ci.yml",
+        event: "push",
+        head_branch: FOREIGN_BRANCH,
+      };
+      const request = async (path: string): Promise<unknown | null> => {
+        if (path === `${scope}/pulls/${landing.pullRequest}`) {
+          return {
+            number: mode === "pull"
+              ? landing.pullRequest + 1
+              : landing.pullRequest,
+            merged: true,
+            merge_commit_sha: landing.revision,
+            head: { sha: landing.head },
+          };
+        }
+        if (path.startsWith(`${scope}/commits/`)) {
+          const revision = path.split("/").at(-1)!;
+          const raw = (await git(
+            fixture.world.bare,
+            "rev-list",
+            "--parents",
+            "-n",
+            "1",
+            revision,
+          )).split(" ");
+          const tree = await git(
+            fixture.world.bare,
+            "rev-parse",
+            `${revision}^{tree}`,
+          );
+          return {
+            sha: revision,
+            parents: raw.slice(1).map((sha, index) => ({
+              sha: mode === "parent" && revision === landing.revision &&
+                  index === 0
+                ? "e".repeat(40)
+                : sha,
+            })),
+            commit: {
+              tree: {
+                sha: mode === "tree" && revision === landing.revision
+                  ? "e".repeat(40)
+                  : tree,
+              },
+            },
+          };
+        }
+        if (path.startsWith(`${scope}/actions/runs?`)) {
+          const query = new URL("https://fixture.invalid" + path);
+          const [from, through] = query.searchParams.get("created")!.split("..")
+            .map(Date.parse);
+          const present = Date.parse(run.created_at) >= from &&
+            Date.parse(run.created_at) <= through;
+          return {
+            total_count: present ? 1 : 0,
+            workflow_runs: present ? [run] : [],
+          };
+        }
+        if (path === `${scope}/actions/runs/71`) return run;
+        if (path.endsWith("/timing")) {
+          return {
+            billable: {
+              UBUNTU: {
+                jobs: 1,
+                total_ms: 0,
+                job_runs: [{ job_id: 711, duration_ms: 0 }],
+              },
+            },
+          };
+        }
+        if (path.includes("/attempts/1/jobs?")) {
+          return {
+            total_count: 1,
+            jobs: [{
+              id: 711,
+              run_id: 71,
+              run_attempt: 1,
+              head_sha: landing.revision,
+              status: "completed",
+              conclusion: "success",
+              runner_id: 1,
+              labels: ["ubuntu-latest"],
+              steps: [{ number: 1, status: "completed" }],
+              started_at: new Date(completedAt - 50000).toISOString(),
+              completed_at: new Date(completedAt).toISOString(),
+            }],
+          };
+        }
+        return null;
+      };
+      const controller = () =>
+        new CalendarCiMinutes({
+          policy,
+          clock: { now: () => now },
+          store,
+          authorizePolicy: () => Promise.resolve(true),
+          resolve: () => Promise.resolve(null),
+          observe: createCiMinuteReconciler({
+            policy,
+            clock: { now: () => now },
+            request,
+            readVerifiedTrainLanding: readLanding,
+          }),
+        });
+      assert.equal(
+        (await controller().reconcile(now + 60000)).kind,
+        "ready",
+        mode,
+      );
+      const closed = await store.read(ciMonth(now).month);
+      assert.ok(closed.ok && closed.value.ledger);
+      assert.equal(
+        closed.value.ledger.reservations[0].state,
+        mode === "verified" ? "terminal_estimated" : "reserved",
+        mode,
+      );
+      assert.equal(closed.value.ledger.reservations[0].chargedMinutes, 25);
+      assert.equal(
+        closed.value.ledger.observed[0].effectDigest,
+        mode === "verified" ? effectDigest : null,
+        mode,
+      );
+      const month = ciMonth(now);
+      now = month.end + 86400000;
+      assert.equal(
+        (await controller().reconcile(now + 60000)).kind,
+        "ready",
+        mode,
+      );
+      const recovered = await store.read(ciMonth(now).month);
+      assert.ok(recovered.ok && recovered.value.ledger);
+      assert.equal(
+        recovered.value.ledger.reservations.some((row) =>
+          row.effectDigest === effectDigest
+        ),
+        mode !== "verified",
+        mode,
+      );
+    }
+  } finally {
+    await fixture.cleanup();
+  }
+});
 
 Deno.test("CI round2 one-day held train starts its durable CI window at publication and preserves it across restart until real expiry", async () => {
   let now = T0, allowed = false;

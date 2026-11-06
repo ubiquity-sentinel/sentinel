@@ -193,6 +193,8 @@ export interface WorkTargetV1 {
   head: GitSha | null;
   /** PR number; null until published. */
   pr: number | null;
+  /** Last authenticated closed-unmerged own PR; replacement identity, never the new PR number. */
+  retiredOwnPr?: number;
   /**
    * Optional V1 candidate state. Absent on every legacy record; present only
    * for records the candidate-preservation writer owns. Never injected.

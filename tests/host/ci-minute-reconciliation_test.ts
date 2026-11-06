@@ -24,6 +24,7 @@ import type { GitSha } from "../../src/contracts/brands.ts";
 import { createPrivateCiEffectResolver } from "../../ops/hosted-autonomy-github-jobs.ts";
 import { createHostedAutonomyGitHub } from "../../ops/hosted-autonomy-github.ts";
 import { GitReviewSnapshot } from "../../src/github/review-snapshot.ts";
+import { completedJobNeverStarted } from "../../src/github/never-started-job.ts";
 
 const HEAD = "a".repeat(40);
 const NOW = Date.UTC(2028, 0, 2);
@@ -438,7 +439,7 @@ function readerFixture(rows: ApiRun[]) {
       policyDigest: ciPolicyDigest(policy),
     },
   };
-  let jobFor = (id: number, attempt: number) =>
+  let jobFor: (id: number, attempt: number) => unknown = (id, attempt) =>
     job(id * 100 + attempt, id, attempt, 497);
   const request = async (path: string) => {
     await Promise.resolve();
@@ -562,6 +563,136 @@ function ciState(initial: CiMinuteLedgerV1) {
   };
   return { store, ledger: () => ledger, writes: () => sequence - 1 };
 }
+
+Deno.test("CI round3 terminal unassigned cancellations and skips complete accounting across fresh turns without becoming CI success", async () => {
+  for (const conclusion of ["cancelled", "skipped"] as const) {
+    const f = readerFixture([catalogRun(7)]);
+    f.rows[0].event = "pull_request";
+    f.jobs((id, attempt) => ({
+      ...job(id * 100 + attempt, id, attempt, 50),
+      conclusion,
+      runner_id: 0,
+      runner_group_id: 1,
+      runner_group_name: "configured pool",
+      labels: [],
+      steps: [],
+    }));
+    const effect: CiEffectV1 = {
+      repository: { owner: "fixture", name: "project", installationId: 1 },
+      kind: "pr_open",
+      head: HEAD,
+      base: "b".repeat(40),
+      ref: "refs/heads/main",
+      pr: null,
+    };
+    const effectDigest = ciMinuteDigest({
+      domain: "sentinel-ci-effect-v1",
+      effect,
+      workflowBlob: HEAD,
+      job: "validation",
+      repositoryId: 101,
+    });
+    const initial = structuredClone(f.ledger());
+    initial.reservations.push({
+      effectDigest,
+      policyDigest: initial.policyDigest,
+      ceilingMinutes: 25,
+      state: "reserved",
+      createdAt: Date.parse(f.rows[0].created_at),
+      settledAt: null,
+      chargedMinutes: 25,
+      proofDigest: null,
+      binding: {
+        repositoryId: 101,
+        workflowBlob: HEAD,
+        job: "validation",
+        effect,
+      },
+    });
+    const state = ciState(initial);
+    for (let turn = 0; turn < 3; turn++) {
+      const controller = new CalendarCiMinutes({
+        policy: f.policy,
+        clock: { now: f.now },
+        store: state.store,
+        authorizePolicy: () => Promise.resolve(true),
+        resolve: () => Promise.resolve(null),
+        observe: f.observe(),
+      });
+      assert.equal((await controller.reconcile(f.now() + 60000)).kind, "ready");
+      const proof = state.ledger().proofs?.[0];
+      assert.ok(proof);
+      assert.equal(proof.neverStarted, true);
+      assert.equal(proof.startedAt, null);
+      assert.equal(proof.completedAt, null);
+      assert.equal(proof.estimate, undefined);
+      assert.equal(proof.conclusion, conclusion);
+      assert.equal(ciJobMinutes(proof), 0);
+      assert.equal(state.ledger().reservations[0].chargedMinutes, 0);
+      assert.equal(
+        state.ledger().reservations[0].accounting?.kind,
+        "never_started",
+      );
+      assert.equal(
+        completedJobNeverStarted(
+          { ...job(701, 7, 1), conclusion, runner_id: 0, steps: [] },
+          701,
+          HEAD,
+        ),
+        false,
+        "shared correctness-CI failure proof remains unchanged",
+      );
+      f.advance(1000);
+    }
+  }
+});
+
+Deno.test("CI round3 started unknown and contradictory terminal jobs never receive unassigned free accounting", async () => {
+  for (
+    const mode of [
+      "allocated",
+      "steps",
+      "missing_steps",
+      "unknown",
+      "runner_name",
+      "bad_time",
+      "positive_meter",
+      "wrong_head",
+    ] as const
+  ) {
+    const f = readerFixture([catalogRun(7)]);
+    f.jobs((id, attempt) => ({
+      ...job(id * 100 + attempt, id, attempt, 50),
+      conclusion: mode === "unknown" ? "neutral" : "cancelled",
+      runner_id: mode === "allocated" ? 1 : 0,
+      steps: mode === "steps" || mode === "allocated"
+        ? [{ number: 1, status: "completed" }]
+        : [],
+      ...(mode === "missing_steps" ? { steps: undefined } : {}),
+      ...(mode === "runner_name" ? { runner_name: "assigned" } : {}),
+      ...(mode === "bad_time" ? { started_at: "invalid" } : {}),
+      ...(mode === "wrong_head" ? { head_sha: "b".repeat(40) } : {}),
+    }));
+    const result = await f.observe(async (path) =>
+      path.endsWith("/timing") && mode === "positive_meter"
+        ? timing([{ job_id: 701, duration_ms: 60000 }])
+        : await f.request(path)
+    )("2028-01", f.now() + 60000, f.ledger());
+    assert.ok(result);
+    if (mode === "allocated") {
+      assert.equal(result.complete, true);
+      assert.equal(result.jobs[0].neverStarted, false);
+      assert.ok(result.jobs[0].estimate!.minutes >= 25);
+    } else {
+      assert.equal(result.complete, false, mode);
+      assert.equal(
+        result.jobs.some((proof) => proof.neverStarted),
+        false,
+        mode,
+      );
+    }
+  }
+});
 
 Deno.test("CI round2 provider-second binding closes a same-second reservation and refuses prior or mismatched identities", async () => {
   const created = NOW - 60000;

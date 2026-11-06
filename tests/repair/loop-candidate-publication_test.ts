@@ -2,7 +2,25 @@
 import assert from "node:assert/strict";
 import { asWorkItemId } from "../../src/contracts/brands.ts";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
-import { portError } from "../../src/contracts/ports.ts";
+import { portError, portOk } from "../../src/contracts/ports.ts";
+import {
+  CalendarCiMinutes,
+  proposedCiMinutePolicy,
+} from "../../src/budget/ci-minutes.ts";
+import {
+  type CiEffectV1,
+  type CiMinuteControllerV1,
+  ciMinuteDigest,
+  type CiMinuteJobProofV1,
+  type CiMinuteLedgerV1,
+  ciMonth,
+  ciPolicyDigest,
+  ciTerminalEstimateDigest,
+  parseCiMinuteLedger,
+  validateCiMinuteTransition,
+} from "../../src/contracts/ci-minute-budget.ts";
+import type { GitSha } from "../../src/contracts/brands.ts";
+import { createPrivateCiEffectResolver } from "../../ops/hosted-autonomy-github-jobs.ts";
 import type { GitHubPullRequestV1 } from "../../src/contracts/ports.ts";
 import {
   candidateBranch,
@@ -90,6 +108,268 @@ for (const boundary of ["fixture", "original replay"] as const) {
     },
   );
 }
+
+Deno.test("CI round3 authenticated retirement gives replacement publication a distinct durable identity with stable retries", async () => {
+  const record = preservedIssueWork("issue-1", H1),
+    branch = candidateBranch(record.id),
+    blob = "c".repeat(40);
+  const effects: CiEffectV1[] = [];
+  const ciMinutes: CiMinuteControllerV1 = {
+    active: true,
+    reserve: (effect, deadline) => {
+      effects.push(structuredClone(effect));
+      return controller.reserve(effect, deadline);
+    },
+  };
+  const rig = await makeRig("synthetic-replacement-accounting", {
+    summaries: false,
+    ciMinutes,
+    github: {
+      candidateLifecycle: {
+        ...positiveLifecycle(),
+        refs: { [`refs/heads/${branch}`]: H1 },
+        pullRequests: [{ ...exactOpenPr(7, H1, branch), state: "closed" }],
+      },
+    },
+  });
+  const policy = {
+    ...proposedCiMinutePolicy(),
+    activated: true,
+    storageAcceptance: "a".repeat(64),
+    ceilingQualification: "b".repeat(64),
+    targets: [{
+      owner: record.repository.owner,
+      name: record.repository.name,
+      repositoryId: 101,
+      ceilingMinutes: 25,
+    }],
+  };
+  const original: CiEffectV1 = {
+    repository: record.repository,
+    kind: "pr_open",
+    head: H1,
+    base: record.target.base,
+    ref: `refs/heads/${branch}`,
+    pr: null,
+  };
+  const firstId = ciMinuteDigest({
+    domain: "sentinel-ci-effect-v1",
+    effect: original,
+    workflowBlob: blob,
+    job: "validation",
+    repositoryId: 101,
+  });
+  const proof: CiMinuteJobProofV1 = {
+    digest: ciMinuteDigest({ syntheticJob: 1 }),
+    effectDigest: firstId,
+    startedAt: T0 - 60000,
+    completedAt: T0 - 1000,
+    neverStarted: false,
+    terminal: true,
+    conclusion: "success",
+    billedDurationMs: 0,
+    estimate: {
+      kind: "retained_estimate",
+      minutes: 25,
+      executionMonth: ciMonth(T0).month,
+      terminalProofDigest: "",
+    },
+  };
+  proof.estimate!.terminalProofDigest = ciTerminalEstimateDigest(proof);
+  let ledger: CiMinuteLedgerV1 = {
+    version: 1,
+    month: ciMonth(T0).month,
+    policyDigest: ciPolicyDigest(policy),
+    updatedAt: T0,
+    sequence: 1,
+    baselineMinutes: 0,
+    watermark: null,
+    reservations: [{
+      effectDigest: firstId,
+      policyDigest: ciPolicyDigest(policy),
+      ceilingMinutes: 25,
+      state: "terminal_estimated",
+      createdAt: T0 - 61000,
+      settledAt: T0 - 1000,
+      chargedMinutes: 25,
+      proofDigest: proof.estimate!.terminalProofDigest,
+      accounting: {
+        kind: "retained_estimate",
+        executionMonth: ciMonth(T0).month,
+        terminalProofDigest: proof.estimate!.terminalProofDigest,
+        startedAt: proof.startedAt,
+        completedAt: proof.completedAt,
+      },
+      binding: {
+        effect: original,
+        repositoryId: 101,
+        workflowBlob: blob,
+        job: "validation",
+      },
+    }],
+    observed: [{ digest: proof.digest, effectDigest: firstId, minutes: 25 }],
+    proofs: [proof],
+  };
+  let stateHead = "1".repeat(40) as GitSha, sequence = 1;
+  const controller = new CalendarCiMinutes({
+    policy,
+    clock: rig.clock,
+    authorizePolicy: (basis, _deadline, facts) =>
+      Promise.resolve(
+        ciPolicyDigest(basis) === ciPolicyDigest(policy) &&
+          (facts === undefined ||
+            facts.workflowBlob === blob && facts.job === "validation" &&
+              facts.timeoutMinutes === 20 && facts.runner === "ubuntu-latest"),
+      ),
+    resolve: createPrivateCiEffectResolver({
+      policy,
+      request: (path) =>
+        Promise.resolve(
+          path.includes("/contents/")
+            ? {
+              type: "file",
+              encoding: "base64",
+              sha: blob,
+              content: btoa(
+                "on: [pull_request]\njobs:\n  validation:\n    runs-on: ubuntu-latest\n    timeout-minutes: 20\n    steps:\n      - run: true\n",
+              ),
+            }
+            : path.includes("/pulls?")
+            ? [...rig.github.candidatePullRequests.values()].filter((pull) =>
+              pull.state === "open"
+            ).map((pull) => ({ number: pull.number, head: { sha: pull.head } }))
+            : { id: 101, private: true, default_branch: "development" },
+        ),
+    }),
+    observe: (month) =>
+      Promise.resolve({
+        month,
+        complete: true,
+        watermark: rig.clock.now(),
+        jobs: [],
+      }),
+    store: {
+      read: () =>
+        Promise.resolve(
+          portOk({ head: stateHead, ledger: structuredClone(ledger) }),
+        ),
+      readPrior: () =>
+        Promise.resolve(portOk({ head: stateHead, ledger: null })),
+      write(input) {
+        assert.equal(input.expectedHead, stateHead);
+        const next = parseCiMinuteLedger(input.ledger);
+        validateCiMinuteTransition(ledger, next);
+        ledger = next;
+        stateHead = String(++sequence).padStart(40, "0") as GitSha;
+        return Promise.resolve(
+          portOk({ status: "applied" as const, head: stateHead }),
+        );
+      },
+    },
+  });
+  const create = rig.github.createPullRequest.bind(rig.github);
+  // Match the real adapter: prefer a unique open PR, otherwise retain its
+  // conservative single-closed-row/ambiguity behavior for recovery reads.
+  rig.github.findPullRequestByHeadRef = (ref) => {
+    const matches = [...rig.github.candidatePullRequests.values()].filter((
+      pull,
+    ) => pull.headRef === ref);
+    const open = matches.filter((pull) => pull.state === "open");
+    return Promise.resolve(
+      open.length === 1
+        ? portOk(open[0])
+        : open.length > 1
+        ? portError("conflict", "synthetic multiple open PRs")
+        : matches.length === 1
+        ? portOk(matches[0])
+        : matches.length === 0
+        ? portOk(null)
+        : portError("conflict", "synthetic multiple closed PRs"),
+    );
+  };
+  let allowed = false, lostAck = true, attempts = 0;
+  rig.github.createPullRequest = async (
+    ...args: Parameters<typeof rig.github.createPullRequest>
+  ) => {
+    attempts++;
+    if (!allowed) return portError("unavailable", "synthetic before mutation");
+    const created = await create(...args);
+    if (created.ok && lostAck) {
+      lostAck = false;
+      return portError("unavailable", "synthetic acknowledgement loss");
+    }
+    return created;
+  };
+  const advance = async () => {
+    const work = (await rig.snapshot()).work[0];
+    rig.clock.advance(
+      Math.max(1, (work.wait?.until ?? rig.clock.now()) - rig.clock.now() + 1),
+    );
+  };
+  try {
+    assert.ok((await rig.store.writeRepair(seededSnapshot([record]), null)).ok);
+    await rig.run();
+    const pending = (await rig.snapshot()).work[0];
+    assert.equal(pending.target.retiredOwnPr, 7);
+    assert.equal(pending.target.pr, null);
+    assert.equal(pending.intent?.kind, "pull_request");
+    const key = pending.intent!.key;
+    assert.ok(key.endsWith(":after-pr:7"));
+    assert.equal(ledger.reservations.length, 2);
+    const replacement = ledger.reservations[1].effectDigest;
+    assert.notEqual(replacement, firstId);
+    allowed = true;
+    await advance();
+    await rig.run();
+    const uncertain = (await rig.snapshot()).work[0];
+    assert.equal(uncertain.intent?.key, key);
+    assert.equal(ledger.reservations.length, 2);
+    assert.equal(ledger.reservations[1].effectDigest, replacement);
+    await advance();
+    await rig.run();
+    const attached = (await rig.snapshot()).work[0];
+    assert.equal(
+      attached.target.pr,
+      8,
+      JSON.stringify({
+        attached,
+        prs: [...rig.github.candidatePullRequests.values()],
+        effects,
+        ledger,
+      }),
+    );
+    assert.equal(attached.target.retiredOwnPr, 7);
+    assert.equal(
+      attempts,
+      2,
+      "one rejected attempt and one applied request, no retry POST after lost acknowledgement",
+    );
+    rig.github.candidatePullRequests.get(8)!.state = "closed";
+    await advance();
+    await rig.run();
+    const next = (await rig.snapshot()).work[0];
+    assert.equal(next.target.pr, 9);
+    assert.equal(next.target.retiredOwnPr, 8);
+    assert.equal(next.target.head, H1);
+    assert.equal(ledger.reservations.length, 3);
+    assert.notEqual(ledger.reservations[2].effectDigest, replacement);
+    assert.equal(ledger.reservations[0].effectDigest, firstId);
+    assert.equal(ledger.reservations[0].chargedMinutes, 25);
+    assert.equal(ledger.proofs?.[0].effectDigest, firstId);
+    assert.ok(
+      effects.filter((effect) => effect.publicationAfter === 7).length >= 2,
+    );
+    assert.ok(
+      effects.filter((effect) => effect.kind === "pr_open").every((effect) =>
+        effect.pr === null
+      ),
+    );
+    assert.equal(rig.github.pushes.length, 0);
+    assert.equal(rig.model.requests.length, 0);
+  } finally {
+    await rig.ctx.cleanup();
+  }
+});
 
 const deadLocalCandidate = (id: ReturnType<typeof asWorkItemId>) =>
   workRecord("issue-1", {

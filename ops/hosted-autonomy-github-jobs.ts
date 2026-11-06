@@ -346,11 +346,36 @@ export async function readCiMinuteWindow(input: {
         ) {
           return incomplete("job_binding");
         }
-        const neverStarted = completedJobNeverStarted(
+        const originalNeverStarted = completedJobNeverStarted(
           job,
           Number(job.id),
           String(run.head_sha),
         );
+        // Accounting-only terminal proof. This does not make a cancelled or
+        // skipped check successful and does not invent an allocated OS/runner.
+        const declaredStart = ciMinuteTimestamp(job.started_at),
+          declaredEnd = ciMinuteTimestamp(job.completed_at);
+        const unassignedTerminal =
+          (job.conclusion === "cancelled" || job.conclusion === "skipped") &&
+          (job.runner_id === 0 || job.runner_id === null) &&
+          Array.isArray(job.steps) && job.steps.length === 0 &&
+          (job.runner_name === undefined || job.runner_name === null ||
+            job.runner_name === "") &&
+          [job.started_at, job.completed_at].every((value) =>
+            value === undefined || value === null ||
+            ciMinuteTimestamp(value) !== null
+          ) &&
+          (declaredStart === null || declaredStart <= input.now()) &&
+          (declaredEnd === null || declaredEnd <= input.now()) &&
+          (declaredStart === null || declaredEnd === null ||
+            declaredEnd >= declaredStart);
+        const billedDurationMs = billed.get(Number(job.id)) ?? null;
+        if (
+          unassignedTerminal && billedDurationMs !== null &&
+          billedDurationMs > 0
+        ) return incomplete("never_started_meter");
+        const neverStarted = originalNeverStarted === true ||
+          unassignedTerminal;
         let startedAt: number | null = null, completedAt: number | null = null;
         if (neverStarted !== true) {
           if (
@@ -378,7 +403,6 @@ export async function readCiMinuteWindow(input: {
         if (effectDigest !== null && !/^[0-9a-f]{64}$/.test(effectDigest)) {
           return incomplete("effect_binding");
         }
-        const billedDurationMs = billed.get(Number(job.id)) ?? null;
         if (
           input.estimateMinutes === undefined &&
           (billedDurationMs === null ||
