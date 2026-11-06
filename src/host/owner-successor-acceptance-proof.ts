@@ -11,7 +11,7 @@ import {
 import { parseHostedRunProofV1 } from "../contracts/hosted-supervisor.ts";
 import type { HostedReleaseRecordV1 } from "../contracts/hosted-supervisor.ts";
 import { findReservationV1 } from "../contracts/state-snapshots.ts";
-import { portError, portOk } from "../contracts/ports.ts";
+import { portError, portOk, SystemClock } from "../contracts/ports.ts";
 import { GitHubApiClient } from "../github/client.ts";
 import { fetchHttpTransport } from "../github/http.ts";
 import { reviewTaskStatementDigest } from "../contracts/review-task-acceptance.ts";
@@ -258,11 +258,7 @@ export async function readOwnerSuccessorAcceptanceAuthority(
           c.retryNotBefore === null || Date.now() < c.retryNotBefore
         );
     };
-    const clock = {
-      now() {
-        return Date.now();
-      },
-    };
+    const clock = new SystemClock();
     const client = new GitHubApiClient({
       repository: {
         owner: "ubiquity-sentinel",

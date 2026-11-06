@@ -20,7 +20,7 @@ import type {
   ReleaseStateSnapshotV1,
   RepairStateSnapshotV1,
 } from "../contracts/state-snapshots.ts";
-import { portError, portOk } from "../contracts/ports.ts";
+import { portError, portOk, SystemClock } from "../contracts/ports.ts";
 import { GitHubApiClient } from "../github/client.ts";
 import { fetchHttpTransport } from "../github/http.ts";
 import { reviewTaskStatementDigest } from "../contracts/review-task-acceptance.ts";
@@ -287,7 +287,7 @@ export async function readOwnerSupersessionAuthority(
         authorizationHeader: () =>
           Promise.resolve(portOk(`Bearer ${input.token}`)),
       },
-      clock: { now: () => Date.now() },
+      clock: new SystemClock(),
       includeIssueRelations: false,
       cooldownGate: {
         beforeRequest: async (scope) =>
@@ -590,7 +590,7 @@ export async function readOwnerSupersededRecoveryAuthority(
         authorizationHeader: () =>
           Promise.resolve(portOk(`Bearer ${input.token}`)),
       },
-      clock: { now: () => Date.now() },
+      clock: new SystemClock(),
       cooldownGate: {
         beforeRequest: async (scope) =>
           scope === 0 && await unchanged()
