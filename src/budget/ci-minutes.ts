@@ -215,7 +215,7 @@ export class CalendarCiMinutes implements CiMinuteCoordinatorV1 {
         if (!read.ok) return unavailable("state_read");
         let ledger = read.value.ledger;
         if (ledger === null) {
-          const previous = await this.options.store.read(period.previous);
+          const previous = await this.options.store.readPrior(period.month);
           if (!previous.ok) return unavailable("state_read");
           if (previous.value.head !== read.value.head) continue;
           const old = previous.value.ledger === null

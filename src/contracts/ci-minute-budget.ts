@@ -311,6 +311,8 @@ export interface CiMinuteStoreV1 {
   ): Promise<
     PortResultV1<{ head: GitSha | null; ledger: CiMinuteLedgerV1 | null }>
   >;
+  /** Latest earlier month in the same validated private state tree; never history traversal. */
+  readPrior(month: string): ReturnType<CiMinuteStoreV1["read"]>;
   write(
     input: { expectedHead: GitSha | null; ledger: CiMinuteLedgerV1 },
   ): Promise<

@@ -101,6 +101,19 @@ function fixture(limit = 40, now = EPOCH, sourcePolicy?: CiMinutePolicyV1) {
         portOk({ head, ledger: structuredClone(months.get(month) ?? null) }),
       );
     },
+    readPrior(month) {
+      const prior = [...months.keys()].filter((key) => key < month).sort().at(
+        -1,
+      );
+      return Promise.resolve(
+        portOk({
+          head,
+          ledger: prior === undefined
+            ? null
+            : structuredClone(months.get(prior)!),
+        }),
+      );
+    },
     write(input) {
       if (input.expectedHead !== head) {
         return Promise.resolve(portOk({ status: "conflict" as const, head }));
@@ -209,7 +222,7 @@ Deno.test("CI inactive capability performs no clock, state, resolver or CI work"
   const off = createCiMinuteController({
     policy: proposedCiMinutePolicy(),
     clock: { now: fail },
-    store: { read: fail, write: fail },
+    store: { read: fail, readPrior: fail, write: fail },
     authorizePolicy: fail,
     resolve: fail,
     observe: fail,

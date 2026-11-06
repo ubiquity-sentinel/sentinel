@@ -30,7 +30,10 @@ import {
   ciPolicyDigest,
 } from "../../src/contracts/ci-minute-budget.ts";
 import type { CiMinuteLedgerV1 } from "../../src/contracts/ci-minute-budget.ts";
-import { proposedCiMinutePolicy } from "../../src/budget/ci-minutes.ts";
+import {
+  createCiMinuteController,
+  proposedCiMinutePolicy,
+} from "../../src/budget/ci-minutes.ts";
 import { verifyCiMinuteSchedulingBasis } from "../../src/budget/ci-minutes.ts";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
 
@@ -864,6 +867,222 @@ Deno.test("CI pacing production native driver creates a private initial CAS, res
       afterPending,
       "pending reconciliation is reused without a new observation or effect",
     );
+  } finally {
+    await f.cleanup();
+  }
+});
+
+Deno.test("CI gap recovery real Git carries the same unresolved reservation across missing months until authenticated terminal closure", async () => {
+  const f = await fixture();
+  const policy = acceptedCiMinutePolicy(), profile = policy.targets[0];
+  const november = Date.UTC(2028, 10, 30, 23);
+  let now = november;
+  let jobs: NonNullable<CiMinuteLedgerV1["proofs"]> = [];
+  const effect = {
+    repository: { owner: profile.owner, name: profile.name, installationId: 1 },
+    kind: "pr_open" as const,
+    head: "a".repeat(40),
+    base: "b".repeat(40),
+    ref: "refs/heads/synthetic",
+    pr: 1,
+  };
+  const controller = () =>
+    createCiMinuteController({
+      policy,
+      clock: { now: () => now },
+      store: f.make(),
+      authorizePolicy: verifyCiMinuteSchedulingBasis,
+      resolve: () =>
+        Promise.resolve({
+          repositoryId: profile.repositoryId,
+          workflowBlob: profile.workflowBlob,
+          job: profile.job,
+          jobs: 1,
+          runner: profile.runner,
+          timeoutMinutes: profile.timeoutMinutes,
+          ceilingMinutes: profile.ceilingMinutes,
+          qualificationDigest: policy.ceilingQualification!,
+          triggered: true,
+          effectState: "not_applied",
+        }),
+      observe: (month) =>
+        Promise.resolve({
+          month,
+          complete: true,
+          watermark: now,
+          observedAt: now,
+          jobs,
+        }),
+    });
+  try {
+    const store = f.make();
+    const seeded = await store.write({
+      expectedHead: null,
+      ledger: {
+        ...f.ledger,
+        month: "2028-11",
+        policyDigest: ciPolicyDigest(policy),
+        updatedAt: now,
+        watermark: now,
+      },
+    });
+    assert.ok(seeded.ok && seeded.value.status === "applied");
+    const reserved = await controller().reserve(effect, now + 60000);
+    assert.equal(reserved.kind, "admitted");
+    if (reserved.kind !== "admitted") return;
+    const id = reserved.reservationDigest;
+    const submitted = await store.read("2028-11");
+    assert.ok(submitted.ok && submitted.value.ledger);
+    submitted.value.ledger.reservations[0].state = "ambiguous";
+    submitted.value.ledger.sequence++;
+    const ambiguous = await store.write({
+      expectedHead: submitted.value.head,
+      ledger: submitted.value.ledger,
+    });
+    assert.ok(ambiguous.ok && ambiguous.value.status === "applied");
+    const december = await store.read("2028-12");
+    assert.ok(december.ok && december.value.ledger === null);
+    now = Date.UTC(2029, 0, 31, 23);
+    assert.equal((await controller().reconcile(now + 60000)).kind, "ready");
+    const january = await store.read("2029-01");
+    assert.ok(january.ok && january.value.ledger);
+    assert.equal(
+      january.value.ledger.reservations.find((row) => row.effectDigest === id)
+        ?.chargedMinutes,
+      25,
+    );
+    assert.equal(january.value.ledger.bootstrap, undefined);
+    assert.equal(
+      january.value.ledger.reservations.find((row) => row.effectDigest === id)
+        ?.state,
+      "ambiguous",
+    );
+    now = Date.UTC(2029, 1, 28, 23);
+    const next = await controller().reserve(
+      { ...effect, head: "c".repeat(40) },
+      now + 60000,
+    );
+    assert.equal(next.kind, "admitted");
+    const february = await store.read("2029-02");
+    assert.ok(february.ok && february.value.ledger);
+    assert.equal(
+      february.value.ledger.reservations.find((row) => row.effectDigest === id)
+        ?.chargedMinutes,
+      25,
+    );
+    jobs = [{
+      digest: ACCEPTANCE,
+      effectDigest: id,
+      startedAt: november - 497000,
+      completedAt: november,
+      terminal: true,
+      neverStarted: false,
+      billedDurationMs: 0,
+      estimate: {
+        kind: "retained_estimate",
+        minutes: 25,
+        executionMonth: "2028-11",
+        terminalProofDigest: ACCEPTANCE,
+      },
+    }];
+    assert.equal((await controller().reconcile(now + 60000)).kind, "ready");
+    now = Date.UTC(2029, 2, 31, 23);
+    jobs = [];
+    assert.equal((await controller().reconcile(now + 60000)).kind, "ready");
+    const march = await store.read("2029-03");
+    assert.ok(march.ok && march.value.ledger);
+    assert.equal(
+      march.value.ledger.reservations.some((row) => row.effectDigest === id),
+      false,
+    );
+    assert.equal(march.value.ledger.reservations.length, 1);
+    const historical = await store.read("2028-11");
+    assert.ok(historical.ok && historical.value.ledger);
+    assert.equal(historical.value.ledger.reservations[0].chargedMinutes, 25);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+Deno.test("CI gap prior discovery uses validated current-tree month metadata and refuses corrupt or unreadable state", async () => {
+  const f = await fixture();
+  try {
+    const store = f.make();
+    assert.deepEqual(await store.readPrior("2029-01"), {
+      ok: true,
+      value: { head: null, ledger: null },
+    });
+    const older = { ...f.ledger, month: "2028-09" };
+    const latest = {
+      ...f.ledger,
+      month: "2028-11",
+      reservations: [{
+        effectDigest: ACCEPTANCE,
+        policyDigest: f.ledger.policyDigest,
+        ceilingMinutes: 25,
+        state: "ambiguous" as const,
+        createdAt: NOW,
+        settledAt: null,
+        chargedMinutes: 37,
+        proofDigest: null,
+      }],
+    };
+    const first = await store.write({ expectedHead: null, ledger: latest });
+    assert.ok(first.ok && first.value.status === "applied");
+    const second = await store.write({
+      expectedHead: first.value.head,
+      ledger: older,
+    });
+    assert.ok(second.ok && second.value.status === "applied");
+    const third = await store.write({
+      expectedHead: second.value.head,
+      ledger: { ...f.ledger, month: "2030-01" },
+    });
+    assert.ok(third.ok && third.value.status === "applied");
+    const prior = await store.readPrior("2029-01");
+    assert.ok(prior.ok && prior.value.ledger);
+    assert.equal(prior.value.head, third.value.head);
+    assert.equal(prior.value.ledger.month, "2028-11");
+    assert.equal(prior.value.ledger.reservations[0].effectDigest, ACCEPTANCE);
+    assert.equal(prior.value.ledger.reservations[0].chargedMinutes, 37);
+    assert.deepEqual(await store.readPrior("2028-09"), {
+      ok: true,
+      value: { head: third.value.head, ledger: null },
+    });
+    for (
+      const mode of ["corrupt_blob", "unreadable_blob", "unknown_path"] as const
+    ) {
+      const runner: GitRunnerV1 = {
+        async runGit(args, options) {
+          if (args[0] === "cat-file" && args[1] === "blob") {
+            if (mode === "corrupt_blob") {
+              return { ok: true, code: 0, stdout: "{invalid", stderr: "" };
+            }
+            if (mode === "unreadable_blob") {
+              return {
+                ok: false,
+                code: 1,
+                stdout: "",
+                stderr: "synthetic read failure",
+              };
+            }
+          }
+          const result = await f.git.runGit(args, options);
+          return mode === "unknown_path" && args[0] === "ls-tree" && result.ok
+            ? {
+              ...result,
+              stdout: result.stdout +
+                `100644 blob ${"a".repeat(40)}\tunknown.json\n`,
+            }
+            : result;
+        },
+      };
+      const refused = await f.make(runner).readPrior("2029-01");
+      assert.equal(refused.ok, false, mode);
+    }
+    const unchanged = await store.readPrior("2029-01");
+    assert.ok(unchanged.ok && unchanged.value.head === third.value.head);
+    assert.equal(unchanged.value.ledger?.reservations[0].chargedMinutes, 37);
   } finally {
     await f.cleanup();
   }

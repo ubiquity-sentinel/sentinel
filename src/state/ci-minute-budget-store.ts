@@ -123,6 +123,17 @@ export class GitCiMinuteStore extends StateGitTransport
   }
 
   read(month: string): ReturnType<CiMinuteStoreV1["read"]> {
+    return this.readMonth(month, false);
+  }
+
+  readPrior(month: string): ReturnType<CiMinuteStoreV1["readPrior"]> {
+    return this.readMonth(month, true);
+  }
+
+  private readMonth(
+    month: string,
+    prior: boolean,
+  ): ReturnType<CiMinuteStoreV1["read"]> {
     if (!MONTH.test(month)) {
       return Promise.resolve(portError("invalid", "CI month"));
     }
@@ -134,9 +145,16 @@ export class GitCiMinuteStore extends StateGitTransport
       if (!found.ok) return found;
       if (found.value === null) return portOk({ head: null, ledger: null });
       const loaded = await this.load(op, found.value);
-      return loaded.ok
-        ? portOk({ head: found.value, ledger: loaded.value.get(month) ?? null })
-        : loaded;
+      if (!loaded.ok) return loaded;
+      const selected = prior
+        ? [...loaded.value.keys()].filter((key) => key < month).sort().at(-1)
+        : month;
+      return portOk({
+        head: found.value,
+        ledger: selected === undefined
+          ? null
+          : loaded.value.get(selected) ?? null,
+      });
     });
   }
 
