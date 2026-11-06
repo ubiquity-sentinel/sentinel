@@ -22,10 +22,7 @@ import type { createHostedAutonomyRequest } from "./hosted-autonomy-github-listi
 import { ciMinuteDigest } from "../src/contracts/ci-minute-budget.ts";
 import type { CiMinuteJobProofV1 } from "../src/contracts/ci-minute-budget.ts";
 import type {
-  CiMinuteLedgerV1,
-  CiMinuteObservationV1,
   CiMinutePolicyV1,
-  CiMinuteProgressV1,
   CiMinuteReadCursorV1,
 } from "../src/contracts/ci-minute-budget.ts";
 import { ciMonth } from "../src/contracts/ci-minute-budget.ts";
@@ -116,6 +113,10 @@ export async function readCiMinuteWindow(input: {
   cursor?: CiMinuteReadCursorV1;
   knownAttempts?: ReadonlySet<string>;
   knownProofs?: readonly CiMinuteJobProofV1[];
+  /** Authenticated metadata from the durable known-run slice, not a new listing. */
+  run?: Record<string, unknown>;
+  /** Accepted conservative scheduling estimate; absence retains strict meter-only reads. */
+  estimateMinutes?: number;
   effectDigestFor?(
     run: Record<string, unknown>,
     attempt: number,
@@ -130,6 +131,7 @@ export async function readCiMinuteWindow(input: {
     scope: input.scope,
     from: input.from,
     through: input.through,
+    ...(input.run === undefined ? {} : { runId: input.run.id }),
   });
   let cursor = input.cursor === undefined
     ? {
@@ -184,9 +186,11 @@ export async function readCiMinuteWindow(input: {
             new Date(input.through).toISOString()
           }`,
         );
-        const raw = await input.request(
-          `/repos/${input.scope}/actions/runs?created=${range}&per_page=100&page=${cursor.runPage}`,
-        );
+        const raw = input.run === undefined
+          ? await input.request(
+            `/repos/${input.scope}/actions/runs?created=${range}&per_page=100&page=${cursor.runPage}`,
+          )
+          : { total_count: 1, workflow_runs: [input.run] };
         if (raw === null || typeof raw !== "object") {
           return incomplete("run_listing");
         }
@@ -196,7 +200,7 @@ export async function readCiMinuteWindow(input: {
       const total = listing.total_count, runs = listing.workflow_runs;
       if (
         !Number.isSafeInteger(total) || Number(total) < 0 ||
-        Number(total) > 1000 || !Array.isArray(runs) ||
+        Number(total) >= 1000 || !Array.isArray(runs) ||
         runs.length !==
           Math.min(100, Math.max(0, Number(total) - (cursor.runPage - 1) * 100))
       ) {
@@ -259,7 +263,7 @@ export async function readCiMinuteWindow(input: {
       cursor.runDigest = runDigest;
       if (cursor.attempt > Number(run.run_attempt)) {
         const timing = timings.get(Number(run.id));
-        if (timing !== undefined) {
+        if (timing !== undefined && input.estimateMinutes === undefined) {
           const ids = new Set(
             [...(input.knownProofs ?? []), ...jobs].filter((j) =>
               j.identity?.repositoryId === input.repositoryId &&
@@ -302,8 +306,10 @@ export async function readCiMinuteWindow(input: {
           `/repos/${input.scope}/actions/runs/${run.id}/timing`,
         );
         const parsed = ciMinuteBillable(timing);
-        if (parsed === null) return incomplete("billing_timing_unavailable");
-        billed = parsed;
+        if (parsed === null && input.estimateMinutes === undefined) {
+          return incomplete("billing_timing_unavailable");
+        }
+        billed = parsed ?? new Map();
         timings.set(Number(run.id), billed);
       }
       if (++jobReads > 8) return incomplete("read_bound");
@@ -367,14 +373,15 @@ export async function readCiMinuteWindow(input: {
         if (effectDigest !== null && !/^[0-9a-f]{64}$/.test(effectDigest)) {
           return incomplete("effect_binding");
         }
-        const billedDurationMs = billed.get(Number(job.id));
+        const billedDurationMs = billed.get(Number(job.id)) ?? null;
         if (
-          billedDurationMs === undefined ||
-          (neverStarted !== true && billedDurationMs <= 0)
+          input.estimateMinutes === undefined &&
+          (billedDurationMs === null ||
+            (neverStarted !== true && billedDurationMs <= 0))
         ) {
           return incomplete("billing_job_binding");
         }
-        jobs.push({
+        const proof: CiMinuteJobProofV1 = {
           digest: ciMinuteDigest({
             repositoryId: input.repositoryId,
             runId: run.id,
@@ -386,25 +393,53 @@ export async function readCiMinuteWindow(input: {
           completedAt,
           neverStarted: neverStarted === true,
           terminal: true,
-          billedDurationMs,
+          billedDurationMs: neverStarted === true && billedDurationMs === null
+            ? 0
+            : billedDurationMs,
           identity: {
             repositoryId: input.repositoryId,
             runId: Number(run.id),
             attempt: cursor.attempt,
             jobId: Number(job.id),
           },
-        });
+        };
+        if (neverStarted !== true && input.estimateMinutes !== undefined) {
+          if (
+            !Number.isSafeInteger(input.estimateMinutes) ||
+            input.estimateMinutes <= 0
+          ) {
+            return incomplete("estimate_binding");
+          }
+          // Timestamp arithmetic can increase conservative exposure, never refund it
+          // or masquerade as an authenticated billing quantity.
+          proof.estimate = {
+            kind: "retained_estimate",
+            minutes: Math.max(
+              input.estimateMinutes,
+              Math.ceil((completedAt! - startedAt!) / 60_000),
+              Math.ceil((billedDurationMs ?? 0) / 60_000),
+            ),
+            executionMonth:
+              ciMonth(startedAt!).month === ciMonth(completedAt!).month
+                ? ciMonth(startedAt!).month
+                : null,
+            terminalProofDigest: ciMinuteDigest({
+              domain: "ci-terminal-estimate-v1",
+              identity: proof.identity,
+              startedAt,
+              completedAt,
+              status: job.status,
+              conclusion: job.conclusion ?? null,
+            }),
+          };
+        }
+        jobs.push(proof);
       }
       cursor.jobsSeen += rows.length;
       if (cursor.jobsSeen === count) {
-        // Keep unidentified native CI attempts readable: a later authenticated
-        // merge binding may attach them without changing their cost proof.
-        if (
-          input.effectDigestFor?.(run, cursor.attempt) !== null ||
-          run.path !== ".github/workflows/ci.yml"
-        ) {
-          completedAttempts.push(attemptDigest);
-        }
+        // The catalog reader can attach a later authenticated effect binding to
+        // the retained job proof without repeating this completed attempt.
+        completedAttempts.push(attemptDigest);
         cursor = {
           ...cursor,
           attempt: cursor.attempt + 1,
@@ -427,207 +462,6 @@ function ciMinuteTimestamp(value: unknown): number | null {
   ) return null;
   const n = Date.parse(value);
   return Number.isSafeInteger(n) && n >= 0 ? n : null;
-}
-
-/** One coordinator turn; cursor, proof slices and balance are saved by the same CAS. */
-export function createPrivateCiObservationReader(
-  input: {
-    policy: CiMinutePolicyV1;
-    request(path: string, deadline: number): Promise<unknown | null>;
-    now(): number;
-  },
-) {
-  return async (
-    month: string,
-    deadline: number,
-    ledger: CiMinuteLedgerV1,
-  ): Promise<CiMinuteObservationV1 | null> => {
-    const now = input.now(), period = ciMonth(now);
-    if (
-      period.month !== month || input.policy.targets.length === 0 ||
-      now >= deadline
-    ) return null;
-    const progress: CiMinuteProgressV1 = ledger.progress
-      ? structuredClone(ledger.progress)
-      : {
-        month,
-        through: now,
-        windowFrom: period.start,
-        windowThrough: Math.min(now, period.start + 7 * 86400000 - 1),
-        targetIndex: 0,
-        cursor: null,
-        jobs: [],
-        completedAttempts: [],
-        bindingIndex: 0,
-        aliases: [],
-      };
-    if (
-      progress.month !== month || progress.through > now ||
-      progress.targetIndex >= input.policy.targets.length
-    ) return null;
-    const partial = (): CiMinuteObservationV1 => ({
-      month,
-      complete: false,
-      watermark: ledger.watermark ?? period.start,
-      observedAt: input.now(),
-      jobs: progress.jobs,
-      progress,
-      completedAttempts: progress.completedAttempts,
-    });
-    // At most one pending merge binding (three metadata reads) per turn.
-    let bindingReads = 0;
-    while ((progress.bindingIndex ?? 0) < ledger.reservations.length) {
-      const index = progress.bindingIndex ?? 0;
-      const reservation = ledger.reservations[index];
-      const binding = reservation.binding;
-      if (
-        binding?.effect.kind === "merge" && reservation.state !== "settled" &&
-        !(progress.aliases ?? []).some((a) =>
-          a.effectDigest === reservation.effectDigest
-        )
-      ) {
-        if (bindingReads++ >= 1) return partial();
-        const e = binding.effect;
-        const scope = e.repository.owner + "/" + e.repository.name;
-        if (e.pr !== null) {
-          const raw = await input.request(
-            "/repos/" + scope + "/pulls/" + e.pr,
-            deadline,
-          ) as Record<string, unknown> | null;
-          const head = raw?.head as Record<string, unknown> | undefined;
-          const merged = raw?.merge_commit_sha;
-          if (
-            raw?.merged === true && head?.sha === e.head &&
-            typeof merged === "string" && /^[0-9a-f]{40}$/.test(merged)
-          ) {
-            const commit = await input.request(
-              "/repos/" + scope + "/commits/" + merged,
-              deadline,
-            ) as Record<string, unknown> | null;
-            const parents = commit?.parents;
-            let verified = false;
-            if (Array.isArray(parents) && parents.length === 2) {
-              verified = parents[0]?.sha === e.base &&
-                parents[1]?.sha === e.head;
-            }
-            if (
-              Array.isArray(parents) && parents.length === 1 &&
-              parents[0]?.sha === e.base && e.head !== null
-            ) {
-              const original = await input.request(
-                "/repos/" + scope + "/commits/" + e.head,
-                deadline,
-              ) as Record<string, unknown> | null;
-              const tree = (v: Record<string, unknown> | null) =>
-                ((v?.commit as Record<string, unknown> | undefined)?.tree as
-                  | Record<string, unknown>
-                  | undefined)?.sha;
-              verified = typeof tree(commit) === "string" &&
-                /^[0-9a-f]{40}$/.test(String(tree(commit))) &&
-                tree(commit) === tree(original);
-            }
-            if (verified) {
-              (progress.aliases ??= []).push({
-                effectDigest: reservation.effectDigest,
-                head: merged,
-              });
-            }
-          }
-        }
-      }
-      progress.bindingIndex = index + 1;
-    }
-    const target = input.policy.targets[progress.targetIndex];
-    const known = new Set([
-      ...(ledger.completedAttempts ?? []),
-      ...progress.completedAttempts,
-    ]);
-    const slice = await readCiMinuteWindow({
-      repositoryId: target.repositoryId,
-      scope: target.owner + "/" + target.name,
-      from: progress.windowFrom,
-      through: progress.windowThrough,
-      cursor: progress.cursor ?? undefined,
-      knownAttempts: known,
-      knownProofs: [...(ledger.proofs ?? []), ...progress.jobs],
-      deadline,
-      now: input.now,
-      request: (path) => input.request(path, deadline),
-      effectDigestFor(run, attempt) {
-        if (run.path !== ".github/workflows/ci.yml") return null;
-        const matches = ledger.reservations.filter((r) => {
-          const b = r.binding;
-          if (
-            !b || b.repositoryId !== target.repositoryId ||
-            (ciMinuteTimestamp(run.created_at) ?? -1) < r.createdAt
-          ) return false;
-          const e = b.effect;
-          if (e.kind === "rerun") {
-            return e.runId === run.id && e.attempt === attempt;
-          }
-          if (attempt !== 1) return false;
-          const expected = (progress.aliases ?? []).find((a) =>
-            a.effectDigest === r.effectDigest
-          )?.head ?? e.head;
-          if (
-            expected !== run.head_sha ||
-            (typeof run.head_branch === "string" &&
-              e.ref !== "refs/heads/" + run.head_branch)
-          ) {
-            return false;
-          }
-          return (e.kind === "merge" || e.kind === "train_push")
-            ? run.event === "push"
-            : e.kind === "train_dispatch"
-            ? run.event === "workflow_dispatch"
-            : run.event === "pull_request";
-        });
-        return matches.length === 1 ? matches[0].effectDigest : null;
-      },
-    });
-    for (const job of slice.jobs) {
-      const old = progress.jobs.find((j) => j.digest === job.digest);
-      if (old && ciMinuteDigest(old) !== ciMinuteDigest(job)) {
-        if (
-          old.effectDigest !== null || job.effectDigest === null ||
-          ciMinuteDigest({ ...old, effectDigest: job.effectDigest }) !==
-            ciMinuteDigest(job)
-        ) return null;
-        old.effectDigest = job.effectDigest;
-      }
-      if (!old) progress.jobs.push(job);
-    }
-    progress.completedAttempts = [
-      ...new Set([...progress.completedAttempts, ...slice.completedAttempts]),
-    ];
-    if (!slice.complete) {
-      progress.cursor = slice.reason === "run_page_changed"
-        ? null
-        : slice.cursor;
-      return partial();
-    }
-    progress.cursor = null;
-    progress.targetIndex++;
-    if (progress.targetIndex < input.policy.targets.length) return partial();
-    if (progress.windowThrough < progress.through) {
-      progress.windowFrom = progress.windowThrough + 1;
-      progress.windowThrough = Math.min(
-        progress.through,
-        progress.windowFrom + 7 * 86400000 - 1,
-      );
-      progress.targetIndex = 0;
-      return partial();
-    }
-    return {
-      month,
-      complete: true,
-      watermark: progress.through,
-      observedAt: input.now(),
-      jobs: progress.jobs,
-      progress: null,
-      completedAttempts: progress.completedAttempts,
-    };
-  };
 }
 
 function ciMinuteBillable(value: unknown): Map<number, number> | null {
