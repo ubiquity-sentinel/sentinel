@@ -407,10 +407,10 @@ export async function runActionsRepairHost(
     clock,
     stateRoot,
     () => isReadOnlyCellJob(deps.job) ? null : takeoverContext,
+    deadline,
   );
+  await ciMinutes.reconcile(deadline);
   const gitExecutable = await resolveExecutable("git", trustedPath);
-  // The committed setting is the only target source; the local template only
-  // supplies trusted per-repository defaults and the self identity.
   const templateConfig = createLocalRepositoryConfig();
   const targets = await loadTargetConfigsV1({
     template: templateConfig,

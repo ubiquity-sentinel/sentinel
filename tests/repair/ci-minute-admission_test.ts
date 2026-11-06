@@ -3,23 +3,28 @@ import {
   CalendarCiMinutes,
   createCiMinuteController,
   proposedCiMinutePolicy,
+  verifyCiMinuteSchedulingBasis,
 } from "../../src/budget/ci-minutes.ts";
 import {
+  acceptedCiMinutePolicy,
   ciJobMinutes,
   ciMinuteDigest,
   ciMonth,
   ciPolicyDigest,
   parseCiMinuteLedger,
+  validateCiMinuteTransition,
 } from "../../src/contracts/ci-minute-budget.ts";
 import type {
+  CiEffectFactsV1,
   CiEffectV1,
   CiMinuteLedgerV1,
   CiMinuteObservationV1,
+  CiMinuteObserverV1,
+  CiMinutePolicyV1,
   CiMinuteStoreV1,
 } from "../../src/contracts/ci-minute-budget.ts";
 import { portOk } from "../../src/contracts/ports.ts";
 import type { GitSha } from "../../src/contracts/brands.ts";
-import { createPrivateCiObservationReader } from "../../ops/hosted-autonomy-github-jobs.ts";
 import { makeRig, seededSnapshot } from "./loop-rig.ts";
 import { inactiveNativeQueueFixture } from "../github/native-queue-fixture.ts";
 import { executeBaseRefreshIntent } from "../../src/repair/loop-base-refresh.ts";
@@ -52,8 +57,8 @@ function effect(name = "first", head = SHA): CiEffectV1 {
   };
 }
 
-function fixture(limit = 40, now = EPOCH) {
-  const policy = {
+function fixture(limit = 40, now = EPOCH, sourcePolicy?: CiMinutePolicyV1) {
+  const policy = sourcePolicy ?? {
     ...proposedCiMinutePolicy(),
     activated: true,
     monthlyLimit: limit,
@@ -100,7 +105,10 @@ function fixture(limit = 40, now = EPOCH) {
       if (input.expectedHead !== head) {
         return Promise.resolve(portOk({ status: "conflict" as const, head }));
       }
-      months.set(input.ledger.month, structuredClone(input.ledger));
+      const parsed = parseCiMinuteLedger(input.ledger);
+      const prior = months.get(parsed.month);
+      if (prior !== undefined) validateCiMinuteTransition(prior, parsed);
+      months.set(parsed.month, parsed);
       head = String(++sequence).padStart(40, "0") as GitSha;
       return Promise.resolve(portOk({ status: "applied" as const, head }));
     },
@@ -109,28 +117,43 @@ function fixture(limit = 40, now = EPOCH) {
   let complete = true;
   let authorized = true;
   let jobs: CiMinuteObservationV1["jobs"] = [];
+  let changedFacts: Partial<CiEffectFactsV1> = {};
+  let observer: CiMinuteObserverV1 = (month) =>
+    Promise.resolve({ month, complete, watermark: now, jobs });
   const controller = new CalendarCiMinutes({
     policy,
     clock,
     store,
-    authorizePolicy: () => Promise.resolve(authorized),
+    authorizePolicy: (basis, deadline, facts) =>
+      authorized
+        ? sourcePolicy === undefined
+          ? Promise.resolve(true)
+          : verifyCiMinuteSchedulingBasis(basis, deadline, facts)
+        : Promise.resolve(false),
     resolve(e) {
+      const target = policy.targets.find((row) =>
+        row.name === e.repository.name
+      )!;
+      const profile = sourcePolicy === undefined
+        ? undefined
+        : acceptedCiMinutePolicy().targets.find((row) =>
+          row.repositoryId === target.repositoryId
+        );
       return Promise.resolve({
-        repositoryId: e.repository.name === "first" ? 101 : 102,
-        workflowBlob: SHA,
-        job: "validation",
+        repositoryId: target.repositoryId,
+        workflowBlob: profile?.workflowBlob ?? SHA,
+        job: profile?.job ?? "validation",
         jobs: 1,
         runner: "ubuntu-latest",
-        timeoutMinutes: 20,
-        ceilingMinutes: e.repository.name === "first" ? 20 : 30,
-        qualificationDigest: PROOF,
+        timeoutMinutes: profile?.timeoutMinutes ?? 20,
+        ceilingMinutes: target.ceilingMinutes,
+        qualificationDigest: policy.ceilingQualification!,
         triggered: true,
         effectState: state,
+        ...changedFacts,
       });
     },
-    observe(month) {
-      return Promise.resolve({ month, complete, watermark: now, jobs });
-    },
+    observe: (...args) => observer(...args),
   });
   return {
     policy,
@@ -153,10 +176,25 @@ function fixture(limit = 40, now = EPOCH) {
     jobs(value: typeof jobs) {
       jobs = value;
     },
+    facts(value: typeof changedFacts) {
+      changedFacts = value;
+    },
+    observe(value: CiMinuteObserverV1) {
+      observer = value;
+    },
     ledger() {
       return months.get(ciMonth(now).month)!;
     },
-    reserve(e = effect()) {
+    reserve(
+      e = sourcePolicy === undefined ? effect() : {
+        ...effect(),
+        repository: {
+          owner: "ubiquity",
+          name: "prospector",
+          installationId: 1,
+        },
+      },
+    ) {
       return controller.reserve(e, now + 60_000);
     },
   };
@@ -248,7 +286,7 @@ Deno.test("CI incomplete evidence and clock regression grant nothing", async () 
   assert.equal(f.ledger().reservations.length, 0);
 });
 
-Deno.test("CI authenticated terminal timing settles conservatively rounded actual cost", async () => {
+Deno.test("CI authenticated positive timing retains the conservative estimate", async () => {
   const f = fixture(100);
   const reserved = await f.reserve();
   assert.equal(reserved.kind, "admitted");
@@ -263,8 +301,8 @@ Deno.test("CI authenticated terminal timing settles conservatively rounded actua
     terminal: true,
   }]);
   await f.reserve(effect("first", "d".repeat(40)));
-  assert.equal(f.ledger().reservations[0].state, "settled");
-  assert.equal(f.ledger().reservations[0].chargedMinutes, 2);
+  assert.equal(f.ledger().reservations[0].state, "terminal_estimated");
+  assert.equal(f.ledger().reservations[0].chargedMinutes, 20);
   assert.equal(f.ledger().observed.length, 1);
 });
 
@@ -557,101 +595,61 @@ Deno.test("CI base refresh hold: first pass and replay preserve intent, since an
   }
 });
 
-Deno.test("CI private CAS: cursor and metered proof slices survive fresh coordinator instances", async () => {
+Deno.test("CI private CAS: normalized proof slices survive fresh coordinator instances", async () => {
   const now = Date.UTC(2028, 0, 5);
   const f = fixture(200, now);
   f.ledger().watermark = null;
-  const request = async (path: string) => {
-    await Promise.resolve(); // Model the asynchronous authenticated transport.
-    const first = path.includes("/fixture/first/");
-    if (path.includes("actions/runs?")) {
-      return {
-        total_count: first ? 9 : 0,
-        workflow_runs: first
-          ? Array.from(
-            { length: 9 },
-            (_, i) => ({
-              id: i + 1,
-              repository: { id: 101 },
-              head_sha: SHA,
-              run_attempt: 1,
-              status: "completed",
-              created_at: new Date(now - 60000).toISOString(),
-            }),
-          )
-          : [],
-      };
-    }
-    const id = Number(/runs\/(\d+)\//.exec(path)![1]);
-    if (path.endsWith("/timing")) {
-      return {
-        run_duration_ms: 5000,
-        billable: {
-          UBUNTU: {
-            jobs: 1,
-            total_ms: 60000,
-            job_runs: [{ job_id: id, duration_ms: 60000 }],
-          },
-        },
-      };
-    }
-    return {
-      total_count: 1,
-      jobs: [{
-        id,
-        run_id: id,
-        run_attempt: 1,
-        head_sha: SHA,
-        status: "completed",
-        conclusion: "success",
-        runner_id: 1,
-        labels: ["ubuntu-latest"],
-        steps: [{ number: 1, status: "completed" }],
-        started_at: new Date(now - 5000).toISOString(),
-        completed_at: new Date(now).toISOString(),
-      }],
-    };
-  };
-  let admitted = false;
-  for (let turn = 0; turn < 8; turn++) {
-    const observer = createPrivateCiObservationReader({
-      policy: f.policy,
-      request,
-      now: f.clock.now,
+  const observer: CiMinuteObserverV1 = (month, _deadline, ledger) => {
+    const offset = ledger.proofs?.length ?? 0;
+    const jobs = Array.from(
+      { length: Math.min(3, 9 - offset) },
+      (_, index) => ({
+        digest: ciMinuteDigest({ job: offset + index }),
+        effectDigest: null,
+        startedAt: now - 5000,
+        completedAt: now,
+        neverStarted: false,
+        terminal: true,
+        billedDurationMs: 60000,
+      }),
+    );
+    const complete = offset + jobs.length === 9;
+    return Promise.resolve({
+      month,
+      complete,
+      watermark: now,
+      jobs,
+      progress: complete ? null : {
+        month,
+        through: now,
+        windowFrom: ciMonth(now).start,
+        windowThrough: now,
+        targetIndex: 0,
+        cursor: null,
+        jobs: [],
+        completedAttempts: [],
+      },
     });
+  };
+  for (let turn = 0; turn < 3; turn++) {
     const fresh = new CalendarCiMinutes({
       policy: f.policy,
       clock: f.clock,
       store: f.store,
       authorizePolicy: () => Promise.resolve(true),
-      resolve: () =>
-        Promise.resolve({
-          repositoryId: 101,
-          workflowBlob: SHA,
-          job: "validation",
-          jobs: 1,
-          runner: "ubuntu-latest",
-          timeoutMinutes: 20,
-          ceilingMinutes: 20,
-          qualificationDigest: PROOF,
-          triggered: true,
-          effectState: "not_applied",
-        }),
+      resolve: () => Promise.resolve(null),
       observe: observer,
     });
-    const result = await fresh.reserve(effect(), now + 60000);
-    if (result.kind === "admitted") {
-      admitted = true;
-      break;
-    }
-    assert.equal(result.kind, "held");
-    assert.equal(f.ledger().watermark, null);
+    const result = await fresh.reconcile(now + 60000);
+    assert.equal(result.kind, turn === 2 ? "ready" : "pending");
     assert.equal(f.ledger().reservations.length, 0);
-    assert.ok(f.ledger().progress);
+    assert.equal(f.ledger().proofs?.length, (turn + 1) * 3);
+    if (turn < 2) assert.equal(f.ledger().watermark, null);
   }
-  assert.equal(admitted, true);
-  assert.equal(f.ledger().proofs?.length, 9);
-  assert.equal(f.ledger().observed.reduce((n, r) => n + r.minutes, 0), 9);
+  assert.equal(
+    f.ledger().observed.reduce((sum, row) => sum + row.minutes, 0),
+    9,
+  );
   assert.equal(f.ledger().watermark, now);
   assert.equal(f.ledger().progress, null);
 });
@@ -739,4 +737,313 @@ Deno.test("CI bogus started-zero meter: retain full reservation despite successf
   assert.equal(f.ledger().reservations[0].chargedMinutes, 20);
   assert.equal(f.ledger().reservations[0].state, "reserved");
   assert.equal(f.ledger().reservations.length, 1);
+});
+
+function managedEffect(name = "prospector", head = SHA): CiEffectV1 {
+  return {
+    ...effect(name, head),
+    repository: { owner: "ubiquity", name, installationId: 1 },
+  };
+}
+
+Deno.test("CI pacing accepted source basis binds every exact authenticated profile field", async () => {
+  const policy = acceptedCiMinutePolicy();
+  assert.equal(
+    await verifyCiMinuteSchedulingBasis(policy, EPOCH + 60000),
+    true,
+  );
+  for (const target of policy.targets) {
+    const facts: CiEffectFactsV1 = {
+      repositoryId: target.repositoryId,
+      workflowBlob: target.workflowBlob,
+      job: target.job,
+      jobs: 1,
+      runner: target.runner,
+      timeoutMinutes: target.timeoutMinutes,
+      ceilingMinutes: target.ceilingMinutes,
+      qualificationDigest: policy.ceilingQualification!,
+      triggered: true,
+      effectState: "not_applied",
+    };
+    assert.equal(
+      await verifyCiMinuteSchedulingBasis(policy, EPOCH + 60000, facts),
+      true,
+    );
+    for (
+      const changed of [
+        { repositoryId: 1 },
+        { workflowBlob: SHA },
+        { job: "changed" },
+        { jobs: 2 },
+        { runner: "ubuntu-24.04" },
+        { timeoutMinutes: target.timeoutMinutes + 1 },
+        { ceilingMinutes: target.ceilingMinutes - 1 },
+        { qualificationDigest: PROOF },
+      ]
+    ) {
+      assert.equal(
+        await verifyCiMinuteSchedulingBasis(policy, EPOCH + 60000, {
+          ...facts,
+          ...changed,
+        }),
+        false,
+      );
+    }
+  }
+  for (
+    const changed of [
+      { monthlyLimit: 1999 },
+      { managedLimit: 1449 },
+      { securityReserve: 149 },
+      { unmanagedReserve: 399 },
+      { calendar: "local_month" },
+      { meterRefunds: true },
+      { privateRemote: "https://example.invalid" },
+      { bootstrap: "empty" },
+    ]
+  ) {
+    assert.equal(
+      await verifyCiMinuteSchedulingBasis(
+        { ...policy, ...changed } as CiMinutePolicyV1,
+        EPOCH + 60000,
+      ),
+      false,
+    );
+  }
+  const f = fixture(1450, EPOCH, policy);
+  f.facts({ timeoutMinutes: 21 });
+  assert.equal((await f.reserve()).kind, "unavailable");
+  assert.equal(f.ledger().reservations.length, 0);
+});
+
+Deno.test("CI pacing native driver bootstraps an unknown month as a persisted floor and resumes without an effect", async () => {
+  const policy = acceptedCiMinutePolicy();
+  const f = fixture(1450, EPOCH, policy);
+  f.months.clear();
+  let observations = 0;
+  f.observe((month, _deadline, ledger) => {
+    observations++;
+    assert.equal(ledger.bootstrap?.floorMinutes, 1450);
+    return Promise.resolve({
+      month,
+      complete: observations > 1,
+      watermark: observations > 1 ? EPOCH : 0,
+      jobs: [],
+      catalog: {
+        runs: [],
+        cursor: 0,
+        passThrough: observations > 1 ? EPOCH : null,
+        complete: observations > 1,
+      },
+    });
+  });
+  const initial = await f.controller.reconcile(EPOCH + 60000);
+  assert.equal(initial.kind, "pending");
+  assert.equal(f.ledger().sequence, 2);
+  assert.equal(f.ledger().baselineMinutes, 1450);
+  assert.equal(f.ledger().watermark, null);
+  assert.equal(f.ledger().reservations.length, 0);
+  const later = await f.reserve();
+  assert.equal(later.kind, "held");
+  if (later.kind === "held") assert.equal(later.reason, "monthly_allowance");
+  assert.equal(f.ledger().baselineMinutes, 1450);
+  assert.equal(f.ledger().reservations.length, 0);
+  const next = Date.UTC(2028, 1, 29, 23);
+  f.now(next);
+  f.observe((month) =>
+    Promise.resolve({ month, complete: true, watermark: next, jobs: [] })
+  );
+  assert.equal((await f.reserve()).kind, "admitted");
+  assert.equal(f.ledger().baselineMinutes, 0);
+  assert.equal(f.months.get("2028-01")!.bootstrap?.floorMinutes, 1450);
+});
+
+Deno.test("CI pacing explicit started-zero proofs retain 25 and 35 estimated minutes and close only their proven month", async () => {
+  const f = fixture(1450, EPOCH, acceptedCiMinutePolicy());
+  const first = await f.reserve(managedEffect());
+  const second = await f.reserve(managedEffect("passport.ubq.fi"));
+  assert.equal(first.kind, "admitted");
+  assert.equal(second.kind, "admitted");
+  if (first.kind !== "admitted" || second.kind !== "admitted") return;
+  f.jobs([first, second].map((result, index) => {
+    const digest = ciMinuteDigest({ job: index });
+    return {
+      digest,
+      effectDigest: result.reservationDigest,
+      startedAt: EPOCH - 497000,
+      completedAt: EPOCH,
+      neverStarted: false,
+      terminal: true,
+      billedDurationMs: index === 0 ? 0 : 60000,
+      estimate: {
+        kind: "retained_estimate",
+        minutes: index === 0 ? 25 : 35,
+        executionMonth: "2028-01",
+        terminalProofDigest: digest,
+      },
+    };
+  }));
+  assert.equal((await f.controller.reconcile(EPOCH + 60000)).kind, "ready");
+  assert.deepEqual(
+    f.ledger().reservations.map((
+      row,
+    ) => [row.state, row.chargedMinutes, row.accounting?.kind]),
+    [
+      ["terminal_estimated", 25, "retained_estimate"],
+      ["terminal_estimated", 35, "retained_estimate"],
+    ],
+  );
+  f.now(Date.UTC(2028, 1, 29, 23));
+  f.jobs([]);
+  assert.equal(
+    (await f.reserve(managedEffect("prospector", "d".repeat(40)))).kind,
+    "admitted",
+  );
+  assert.equal(f.ledger().reservations.length, 1);
+  assert.deepEqual(
+    f.months.get("2028-01")!.reservations.map((row) => row.chargedMinutes),
+    [25, 35],
+  );
+});
+
+Deno.test("CI pacing authenticated terminal never-started work is zero and cannot replay the same effect", async () => {
+  const f = fixture(1450, EPOCH, acceptedCiMinutePolicy());
+  const reservation = await f.reserve();
+  assert.equal(reservation.kind, "admitted");
+  if (reservation.kind !== "admitted") return;
+  f.jobs([{
+    digest: PROOF,
+    effectDigest: reservation.reservationDigest,
+    startedAt: null,
+    completedAt: null,
+    neverStarted: true,
+    terminal: true,
+    billedDurationMs: 0,
+  }]);
+  assert.equal((await f.controller.reconcile(EPOCH + 60000)).kind, "ready");
+  assert.equal(f.ledger().reservations[0].chargedMinutes, 0);
+  assert.equal(f.ledger().reservations[0].accounting?.kind, "never_started");
+  assert.equal((await f.reserve()).kind, "unavailable");
+});
+
+Deno.test("CI pacing cross-boundary and unresolved work carry while a late prior-month terminal proof closes exposure", async () => {
+  const f = fixture(1450, EPOCH, acceptedCiMinutePolicy());
+  const first = await f.reserve();
+  const second = await f.reserve(managedEffect("passport.ubq.fi"));
+  assert.equal(first.kind, "admitted");
+  assert.equal(second.kind, "admitted");
+  if (first.kind !== "admitted" || second.kind !== "admitted") return;
+  f.jobs([{
+    digest: PROOF,
+    effectDigest: first.reservationDigest,
+    startedAt: Date.UTC(2027, 11, 31, 23, 59),
+    completedAt: Date.UTC(2028, 0, 1, 0, 1),
+    neverStarted: false,
+    terminal: true,
+    billedDurationMs: 0,
+    estimate: {
+      kind: "retained_estimate",
+      minutes: 25,
+      executionMonth: null,
+      terminalProofDigest: PROOF,
+    },
+  }]);
+  await f.controller.reconcile(EPOCH + 60000);
+  f.now(Date.UTC(2028, 1, 29, 23));
+  const digest = ciMinuteDigest({ job: "late" });
+  f.jobs([{
+    digest,
+    effectDigest: second.reservationDigest,
+    startedAt: EPOCH - 497000,
+    completedAt: EPOCH,
+    neverStarted: false,
+    terminal: true,
+    billedDurationMs: 0,
+    estimate: {
+      kind: "retained_estimate",
+      minutes: 35,
+      executionMonth: "2028-01",
+      terminalProofDigest: digest,
+    },
+  }]);
+  assert.equal(
+    (await f.reserve(managedEffect("prospector", "e".repeat(40)))).kind,
+    "admitted",
+  );
+  const rows = f.ledger().reservations;
+  assert.equal(
+    rows.find((row) => row.effectDigest === first.reservationDigest)?.state,
+    "reserved",
+  );
+  assert.equal(
+    rows.find((row) => row.effectDigest === first.reservationDigest)
+      ?.chargedMinutes,
+    25,
+  );
+  assert.equal(
+    rows.find((row) => row.effectDigest === second.reservationDigest)
+      ?.accounting?.executionMonth,
+    "2028-01",
+  );
+  assert.equal(f.months.get("2028-01")!.reservations[1].chargedMinutes, 35);
+});
+
+Deno.test("CI pacing rollover resumes the same bounded initial-discovery cursor", async () => {
+  const f = fixture(1450, EPOCH, acceptedCiMinutePolicy());
+  f.ledger().watermark = null;
+  f.ledger().progress = {
+    month: "2028-01",
+    through: EPOCH,
+    windowFrom: 0,
+    windowThrough: EPOCH,
+    targetIndex: 0,
+    jobs: [],
+    completedAttempts: [],
+    cursor: {
+      queryDigest: PROOF,
+      runPage: 2,
+      runOffset: 1,
+      attempt: 1,
+      jobPage: 1,
+      jobsSeen: 0,
+      runDigest: PROOF,
+    },
+  };
+  f.ledger().catalog = {
+    runs: [1, 2].map((runId) => ({
+      repositoryId: 1337190500,
+      runId,
+      head: SHA,
+      createdAt: EPOCH - 60000,
+      updatedAt: EPOCH,
+      runAttempt: 1,
+      checkedAttempt: 0,
+      status: "unknown",
+      terminalProofDigest: null,
+      refreshRequired: true,
+    })),
+    cursor: 1,
+    passThrough: null,
+    complete: false,
+  };
+  const later = Date.UTC(2028, 1, 1);
+  f.now(later);
+  f.observe((month, _deadline, ledger) => {
+    assert.equal(ledger.progress?.month, "2028-02");
+    assert.equal(ledger.progress?.cursor?.runPage, 2);
+    assert.equal(ledger.progress?.cursor?.queryDigest, PROOF);
+    assert.equal(ledger.progress?.windowThrough, EPOCH);
+    assert.equal(ledger.catalog?.cursor, 1);
+    return Promise.resolve({
+      month,
+      complete: false,
+      watermark: 0,
+      observedAt: later,
+      jobs: [],
+      catalog: structuredClone(ledger.catalog!),
+    });
+  });
+  assert.equal((await f.controller.reconcile(later + 60000)).kind, "pending");
+  assert.equal(f.ledger().progress?.windowFrom, 0);
+  assert.equal(f.ledger().progress?.cursor?.runOffset, 1);
 });

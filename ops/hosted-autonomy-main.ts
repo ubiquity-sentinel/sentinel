@@ -30,13 +30,26 @@ import {
 } from "../src/contracts/hosted-controller-deployment.ts";
 import { runHostedAutonomy } from "./hosted-autonomy-runner.ts";
 import { GitDeliveryTrainStore } from "../src/state/delivery-train-store.ts";
-import { proposedCiMinutePolicy } from "../src/budget/ci-minutes.ts";
+import { verifyCiMinuteSchedulingBasis } from "../src/budget/ci-minutes.ts";
 import {
   ciStateGitArgs,
   composePrivateCiMinutes,
   type HostedPrivateCiCapabilities,
 } from "../src/host/hosted-app-principal.ts";
-import { CI_MINUTE_PRIVATE_REMOTE } from "../src/contracts/ci-minute-budget.ts";
+import {
+  acceptedCiMinutePolicy,
+  CI_MINUTE_PRIVATE_REMOTE,
+} from "../src/contracts/ci-minute-budget.ts";
+import {
+  HOSTED_AUTONOMY_PASS_DEADLINE_MS,
+  HOSTED_AUTONOMY_PHASE_RESERVE_MS,
+} from "./hosted-autonomy-continuation.ts";
+import {
+  APP_TOKEN_MINTED_NOT_BEFORE_ENV,
+  APP_TOKEN_NOT_AFTER_ENV,
+  deriveAppTokenNotAfterV1,
+  parseAppTokenNotAfterV1,
+} from "../src/host/hosted-app-token-window.ts";
 import { readHostedPrivateCiData } from "../src/host/hosted-app-principal-native.ts";
 import { fetchHttpTransport } from "../src/github/http.ts";
 import { readHostedMaintenanceCompatibility } from "./hosted-autonomy-runtime-compatibility.ts";
@@ -185,6 +198,20 @@ async function runHostedAutonomyMainResult(
   input: HostedAutonomyMainInputV1 | undefined,
   env: (key: string) => string | null,
 ): Promise<HostedAutonomyResultV1> {
+  const nativeTurnOrigin = Date.now();
+  const tokenDeadline = Math.min(
+    parseAppTokenNotAfterV1(env(APP_TOKEN_NOT_AFTER_ENV) ?? undefined) ??
+      Infinity,
+    deriveAppTokenNotAfterV1(
+      env(APP_TOKEN_MINTED_NOT_BEFORE_ENV) ?? undefined,
+      nativeTurnOrigin,
+    ) ?? Infinity,
+  );
+  const nativeTurnDeadline = Math.min(
+    nativeTurnOrigin + HOSTED_AUTONOMY_PASS_DEADLINE_MS -
+      HOSTED_AUTONOMY_PHASE_RESERVE_MS,
+    tokenDeadline,
+  );
   // Missing output and every failure before custody are closed at the workflow boundary.
   await writeQueueCustodyOutput(env("GITHUB_OUTPUT"), false);
   await writeHostedMigrationOutput(env("GITHUB_OUTPUT"), null);
@@ -408,12 +435,14 @@ async function runHostedAutonomyMainResult(
         });
       };
       const ciMinutes = composePrivateCiMinutes({
-        policy: proposedCiMinutePolicy(),
+        policy: acceptedCiMinutePolicy(),
         clock: ciClock,
         scratch: ciScratch,
+        deadlineAt: nativeTurnDeadline,
         authority: privateCiAuthority,
-        billingBasis: () => Promise.resolve(false),
+        billingBasis: verifyCiMinuteSchedulingBasis,
       });
+      await ciMinutes.reconcile(nativeTurnDeadline);
       const githubFor = (
         repository: RepositoryIdentityV1,
       ): HostedAutonomyGitHubV1 => {
