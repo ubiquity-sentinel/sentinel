@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import { parseRepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import type {
   QueueAdmission,
@@ -141,6 +142,7 @@ export async function orchestrationRig() {
     },
   };
   const deps: HostedAutonomyDepsV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     state,
     queue,
     clock: { now: () => now },

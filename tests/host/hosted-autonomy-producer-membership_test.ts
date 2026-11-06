@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -415,6 +416,7 @@ async function membershipRig(producers = 3, readCost = 0) {
         clock,
         configs: [config],
         cycleFor: () => ({
+          ciMinutes: INACTIVE_CI_MINUTES,
           state: guarded,
           clock,
           configs: [config],
@@ -464,6 +466,7 @@ async function membershipRig(producers = 3, readCost = 0) {
     try {
       return await recoverHostedCurrentMatrix(
         {
+          ciMinutes: INACTIVE_CI_MINUTES,
           state,
           clock,
           closedMatrix,

@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { withHistoricalAutonomy } from "./hosted-autonomy-spent-fixtures.ts";
 import { runHostedDeliveryPass } from "../../ops/hosted-autonomy-delivery-pass.ts";
@@ -107,6 +108,7 @@ async function fixture(
     },
   };
   const deps: HostedAutonomyDepsV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     state: rig.state,
     githubFor: rig.githubFor,
     clock: { now: () => T0 + 2000 },

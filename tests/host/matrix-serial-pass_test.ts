@@ -1,4 +1,5 @@
 /** Serial repair must not walk the implementation backlog before matrix planning. */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
 import type { HostedExecutionIntentV1 } from "../../src/contracts/hosted-supervisor.ts";
@@ -71,6 +72,7 @@ function rig(
   let transports = 0;
   let preparations = 0;
   const input: ActionsTargetCyclesInputV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     configs,

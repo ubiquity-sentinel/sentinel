@@ -7,6 +7,7 @@
  * sequence 37010 (2026-10-16T23:21:07Z), with the read-only GitHub facts of
  * 23:25-23:35Z, in `tests/fixtures/host/spent-delivery-live-2321.json`.
  */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { parseWorkRecordV1 } from "../../src/contracts/work-record.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
@@ -360,6 +361,7 @@ export async function runAt(
     const { runHostedAutonomy } = await graph.runner();
     const custody = historicalDarkQueueFixture(rig);
     return await runHostedAutonomy({
+      ciMinutes: INACTIVE_CI_MINUTES,
       state: rig.state,
       githubFor: rig.githubFor,
       clock: { now: () => now },
@@ -386,6 +388,7 @@ export async function deliveryOnly(
     assert.ok(release.ok && release.value.status === "found");
     const custody = historicalDarkQueueFixture(rig);
     const deps: HostedAutonomyDepsV1 = {
+      ciMinutes: INACTIVE_CI_MINUTES,
       state: rig.state,
       githubFor: rig.githubFor,
       clock: { now: () => now },

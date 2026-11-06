@@ -6,6 +6,7 @@
  * store with the real snapshot and transition rules (`TransitionState`),
  * recording every write it accepts.
  */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -345,6 +346,7 @@ export async function passDeps(
   now: () => number = () => NOW,
 ): Promise<HostedAutonomyDepsV1> {
   return await withDarkQueueAuthority({
+    ciMinutes: INACTIVE_CI_MINUTES,
     state: state as unknown as StateReadView & RepairStateWriter,
     githubFor: github.githubFor,
     clock: { now },

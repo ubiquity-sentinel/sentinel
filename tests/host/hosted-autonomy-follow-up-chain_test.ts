@@ -1,4 +1,5 @@
 /** Follow-ups follow a completed delivery pass and never a failed one. */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { parseReviewReceiptV1 } from "../../src/contracts/review-receipt.ts";
 import { runHostedFollowUpPass } from "../../ops/hosted-autonomy-follow-up-pass.ts";
@@ -87,6 +88,7 @@ Deno.test("follow-ups F9: the follow-up pass runs after a delivery and never aft
       const [request] = (await readSnapshot(rig)).releaseRequests;
       const custody = historicalDarkQueueFixture(rig);
       const actions = await runHostedFollowUpPass({
+        ciMinutes: INACTIVE_CI_MINUTES,
         state: rig.state,
         githubFor: rig.githubFor,
         clock: { now: () => NOW },
@@ -110,6 +112,7 @@ Deno.test("follow-ups F9: the follow-up pass runs after a delivery and never aft
       assert.notEqual(delivery.result?.status, "applied");
       const custody = historicalDarkQueueFixture(rig);
       const actions = await runHostedFollowUpPass({
+        ciMinutes: INACTIVE_CI_MINUTES,
         state: rig.state,
         githubFor: rig.githubFor,
         clock: { now: () => NOW },
