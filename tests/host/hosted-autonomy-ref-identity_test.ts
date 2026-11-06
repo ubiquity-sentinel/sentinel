@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import type { GitSha, WorkItemId } from "../../src/contracts/brands.ts";
 import { deriveReservationId } from "../../src/budget/mod.ts";
@@ -549,6 +550,7 @@ Deno.test(
       const originalWrite = rig.state.writeRepair.bind(rig.state);
       let attempts = 0;
       const result = await runHostedAutonomy({
+        ciMinutes: INACTIVE_CI_MINUTES,
         state: {
           ...rig.state,
           writeRepair: async (

@@ -8,6 +8,7 @@
  * run as usual. The state here needs closed-wave recovery, so any recovery
  * attempt would show up as a line and a state write.
  */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 
 import { RollingStartBudget } from "../../src/budget/mod.ts";
@@ -88,6 +89,7 @@ Deno.test("matrix aggregate bootstrap: closed-wave recovery and the work walk sk
   let result;
   try {
     result = await runActionsMatrixAggregateCycles({
+      ciMinutes: INACTIVE_CI_MINUTES,
       clock,
       state,
       configs,

@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 import assert from "node:assert/strict";
 import { deriveReservationId } from "../../src/budget/mod.ts";
@@ -594,6 +595,7 @@ Deno.test("hosted autonomy main disposes an evidenced runtime mismatch in one wr
   const state = new FakeState(f.snapshot);
   const result = await runHostedAutonomy(
     await withDarkQueueAuthority({
+      ciMinutes: INACTIVE_CI_MINUTES,
       state,
       githubFor: () => hostedSurface({ mismatchDisposition: observations() }),
       clock: { now: () => T0 + 5 },

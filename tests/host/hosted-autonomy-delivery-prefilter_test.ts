@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { runHostedDeliveryPass } from "../../ops/hosted-autonomy-delivery-pass.ts";
 import { createHostedQueueAuthority } from "../../ops/hosted-autonomy-queue-authority.ts";
@@ -142,6 +143,7 @@ async function fixture(options: {
     verifyProtectedWrite: root.verifyProtectedWrite,
   };
   const deps: HostedAutonomyDepsV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     state: protectQueueState(state, custody),
     githubFor: () => github,
     clock: authority.clock,

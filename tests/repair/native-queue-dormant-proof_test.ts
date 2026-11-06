@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
 import { portError } from "../../src/contracts/ports.ts";
@@ -78,6 +79,7 @@ async function proofRig() {
   const github = new FakeGithub({ nativeQueue: guard });
   const configs = repairConfigs();
   const deps = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     state,
     clock: f.clock,
     github,

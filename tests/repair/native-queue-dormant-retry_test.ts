@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
 import { portError, portOk } from "../../src/contracts/ports.ts";
@@ -77,6 +78,7 @@ function rig() {
   });
   state.repairHead = SHA1;
   const deps = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     state,
     clock,
     github,
@@ -175,6 +177,7 @@ Deno.test("native dormant state read recovers without permanent custody", async 
   const never = () =>
     Promise.reject(new Error("Unexpected queue authority call"));
   const launcherDeps: HostedAutonomyDepsV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     state: r.state,
     clock: r.clock,
     githubFor: () => null,

@@ -18,6 +18,7 @@
  * The retry table's conflict-marker guard is pinned in
  * `hosted-autonomy-conflict-guard_test.ts`.
  */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 import assert from "node:assert/strict";
 import type {
@@ -183,6 +184,7 @@ async function runWith(
 ): Promise<HostedAutonomyResultV1> {
   return runHostedAutonomy(
     await withDarkQueueAuthority({
+      ciMinutes: INACTIVE_CI_MINUTES,
       state: state as unknown as StateReadView & RepairStateWriter,
       githubFor: () => surface(facts),
       clock: { now: () => NOW },
@@ -605,6 +607,7 @@ Deno.test("conflict re-admission: one pass re-admits every verified open pull re
   );
   const result = await runHostedAutonomy(
     await withDarkQueueAuthority({
+      ciMinutes: INACTIVE_CI_MINUTES,
       state: state as unknown as StateReadView & RepairStateWriter,
       githubFor: () => manySurface(reads, moved.target.branch),
       clock: { now: () => NOW },
@@ -644,6 +647,7 @@ Deno.test("conflict re-admission: moved-tip re-pends and re-admissions all proce
   );
   const result = await runHostedAutonomy(
     await withDarkQueueAuthority({
+      ciMinutes: INACTIVE_CI_MINUTES,
       state: state as unknown as StateReadView & RepairStateWriter,
       githubFor: () => manySurface([]),
       clock: { now: () => NOW },

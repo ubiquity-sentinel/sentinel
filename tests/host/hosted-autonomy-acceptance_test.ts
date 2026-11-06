@@ -6,6 +6,7 @@
  * spent) are owner-gated, named once in the run summary instead of reporting
  * `spent_not_admissible` on every pass.
  */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { asWorkItemId, type GitSha } from "../../src/contracts/brands.ts";
 import {
@@ -124,6 +125,7 @@ async function liveRig(name: string): Promise<RigV1> {
  */
 async function retryPass(rig: RigV1, runtimes?: ReadonlySet<string>) {
   const deps: HostedAutonomyDepsV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     state: rig.state,
     githubFor: rig.githubFor,
     clock: { now: () => NOW },
