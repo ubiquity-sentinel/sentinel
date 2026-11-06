@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { readCiMinuteWindow } from "../../ops/hosted-autonomy-github-jobs.ts";
 import { createCiMinuteReconciler } from "../../ops/ci-minute-reconciliation.ts";
 import {
+  acceptedCiMinutePolicy,
   ciJobMinutes,
   ciMinuteDigest,
   ciPolicyDigest,
-  INACTIVE_CI_MINUTE_POLICY,
   parseCiMinuteLedger,
 } from "../../src/contracts/ci-minute-budget.ts";
 import type {
@@ -400,8 +400,7 @@ function catalogRun(
 }
 function readerFixture(rows: ApiRun[]) {
   const policy: CiMinutePolicyV1 = {
-    ...INACTIVE_CI_MINUTE_POLICY,
-    activated: true,
+    ...acceptedCiMinutePolicy(),
     targets: [{
       owner: "fixture",
       name: "project",

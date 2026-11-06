@@ -25,11 +25,13 @@ import { GitCiMinuteStore } from "../../src/state/ci-minute-budget-store.ts";
 import { DenoGitRunner } from "../../src/state/state-git.ts";
 import type { GitRunnerV1 } from "../../src/state/state-git.ts";
 import {
+  CI_MINUTE_PRIVATE_REMOTE,
   CI_MINUTE_REF,
   ciPolicyDigest,
 } from "../../src/contracts/ci-minute-budget.ts";
 import type { CiMinuteLedgerV1 } from "../../src/contracts/ci-minute-budget.ts";
 import { proposedCiMinutePolicy } from "../../src/budget/ci-minutes.ts";
+import { verifyCiMinuteSchedulingBasis } from "../../src/budget/ci-minutes.ts";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
 
 const ACCEPTANCE = "a".repeat(64);
@@ -348,7 +350,7 @@ Deno.test("CI private scope: Scope200 alone, expired, wrong-repo, read-only and 
   }
 });
 
-Deno.test("CI phase1 source policy is exact retained-estimate data without activating current consumers", () => {
+Deno.test("CI phase1 source policy is exact retained-estimate data and preserves explicit inactive fixtures", () => {
   const policy = acceptedCiMinutePolicy();
   assert.equal(policy.activated, true);
   assert.equal(policy.accounting, "retained_estimates");
@@ -629,6 +631,238 @@ Deno.test("CI capacity synthetic catalog and retained proofs serialize through r
         maxCatalogRuns: CI_MINUTE_MAX_CATALOG_RUNS,
         maxLedgerBytes: CI_MINUTE_MAX_BYTES,
       }),
+    );
+  } finally {
+    await f.cleanup();
+  }
+});
+
+Deno.test("CI pacing production composition refuses changed source basis before authority or store work", async () => {
+  let touched = 0;
+  const policy = acceptedCiMinutePolicy();
+  policy.unmanagedReserve--;
+  const controller = composePrivateCiMinutes({
+    policy,
+    clock: { now: () => NOW },
+    scratch: "/not-used/ci-minutes-private",
+    authority: () => {
+      touched++;
+      throw new Error("invalid source touched authority");
+    },
+    billingBasis: verifyCiMinuteSchedulingBasis,
+  });
+  assert.equal((await controller.reconcile(NOW + 60000)).kind, "unavailable");
+  assert.equal(
+    (await controller.reserve({
+      repository: { owner: "ubiquity", name: "prospector", installationId: 1 },
+      kind: "pr_open",
+      head: "a".repeat(40),
+      base: "b".repeat(40),
+      ref: "refs/heads/task",
+      pr: 1,
+    }, NOW + 60000)).kind,
+    "unavailable",
+  );
+  assert.equal(touched, 0);
+});
+
+Deno.test("CI pacing production native driver creates a private initial CAS, resumes accounting, and admits one due later-month effect", async () => {
+  const f = await fixture();
+  let now = NOW;
+  let applied = false;
+  let pendingRuns = false;
+  const paths: string[] = [];
+  const policy = acceptedCiMinutePolicy();
+  const capability = {
+    verify: () => Promise.resolve(true),
+    request(path: string) {
+      paths.push(path);
+      const profile = policy.targets.find((target) =>
+        path.startsWith(`/repos/${target.owner}/${target.name}`)
+      );
+      assert.ok(profile, path);
+      const run = (id: number) => ({
+        id,
+        repository: { id: profile.repositoryId },
+        head_sha: "a".repeat(40),
+        run_attempt: 1,
+        status: "queued",
+        created_at: new Date(now).toISOString(),
+        updated_at: new Date(now).toISOString(),
+      });
+      if (path.includes("/actions/runs?")) {
+        return Promise.resolve(
+          pendingRuns
+            ? {
+              total_count: 9,
+              workflow_runs: Array.from(
+                { length: 9 },
+                (_, index) => run(index + 1),
+              ),
+            }
+            : { total_count: 0, workflow_runs: [] },
+        );
+      }
+      if (path.includes("/actions/runs/")) {
+        return Promise.resolve(run(Number(path.split("/").at(-1))));
+      }
+      if (path.includes("/contents/")) {
+        const workflow =
+          `on: [pull_request]\njobs:\n  ${profile.job}:\n    runs-on: ubuntu-latest\n    timeout-minutes: ${profile.timeoutMinutes}\n    steps:\n      - run: true\n`;
+        return Promise.resolve({
+          type: "file",
+          encoding: "base64",
+          sha: profile.workflowBlob,
+          content: btoa(workflow),
+        });
+      }
+      if (path.includes("/pulls?")) {
+        return Promise.resolve(
+          applied ? [{ head: { sha: "a".repeat(40) } }] : [],
+        );
+      }
+      assert.equal(path, `/repos/${profile.owner}/${profile.name}`);
+      return Promise.resolve({
+        id: profile.repositoryId,
+        private: true,
+        default_branch: "development",
+      });
+    },
+    runGit(args: string[], options: Parameters<GitRunnerV1["runGit"]>[1]) {
+      const local = args[0] === "remote" && args[3] === CI_MINUTE_PRIVATE_REMOTE
+        ? [...args.slice(0, 3), f.bare]
+        : args;
+      return f.git.runGit(local, options);
+    },
+  };
+  const make = (deadlineAt?: number) =>
+    composePrivateCiMinutes({
+      policy,
+      clock: { now: () => now },
+      scratch: `${f.path}/production/ci-minutes-private`,
+      deadlineAt,
+      authority: () => Promise.resolve(capability),
+      billingBasis: verifyCiMinuteSchedulingBasis,
+    });
+  const effect = {
+    repository: { owner: "ubiquity", name: "prospector", installationId: 1 },
+    kind: "pr_open" as const,
+    head: "a".repeat(40),
+    base: "b".repeat(40),
+    ref: "refs/heads/task",
+    pr: 1,
+  };
+  try {
+    const first = await make().reconcile(now + 60000);
+    assert.equal(first.kind, "ready");
+    const store = f.make();
+    const initial = await store.read("2028-01");
+    assert.ok(initial.ok && initial.value.ledger?.bootstrap);
+    assert.equal(initial.value.ledger.baselineMinutes, 1450);
+    assert.equal(initial.value.ledger.reservations.length, 0);
+    assert.equal((await make().reserve(effect, now + 60000)).kind, "held");
+    const resumed = await store.read("2028-01");
+    assert.ok(resumed.ok && resumed.value.ledger);
+    assert.ok(resumed.value.ledger.sequence > initial.value.ledger.sequence);
+    assert.equal(resumed.value.ledger.baselineMinutes, 1450);
+    const refs = await f.git.runGit(["for-each-ref", "--format=%(refname)"], {
+      cwd: f.bare,
+    });
+    assert.equal(refs.stdout.trim(), CI_MINUTE_REF);
+    now = Date.UTC(2028, 1, 29, 23);
+    assert.equal((await make().reserve(effect, now + 60000)).kind, "admitted");
+    applied = true;
+    assert.equal(
+      (await make().reserve(effect, now + 60000)).kind,
+      "reconciled",
+    );
+    const later = await store.read("2028-02");
+    assert.ok(later.ok && later.value.ledger);
+    assert.equal(later.value.ledger.reservations.length, 1);
+    assert.equal(later.value.ledger.reservations[0].chargedMinutes, 25);
+    const count = paths.length;
+    assert.equal((await make(now).reconcile(now + 60000)).kind, "unavailable");
+    assert.equal(
+      paths.length,
+      count,
+      "the existing native deadline can only shorten caller work",
+    );
+    applied = false;
+    now = Date.UTC(2028, 2, 2);
+    const period = { start: Date.UTC(2028, 2, 1), end: Date.UTC(2028, 3, 1) };
+    const earned = Math.floor(
+      1450 * (now - period.start) / (period.end - period.start),
+    );
+    const known: CiMinuteLedgerV1 = {
+      version: 1,
+      month: "2028-03",
+      policyDigest: ciPolicyDigest(policy),
+      updatedAt: now,
+      sequence: 1,
+      baselineMinutes: earned - 25,
+      watermark: null,
+      reservations: [],
+      observed: [],
+    };
+    const seeded = await store.write({
+      expectedHead: later.value.head,
+      ledger: known,
+    });
+    assert.ok(seeded.ok && seeded.value.status === "applied");
+    const oneTurn = make(now + 60000);
+    assert.equal((await oneTurn.reconcile(now + 60000)).kind, "ready");
+    const afterObservation = paths.filter((path) =>
+      path.includes("/actions/runs")
+    ).length;
+    const profileReads = paths.filter((path) =>
+      path.includes("/contents/")
+    ).length;
+    assert.equal(
+      (await oneTurn.reserve({ ...effect, head: "e".repeat(40) }, now + 60000))
+        .kind,
+      "admitted",
+    );
+    assert.equal(
+      (await oneTurn.reserve({ ...effect, head: "f".repeat(40) }, now + 60000))
+        .kind,
+      "held",
+    );
+    assert.equal(
+      paths.filter((path) => path.includes("/actions/runs")).length,
+      afterObservation,
+      "ready reconciliation is observed exactly once in a native turn",
+    );
+    assert.equal(
+      paths.filter((path) => path.includes("/contents/")).length,
+      profileReads + 2,
+      "both actual effects revalidate their authenticated profile",
+    );
+    const capacity = await store.read("2028-03");
+    assert.ok(capacity.ok && capacity.value.ledger);
+    assert.equal(capacity.value.ledger.reservations.length, 1);
+    now += 60001;
+    assert.equal(
+      (await oneTurn.reconcile(now + 60000)).kind,
+      "unavailable",
+      "cached readiness expires at the fixed native deadline",
+    );
+    now = Date.UTC(2028, 3, 2);
+    pendingRuns = true;
+    const pendingTurn = make(now + 60000);
+    assert.equal((await pendingTurn.reconcile(now + 60000)).kind, "pending");
+    const afterPending = paths.length;
+    assert.equal((await pendingTurn.reserve(effect, now + 60000)).kind, "held");
+    assert.equal(
+      (await pendingTurn.reserve(
+        { ...effect, head: "e".repeat(40) },
+        now + 60000,
+      )).kind,
+      "held",
+    );
+    assert.equal(
+      paths.length,
+      afterPending,
+      "pending reconciliation is reused without a new observation or effect",
     );
   } finally {
     await f.cleanup();

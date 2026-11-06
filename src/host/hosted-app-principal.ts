@@ -1,4 +1,3 @@
-import { proposedCiMinutePolicy } from "../budget/ci-minutes.ts";
 /** Hosted App authority is private to the actual same-credential REST/Git factory. */
 import { isGitSha } from "../contracts/brands.ts";
 import { canonicalStringify } from "../contracts/canonical.ts";
@@ -35,24 +34,29 @@ import {
 import { DenoGitRunner, type GitRunnerV1 } from "../state/state-git.ts";
 import { githubGitAuthEnv } from "./local-github-auth.ts";
 import {
+  acceptedCiMinutePolicy,
   CI_MINUTE_PRIVATE_REMOTE,
   CI_MINUTE_REF,
+  ciMinuteDigest,
+  ciMonth,
 } from "../contracts/ci-minute-budget.ts";
 import type {
   CiEffectFactsV1,
   CiEffectV1,
-  CiMinuteControllerV1,
+  CiMinuteCoordinatorV1,
+  CiMinuteDecisionV1,
+  CiMinuteObservationV1,
   CiMinutePolicyV1,
+  CiMinuteReconcileDecisionV1,
 } from "../contracts/ci-minute-budget.ts";
 import {
   createCiMinuteController,
   INACTIVE_CI_MINUTES,
+  verifyCiMinuteSchedulingBasis,
 } from "../budget/ci-minutes.ts";
 import { GitCiMinuteStore } from "../state/ci-minute-budget-store.ts";
-import {
-  createPrivateCiEffectResolver,
-  createPrivateCiObservationReader,
-} from "../../ops/hosted-autonomy-github-jobs.ts";
+import { createPrivateCiEffectResolver } from "../../ops/hosted-autonomy-github-jobs.ts";
+import { createCiMinuteReconciler } from "../../ops/ci-minute-reconciliation.ts";
 import {
   type HostedAppSourceEvidence,
   type HostedAppSourceInput,
@@ -80,63 +84,113 @@ export function composePrivateCiMinutes(input: {
   policy: CiMinutePolicyV1;
   clock: Clock;
   scratch: string;
+  /** Existing native-turn absolute bound; consumers may only shorten it. */
+  deadlineAt?: number;
   authority(deadline: number): Promise<HostedPrivateCiCapabilities | null>;
   billingBasis?(
     policy: CiMinutePolicyV1,
     deadline: number,
     facts?: CiEffectFactsV1,
   ): Promise<boolean>;
-}): CiMinuteControllerV1 {
+}): CiMinuteCoordinatorV1 {
   if (input.policy.activated === false) return INACTIVE_CI_MINUTES;
-  return Object.freeze({
-    active: true,
-    async reserve(effect: CiEffectV1, deadline: number) {
-      try {
-        if (
-          input.billingBasis === undefined ||
-          !await input.billingBasis(input.policy, deadline)
-        ) {
-          return {
-            kind: "unavailable" as const,
-            reason: "billing_basis_unavailable",
-          };
-        }
-        const capability = await input.authority(deadline);
-        if (capability === null || !await capability.verify(deadline)) {
-          return {
-            kind: "unavailable" as const,
-            reason: "private_ci_authority_unavailable",
-          };
-        }
-        const store = new GitCiMinuteStore({
-          scratchDir: input.scratch,
-          remoteUrl: CI_MINUTE_PRIVATE_REMOTE,
-          runner: capability,
-          storageAcceptance: input.policy.storageAcceptance ?? "",
-        });
-        const reads = {
-          policy: input.policy,
-          now: () => input.clock.now(),
-          request: (path: string, limit: number) =>
-            capability.request(path, limit),
-        };
-        return await createCiMinuteController({
-          policy: input.policy,
-          clock: input.clock,
-          store,
-          authorizePolicy: async (policy, limit, facts) =>
-            await input.billingBasis!(policy, limit, facts) &&
-            await capability.verify(limit),
-          resolve: createPrivateCiEffectResolver(reads),
-          observe: createPrivateCiObservationReader(reads),
-        }).reserve(effect, deadline);
-      } catch {
+  let nativeDeadline = input.deadlineAt;
+  let scope: string | null = null;
+  let observation: Promise<CiMinuteObservationV1 | null> | null = null;
+  let driverDecision: CiMinuteReconcileDecisionV1 | null = null;
+  const run = async (effect: CiEffectV1 | null, deadline: number) => {
+    nativeDeadline ??= deadline;
+    deadline = Math.min(deadline, nativeDeadline);
+    try {
+      if (!Number.isSafeInteger(deadline) || input.clock.now() >= deadline) {
+        return { kind: "unavailable" as const, reason: "private_ci_deadline" };
+      }
+      const currentScope = ciMinuteDigest({
+        policy: input.policy,
+        month: ciMonth(input.clock.now()).month,
+        deadline: nativeDeadline,
+      });
+      if (scope !== null && scope !== currentScope) {
         return {
           kind: "unavailable" as const,
-          reason: "private_ci_composition_unavailable",
+          reason: "private_ci_window_changed",
         };
       }
-    },
+      scope ??= currentScope;
+      if (driverDecision !== null && effect === null) return driverDecision;
+      if (driverDecision?.kind === "pending") {
+        return {
+          kind: "held" as const,
+          retryAt: driverDecision.retryAt,
+          reason: driverDecision.reason,
+        };
+      }
+      if (driverDecision?.kind === "unavailable") return driverDecision;
+      if (
+        input.clock.now() >= deadline ||
+        input.billingBasis === undefined ||
+        !await input.billingBasis(input.policy, deadline)
+      ) {
+        return {
+          kind: "unavailable" as const,
+          reason: "billing_basis_unavailable",
+        };
+      }
+      const capability = await input.authority(deadline);
+      if (capability === null || !await capability.verify(deadline)) {
+        return {
+          kind: "unavailable" as const,
+          reason: "private_ci_authority_unavailable",
+        };
+      }
+      const store = new GitCiMinuteStore({
+        scratchDir: input.scratch,
+        remoteUrl: CI_MINUTE_PRIVATE_REMOTE,
+        runner: capability,
+        storageAcceptance: input.policy.storageAcceptance ?? "",
+      });
+      const reads = {
+        policy: input.policy,
+        now: () => input.clock.now(),
+        request: (path: string, limit: number) =>
+          capability.request(path, limit),
+      };
+      const controller = createCiMinuteController({
+        policy: input.policy,
+        clock: input.clock,
+        store,
+        authorizePolicy: async (policy, limit, facts) =>
+          await input.billingBasis!(policy, limit, facts) &&
+          await capability.verify(limit),
+        resolve: createPrivateCiEffectResolver(reads),
+        observe: (month, limit, ledger) => {
+          observation ??= createCiMinuteReconciler({
+            policy: input.policy,
+            request: reads.request,
+            clock: input.clock,
+          })(month, limit, ledger).catch(() => null);
+          return observation.then((value) =>
+            value === null ? null : structuredClone(value)
+          );
+        },
+      });
+      if (effect === null) {
+        return driverDecision = await controller.reconcile(deadline);
+      }
+      return await controller.reserve(effect, deadline);
+    } catch {
+      return {
+        kind: "unavailable" as const,
+        reason: "private_ci_composition_unavailable",
+      };
+    }
+  };
+  return Object.freeze({
+    active: true,
+    reserve: (effect: CiEffectV1, deadline: number) =>
+      run(effect, deadline) as Promise<CiMinuteDecisionV1>,
+    reconcile: async (deadline: number) =>
+      driverDecision = await run(null, deadline) as CiMinuteReconcileDecisionV1,
   });
 }
 
@@ -729,14 +783,16 @@ export function runtimeCiMinutes(
   clock: Clock,
   stateRoot: string,
   principal: () => HostedAppPrincipalContext | null,
-): CiMinuteControllerV1 {
+  deadlineAt: number,
+): CiMinuteCoordinatorV1 {
   const scratch = stateRoot + "/ci-minutes-private";
   return composePrivateCiMinutes({
-    policy: proposedCiMinutePolicy(),
+    policy: acceptedCiMinutePolicy(),
     clock,
     scratch,
+    deadlineAt,
     authority: (limit) =>
       createHostedPrivateCiCapabilities(principal(), scratch, limit),
-    billingBasis: () => Promise.resolve(false),
+    billingBasis: verifyCiMinuteSchedulingBasis,
   });
 }
