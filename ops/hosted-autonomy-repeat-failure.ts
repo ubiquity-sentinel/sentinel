@@ -60,7 +60,11 @@ import {
 } from "../src/contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
 import { MaxText } from "../src/contracts/validation.ts";
-import { ATTEMPT_TRANSIENT_DECAY_MS } from "../src/repair/attempt-policy.ts";
+import {
+  ATTEMPT_DETAIL_INCOMPLETE,
+  ATTEMPT_TRANSIENT_DECAY_MS,
+  IMPLEMENTATION_RECEIPT_FAILURE_DETAILS,
+} from "../src/repair/attempt-policy.ts";
 import { sameRepository } from "./hosted-autonomy-policy.ts";
 import {
   isPassportWorkTrial,
@@ -92,7 +96,13 @@ function sha256Hex(text: string): string {
 
 /** Case, whitespace, hex identities and numbers folded. */
 export function normalizeFailureMessage(message: string): string {
-  return message.normalize("NFC").toLowerCase()
+  // Closed cell causes enrich the park, not the historical retry identity.
+  const detail = Object.values(IMPLEMENTATION_RECEIPT_FAILURE_DETAILS).some(
+      (known) => known === message,
+    )
+    ? ATTEMPT_DETAIL_INCOMPLETE
+    : message;
+  return detail.normalize("NFC").toLowerCase()
     .replace(/\b[0-9a-f]{7,64}\b/g, "<hex>")
     .replace(/\d+/g, "<n>")
     .replace(/\s+/g, " ")
