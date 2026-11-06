@@ -142,7 +142,7 @@ Deno.test("hosted workflow: jobs that start no target model session install no B
 Deno.test("hosted workflow: self-test dependencies are prepared without credentials before mint", () => {
   const nodeVersion = /node-version: (\S+)/.exec(CI)?.[1];
   assert.equal(nodeVersion, "24.19.0");
-  for (const job of ["matrix_plan", "matrix_cell", "repair"]) {
+  for (const job of ["matrix_plan", "matrix_cell", "repair_cell", "repair"]) {
     const steps = jobSteps(SUPERVISOR, job);
     const node = stepIndex(steps, /uses: actions\/setup-node@/);
     assert.ok(steps[node].includes(`node-version: ${nodeVersion}`));
@@ -183,6 +183,8 @@ Deno.test("hosted workflow: self-test dependencies are prepared without credenti
     assert.ok(steps[seal].includes("ops/hosted-autonomy-self-dependencies.ts"));
     assert.ok(steps[seal].includes("--allow-env=PATH,NODE_V8_COVERAGE"));
     assert.ok(!/secrets\.|outputs\.token|--allow-net/.test(steps[seal]));
+  }
+  for (const job of ["matrix_plan", "matrix_cell", "repair"]) {
     const lines = jobLines(SUPERVISOR, job).join("\n");
     assert.equal(
       lines.includes("SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT"),
