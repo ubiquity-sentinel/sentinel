@@ -99,6 +99,7 @@ Deno.test("current matrix: a producer pass past the walk deadline defers instead
     snapshot: {
       sequence: 1,
       stateHead: null,
+      githubCooldowns: [],
       hostedReleases: [],
       hostedRuntimes: [{
         id: HOSTED_RUNTIME_ID,
@@ -117,30 +118,35 @@ Deno.test("current matrix: a producer pass past the walk deadline defers instead
   };
   let now = T0 + 10_000_000;
   const startedAt = now;
+  const clock = { now: () => now };
+  const state = {
+    readRepair: () =>
+      Promise.resolve(
+        portOk({
+          status: "found",
+          head: "f".repeat(40),
+          ref: null,
+          snapshot: {
+            work: [record],
+            reservations: [charge],
+            reviews: [],
+            releaseRequests: [],
+            githubCooldowns: [],
+          },
+        }),
+      ),
+    readRelease: () => Promise.resolve(portOk(structuredClone(release))),
+    readReleaseAt: () => Promise.reject(new Error("not used")),
+    writeRepair: () => Promise.reject(new Error("no write expected")),
+  };
   const deps = {
-    clock: { now: () => now },
+    clock,
     githubFor: () => ({ readBaseTip: () => Promise.resolve(null) }),
-    state: {
-      readRepair: () =>
-        Promise.resolve(
-          portOk({
-            status: "found",
-            head: "f".repeat(40),
-            ref: null,
-            snapshot: {
-              work: [record],
-              reservations: [charge],
-              reviews: [],
-              releaseRequests: [],
-            },
-          }),
-        ),
-      readRelease: () => Promise.resolve(portOk(structuredClone(release))),
-      readReleaseAt: () => Promise.reject(new Error("not used")),
-      writeRepair: () => Promise.reject(new Error("no write expected")),
-    },
+    state,
     closedMatrix: () =>
       Promise.resolve({
+        state,
+        clock,
         configs: [{ repository: REPO }],
         binding: undefined,
         transportFor: () => ({
