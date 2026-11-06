@@ -580,8 +580,11 @@ function effectBinding(
       return effect.runId === run.id && effect.attempt === attempt &&
         effect.head === run.head_sha;
     }
+    // GitHub's creation timestamp identifies a second, not a millisecond instant.
     if (
-      attempt !== 1 || (timestamp(run.created_at) ?? -1) < reservation.createdAt
+      attempt !== 1 ||
+      Math.floor((timestamp(run.created_at) ?? -1) / 1000) <
+        Math.floor(reservation.createdAt / 1000)
     ) return false;
     const expected = progress.aliases?.find((a) =>
       a.effectDigest === reservation.effectDigest

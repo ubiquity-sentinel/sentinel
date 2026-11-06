@@ -30,9 +30,12 @@ import {
   type TrainWorldV1,
 } from "./delivery-train-rig.ts";
 import { T0 } from "../state/helpers.ts";
-import type { GitDeliveryTrainStore } from "../../src/state/delivery-train-store.ts";
+import { GitDeliveryTrainStore } from "../../src/state/delivery-train-store.ts";
 import { FOREIGN_REPO } from "./hosted-autonomy-fixtures.ts";
-import { DELIVERY_TRAIN_CI_WAIT_MS } from "../../src/contracts/delivery-train-ledger.ts";
+import {
+  DELIVERY_TRAIN_CI_WAIT_MS,
+  type DeliveryTrainLedgerV1,
+} from "../../src/contracts/delivery-train-ledger.ts";
 import {
   createTrainComposerFor,
   type TrainGitOptionsV1,
@@ -104,6 +107,175 @@ function counts(metrics: ReturnType<typeof createMetricsCollectorV1>) {
     }).counts;
   return { trainsBuilt, targetCiRunsTriggered, mergesCompleted };
 }
+
+Deno.test("CI round2 one-day held train starts its durable CI window at publication and preserves it across restart until real expiry", async () => {
+  let now = T0, allowed = false;
+  const fixture = await trainPass(
+    "synthetic-calendar-window",
+    FIVE.slice(0, 2),
+    {
+      ledger: "git",
+      clock: { now: () => now },
+      prepare: (world) => {
+        world.ci = () => "pending";
+      },
+      ciMinutes: {
+        active: true,
+        reserve: () =>
+          Promise.resolve(
+            allowed
+              ? { kind: "admitted", reservationDigest: "a".repeat(64) }
+              : {
+                kind: "held",
+                retryAt: now + 86400000,
+                reason: "calendar_allowance",
+              },
+          ),
+      },
+    },
+  );
+  try {
+    await fixture.once();
+    const held = (await fixture.world.ledger()).train;
+    assert.ok(held);
+    assert.equal(held.phase, "publishing");
+    assert.equal(held.ciStartedAt, null);
+    assert.equal(counts(fixture.metrics).targetCiRunsTriggered, 0);
+    now += 86400000;
+    allowed = true;
+    await fixture.once();
+    const published = (await fixture.world.ledger()).train;
+    assert.ok(published);
+    assert.equal(published.phase, "published");
+    assert.equal(published.createdAt, held.createdAt);
+    assert.equal(published.ciStartedAt, now);
+    assert.equal(published.operationId, held.operationId);
+    assert.equal(published.sha, held.sha);
+    const startedAt = published.ciStartedAt;
+    const root = fixture.world.bare.slice(
+      0,
+      fixture.world.bare.lastIndexOf("/"),
+    );
+    const restarted = new GitDeliveryTrainStore({
+      scratchDir: `${root}/restart-ledger`,
+      remoteUrl: `${root}/state-remote.git`,
+    });
+    const loaded = await restarted.read(FOREIGN_REPO);
+    assert.ok(loaded?.ledger.train);
+    assert.equal(loaded.ledger.train.ciStartedAt, startedAt);
+    fixture.world.trainDeps.journal = restarted;
+    for (const ciStartedAt of [null, published.createdAt - 1, "invalid"]) {
+      const invalid: unknown = {
+        ...loaded.ledger,
+        train: { ...loaded.ledger.train, ciStartedAt },
+      };
+      assert.equal(
+        await restarted.write({
+          repository: FOREIGN_REPO,
+          expectedHead: loaded.head,
+          ledger: invalid as DeliveryTrainLedgerV1,
+        }),
+        null,
+      );
+    }
+    now = startedAt! + DELIVERY_TRAIN_CI_WAIT_MS;
+    await fixture.once();
+    const pending = (await fixture.world.ledger()).train;
+    assert.ok(pending);
+    assert.equal(pending.phase, "published");
+    assert.equal(pending.ciStartedAt, startedAt);
+    assert.equal(pending.sha, held.sha);
+    assert.equal(counts(fixture.metrics).targetCiRunsTriggered, 1);
+    now++;
+    const expired = await fixture.once();
+    assert.equal((await fixture.world.ledger()).train, null);
+    assert.ok(
+      expired.actions.some((action) =>
+        action.endsWith(":dissolved:ci_unavailable")
+      ),
+      JSON.stringify(expired.actions),
+    );
+    assert.deepEqual(fixture.world.merges, []);
+    assert.equal(counts(fixture.metrics).targetCiRunsTriggered, 1);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+Deno.test("CI round2 held train can dissolve on base change without any CI start timestamp or dispatch", async () => {
+  let observation: "initial" | "unavailable" | "moved" = "initial";
+  const fixture = await trainPass("synthetic-held-change", FIVE.slice(0, 2), {
+    ledger: "git",
+    prepare: (world) => {
+      const surface = world.surface;
+      world.surface = (base) => ({
+        ...surface(base),
+        readBaseTip: () =>
+          Promise.resolve(
+            observation === "unavailable"
+              ? null
+              : observation === "moved"
+              ? world.members[0].head
+              : world.initialTip,
+          ),
+      });
+    },
+    ciMinutes: {
+      active: true,
+      reserve: () =>
+        Promise.resolve({
+          kind: "held",
+          retryAt: T0 + 86400000,
+          reason: "calendar_allowance",
+        }),
+    },
+  });
+  try {
+    await fixture.once();
+    const held = (await fixture.world.ledger()).train;
+    assert.ok(held);
+    assert.equal(held.ciStartedAt, null);
+    const journal = fixture.world.trainDeps.journal;
+    let ended = false;
+    fixture.world.trainDeps.journal = {
+      read: (repository) => journal.read(repository),
+      write: async (input) => {
+        const result = await journal.write(input);
+        if (input.ledger.train === null && result?.status === "applied") {
+          ended = true;
+        }
+        return result;
+      },
+    };
+    observation = "unavailable";
+    const unavailable = await fixture.once();
+    const preserved = (await fixture.world.ledger()).train;
+    assert.equal(preserved?.operationId, held.operationId);
+    assert.equal(preserved?.sha, held.sha);
+    assert.equal(preserved?.ciStartedAt, null);
+    assert.equal(ended, false);
+    assert.ok(
+      unavailable.actions.some((action) => action.endsWith(":base_unreadable")),
+      JSON.stringify(unavailable.actions),
+    );
+    observation = "moved";
+    const result = await fixture.once();
+    assert.ok(ended, JSON.stringify(result.actions));
+    assert.notEqual(
+      (await fixture.world.ledger()).train?.operationId,
+      held.operationId,
+    );
+    assert.ok(
+      result.actions.some((action) => action.endsWith(":dissolved:base_moved")),
+      JSON.stringify(result.actions),
+    );
+    assert.equal(counts(fixture.metrics).targetCiRunsTriggered, 0);
+    assert.deepEqual(await fixture.world.trainRefs(), []);
+    assert.deepEqual(fixture.world.merges, []);
+  } finally {
+    await fixture.cleanup();
+  }
+});
 
 Deno.test("CI acceptance train qualifies unpublished local commit before push and dispatch and restores identical SHA in a fresh directory", async () => {
   const readers = new Map<

@@ -560,7 +560,9 @@ export function createPrivateCiEffectResolver(
       }
       let decoded: Uint8Array, workflowBlob: string;
       if (
-        ["base_refresh", "train_push", "train_dispatch"].includes(effect.kind)
+        ["head_push", "base_refresh", "train_push", "train_dispatch"].includes(
+          effect.kind,
+        )
       ) {
         const evidence = await input.readPreparedWorkflow?.(effect, deadline);
         if (

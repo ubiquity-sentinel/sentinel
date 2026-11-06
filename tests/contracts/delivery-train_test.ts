@@ -23,6 +23,11 @@ import {
 } from "../../src/contracts/delivery-train.ts";
 import { RecordParseError } from "../../src/contracts/validation.ts";
 import {
+  EMPTY_DELIVERY_TRAIN_LEDGER,
+  parseDeliveryTrainLedgerV1,
+} from "../../src/contracts/delivery-train-ledger.ts";
+import { newTrain } from "../../ops/hosted-autonomy-train-run.ts";
+import {
   BASE,
   BRANCH,
   manifest,
@@ -63,6 +68,62 @@ function refuses(input: unknown, code: string, path?: string): void {
     },
   );
 }
+
+Deno.test("CI round2 train window parser distinguishes held null, valid attempt time and legacy absence", () => {
+  const train = newTrain("synthetic/project", "a".repeat(40), 1, [{
+    recordId: "synthetic",
+    pullRequest: 1,
+    head: "b".repeat(40),
+    base: "a".repeat(40),
+    receiptId: "synthetic-review",
+    commit: "c".repeat(40),
+    patch: "d".repeat(64),
+    landedOn: null,
+    revision: null,
+  }], 1000);
+  const ledger = { ...EMPTY_DELIVERY_TRAIN_LEDGER, train };
+  assert.equal(train.ciStartedAt, null);
+  assert.ok(parseDeliveryTrainLedgerV1(ledger));
+  for (
+    const ciStartedAt of [-1, 999, 1000.5, NaN, Infinity, "1000", undefined, {}]
+  ) {
+    assert.equal(
+      parseDeliveryTrainLedgerV1({
+        ...ledger,
+        train: { ...train, ciStartedAt },
+      }),
+      null,
+    );
+  }
+  for (const phase of ["published", "merging"]) {
+    assert.equal(
+      parseDeliveryTrainLedgerV1({
+        ...ledger,
+        train: { ...train, phase, ciStartedAt: null },
+      }),
+      null,
+    );
+    assert.equal(
+      parseDeliveryTrainLedgerV1({
+        ...ledger,
+        train: { ...train, phase, ciStartedAt: 1500 },
+      })?.train?.ciStartedAt,
+      1500,
+    );
+  }
+  const { ciStartedAt: _ciStartedAt, ...legacy } = train;
+  const old = parseDeliveryTrainLedgerV1({
+    ...ledger,
+    train: { ...legacy, phase: "published" },
+  });
+  assert.ok(old?.train);
+  assert.equal(Object.hasOwn(old.train, "ciStartedAt"), false);
+  assert.equal(old.train.createdAt, 1000);
+  assert.ok(
+    parseDeliveryTrainLedgerV1({ ...ledger, train: null }),
+    "a never-published held train can terminate without a fabricated CI time",
+  );
+});
 
 Deno.test("delivery train: the digest is stable across key order and names its domain", async () => {
   const base = manifest([3, 5, 8]);

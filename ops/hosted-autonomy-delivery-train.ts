@@ -186,7 +186,56 @@ class RepositoryTrain extends TrainRun {
   }
 
   async publish(): Promise<Outcome> {
-    const train = this.train;
+    let train = this.train;
+    let tip: string | null = null;
+    try {
+      tip = await this.context.readTip(this.scope);
+    } catch { /* unavailable */ }
+    if (this.late()) return "deferred";
+    if (tip === null || !/^[0-9a-f]{40}$/.test(tip)) {
+      this.act(`train:${train.operationId}:base_unreadable`);
+      return "done";
+    }
+    if (tip !== train.tip) return await this.end("dissolved:base_moved");
+    for (const member of train.members) {
+      const record = this.context.snapshot.work.find((row) =>
+        row.id === member.recordId &&
+        hostedRepositoryKey(row.repository) ===
+          hostedRepositoryKey(this.scope.repository)
+      );
+      if (
+        !record || record.target.head === null || record.target.base === null ||
+        record.target.pr === null
+      ) {
+        this.act(`train:${train.operationId}:member_unavailable`);
+        return "done";
+      }
+      if (
+        record.target.head !== member.head ||
+        record.target.base !== member.base ||
+        record.target.pr !== member.pullRequest
+      ) return await this.end("dissolved:member_changed");
+      if (!trainShaped(this.context, record)) {
+        this.act(`train:${train.operationId}:member_unavailable`);
+        return "done";
+      }
+      let refusal: string | null = "member_unavailable";
+      try {
+        const gate = await trainMemberGate(
+          this.context,
+          this.scope,
+          record,
+          member.receiptId,
+        );
+        refusal = gate.refusal ??
+          await trainAdmissionRefusal(this.scope, record);
+      } catch { /* unavailable never proves a mismatch */ }
+      if (this.late()) return "deferred";
+      if (refusal !== null) {
+        this.act(`train:${train.operationId}:member_revalidation:${refusal}`);
+        return "done";
+      }
+    }
     let dispatchAlreadyApplied = false;
     const ci = this.context.deps.ciMinutes;
     if (ci === undefined) {
@@ -262,6 +311,17 @@ class RepositoryTrain extends TrainRun {
         }
       }
     }
+    // Calendar holds leave this null. Journal the first effect attempt before
+    // writing remotely; an ambiguous response/restart must not refresh it.
+    if (train.ciStartedAt === null) {
+      if (
+        !await this.persist({
+          ...this.ledger,
+          train: { ...train, ciStartedAt: this.context.deps.clock.now() },
+        })
+      ) return "done";
+      train = this.train;
+    }
     let outcome: "applied" | "rejected" | "ambiguous";
     try {
       outcome = await this.composer.publish({ ref: train.ref, sha: train.sha });
@@ -324,7 +384,10 @@ class RepositoryTrain extends TrainRun {
     }
     if (verdict.kind === "red") return await this.red(verdict);
     const now = this.context.deps.clock.now();
-    if (!(now - train.createdAt <= DELIVERY_TRAIN_CI_WAIT_MS)) {
+    // Legacy records have no attempt proof: retain their original conservative
+    // clock instead of manufacturing a current timestamp during an upgrade.
+    const ciStartedAt = train.ciStartedAt ?? train.createdAt;
+    if (!(now - ciStartedAt <= DELIVERY_TRAIN_CI_WAIT_MS)) {
       // Never red: the members fall back to the per-record path, and train
       // again only on a moved tip or a new head.
       return await this.end(

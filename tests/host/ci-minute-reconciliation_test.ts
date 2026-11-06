@@ -11,6 +11,7 @@ import {
   validateCiMinuteTransition,
 } from "../../src/contracts/ci-minute-budget.ts";
 import type {
+  CiEffectV1,
   CiMinuteLedgerV1,
   CiMinuteObservationV1,
   CiMinutePolicyV1,
@@ -562,6 +563,131 @@ function ciState(initial: CiMinuteLedgerV1) {
   return { store, ledger: () => ledger, writes: () => sequence - 1 };
 }
 
+Deno.test("CI round2 provider-second binding closes a same-second reservation and refuses prior or mismatched identities", async () => {
+  const created = NOW - 60000;
+  for (
+    const mode of [
+      "same_second",
+      "prior_second",
+      "foreign",
+      "head",
+      "event",
+      "workflow",
+      "ambiguous",
+      "rerun_id",
+      "rerun_attempt",
+    ] as const
+  ) {
+    const rerun = mode === "rerun_id" || mode === "rerun_attempt";
+    const row = catalogRun(
+      7,
+      rerun ? 2 : 1,
+      rerun
+        ? Date.UTC(2027, 9, 1)
+        : created - (mode === "prior_second" ? 1000 : 0),
+    );
+    row.event = mode === "event" ? "push" : "pull_request";
+    row.head_branch = "synthetic";
+    if (mode === "foreign") row.repository.id = 102;
+    if (mode === "head") row.head_sha = "d".repeat(40);
+    if (mode === "workflow") row.path = ".github/workflows/other.yml";
+    const f = readerFixture([row]);
+    f.jobs((id, attempt) => ({
+      ...job(id * 100 + attempt, id, attempt, 50),
+      head_sha: row.head_sha,
+      ...(rerun && attempt === 1
+        ? {
+          started_at: new Date(Date.UTC(2027, 11, 20)).toISOString(),
+          completed_at: new Date(Date.UTC(2027, 11, 20) + 50000).toISOString(),
+        }
+        : {}),
+    }));
+    const effect: CiEffectV1 = {
+      repository: { owner: "fixture", name: "project", installationId: 1 },
+      kind: rerun ? "rerun" : "pr_open",
+      head: HEAD,
+      base: "b".repeat(40),
+      ref: "refs/heads/synthetic",
+      pr: null,
+      ...(rerun
+        ? {
+          runId: mode === "rerun_id" ? 8 : 7,
+          attempt: mode === "rerun_attempt" ? 3 : 2,
+        }
+        : {}),
+    };
+    const effectDigest = ciMinuteDigest({
+      domain: "sentinel-ci-effect-v1",
+      effect,
+      workflowBlob: "c".repeat(40),
+      job: "validation",
+      repositoryId: 101,
+    });
+    const initial = structuredClone(f.ledger());
+    initial.reservations.push({
+      effectDigest,
+      policyDigest: ciPolicyDigest(f.policy),
+      ceilingMinutes: 25,
+      state: "reserved",
+      createdAt: created + 500,
+      settledAt: null,
+      chargedMinutes: 25,
+      proofDigest: null,
+      binding: {
+        effect,
+        repositoryId: 101,
+        workflowBlob: "c".repeat(40),
+        job: "validation",
+      },
+    });
+    if (mode === "ambiguous") {
+      initial.reservations.push({
+        ...structuredClone(initial.reservations[0]),
+        effectDigest: ciMinuteDigest({
+          domain: "sentinel-ci-effect-v1",
+          effect: { ...effect, base: "e".repeat(40) },
+          workflowBlob: "c".repeat(40),
+          job: "validation",
+          repositoryId: 101,
+        }),
+        binding: {
+          ...initial.reservations[0].binding!,
+          effect: { ...effect, base: "e".repeat(40) },
+        },
+      });
+    }
+    const state = ciState(initial);
+    const controller = new CalendarCiMinutes({
+      policy: f.policy,
+      clock: { now: f.now },
+      store: state.store,
+      authorizePolicy: () => Promise.resolve(true),
+      resolve: () => Promise.resolve(null),
+      observe: f.observe(),
+    });
+    const result = await controller.reconcile(NOW + 60000);
+    const reservation = state.ledger().reservations[0];
+    assert.equal(reservation.chargedMinutes, 25, mode);
+    if (mode === "same_second") {
+      assert.equal(result.kind, "ready");
+      assert.equal(reservation.state, "terminal_estimated");
+      assert.equal(reservation.accounting?.executionMonth, "2028-01");
+      assert.equal(state.ledger().observed[0].effectDigest, effectDigest);
+      assert.equal(state.ledger().proofs?.[0].effectDigest, effectDigest);
+    } else {
+      assert.equal(reservation.state, "reserved", mode);
+      assert.equal(reservation.accounting, undefined, mode);
+      assert.equal(
+        state.ledger().observed.some((job) =>
+          job.effectDigest === effectDigest
+        ),
+        false,
+        mode,
+      );
+    }
+  }
+});
+
 Deno.test("CI acceptance rerun consumer authenticates exact workflow before POST and settles the matching reader receipt once", async () => {
   const originalFetch = globalThis.fetch, originalNow = Date.now;
   Date.now = () => NOW;
@@ -827,7 +953,7 @@ Deno.test("CI acceptance prepared object qualification ignores working files and
     });
     const effect = {
       repository: { owner: "fixture", name: "project", installationId: 1 },
-      kind: "base_refresh" as const,
+      kind: "head_push" as const,
       head,
       base: null,
       ref: "refs/heads/synthetic",
