@@ -514,11 +514,11 @@ function neededReservations(
   snapshot: RepairStateSnapshotV1,
   binding: ClosedCWaveBindingV1 = CLOSED_C_WAVE,
 ): ReadonlySet<string> {
-  // A wave is actionable only while one of its charges is still live; once
-  // every cell charge has been compacted into the durable archive the wave is
-  // fully terminal and needs no artifact or history IO.
+  // A fully archived wave is terminal and needs no artifact or history IO.
+  // Keep missing charges actionable so recovery can report a typed skip.
   if (
     !binding.cells.some((cell) =>
+      !findReservationV1(snapshot, cell.reservationId) ||
       snapshot.reservations.some((row) => row.id === cell.reservationId)
     )
   ) return new Set();

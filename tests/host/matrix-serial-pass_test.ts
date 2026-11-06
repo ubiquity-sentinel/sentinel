@@ -8,6 +8,7 @@ import { prepareMatrixIntakeV1 } from "../../src/repair/loop-intake.ts";
 import { targetDeps } from "../../src/host/matrix-actions-shared.ts";
 import { DurableGitHubCooldownGate } from "../../src/repair/github-cooldown.ts";
 import { runActionsMatrixAggregateCycles } from "../../src/host/matrix-aggregate.ts";
+import { CLOSED_C_WAVE } from "../../src/host/modern-matrix-recovery.ts";
 import type { ActionsTargetCyclesInputV1 } from "../../src/host/actions-target-cycles.ts";
 import {
   FakeClock,
@@ -20,6 +21,7 @@ import {
 } from "../repair/helpers.ts";
 import { seededSnapshot } from "../repair/loop-rig.ts";
 import { SHA1, T0, workRecord } from "../state/helpers.ts";
+import { releaseSnapshot } from "./hosted-autonomy-rig.ts";
 
 function rig(
   targets = 1,
@@ -55,6 +57,8 @@ function rig(
   );
   state.repair = seededSnapshot(work);
   state.repairHead = SHA1;
+  // Even an all-absent historical wave reads both authoritative state surfaces.
+  state.setRelease(releaseSnapshot());
   let reads = 0;
   const read = state.readRepair.bind(state);
   state.readRepair = () => {
@@ -142,6 +146,9 @@ async function measure(input: ActionsTargetCyclesInputV1, native = false) {
     );
     return {
       result,
+      closedCRecovery: lines.filter((line) =>
+        line.includes('"kind":"sentinel_closed_c_recovery"')
+      ),
       steps: lines.filter((line) =>
         line.includes('"kind":"sentinel_step"')
       ).length,
@@ -168,6 +175,13 @@ Deno.test("matrix serial pass: 700 planner-owned issues across 30 targets need n
   assert.deepEqual(test.state.repair, before);
   assert.equal(test.model.requests.length, 0);
   assert.equal(measured.result.addressed.length, 30);
+  assert.deepEqual(
+    measured.closedCRecovery.map((line) => JSON.parse(line).skipped),
+    [{
+      reason: "missing_reservation",
+      reservationIds: CLOSED_C_WAVE.cells.map((cell) => cell.reservationId),
+    }],
+  );
 });
 
 for (const targets of [DEFAULT_STEP_LIMIT + 1, DEFAULT_STEP_LIMIT * 2]) {
