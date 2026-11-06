@@ -1,5 +1,8 @@
 import {
   acceptedCiMinutePolicy,
+  CI_MINUTE_MAX_BYTES,
+  CI_MINUTE_MAX_CATALOG_RUNS,
+  CI_MINUTE_MAX_RECORDS,
   INACTIVE_CI_MINUTE_POLICY,
   parseCiMinuteLedger,
   validateCiMinuteTransition,
@@ -27,6 +30,7 @@ import {
 } from "../../src/contracts/ci-minute-budget.ts";
 import type { CiMinuteLedgerV1 } from "../../src/contracts/ci-minute-budget.ts";
 import { proposedCiMinutePolicy } from "../../src/budget/ci-minutes.ts";
+import { canonicalStringify } from "../../src/contracts/canonical.ts";
 
 const ACCEPTANCE = "a".repeat(64);
 const NOW = Date.UTC(2028, 0, 31);
@@ -531,4 +535,102 @@ Deno.test("CI phase1 explicit terminal-unmetered proof is not a fabricated actua
   assert.throws(() => parseCiMinuteLedger(cross));
   cross.proofs![0].estimate!.executionMonth = null;
   parseCiMinuteLedger(cross);
+});
+
+Deno.test("CI capacity synthetic catalog and retained proofs serialize through real Git within finite bounds", async () => {
+  assert.equal(CI_MINUTE_MAX_CATALOG_RUNS, 8192);
+  assert.equal(CI_MINUTE_MAX_BYTES, 4 * 2 ** 20);
+  assert.equal(CI_MINUTE_MAX_RECORDS, 4096);
+  const f = await fixture();
+  try {
+    const run = (index: number) => ({
+      repositoryId: index < 2000 ? 101 : 102,
+      runId: 10000000000 + index,
+      head: "a".repeat(40),
+      createdAt: NOW - 497000,
+      updatedAt: NOW,
+      runAttempt: 1,
+      checkedAttempt: 1,
+      status: "completed" as const,
+      terminalProofDigest: ciMinuteDigest({ run: index }),
+      refreshRequired: false,
+    });
+    const proof = (index: number) => ({
+      digest: ciMinuteDigest({ job: index }),
+      effectDigest: null,
+      startedAt: NOW - 497000,
+      completedAt: NOW,
+      neverStarted: false,
+      terminal: true,
+      billedDurationMs: 0,
+      estimate: {
+        kind: "retained_estimate" as const,
+        minutes: 25,
+        executionMonth: "2028-01",
+        terminalProofDigest: ciMinuteDigest({ job: index }),
+      },
+    });
+    f.ledger.catalog = {
+      runs: Array.from({ length: 4000 }, (_, index) => run(index)),
+      cursor: 4000,
+      passThrough: NOW,
+      complete: true,
+    };
+    f.ledger.proofs = Array.from({ length: 64 }, (_, index) => proof(index));
+    f.ledger.observed = f.ledger.proofs.map((job) => ({
+      digest: job.digest,
+      effectDigest: null,
+      minutes: job.estimate!.minutes,
+    }));
+    const bytes = new TextEncoder().encode(canonicalStringify(f.ledger)).length;
+    assert.ok(bytes > 2 ** 20 && bytes < CI_MINUTE_MAX_BYTES, String(bytes));
+    parseCiMinuteLedger(f.ledger);
+    const store = f.make();
+    const saved = await store.write({ expectedHead: null, ledger: f.ledger });
+    assert.ok(saved.ok && saved.value.status === "applied");
+    const read = await store.read("2028-01");
+    assert.ok(read.ok && read.value.ledger !== null);
+    assert.deepEqual(read.value.ledger, f.ledger);
+
+    const boundary = structuredClone(f.ledger);
+    boundary.catalog!.runs = Array.from(
+      { length: CI_MINUTE_MAX_CATALOG_RUNS },
+      (_, index) => run(index),
+    );
+    boundary.catalog!.cursor = CI_MINUTE_MAX_CATALOG_RUNS;
+    parseCiMinuteLedger(boundary);
+    boundary.catalog!.runs.push(run(CI_MINUTE_MAX_CATALOG_RUNS));
+    boundary.catalog!.cursor++;
+    assert.throws(
+      () => parseCiMinuteLedger(boundary),
+      /invalid CI catalog cursor/,
+    );
+    boundary.catalog!.runs.pop();
+    boundary.catalog!.cursor--;
+    boundary.proofs = Array.from(
+      { length: CI_MINUTE_MAX_RECORDS },
+      (_, index) => proof(index),
+    );
+    boundary.observed = boundary.proofs.map((job) => ({
+      digest: job.digest,
+      effectDigest: null,
+      minutes: job.estimate!.minutes,
+    }));
+    assert.ok(
+      new TextEncoder().encode(canonicalStringify(boundary)).length >
+        CI_MINUTE_MAX_BYTES,
+    );
+    assert.throws(() => parseCiMinuteLedger(boundary), /CI ledger bound/);
+    console.log(
+      JSON.stringify({
+        syntheticRuns: 4000,
+        retainedProofs: 64,
+        serializedBytes: bytes,
+        maxCatalogRuns: CI_MINUTE_MAX_CATALOG_RUNS,
+        maxLedgerBytes: CI_MINUTE_MAX_BYTES,
+      }),
+    );
+  } finally {
+    await f.cleanup();
+  }
 });

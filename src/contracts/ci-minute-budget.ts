@@ -9,7 +9,8 @@ export const CI_MINUTE_REF = "refs/heads/sentinel-state/ci-minutes";
 export const CI_MINUTE_PRIVATE_REMOTE =
   "https://github.com/ubiquity/prospector.git";
 export const CI_MINUTE_MAX_RECORDS = 4096;
-export const CI_MINUTE_MAX_BYTES = 2 ** 20;
+export const CI_MINUTE_MAX_CATALOG_RUNS = 8192;
+export const CI_MINUTE_MAX_BYTES = 4 * 2 ** 20;
 
 export interface CiMinutePolicyV1 {
   version: 1;
@@ -616,7 +617,8 @@ function validateCiMinuteAccounting(value: unknown): void {
 function validateCiMinuteCatalog(value: unknown): void {
   keys(value, "runs cursor passThrough complete");
   if (
-    !Array.isArray(value.runs) || value.runs.length > CI_MINUTE_MAX_RECORDS ||
+    !Array.isArray(value.runs) ||
+    value.runs.length > CI_MINUTE_MAX_CATALOG_RUNS ||
     !Number.isSafeInteger(value.cursor) || Number(value.cursor) < 0 ||
     Number(value.cursor) > value.runs.length ||
     typeof value.complete !== "boolean" ||
