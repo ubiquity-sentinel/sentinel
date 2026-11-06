@@ -3,6 +3,7 @@
  * version tolerance), the pure verdict, and the planner gate that refuses a
  * cached-incapable target before any reservation.
  */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
@@ -160,6 +161,7 @@ async function planOnce(rows: unknown[]) {
   assert.ok(seeded.ok && seeded.value.status === "applied");
   let modelCalls = 0;
   const deps = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     configs: [config],

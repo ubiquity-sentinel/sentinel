@@ -1,4 +1,5 @@
 /** Full raw issue discovery and bounded shared implementation admission. */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
 import { parseMatrixPlanV1 } from "../../src/contracts/matrix.ts";
@@ -168,6 +169,7 @@ Deno.test("issue body admission: real REST scope and mixed matrix retain unsuppo
       sessionBound: { maxDurationMs: 240_000, maxOutputChars: 200_000 },
     });
     const report = await planMatrixWave({
+      ciMinutes: INACTIVE_CI_MINUTES,
       clock: rig.clock,
       state: rig.store,
       configs,

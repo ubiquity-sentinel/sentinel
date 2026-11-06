@@ -2,6 +2,7 @@
  * The two closed parked-preservation classes the disposition pass owns, their
  * native repository surface and one real hosted maintenance run.
  */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 import assert from "node:assert/strict";
 import { deriveReservationId } from "../../src/budget/mod.ts";
@@ -219,6 +220,7 @@ export async function runAt(
 ): Promise<HostedAutonomyResultV1> {
   return runHostedAutonomy(
     await withDarkQueueAuthority({
+      ciMinutes: INACTIVE_CI_MINUTES,
       state: state as unknown as StateReadView & RepairStateWriter,
       githubFor: () => surface(facts),
       clock: { now: () => now },

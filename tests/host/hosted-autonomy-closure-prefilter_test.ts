@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import type { WorkItemId } from "../../src/contracts/brands.ts";
 import type { ReviewReceiptV1 } from "../../src/contracts/review-receipt.ts";
@@ -79,6 +80,7 @@ async function closureRig(
     }));
   };
   const deps: HostedAutonomyDepsV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     state: rig.state,
     githubFor: (repository) =>
       repository.owner === PASSPORT.owner &&

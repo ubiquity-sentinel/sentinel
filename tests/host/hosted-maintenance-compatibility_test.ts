@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import { portOk } from "../../src/contracts/ports.ts";
@@ -295,6 +296,7 @@ Deno.test("maintenance main: installed successor and bootstrap preserve admissio
             throw new Error("unexpected target surface");
           };
           const deps = {
+            ciMinutes: INACTIVE_CI_MINUTES,
             state: f.state,
             clock: { now: () => NOW },
             githubFor,

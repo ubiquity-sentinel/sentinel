@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { canonicalStringifySha256 } from "../../src/contracts/canonical.ts";
 import { baseAndHeadAreMerged } from "../../ops/hosted-autonomy-delivery.ts";
@@ -452,6 +453,7 @@ Deno.test("fixture proof: active delivery consumer requires a pinned exact synth
       });
       const state = new MemoryState();
       const deps = {
+        ciMinutes: INACTIVE_CI_MINUTES,
         state,
         githubFor: () => surface,
         clock: { now: () => T0 },
@@ -517,6 +519,7 @@ Deno.test("fixture proof: dormant compiled floor accepts exact legacy direct; qu
         snapshot: liveSnapshot([facts.record], [facts.receipt]),
         observedHead: SHA1,
         deps: {
+          ciMinutes: INACTIVE_CI_MINUTES,
           state: new MemoryState(),
           githubFor: () => surface,
           clock: { now: () => T0 },

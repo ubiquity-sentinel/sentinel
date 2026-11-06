@@ -8,6 +8,7 @@
  * or written for it, and the full gate runs again for a request the release
  * ref records. Live record, request and receipt shapes.
  */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import {
   DORMANT_HOSTED_SUPERVISOR_POLICY,
   withHostedProductionPolicy,
@@ -144,6 +145,7 @@ async function deferredPasses(
     for (let pass = 0; pass < 3; pass++) {
       const result = await runHostedAutonomy(
         await withHistoricalQueueAuthority({
+          ciMinutes: INACTIVE_CI_MINUTES,
           state: rig.state,
           githubFor: () => surface,
           clock: { now: () => NOW + pass * 300_000 },
@@ -185,6 +187,7 @@ historicalTest(
       const { surface, reads } = countingSurface(github);
       const result = await runHostedAutonomy(
         await withHistoricalQueueAuthority({
+          ciMinutes: INACTIVE_CI_MINUTES,
           state: rig.state,
           githubFor: () => surface,
           clock: { now: () => now + 300_000 },
@@ -225,6 +228,7 @@ historicalTest(
       const pass = async (offset: number) =>
         runHostedAutonomy(
           await withHistoricalQueueAuthority({
+            ciMinutes: INACTIVE_CI_MINUTES,
             state: rig.state,
             githubFor: () => surface,
             clock: { now: () => now + offset },
@@ -328,6 +332,7 @@ Deno.test({
       const before = await sequence(rig.state);
       for (const pass of [0, 1]) {
         const rolled = await runner.runHostedAutonomy({
+          ciMinutes: INACTIVE_CI_MINUTES,
           state: rig.state,
           githubFor: () => surface,
           clock: { now: () => NOW + pass * 300_000 },

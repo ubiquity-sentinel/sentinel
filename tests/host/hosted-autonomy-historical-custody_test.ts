@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { DORMANT_HOSTED_POLICIES } from "./actions-supervisor-fixture.ts";
 import { matrixDigestV1 } from "../../src/contracts/matrix.ts";
@@ -306,6 +307,7 @@ Deno.test("historical release witness: overwritten ordinary proof still quaranti
       }];
     };
     const result = await runHostedAutonomy({
+      ciMinutes: INACTIVE_CI_MINUTES,
       state: f.rig.state,
       githubFor: f.rig.githubFor,
       clock: f.clock,

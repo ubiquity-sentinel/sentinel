@@ -18,6 +18,7 @@
  * implementation charge; a settled charge bound to another task, repository
  * or purpose is refused outright.
  */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 import assert from "node:assert/strict";
 import {
@@ -424,6 +425,7 @@ async function maintain(
 ) {
   return runHostedAutonomy(
     await withDarkQueueAuthority({
+      ciMinutes: INACTIVE_CI_MINUTES,
       state: state as unknown as StateReadView & RepairStateWriter,
       githubFor: () => surface(pullState),
       clock: { now: () => NOW },
@@ -580,6 +582,7 @@ historicalMaintenanceTest(
     );
     const result = await runHostedAutonomy(
       await withDarkQueueAuthority({
+        ciMinutes: INACTIVE_CI_MINUTES,
         state: state as unknown as StateReadView & RepairStateWriter,
         githubFor: () => ({
           ...surface("open"),

@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { DORMANT_HOSTED_POLICIES } from "./actions-supervisor-fixture.ts";
 import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
@@ -329,6 +330,7 @@ Deno.test("historical malformed wave: successor bootstrap overwrites proof and a
     try {
       const aggregate = await runActionsMatrixAggregateCycles(
         {
+          ciMinutes: INACTIVE_CI_MINUTES,
           clock: f.clock,
           state: f.rig.state,
           configs: [config],

@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { createHostedQueueAuthority } from "../../ops/hosted-autonomy-queue-authority.ts";
 import { protectQueueState } from "../../ops/hosted-autonomy-queue-state.ts";
@@ -128,6 +129,7 @@ Deno.test("real queue authority permits queued booking after a direct merge in t
     }) satisfies RepairStateWriter["writeRepair"],
   };
   const deps: HostedAutonomyDepsV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     state: protectQueueState(underlying, custody),
     githubFor,
     clock: rig.clock,
@@ -440,6 +442,7 @@ Deno.test("queue prelude acknowledges an exact published refresh once, preserves
       },
     });
     const deps: HostedAutonomyDepsV1 = {
+      ciMinutes: INACTIVE_CI_MINUTES,
       state,
       clock: rig.clock,
       githubFor: () => native.github,
@@ -543,6 +546,7 @@ Deno.test("queue prelude acknowledges an exact published refresh once, preserves
     });
     const configs = repairConfigs();
     const loopDeps = {
+      ciMinutes: INACTIVE_CI_MINUTES,
       state: rig.store,
       clock: rig.clock,
       github,
