@@ -8,6 +8,10 @@ import { asWorkItemId } from "../../src/contracts/brands.ts";
 import { emitHostedRuntimeCliResult } from "../../src/host/hosted-runtime.ts";
 import {
   createStepLog,
+  MATRIX_SKIP_LINE_KIND,
+  matrixSkipLine,
+  MAX_MATRIX_SKIP_RECORDS,
+  parseMatrixSkipLine,
   parseStepLine,
   STEP_LINE_KIND,
   STEP_LINE_OUTCOMES,
@@ -96,6 +100,23 @@ Deno.test("step line: one cycle prints at most its bound, and junk is never prin
   ]);
 });
 
+Deno.test("step line: a matrix-skip summary above the step-line bound round-trips", () => {
+  // The summary reports a state larger than the per-step line bound (1000):
+  // the producer and the parser share one record-count bound, so the large
+  // state's one summary is never silently dropped.
+  const parsed = JSON.parse(matrixSkipLine(1_234)!);
+  assert.equal(parsed.records, 1_234);
+  assert.deepEqual(parseMatrixSkipLine(parsed), parsed);
+  assert.equal(matrixSkipLine(MAX_MATRIX_SKIP_RECORDS + 1), null);
+  assert.equal(
+    parseMatrixSkipLine({
+      ...parsed,
+      records: MAX_MATRIX_SKIP_RECORDS + 1,
+    }),
+    null,
+  );
+});
+
 Deno.test("step line: the launcher re-emits valid child step lines before the terminal", async () => {
   const rig = await makeRig();
   try {
@@ -116,15 +137,22 @@ Deno.test("step line: the launcher re-emits valid child step lines before the te
         step({ extra: true }),
         step({ recordId: "x".repeat(300) }),
         step({ step: "review", outcome: "progress", elapsedMs: 3400 }),
+        matrixSkipLine(250)!,
         childLine(rig.execution),
       ].join("\n") + "\n",
     );
     const result = await launch(rig);
     assert.equal(result.status, "healthy", JSON.stringify(result));
-    assert.deepEqual(result.stepLines?.map((line) => line.outcome), [
-      "deferred",
-      "progress",
-    ]);
+    assert.deepEqual(
+      result.stepLines?.map((line) =>
+        line.kind === STEP_LINE_KIND ? line.outcome : line.kind
+      ),
+      [
+        "deferred",
+        "progress",
+        MATRIX_SKIP_LINE_KIND,
+      ],
+    );
     const lines: string[] = [];
     const original = console.log;
     console.log = (...args: unknown[]) =>
@@ -135,9 +163,18 @@ Deno.test("step line: the launcher re-emits valid child step lines before the te
       console.log = original;
     }
     const kinds = lines.map((line) => JSON.parse(line).kind);
-    assert.deepEqual(kinds.slice(0, 2), [STEP_LINE_KIND, STEP_LINE_KIND]);
+    assert.deepEqual(kinds.slice(0, 3), [
+      STEP_LINE_KIND,
+      STEP_LINE_KIND,
+      MATRIX_SKIP_LINE_KIND,
+    ]);
+    assert.equal(
+      JSON.parse(lines[2]).records,
+      250,
+      "the matrix skip summary is re-emitted with its count",
+    );
     assert.ok(
-      kinds.indexOf("hosted_runtime_terminal") > 1,
+      kinds.indexOf("hosted_runtime_terminal") > 2,
       "the terminal follows the advisory step lines",
     );
   } finally {

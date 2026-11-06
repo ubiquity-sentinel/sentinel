@@ -374,6 +374,16 @@ export class FollowFake {
       throw new Error(`unexpected fake mutation ${path}`);
     }
     if (path === "") return response(repository);
+    if (
+      path === "/git/matching-refs/heads/sentinel-state/maintenance-index"
+    ) {
+      return response(
+        this.matrixIndex === null ? [] : [{
+          ref: "refs/heads/sentinel-state/maintenance-index",
+          object: { type: "commit", sha: INDEX_COMMIT },
+        }],
+      );
+    }
     if (path.startsWith("/git/ref/")) {
       const name = path.slice("/git/ref/".length);
       const value = name === "heads/development"

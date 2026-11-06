@@ -7,6 +7,8 @@
  * previous deferral and VPS acceptance remain.
  */
 import assert from "node:assert/strict";
+import { portError } from "../../src/contracts/ports.ts";
+import { RELEASE_POLL_MS } from "../../src/repair/loop-bounds.ts";
 import { makeRig, seededSnapshot } from "./loop-rig.ts";
 import { gatewayLoopDelivery } from "./vps-delivery-fixtures.ts";
 import { releaseWithoutVps } from "./release-deferred-fixtures.ts";
@@ -217,3 +219,58 @@ Deno.test("release path enabled + already-deferred record + merged PR: stays def
     await rig.ctx.cleanup();
   }
 });
+
+for (const deferred of [false, true]) {
+  for (const denial of ["unavailable", "throw", "rate_limited"] as const) {
+    Deno.test(`release path disabled + ${deferred ? "deferred" : "ready"} record: cooldown ${denial}`, async () => {
+      const { rig, record, request } = await seededRig(
+        `merge-accepted-cooldown-${deferred}-${denial}`,
+        releaseWithoutVps(T0),
+        deferred ? deferredShape : undefined,
+      );
+      try {
+        const beforeRequest = rig.githubCooldown.beforeRequest.bind(
+          rig.githubCooldown,
+        );
+        let checks = 0;
+        rig.githubCooldown.beforeRequest = (installationId) => {
+          // Allow issue intake; fail the guard before the merge-acceptance read.
+          if (++checks === 1) return beforeRequest(installationId);
+          if (denial === "throw") throw new Error("cooldown state unavailable");
+          return Promise.resolve(
+            portError(denial, "cooldown state unavailable"),
+          );
+        };
+        const outcome = await rig.entry();
+        const after = await rig.snapshot();
+        assert.equal(checks, 2);
+        assert.equal(rig.github.calls.includes(`readPr:${PR}`), false);
+        assert.deepEqual(after.releaseRequests, [request]);
+        assert.deepEqual(after.reservations, []);
+        if (denial === "rate_limited") {
+          assert.equal(outcome.status, "idle");
+          assert.equal(after.work[0].nextStep, "delivery");
+          assert.deepEqual(after.work[0].wait, {
+            reason: "unavailable",
+            since: T0,
+            until: T0 + RELEASE_POLL_MS,
+          });
+          rig.githubCooldown.beforeRequest = beforeRequest;
+          rig.clock.advance(RELEASE_POLL_MS);
+          await rig.entry();
+          assert.equal((await rig.snapshot()).work[0].nextStep, "done");
+        } else {
+          assert.deepEqual(outcome, {
+            status: "state_error",
+            detail: denial === "throw"
+              ? "github cooldown gate unavailable"
+              : "github cooldown gate denied",
+          });
+          assert.deepEqual(after.work[0], record);
+        }
+      } finally {
+        await rig.ctx.cleanup();
+      }
+    });
+  }
+}

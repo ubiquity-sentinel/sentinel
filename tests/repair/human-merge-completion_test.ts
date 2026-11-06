@@ -20,6 +20,11 @@ import {
 } from "../../src/repair/human-merge.ts";
 import { candidateBranch } from "../../src/repair/keys.ts";
 import { MERGED_OFF_TIP_PREFIX } from "../../src/repair/merge-off-tip.ts";
+import {
+  httpRespond,
+  makePort as makeGitHubPort,
+  pullWire,
+} from "../github/helpers.ts";
 import { reservation, SHA1, SHA2, SHA3, T0 } from "../state/helpers.ts";
 import { exactOpenPr, preservedIssueWork } from "./loop-candidate-fixtures.ts";
 import { completedReceipt, deliveryRecord } from "./loop-review-fixtures.ts";
@@ -78,7 +83,27 @@ function closedIssueRig(name: string, merged: GitHubPullRequestV1) {
 
 Deno.test("human merge: a closed source issue completes delivery with provenance and a release request", async () => {
   const merged = mergedPr();
-  const rig = await closedIssueRig("human-merge-completion", merged);
+  const { port } = makeGitHubPort({
+    script: [
+      httpRespond(
+        "GET",
+        "/repos/ubiquity-sentinel/sentinel/pulls/7",
+        200,
+        pullWire({
+          number: merged.number,
+          state: "closed",
+          head: { ref: merged.headRef, sha: merged.head },
+          base: { ref: merged.baseRef, sha: merged.base },
+          merged_at: "2026-09-07T02:00:00Z",
+          merge_commit_sha: merged.mergeSha,
+          merged_by: { login: HUMAN_MERGE_ACTOR },
+        }),
+      ),
+    ],
+  });
+  const observed = await port.readPullRequest(merged.number);
+  assert.ok(observed.ok && observed.value !== null);
+  const rig = await closedIssueRig("human-merge-completion", observed.value);
   try {
     const record = humanMergeRecord();
     const charge = reservation("human-merge-review-charge", {
@@ -532,6 +557,70 @@ Deno.test("human merge: a merged head that moved past the reviewed head complete
       0,
       "the completed human merge is never merged again",
     );
+  } finally {
+    await rig.ctx.cleanup();
+  }
+});
+
+Deno.test("human merge: merge intent recovery completes a moved head without binding its prior review", async () => {
+  const merged = mergedPr(MERGED_HEAD);
+  const rig = await closedIssueRig("human-merge-intent-head-moved", merged);
+  Object.defineProperty(rig.github, "readCommitParents", {
+    value: () => Promise.resolve(portOk([SHA2, MERGED_HEAD])),
+  });
+  try {
+    const record = humanMergeRecord();
+    const receipt = localReceipt();
+    const recovering = {
+      ...record,
+      nextStep: "delivery" as const,
+      intent: {
+        kind: "merge" as const,
+        key: `merge:7:${SHA3}`,
+        startedAt: T0,
+        branch: record.target.branch,
+        expectedHead: SHA3,
+        observedBase: SHA1,
+        pr: 7,
+        requestId: receipt.requestId,
+        resultId: receipt.id,
+      },
+    };
+    const written = await rig.store.writeRepair(
+      seededSnapshot([recovering], { reviews: [receipt] }),
+      null,
+    );
+    assert.ok(written.ok && written.value.status === "applied");
+
+    const outcome = await rig.run();
+    assert.equal(outcome.status, "idle", JSON.stringify(outcome));
+    const state = await rig.snapshot();
+    const work = state.work[0]!;
+    assert.equal(work.nextStep, "done");
+    assert.equal(work.blocker, null);
+    assert.equal(work.intent, null);
+    assert.deepEqual(
+      work.target,
+      record.target,
+      "the reviewed identity is retained",
+    );
+    assert.deepEqual(work.evidence, [
+      humanMergeProvenanceRef(7, MERGED_HEAD, SHA2, HUMAN_MERGE_ACTOR),
+    ]);
+    assert.equal(state.releaseRequests.length, 1);
+    assert.equal(state.releaseRequests[0]!.revision, SHA2);
+    assert.equal(state.releaseRequests[0]!.source.reviewReceiptId, null);
+    assert.equal(rig.model.requests.length, 0);
+    assert.equal(rig.github.calls.filter((call) => call === "merge").length, 0);
+
+    await rig.run();
+    const restarted = await rig.snapshot();
+    assert.deepEqual(
+      restarted.work[0],
+      work,
+      "recovery is durable across restart",
+    );
+    assert.deepEqual(restarted.releaseRequests, state.releaseRequests);
   } finally {
     await rig.ctx.cleanup();
   }

@@ -2,9 +2,9 @@
  * Owner rule 2026-10-30: a human merge completes a record. The runtime's
  * retired head park ("observed merged head identity mismatch") and its
  * moved-base park ("the merge landed off its reviewed base: ...") are
- * re-admitted to `review` when the record's own branch carries exactly one
- * merged pull on the repository's base branch; the record keeps its reviewed
- * head, base, counters, reservations and evidence. A park the runtime's own
+ * re-admitted to `review` when the record's own branch identifies its retained
+ * merged pull (or exactly one pull) on the repository's base branch; it keeps
+ * its reviewed head, base, counters, reservations and evidence. A park the runtime's own
  * trusted merge wrote stays refused.
  */
 import assert from "node:assert/strict";
@@ -15,6 +15,7 @@ import {
   decideHumanMergeHeadReadmission,
   type HumanMergeCandidateV1,
   planHumanMergeHeadReadmissions,
+  verifyHumanMergeHeadReadmissions,
 } from "../../ops/hosted-autonomy-human-merge-readmission.ts";
 import type { HostedAutonomyHeadPullV1 } from "../../ops/hosted-autonomy-types.ts";
 import { HUMAN_MERGE_HEAD_MISMATCH_BLOCKER } from "../../src/repair/human-merge.ts";
@@ -25,10 +26,11 @@ import {
   blockedRecord,
   deliveryRecord,
   HEAD,
+  pullFacts,
   SELF_REPO,
   TARGET,
 } from "./hosted-autonomy-fixtures.ts";
-import { repairSnapshot } from "./hosted-autonomy-rig.ts";
+import { makeRig, repairSnapshot, run } from "./hosted-autonomy-rig.ts";
 
 const BRANCH = "sentinel/repair/issue-ubiquity-sentinel-48";
 const OFF_BASE_BLOCKER = `${MERGED_OFF_TIP_PREFIX}merge ` +
@@ -196,6 +198,104 @@ Deno.test("human merge readmission: the merged pull on the base branch is restor
   if (decision.kind !== "readmit") return;
   assert.equal(decision.readmission.pullRequest, 51);
   assert.equal(decision.readmission.detail, "human_merge_head_moved");
+});
+
+Deno.test("human merge readmission: a retained PR disambiguates an earlier closed PR", () => {
+  const earlier = mergedPull({ number: 50, merged: false });
+  for (
+    const parkedBy of [
+      "head_mismatch",
+      "merge_off_base",
+      "review_backoff",
+    ] as const
+  ) {
+    const retained = { ...candidate, pullRequest: 51, parkedBy };
+    for (const pulls of [[earlier, mergedPull()], [mergedPull(), earlier]]) {
+      const decision = decideHumanMergeHeadReadmission(
+        retained,
+        pulls,
+        "development",
+        "0x4007",
+      );
+      assert.equal(decision.kind, "readmit", JSON.stringify(decision));
+      if (decision.kind === "readmit") {
+        assert.equal(decision.readmission.pullRequest, 51);
+      }
+    }
+    const missing = decideHumanMergeHeadReadmission(
+      retained,
+      [earlier, mergedPull({ number: 52 })],
+      "development",
+      "0x4007",
+    );
+    assert.equal(
+      missing.kind,
+      "refused",
+      "another PR cannot replace the retained PR",
+    );
+  }
+  assert.equal(
+    decideHumanMergeHeadReadmission(
+      candidate,
+      [earlier, mergedPull()],
+      "development",
+    ).kind,
+    "refused",
+    "without a retained identity the listing remains ambiguous",
+  );
+});
+
+Deno.test("human merge readmission: verification reads the retained PR merger among closed PRs", async () => {
+  const snapshot = repairSnapshot([parkedOffBase()], [], [], [charge()]);
+  const { rig, github } = await makeRig("human-merge-retained-pr", {
+    repair: snapshot,
+  });
+  const reads: number[] = [];
+  github.listPullsByHeadRef = () =>
+    Promise.resolve([
+      mergedPull({ number: 50, merged: false }),
+      mergedPull(),
+    ]);
+  github.readPull = (number) => {
+    reads.push(number);
+    return Promise.resolve(pullFacts({ number, mergedBy: "0x4007" }));
+  };
+  try {
+    for (const parkedBy of ["merge_off_base", "review_backoff"] as const) {
+      const actions: string[] = [];
+      const verified = await verifyHumanMergeHeadReadmissions(
+        [{ ...offBaseCandidate, parkedBy }],
+        () =>
+          Promise.resolve({
+            repository: SELF_REPO,
+            key: "ubiquity-sentinel/sentinel",
+            surface: github,
+            baseBranch: "development",
+          }),
+        actions,
+      );
+      assert.deepEqual(actions, []);
+      assert.equal(verified.length, 1);
+      assert.equal(verified[0]!.pullRequest, 51);
+    }
+    assert.deepEqual(
+      reads,
+      [51, 51],
+      "the old closed PR is never used for merger evidence",
+    );
+    const result = await run(rig, github);
+    assert.equal(result.status, "applied", JSON.stringify(result));
+    assert.equal(result.reason, "retried");
+    const readback = await rig.state.readRepair();
+    assert.ok(readback.ok && readback.value.status === "found");
+    const applied = readback.value.snapshot;
+    assert.equal(applied.work[0]!.nextStep, "review");
+    assert.equal(applied.work[0]!.blocker, null);
+    assert.deepEqual(applied.work[0]!.target, snapshot.work[0]!.target);
+    assert.deepEqual(applied.reservations, snapshot.reservations);
+  } finally {
+    await Deno.remove(rig.tmp, { recursive: true });
+  }
 });
 
 Deno.test("human merge readmission: a moved-base park readmits only a human merge", () => {

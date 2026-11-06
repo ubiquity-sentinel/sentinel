@@ -20,7 +20,12 @@ const ROOT = decodeURIComponent(HERE.pathname).replace(
   "",
 );
 
-const LAUNCHER_JOBS = ["matrix_plan", "matrix_cell", "repair"] as const;
+const LAUNCHER_JOBS = [
+  "matrix_plan",
+  "matrix_cell",
+  "repair_cell",
+  "repair",
+] as const;
 /**
  * Job-scoped launcher inputs: each is read only for the one job whose step
  * grants it (the planner's output file; planner/repair App mint evidence).
@@ -105,10 +110,11 @@ Deno.test("hosted launcher: every host key the child builder reads is a launcher
       assert.ok(allowed.has(key), `${job}: the launcher must read ${key}`);
     }
     // Only the trusted repair/planner children receive a derived App window.
-    assert.equal(consulted.has(MINT_BOUND), job !== "matrix_cell", job);
+    const cell = job === "matrix_cell" || job === "repair_cell";
+    assert.equal(consulted.has(MINT_BOUND), !cell, job);
     assert.equal(
       Object.hasOwn(child, "SENTINEL_SUPERVISOR_TOKEN_NOT_AFTER"),
-      job !== "matrix_cell",
+      !cell,
       job,
     );
   }

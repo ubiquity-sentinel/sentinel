@@ -389,6 +389,34 @@ claimed to be the snapshot's own content commit hash. Enabling strict
 expected-head CAS. Duplicate work/reservation/release (and incident/evidence/
 review/replay/request) ids are rejected instead of collapsing to last-wins maps.
 
+### AttemptMemoryRecordV1 input fingerprints (`inputs`, optional)
+
+`AttemptMemoryRecordV1.inputs` (`src/contracts/attempt-input.ts`) records the
+input fingerprint of each implementation attempt that proved what its inputs
+produce (a completed session judged without progress, `JUDGED_ATTEMPT_DETAILS`:
+no change or only generated/cache artifacts, or an accepted candidate that
+reproduced its starting head; never an incomplete, lost or transient run),
+written by the trusted settlement/success mutations in the same state commit.
+Absent is the exact legacy shape, never injected, and matches nothing. Digest
+domains are distinct and never compared with each other or with the
+family/failure fingerprints (`sentinel.memory.attempt-family.v1`,
+`sentinel.memory.attempt-fingerprint.v1`):
+
+| Field            | Domain                                | Canonical payload                                                              |
+| ---------------- | ------------------------------------- | ------------------------------------------------------------------------------ |
+| `patchDigest`    | `sentinel.memory.attempt-patch.v1`    | `{base, head}` of the candidate the attempt continues (`head: null` when none) |
+| `findingsDigest` | `sentinel.memory.attempt-findings.v1` | sorted `{severity, path, message}` of the latest persisted review findings     |
+| `fingerprint`    | `sentinel.memory.attempt-input.v1`    | `{taskId, purpose, controllerSha, baseTip, patchDigest, findingsDigest}`       |
+
+Each is SHA-256 over the canonical serialization. Admission
+(`prepareImplementationStart`) refuses an attempt whose input fingerprint equals
+a recorded row before any reservation: the record is blocked with
+`identical_attempt_refused: prior attempt <reservation id> ...` and the row's
+`refusals`/`lastRefusedAtMs` grow; the prior charge is never refunded or
+rewritten. A changed base tip, candidate head, findings set or runtime revision
+is a distinct attempt; its prompt carries the newest refusal as a prior-attempt
+fact whose detail starts `identical attempt refused:`.
+
 ### ReleaseStateSnapshotV1 (`kind: "release_state_snapshot"`)
 
 The single JSON document on `sentinel-state/release`:
@@ -443,6 +471,113 @@ members onto one exact tip `T` as one octopus commit `C` with parents
   (`selectActiveTrainV1`), `train-bisect.ts` and `train-proof.ts`
   (`verifyTrainLandingV1`). No launcher or runtime path calls them yet;
   `deliveryTrainModeV1` and the launcher phases (WP3.3, WP3.4) are separate.
+
+### ThroughputMetricsRecordV1 (`kind: "throughput_metrics"`)
+
+`src/contracts/throughput-metrics.ts` (#338). This is an advisory record with
+one entry per hosted supervisor cycle. It grants no health, admission,
+accounting or merge authority.
+
+- Shape:
+  `{ version: "v1", kind: "throughput_metrics", cycle: { runId, attempt },
+  startedAtMs, finishedAtMs, phaseMs, counts, plannerRefusal }`.
+  `phaseMs` has exactly `maintenance`, `prepare`, `matrixPlan`,
+  `matrixCellTotal`, `repair`, `finalize` and `bootstrap`. `counts` has exactly
+  `recordsRead`, `recordsStepped`, `recordsSkipped`, `cellsPlanned`,
+  `readyRecordsNotPlanned`, `modelStarts`, `reviewsRequested`, `refreshCommits`,
+  `targetCiRunsTriggered`, `trainsBuilt`, `mergesCompleted`, `ownerNoticesSent`
+  and `releaseRequestsMovedToCold`. Each of these values is a nonnegative safe
+  integer or `null`. `null` means the writer did not observe the value; it never
+  means zero. `plannerRefusal` is `null` or one of `deadline_margin`,
+  `no_ready_records`, `reservation_denied`, `provider_unavailable` or
+  `target_unavailable`. #335 supplies these values.
+- Additive `waitCauses` (#335): absent on records written before it existed,
+  `null` when finalize did not read the repair state, otherwise a histogram of
+  the records waiting in `backoff`/`unavailable` at the cycle's end. Keys are
+  `port:status:code` from the record's `wait.cause`, or `legacy:none:<reason>`
+  for a wait written without one. It has at most six keys; further keys fold
+  into `other:none:other`. The daily rollup sums it per key under the same bound
+  (absent until a folded record carried it).
+- Planner refusal (#335): `planMatrixWave` classifies each pass
+  (`src/host/matrix-plan-refusal.ts`) and reports a `refusal` with a `reason`
+  and a `readyUnplanned` count. `readyUnplanned` counts the ready records of the
+  last state read that got no cell, or is `null` when the pass stopped before
+  any read. The planner child adds optional `plannerRefusal`/`readyUnplanned`
+  keys to its `sentinel_matrix_plan_diagnostic` line, now printed on every
+  planner pass. The launcher re-parses and re-emits them. Finalize reads them
+  from the `matrix_plan` job log and sets `plannerRefusal` and
+  `counts.readyRecordsNotPlanned`.
+- Wait cause (#335, `src/contracts/work-wait-cause.ts`): `WorkWaitV1` has an
+  optional `cause: { port, status, code }`. `port` is one of `github`, `model`,
+  `budget`, `queue`, `state`, `ci` or `runtime`. `status` is one of `none`,
+  `4xx`, `429`, `5xx`, `network` or `unknown`. `code` is a short closed code
+  that matches `[a-z0-9_]{1,16}`. The trusted step loop writes it on its queue
+  holds, issue prerequisite and base-read waits and admission-unavailable waits.
+  It never stores bodies, URLs or raw text. The work-record parser accepts waits
+  with or without it. A wait without a cause serializes exactly as it did
+  before. Writes are gated by `recordWaitCauses`, which the hosted hosts set
+  from `HOSTED_RECORD_WAIT_CAUSES` (on) under the installed rollback-target
+  rule. A new revision installs with a model-disabled bootstrap that writes no
+  record (#336), and automatic rollback happens only when that bootstrap fails.
+  A runtime that cannot parse `cause` therefore never reads a state this
+  revision wrote.
+- `parseThroughputMetricsRecordV1` rejects unknown and missing keys at every
+  level. It checks that `finishedAtMs >= startedAtMs` and that the canonical
+  form is at most 2,048 bytes. The bound was raised from 1,024 because a
+  realistic full record measured 1,011 bytes; a record using every key at the
+  largest safe integer fits, at about 1,350 bytes. The daily rollup keeps its
+  own 4,096-byte bound. Before any structural check it scans the whole input,
+  unknown keys included, and refuses any key or string longer than 32 characters
+  or shaped like a URL. A record therefore cannot carry credentials, URLs,
+  bodies or raw diagnostics. `parseThroughputMetricsLineV1` checks the byte
+  bound before it parses JSON, and it requires the canonical spelling.
+- `MetricsCollectorV1` (`createMetricsCollectorV1`, in
+  `throughput-metrics-collector.ts`) is the accumulator that phases fill. It
+  provides `addPhaseMs`, `addCount`, `setPlannerRefusal`, `addWaitCause` and
+  `snapshot`. The first `add*` call on a field replaces its `null`, and later
+  calls add to the value. Invalid input throws.
+- Storage: the record is kept on the sidecar ref
+  `refs/heads/sentinel-state/metrics` (`src/state/throughput-metrics-*.ts`),
+  never in the repair or release snapshot. No step loop, planner or maintenance
+  walk reads that ref. The ref holds at most 2,000 hot records in
+  `throughput/<UTC date>.jsonl`, one canonical line each, ordered by
+  `(finishedAtMs, runId, attempt)`. When an append goes past that bound, the
+  oldest records are folded into the daily rollup `throughput/daily.jsonl`
+  (`ThroughputDailySummaryV1`, `kind: "throughput_metrics_daily"`). For each
+  field the rollup keeps `{ sum, known }` and a count of each refusal reason.
+  The rollup keeps at most 400 days; Git history keeps everything older. Every
+  write is one commit on the exact expected head, pushed without force. A moved
+  ref is a conflict, and the writer re-reads and retries up to three times. A
+  cycle that is already present counts as a `duplicate` and is not written
+  again.
+- Writer: only the finalize job writes this record
+  (`src/host/throughput-metrics-finalize.ts`, called from
+  `runHostedSupervisorHost`). It builds the record from facts it already has:
+  the run attempt's completed job list with its jobs-API windows, and the
+  aggregated run summary. A bootstrap execution's repair-slot time is recorded
+  as `bootstrap`. Fields that finalize cannot observe stay `null`. The write is
+  limited to 60 seconds, never throws and never changes the finalize outcome.
+- Additive counters `recordsDemoted`, `recordsPromoted` and
+  `releaseRequestsSuperseded` (#324): present only when observed, never `null`.
+  A cycle that observed none of them keeps the older shape byte for byte, and
+  older stored lines and rollups still parse. The rollup carries each one's
+  `{ sum, known }` once a folded record had it.
+- Record counts: the maintenance repair-tier step pushes one closed
+  `tier-summary:read=N:demoted=N:promoted=N:moved_cold=N|-:superseded=N|-`
+  action. The step writes it as
+  `tierCounts=<read>,<demoted>,<promoted>,
+  <movedCold>,<superseded>` (`-` when
+  the release path was not observed) or `none`
+  (`src/host/tier-counts-output.ts`). The workflow passes it to finalize as
+  `SENTINEL_TIER_COUNTS`. Finalize also reads the launcher-re-emitted
+  `sentinel_repair_pass` lines (#326) from the `repair` job log. It sums
+  `recordsStepped` and `recordsSkipped` over the passes. When both the tier step
+  and the repair pass report `recordsRead`, the record carries the **maximum**:
+  both read the same hot records, so they are never summed. Within the repair
+  job the largest pass read is used.
+- Bootstrap duration: when the run is a bootstrap, finalize prefers the launcher
+  summary's `bootstrapDurationMs` (#336). It falls back to the `repair` job
+  window only when that value is absent.
 
 ## 5. Ports and result semantics
 

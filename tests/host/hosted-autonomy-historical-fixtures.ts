@@ -677,7 +677,7 @@ export async function historicalMalformedRig(
   }
   const checkoutHead = await gitRun(checkout, ["rev-parse", "HEAD"], ENV);
   assert(checkoutHead.ok);
-  const mainEnv = {
+  const mainEnv: Record<string, string> = {
     GITHUB_REPOSITORY: "ubiquity-sentinel/sentinel",
     GITHUB_REF: "refs/heads/sentinel-supervisor",
     GITHUB_JOB: "maintenance",
@@ -691,6 +691,7 @@ export async function historicalMalformedRig(
   };
   return {
     rig,
+    mainEnv,
     github,
     clock,
     records,

@@ -145,7 +145,7 @@ export async function runHostedRuntimeMain(): Promise<
  * own `--allow-env` grant lacks (that read would refuse the whole launch).
  */
 export function readJobScopedLauncherEnv(
-  job: "repair" | "matrix_plan" | "matrix_cell",
+  job: "repair" | "matrix_plan" | "matrix_cell" | "repair_cell",
   read: (name: string) => string | undefined,
 ): Record<string, string | undefined> {
   if (job === "repair" || job === "matrix_plan") {

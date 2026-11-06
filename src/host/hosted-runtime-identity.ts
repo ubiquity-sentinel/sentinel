@@ -25,7 +25,7 @@ import type {
 import { joinPath } from "./local.ts";
 import type { LocalModelDiagnosticV1 } from "./local.ts";
 import type { ModelBoundaryErrorCodeV1 } from "../repair/model-port-diagnostics.ts";
-import type { StepLineV1 } from "../repair/step-line.ts";
+import type { AdvisoryLogLineV1 } from "../repair/step-line.ts";
 import type { HostedMatrixPlanDiagnosticV1 } from "./matrix-plan-diagnostic.ts";
 
 /** Exact fixed workflow ref the protected supervisor runs from. */
@@ -155,7 +155,8 @@ export type HostedRuntimeJobV1 =
   | "repair"
   | "finalize"
   | "matrix_plan"
-  | "matrix_cell";
+  | "matrix_cell"
+  | "repair_cell";
 
 /** Core run identity plus the exact protected job this process runs in. */
 export interface HostedRuntimeIdentityV1 {
@@ -473,10 +474,11 @@ export interface HostedRuntimeLauncherResultV1 {
    */
   matrixPlanDiagnostic?: HostedMatrixPlanDiagnosticV1;
   /**
-   * Advisory-only re-parsed `sentinel_step` lines of a settled repair child,
-   * bounded; they never attest health, terminal, settlement or delivery.
+   * Advisory-only re-parsed `sentinel_step` and matrix-skip summary lines of a
+   * settled repair child, bounded; they never attest health, terminal,
+   * settlement or delivery.
    */
-  stepLines?: StepLineV1[];
+  stepLines?: AdvisoryLogLineV1[];
   /**
    * Diagnostic-only receipt for a rejected matrix launcher result. Present
    * only when status is "unavailable" from resolveMatrixLauncherResult; it

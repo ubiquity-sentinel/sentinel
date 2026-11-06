@@ -22,6 +22,11 @@ import {
   conflictResolutionAdmissible,
   conflictResolutionRouteOpen,
 } from "./conflict-resolution.ts";
+import {
+  lostConflictCellBinding,
+  lostConflictCellExpired,
+  settleLostConflictCell,
+} from "./conflict-lost-cell.ts";
 import { correctFailedHeadBeforeRefresh } from "./loop-ci-correction.ts";
 import { executeConflictResolutionStep } from "./loop-conflict-resolution.ts";
 import { retryAlreadySatisfiedClosure, retryClosure } from "./loop-closure.ts";
@@ -36,7 +41,9 @@ import {
   existingHeadContinuationShape,
   unpublishedLocalCandidateShape,
 } from "./loop-eligibility.ts";
+import { recoverClosedExistingHead } from "./loop-existing-head-continuation.ts";
 import { executeMerge, reconcileMergeIntent } from "./loop-merge.ts";
+import { ownerLandingDelivery } from "./loop-owner-landing.ts";
 import { executeCandidatePreservation } from "./loop-preservation.ts";
 import { executePublishStep } from "./loop-publication.ts";
 import { configFor, releaseRequestMatchesDelivery } from "./loop-records.ts";
@@ -129,10 +136,22 @@ export async function executeWorkStep(
   // A saved implementation intent is never resubmitted; fail closed.
   if (record.intent !== null && record.intent.kind === "implementation") {
     if (deps.externalImplementations === true) {
+      // A conflict-resolution admission past its cell's evidence expiry can
+      // never be consumed: settle the lost cell instead of deferring forever.
+      if (
+        lostConflictCellExpired(record, deps.clock.now()) &&
+        lostConflictCellBinding(context.snapshot, record) !== null
+      ) return settleLostConflictCell(deps, context, record, "expired");
       return MATRIX_ARTIFACT_DEFERRED;
     }
     return handleImplementationUncertainty(deps, context, record);
   }
+
+  // A closed own PR cannot continue or produce a verdict. Reuse its exact
+  // live published branch (or restart if deleted) before the preserved-null
+  // refusal; this also reconciles a replacement PR's durable create intent.
+  const replacement = await recoverClosedExistingHead(deps, context, record);
+  if (replacement !== null) return replacement;
 
   // A new-format record without a preserved descriptor (and without the
   // pending preservation intent handled above) must stop safely: it is never
@@ -265,6 +284,7 @@ export async function executeWorkStep(
   if (
     record.target.head === null ||
     localOnlyCandidate ||
+    (existingHeadContinuationShape(record) && isCiFixMarker(record.wait)) ||
     headNeedsCorrection(
       context.snapshot,
       record,
@@ -406,6 +426,11 @@ export async function executeDeliveryStep(
     // An existing release request is delivery bookkeeping: a base movement
     // never replaces or duplicates it.
     return observeReleaseAcceptance(deps, context, record, existingRequest);
+  }
+  // An owner-landing record is never merged or refreshed by Sentinel: its
+  // owner merges it (or updates its branch), and that merge completes it.
+  if (record.ownerLanding !== undefined) {
+    return ownerLandingDelivery(deps, context, record);
   }
   const refresh = await refreshMovedBaseBeforeMerge(deps, context, record);
   if (refresh !== null) return refresh;

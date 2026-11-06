@@ -314,7 +314,8 @@ for (const held of [false, true]) {
           });
         },
       });
-      assert.equal(cycles, held ? 0 : 1);
+      // #336: a bootstrap never runs target cycles, held or not.
+      assert.equal(cycles, 0);
       assert.equal(writes, 0);
       assert.equal(nativeMutations, 0);
       assert.equal(result.startupReady, true);

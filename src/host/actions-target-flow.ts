@@ -19,6 +19,11 @@ export function createActionsTargetFlow(
   cycleOptions: Pick<RepairCycleOptionsV1, "matrixIntakeOwnsBranches"> = {},
 ) {
   const origin = input.runOrigin ?? input.clock.now();
+  // A model-disabled bootstrap execution still prepares every target (the
+  // bootstrap contract's source intake) and dispatches pre-merge CI; only the
+  // work-record walk is skipped (issue #297).
+  const bootstrap = input.bootstrap === true ||
+    input.host?.execution.purpose === "bootstrap";
   const addressed: string[] = [];
   const skipped: string[] = [];
   const failed: string[] = [];
@@ -138,6 +143,7 @@ export function createActionsTargetFlow(
             model: input.model,
             budget: input.budget,
             externalImplementations: input.externalImplementations,
+            recordWaitCauses: input.recordWaitCauses,
             legacyReviewCutoff: input.legacyReviewCutoff ?? null,
           };
           const options = {
@@ -145,7 +151,14 @@ export function createActionsTargetFlow(
             deadline: input.deadline,
             stepLimit: input.stepLimit,
             modelStartsEnabled: input.modelStartsEnabled,
+            // A model-disabled bootstrap execution performs intake, maintenance
+            // and health only: it never walks the work queue (issue #297).
+            bootstrap,
             runStartedAt: origin,
+            // #328: the records this run's repository cells step.
+            ...(input.excludeRecords === undefined
+              ? {}
+              : { excludeRecords: input.excludeRecords }),
           };
           if (input.runCycle !== undefined) {
             // The existing deterministic test seam; never used by production.

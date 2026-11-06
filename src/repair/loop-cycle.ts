@@ -7,6 +7,7 @@ import { createRunBounds, DEFAULT_STEP_LIMIT } from "./loop-bounds.ts";
 import { resumeBaseSatisfaction } from "./loop-base-satisfaction.ts";
 import {
   declaredOperationFits,
+  matrixAdmissionOnlyIds,
   matrixOwnsFreshImplementation,
 } from "./loop-eligibility.ts";
 import { pollIntake } from "./loop-intake.ts";
@@ -38,7 +39,8 @@ import type {
 } from "./loop-types.ts";
 import { executeStep } from "./loop-work.ts";
 import { rankEligibleWork, rankReviewDrain } from "./selection.ts";
-import { createStepLog } from "./step-line.ts";
+import { createStepLog, matrixSkipLine } from "./step-line.ts";
+import { StepInputGate } from "./loop-input-gate.ts";
 import { setWait } from "./transitions.ts";
 
 /** Scheduling boundary, never a persisted work status. */
@@ -63,19 +65,54 @@ export async function runRepairCycle(
   }
 }
 
-/** Original bounds and invocation-local sets survive each scheduling yield. */
+type RepairCycleGeneratorV1 = AsyncGenerator<
+  RepairCycleAdvanceV1,
+  RepairCycleOutcomeV1,
+  readonly string[] | undefined
+>;
+
+/**
+ * Original bounds and invocation-local sets survive each scheduling yield.
+ * The pass prints one advisory `sentinel_repair_pass` summary when it ends
+ * (issue #326), on every return path including the caller's `return()`.
+ */
 export async function* advanceRepairCycle(
   deps: RepairCycleDepsV1,
   options: RepairCycleOptionsV1,
   registerPostDrain?: (continuation: PostDrainReviewContinuationV1) => void,
-): AsyncGenerator<
-  RepairCycleAdvanceV1,
-  RepairCycleOutcomeV1,
-  readonly string[] | undefined
-> {
+): RepairCycleGeneratorV1 {
   const bounds = createRunBounds(deps, options);
+  const gate = new StepInputGate(deps, bounds, {
+    modelStartsEnabled: options.modelStartsEnabled ?? null,
+  });
+  try {
+    return yield* advanceSerialPass(
+      deps,
+      options,
+      bounds,
+      gate,
+      registerPostDrain,
+    );
+  } finally {
+    if (options.bootstrap !== true) gate.log();
+  }
+}
+
+async function* advanceSerialPass(
+  deps: RepairCycleDepsV1,
+  options: RepairCycleOptionsV1,
+  bounds: ReturnType<typeof createRunBounds>,
+  gate: StepInputGate,
+  registerPostDrain?: (continuation: PostDrainReviewContinuationV1) => void,
+): RepairCycleGeneratorV1 {
   const { runDeadline } = bounds;
   const stepLimit = options.stepLimit ?? DEFAULT_STEP_LIMIT;
+  // A model-disabled bootstrap still runs intake, maintenance, compatibility,
+  // health and pending candidate-preservation reconciliation, but it must not
+  // walk the model-disabled work queue (issue #297).
+  const bootstrap = options.bootstrap === true;
+  const bootstrapDetail =
+    "bootstrap pass: maintenance, compatibility and health only";
   const tracking: RepairCycleTrackingV1 = {
     steps: 0,
     lastSnapshot: null,
@@ -122,6 +159,9 @@ export async function* advanceRepairCycle(
   let intakePolled = false;
   // One bounded advisory `sentinel_step` line per selected step (C5.2).
   const logStep = createStepLog();
+  // One advisory summary per run for the records the serial pass declines to
+  // step because their only action is the planner's admission (issue #297).
+  let matrixSkipLogged = false;
 
   registerPostDrain?.(
     createPostDrainContinuation(deps, bounds, stepLimit, tracking),
@@ -149,7 +189,11 @@ export async function* advanceRepairCycle(
         return { status: "state_error", detail: "repair state unavailable" };
       }
     }
-    const context: LoopContextV1 = { ...loaded, bounds };
+    const context: LoopContextV1 = {
+      ...loaded,
+      bounds,
+      pendingStepInputs: gate.pending,
+    };
     tracking.lastSnapshot = context.snapshot;
 
     // The initial state read is awaited wall-clock time and may have crossed
@@ -202,6 +246,7 @@ export async function* advanceRepairCycle(
     }
 
     if (tracking.steps >= stepLimit) {
+      await gate.flush(context);
       return { status: "step_limit", steps: tracking.steps };
     }
 
@@ -368,9 +413,42 @@ export async function* advanceRepairCycle(
       deps.configs,
       deps.clock.now(),
     );
+    // Records whose only possible action is the matrix admission the planner
+    // owns are never stepped here: the work step could only return the same
+    // deterministic deferral after its live pre-admission reads. They are
+    // counted in ONE advisory summary per run instead of one step line each.
+    const matrixOnly = matrixAdmissionOnlyIds(deps, context);
+    const matrixDeclined = matrixOnly.size === 0
+      ? 0
+      : rank.ordered.filter((id) => matrixOnly.has(id)).length;
+    if (!matrixSkipLogged && matrixDeclined > 0) {
+      matrixSkipLogged = true;
+      try {
+        const line = matrixSkipLine(matrixDeclined);
+        if (line !== null) console.log(line);
+      } catch { /* advisory only */ }
+    }
+    // One batched live-input read per repository holding records this pass
+    // may step (issue #326); waiting records need no read.
+    if (!bootstrap) {
+      gate.noteWaiting(rank.skipped);
+      await gate.prime(
+        context.snapshot.work.filter((record) =>
+          rank.ordered.includes(record.id) && !matrixOnly.has(record.id) &&
+          options.excludeRecords?.has(record.id) !== true
+        ),
+      );
+    }
     if (rank.ordered.length === 0) {
+      await gate.flush(context);
       if (!didWork && sourceError !== null) {
         return { status: "source_error", detail: sourceError };
+      }
+      // The model-disabled bootstrap owns no work step: only its intake,
+      // maintenance and health ran (issue #297).
+      if (bootstrap) {
+        tracking.postDrainAllowed = true;
+        return { status: "idle", detail: bootstrapDetail };
       }
       tracking.postDrainAllowed = true;
       const wake = yield {
@@ -388,13 +466,32 @@ export async function* advanceRepairCycle(
     let selected: WorkRecordV1 | null = null;
     let cannotFit: string | null = null;
     for (const id of rank.ordered) {
-      if (deferred.has(id) || takeoverRefused.has(id)) continue;
+      if (
+        deferred.has(id) || takeoverRefused.has(id) ||
+        options.excludeRecords?.has(id) === true
+      ) continue;
+      // Matrix-only work is the planner's; this pass yields to it instead of
+      // stepping (and re-reading) the record.
+      if (matrixOnly.has(id)) continue;
       const record = context.snapshot.work.find(
         (work) => work.id === id,
       );
       if (record === undefined) {
         return { status: "state_error", detail: "selected record missing" };
       }
+      // A bootstrap execution still reconciles pending candidate-preservation
+      // intents (deterministic, no model), but every other work record is the
+      // ordinary run's: it is never walked here (issue #297).
+      if (
+        bootstrap &&
+        record.intent?.kind !== "candidate_preservation"
+      ) continue;
+      // Unchanged inputs since the record's last settled step: its step could
+      // only repeat that deferral, so it is skipped with no write or charge.
+      // A record a review completion woke is always stepped.
+      if (
+        !bootstrap && !awakened.has(id) && await gate.skips(context, record)
+      ) continue;
       if (
         deps.externalImplementations === true &&
         matrixOwnsFreshImplementation(record) &&
@@ -413,6 +510,16 @@ export async function* advanceRepairCycle(
       cannotFit = `next operation for ${id} cannot fit`;
     }
     if (selected === null) {
+      // Bootstrap has no work-record walk beyond preservation maintenance.
+      // Its failed source read is still an unhealthy source, never an idle
+      // health pass.
+      if (bootstrap) {
+        if (!didWork && sourceError !== null) {
+          return { status: "source_error", detail: sourceError };
+        }
+        tracking.postDrainAllowed = true;
+        return { status: "idle", detail: bootstrapDetail };
+      }
       // Every remaining record was deferred: matrix ownership, a model start
       // past the horizon, a cooldown or a transient read. None of these stops
       // deterministic work, which this loop keeps running for lower-ranked
@@ -422,13 +529,19 @@ export async function* advanceRepairCycle(
       // re-check and exact identity), so it stays open here; every other
       // margin exit keeps it closed.
       tracking.postDrainAllowed = true;
+      await gate.flush(context);
       const wake = yield {
         kind: "waiting",
         outcome: {
           status: "margin",
           detail: deferred.size > 0
             ? "all eligible work is deferred (cooldown or run bounds)"
-            : cannotFit ?? "no operation fits the remaining run margin",
+            : cannotFit ??
+              (matrixDeclined > 0
+                ? "remaining work is matrix-owned (planner admission)"
+                : gate.summary().skipReasons.unchanged_inputs > 0
+                ? "remaining eligible work has unchanged inputs"
+                : "no operation fits the remaining run margin"),
         },
       };
       receiveWake(wake);
@@ -437,6 +550,8 @@ export async function* advanceRepairCycle(
     }
 
     awakened.delete(selected.id);
+    gate.beginStep(selected.id);
+    options.onStep?.(selected.id);
     context.executionBaseline = selected;
     // Monotonic wall time: the injected run clock is never read for the log.
     const stepStartedAt = performance.now();
@@ -447,6 +562,7 @@ export async function* advanceRepairCycle(
       result.kind,
       Math.round(performance.now() - stepStartedAt),
     );
+    await gate.settle(context, selected.id, result, selected);
     if (result.kind === "deferred") {
       deferred.add(selected.id);
       receiveWake(yield { kind: "progress" });
@@ -459,6 +575,7 @@ export async function* advanceRepairCycle(
       return { status: "margin", detail: result.detail };
     }
     if (result.kind === "idle") {
+      await gate.flush(context);
       if (!didWork && sourceError !== null) {
         return { status: "source_error", detail: sourceError };
       }

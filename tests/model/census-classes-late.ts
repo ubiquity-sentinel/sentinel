@@ -26,10 +26,7 @@ import {
   TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL,
   TASK_ACCEPTANCE_UNCERTAIN_DETAIL,
 } from "../../src/contracts/review-task-acceptance.ts";
-import {
-  RETIRED_MERGED_MESSAGE,
-  RETIRED_TARGET_MESSAGE,
-} from "../../src/repair/selection.ts";
+import { RETIRED_TARGET_MESSAGE } from "../../src/repair/selection.ts";
 import {
   BASE_REFRESH_CAPABILITY_DETAIL,
   BASE_REFRESH_FOREIGN_HEAD_DETAIL,
@@ -467,20 +464,7 @@ export const LATE_CLASSES: ParkClassV1[] = [
       intent: "none",
     }],
   },
-  {
-    id: "term.merged_outside",
-    message: RETIRED_MERGED_MESSAGE,
-    kind: "other",
-    writer: W(
-      "src/repair/loop-base-refresh.ts",
-      'clearIntent(markBlocked(record, "other", RETIRED_MERGED_MESSAGE, at), at),',
-      "w.term.merged_outside",
-    ),
-    trigger: "human",
-    terminal: "merged_outside",
-    world: { pull: "merged" },
-    variants: [cleared("round1", 1, "clean")],
-  },
+  // Human merges complete delivery; they no longer write a terminal park.
   // -------------------------------------------------------------------- misc
   {
     id: "misc.unconfigured",

@@ -21,6 +21,11 @@ import {
   resolveHostedDelivery,
   retainHostedDeliveryProvenance,
 } from "./hosted-autonomy-delivery-proof.ts";
+import {
+  gateDeliveryChecks,
+  persistDeliveryCheckUpdates,
+  postDeliveryCheckComments,
+} from "./hosted-autonomy-delivery-checks.ts";
 import { hasQueueIntentNamespace } from "./hosted-autonomy-queue-policy.ts";
 import { queueRecordProtected } from "./hosted-autonomy-queue-context.ts";
 import { intentClosable } from "./hosted-autonomy-retries.ts";
@@ -312,13 +317,16 @@ export async function runHostedClosurePass(
     // only already-proven delivery bookkeeping may preempt unrelated retries.
     if (!ready) return null;
   }
-  // A record whose source issue is closed and whose own pull request is
-  // definitively closed without a merge can never deliver, whatever step it is
-  // parked at. That verdict requires the read to succeed and the pull to be
-  // neither merged nor open; a failed or empty read is not evidence and leaves
-  // the record alone. An already retired record is never planned again
-  // (`planHostedRetirements`), so its pull request is not read.
+  // A record whose source issue is closed and whose own pull request reads
+  // unmerged (closed, or still open) can never deliver, whatever step or
+  // intent it is parked at: the task it would deliver is gone. That verdict
+  // requires the read to succeed and the pull not to be merged; a failed or
+  // empty read is not evidence and leaves the record alone. An open pull is
+  // closed by the retired-pull pass once the record is retired. An already
+  // retired record is never planned again (`planHostedRetirements`), so its
+  // pull request is not read.
   const closedUnmerged = new Set<string>();
+  const openUnmerged = new Set<string>();
   for (const record of snapshot.work) {
     if (
       record.nextStep === "done" || isHostedRetired(record) ||
@@ -339,8 +347,8 @@ export async function runHostedClosurePass(
     const scope = await scopeFor(record.repository);
     const pull = await readHostedPullStatus(scope, pullRequest);
     if (pull === null) continue;
-    if (pull.merged === false && pull.state === "closed") {
-      closedUnmerged.add(record.id);
+    if (pull.merged === false) {
+      (pull.state === "closed" ? closedUnmerged : openUnmerged).add(record.id);
     }
   }
   const retirements = planHostedRetirements(
@@ -348,6 +356,7 @@ export async function runHostedClosurePass(
     closedIssues,
     closedUnmerged,
     deps.queueCustody,
+    openUnmerged,
   ).filter((plan) => !settled(plan.id));
   let retirementResult: HostedAutonomyResultV1 | null = null;
   if (retirements.length > 0) {
@@ -562,13 +571,21 @@ export async function runHostedClosurePass(
       repository: record.repository,
     });
   }
-  const closures = closureCandidates.filter((plan) => !settled(plan.id)).filter(
+  const gateable = closureCandidates.filter((plan) => !settled(plan.id)).filter(
     (plan) =>
       !deliveryOnly ||
       closureSnapshot.work.some((record) =>
         record.id === plan.id && record.nextStep === "delivery"
       ),
   );
+  // Merge is not delivery (#337): the target's trusted delivery checks on the
+  // merge commit gate the closure; an empty policy lets every plan through.
+  const deliveryGate = await gateDeliveryChecks(
+    context,
+    gateable,
+    closureSnapshot.work,
+  );
+  const closures = gateable.filter((plan) => deliveryGate.proceed.has(plan.id));
   if (closures.length > 0) {
     for (const plan of closures) {
       const record = closureSnapshot.work.find((item) =>
@@ -762,7 +779,7 @@ export async function runHostedClosurePass(
             work: snapshot.work.map((record) =>
               applied.some((plan) => plan.id === record.id)
                 ? recovered.get(record.id) ?? record
-                : record
+                : deliveryGate.updates.get(record.id) ?? record
             ),
           },
           observedHead as GitSha,
@@ -796,6 +813,7 @@ export async function runHostedClosurePass(
       ) {
         return failed("readback_unverified", observedHead, actions);
       }
+      await postDeliveryCheckComments(context, deliveryGate.comments);
       return {
         kind: "hosted_autonomy",
         status: "applied",
@@ -808,6 +826,9 @@ export async function runHostedClosurePass(
     }
   }
 
+  if (deliveryGate.updates.size > 0) {
+    return persistDeliveryCheckUpdates(context, deliveryGate);
+  }
   if (retirementResult !== null) return retirementResult;
   return null;
 }

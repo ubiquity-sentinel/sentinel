@@ -167,11 +167,13 @@ Deno.test("hosted execution: release requests require the merged two-parent PR p
   }
 });
 
-Deno.test("hosted execution: future, inverted or early-terminal metadata is refused", async () => {
+Deno.test("hosted execution: excessive skew, inverted or early-terminal metadata is refused", async () => {
+  // Native timestamps may lead by one hour, but never beyond that plus precision.
+  const beyondSkew = OBSERVED + 3_600_000 + 5_000;
   const futureAttempt = makeRig();
   scriptAttemptAndJobs(
     futureAttempt,
-    attemptBody({ updatedAt: OBSERVED + 5000 }),
+    attemptBody({ updatedAt: beyondSkew }),
     jobsBody([jobBody()]),
   );
   scriptLog(futureAttempt, logText([terminalRecord()]));
@@ -186,8 +188,8 @@ Deno.test("hosted execution: future, inverted or early-terminal metadata is refu
     attemptBody(),
     jobsBody([
       jobBody({
-        completedAt: OBSERVED + 5000,
-        steps: [runtimeStep({ completedAt: OBSERVED + 5000 })],
+        completedAt: beyondSkew,
+        steps: [runtimeStep({ completedAt: beyondSkew })],
       }),
     ]),
   );

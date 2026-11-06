@@ -27,6 +27,8 @@ import {
   reviewOperationKey,
   reviewReceiptId,
 } from "./keys.ts";
+import { completeHumanMerge } from "./human-merge.ts";
+import { parkForOwnerMerge } from "./loop-owner-landing.ts";
 import { ensureBaseRefreshIntent } from "./loop-base-refresh.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
 import { gateDeliveryOnChecks } from "./loop-checks.ts";
@@ -315,6 +317,11 @@ export async function executeMerge(
     "attribute",
   );
   if (ciGate !== null) return ciGate;
+  // A protected-path change is reviewed and tested, but only its owner
+  // merges it: no merge intent, no merge call.
+  if (record.ownerLanding !== undefined) {
+    return parkForOwnerMerge(deps, context, record, now);
+  }
   let mergeRequest;
   try {
     mergeRequest = parseMergeRequestV1({
@@ -743,9 +750,16 @@ export async function reconcileMergeIntent(
   }
   if (pull.state === "merged" && pull.mergeSha !== null) {
     if (pull.head !== record.target.head) {
-      // Reconcile only the head this task reviewed: an observed merged head
-      // different from the saved reviewed head is an identity contradiction
-      // and must never produce a release request for the wrong revision.
+      if (
+        pull.number === record.target.pr &&
+        pull.headRef === record.target.branch
+      ) {
+        // A human may merge a newer head while our merge intent is pending.
+        // Complete our own pull with provenance, never the prior receipt.
+        return completeHumanMerge(deps, context, record, pull, pull.mergeSha);
+      }
+      // A foreign pull or branch is still an identity contradiction, not a
+      // human merge of this record's publication.
       return persistWork(
         deps,
         context,

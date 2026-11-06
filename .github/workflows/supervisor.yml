@@ -48,6 +48,13 @@ jobs:
       runtimeMigrationOnly: ${{ steps.autonomy.outputs.runtimeMigrationOnly }}
       runtimeMigrationRevision: ${{ steps.autonomy.outputs.runtimeMigrationRevision }}
       runtimeMigrationGeneration: ${{ steps.autonomy.outputs.runtimeMigrationGeneration }}
+      # #327: the closed upkeep deferral reason (or none) finalize counts.
+      upkeepDeferral: ${{ steps.autonomy.outputs.upkeepDeferral }}
+      # #330: the delivery pass's train, CI-run and merge counts (or none).
+      deliveryCounts: ${{ steps.autonomy.outputs.deliveryCounts }}
+      # #324/#338: the repair-tier step's read/demoted/promoted/cold/superseded
+      # counts (or none).
+      tierCounts: ${{ steps.autonomy.outputs.tierCounts }}
     # The scoped generation-68 verification settled healthy, so the maintenance
     # writer is restored to its protected-ref condition; it performs bounded
     # self-upkeep (retries and reviewed-head delivery) before prepare.
@@ -246,6 +253,11 @@ jobs:
       planDigest: ${{ steps.matrix_plan.outputs.planDigest }}
       hasCells: ${{ steps.matrix_plan.outputs.hasCells }}
       planArtifactDigest: ${{ steps.plan_artifact.outputs.artifact-digest }}
+      # #328: the repository repair fan-out plan of the same planning pass.
+      # An older runtime writes none of these, so no repository cell runs.
+      repairMatrix: ${{ steps.matrix_plan.outputs.repairMatrix }}
+      repairPlanDigest: ${{ steps.matrix_plan.outputs.repairPlanDigest }}
+      hasRepairCells: ${{ steps.matrix_plan.outputs.hasRepairCells }}
     concurrency:
       group: sentinel-repair
       cancel-in-progress: false
@@ -386,6 +398,15 @@ jobs:
         with:
           name: sentinel-matrix-plan-${{ github.run_id }}-${{ github.run_attempt }}
           path: .sentinel-matrix/plan.json
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7
+      - name: Upload immutable repair fan-out plan
+        if: ${{ steps.matrix_plan.outputs.hasRepairCells == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: sentinel-repair-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .sentinel-repair/plan.json
           if-no-files-found: error
           include-hidden-files: true
           retention-days: 7
@@ -590,6 +611,181 @@ jobs:
           include-hidden-files: true
           retention-days: 7
 
+  # #328: one credential-free repository repair cell per repository the plan
+  # delegated records of. It steps only those records against the hot repair
+  # state it reads, writes no state ref (its state writer refuses), receives
+  # only read-only App tokens (the private key reaches the mint steps only),
+  # starts no model, and uploads one sealed delta. finalize, the single
+  # trusted writer, authenticates and applies the deltas.
+  repair_cell:
+    name: repair_cell (${{ matrix.cellId }})
+    needs: [maintenance, prepare, matrix_plan]
+    if: ${{ !cancelled() && needs.maintenance.result == 'success' && needs.prepare.result == 'success' && github.ref == 'refs/heads/sentinel-supervisor' && needs.prepare.outputs.run == 'true' && needs.matrix_plan.result == 'success' && needs.matrix_plan.outputs.hasRepairCells == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment:
+      name: sentinel-supervisor
+    permissions:
+      contents: read
+      actions: read
+      issues: read
+      pull-requests: read
+      checks: read
+      statuses: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.matrix_plan.outputs.repairMatrix) }}
+    outputs:
+      repairCellArtifactDigest: ${{ steps.repair_cell_artifact.outputs.artifact-digest }}
+    steps:
+      - name: Checkout protected launcher source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          path: launcher
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Checkout selected runtime source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.prepare.outputs.revision }}
+          path: runtime
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.x
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      # The self-dependency seal pins the sandbox Node at its platform path
+      # (`SANDBOX_NODE_EXECUTABLE`); without this copy the seal step refuses
+      # and the cell never starts (same copy as matrix_plan and matrix_cell).
+      - name: Expose the pinned Node to the model sandbox
+        run: |
+          set -euo pipefail
+          sudo install -m755 "$(command -v node)" /usr/local/bin/node
+          test "$(/usr/local/bin/node --version)" = "v24.19.0"
+      - name: Install locked self-test dependencies
+        working-directory: launcher
+        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund --prefix .github/actions/sentinel-app-token
+      - name: Seal trusted self-test dependencies
+        working-directory: launcher
+        run: >-
+          deno run --no-lock
+          --allow-read --allow-write --allow-run
+          --allow-env=PATH,NODE_V8_COVERAGE
+          ops/hosted-autonomy-self-dependencies.ts
+      # The runtime host resolves the pinned Codex executable and proves model
+      # startup like every hosted child; a repository cell never starts one.
+      - name: Install pinned Codex app-server
+        run: npm install --global @openai/codex@0.154.0
+      # The startup probe's sandbox checks need unprivileged user namespaces,
+      # exactly as in matrix_cell, so a cell's model-start gate (and with it
+      # its step stamps) matches the serial pass. Ephemeral runner only.
+      - name: Enable Linux user namespaces for bubblewrap
+        continue-on-error: true
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
+        run: |
+          set -euo pipefail
+          current_userns=$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || true)
+          if [ -n "$current_userns" ] && [ "$current_userns" != "1" ]; then
+            sudo sysctl -w kernel.unprivileged_userns_clone=1
+          fi
+          current_apparmor=$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true)
+          if [ -n "$current_apparmor" ] && [ "$current_apparmor" != "0" ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+      - name: Resolve the committed target repositories
+        id: targets
+        working-directory: launcher
+        run: |
+          set -euo pipefail
+          repositories=$(jq -r --arg self 'ubiquity-sentinel/sentinel' 'map(select(. != $self)) | join(",")' sentinel.targets.json)
+          if [ -z "$repositories" ]; then
+            echo "sentinel.targets.json names no foreign repository" >&2
+            exit 1
+          fi
+          echo "repositories=$repositories" >> "$GITHUB_OUTPUT"
+      - name: Mint the scoped sentinel App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: Iv23liHUJNXds9mU3j7Q
+          private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
+          owner: ubiquity
+          repositories: ${{ steps.targets.outputs.repositories }}
+          permission-contents: read
+          permission-issues: read
+          permission-pull-requests: read
+          permission-checks: read
+          permission-actions: read
+      - name: Mint the scoped self installation token
+        id: self-token
+        uses: ./launcher/.github/actions/sentinel-app-token
+        with:
+          client-id: Iv23liHUJNXds9mU3j7Q
+          private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
+          owner: ubiquity-sentinel
+          repositories: sentinel
+      - name: Download immutable repair fan-out plan
+        uses: actions/download-artifact@v4
+        with:
+          name: sentinel-repair-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .sentinel-repair
+      - name: Run repository repair cell
+        id: repair_cell
+        working-directory: launcher
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SENTINEL_SUPERVISOR_TOKEN: ${{ steps.app-token.outputs.token }}
+          SENTINEL_SELF_TOKEN: ${{ steps.self-token.outputs.token }}
+          SENTINEL_SELF_TOKEN_MINT_GRANT: ${{ steps.self-token.outputs.mint-grant }}
+          SENTINEL_TARGET_INSTALLATION_ID: ${{ steps.app-token.outputs.installation-id }}
+          SENTINEL_SELF_INSTALLATION_ID: ${{ steps.self-token.outputs.installation-id }}
+          UOS_AI_TOKEN: ${{ secrets.UOS_AI_TOKEN }}
+          SENTINEL_APP_INSTALLATION_ID: "155687488"
+          # The same route bindings as every job, so a cell's step stamps
+          # match the serial pass's; the App private key is never bound here.
+          SENTINEL_MODEL_BASE_URL: ${{ vars.SENTINEL_MODEL_BASE_URL }}
+          SENTINEL_MODEL_ID: ${{ vars.SENTINEL_IMPLEMENTATION_MODEL_ID || 'gpt-6.1-sol' }}
+          SENTINEL_REVIEW_MODEL_ID: ${{ vars.SENTINEL_REVIEW_MODEL_ID }}
+          SENTINEL_MODEL_FALLBACK: ${{ vars.SENTINEL_MODEL_FALLBACK }}
+          SENTINEL_DEEPSEEK_API_KEY: ${{ secrets.SENTINEL_DEEPSEEK_API_KEY }}
+          SENTINEL_BACKUP_CI: ${{ vars.SENTINEL_BACKUP_CI || 'on' }}
+        run: |
+          printf '%s\n' '{"planDigest":"${{ needs.matrix_plan.outputs.planDigest }}","repairPlanDigest":"${{ needs.matrix_plan.outputs.repairPlanDigest }}","cellId":"${{ matrix.cellId }}"}' |
+          deno run \
+          --allow-read \
+          --allow-write \
+          --allow-run \
+          --allow-net="api.github.com,*.blob.core.windows.net" \
+          --allow-env=HOME,PATH,GITHUB_TOKEN,SENTINEL_SUPERVISOR_TOKEN,SENTINEL_SELF_TOKEN,SENTINEL_SELF_TOKEN_MINT_GRANT,SENTINEL_TARGET_INSTALLATION_ID,SENTINEL_SELF_INSTALLATION_ID,SENTINEL_COOLDOWN_MODE,SENTINEL_MERGE_QUEUE,SENTINEL_BACKUP_CI,SENTINEL_MODEL_BASE_URL,SENTINEL_MODEL_ID,SENTINEL_REVIEW_MODEL_ID,SENTINEL_MODEL_FALLBACK,SENTINEL_DEEPSEEK_API_KEY,SENTINEL_APP_INSTALLATION_ID,UOS_AI_TOKEN,NODE_V8_COVERAGE,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_WORKFLOW_REF,GITHUB_JOB \
+          src/host/hosted-runtime.ts
+
+      # A cell whose child never wrote its result (a failed setup step) still
+      # uploads one bounded refusal record, which finalize counts `refused`.
+      - name: Record a refused repair cell
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          # noclobber: an existing delta or refusal is never overwritten.
+          set -o noclobber
+          if [ ! -e .sentinel-repair/result.json ]; then
+            mkdir -p .sentinel-repair
+            printf '%s\n' '{"cellId":"${{ matrix.cellId }}","kind":"repair_cell_refusal","reason":"cell_unavailable","version":"v1"}' > .sentinel-repair/result.json
+          fi
+      - name: Upload sealed repair delta
+        id: repair_cell_artifact
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: sentinel-repair-cell-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.cellId }}
+          path: .sentinel-repair/result.json
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7
+
   repair:
     # Starts with the cells: the progressive consumer polls authenticated
     # completed cell artifacts, ingests each exactly once, and leaves slower or
@@ -733,6 +929,14 @@ jobs:
           private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
           owner: ubiquity-sentinel
           repositories: sentinel
+      # #328: the serial pass never steps the records the repository cells
+      # step; it reads the delegation from the same verified plan.
+      - name: Download immutable repair fan-out plan
+        if: ${{ needs.prepare.outputs.modelStartsEnabled == 'true' && needs.matrix_plan.outputs.hasRepairCells == 'true' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: sentinel-repair-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .sentinel-repair
       - name: Run selected Sentinel runtime
         working-directory: launcher
         env:
@@ -769,7 +973,11 @@ jobs:
           SENTINEL_BACKUP_CI: ${{ vars.SENTINEL_BACKUP_CI || 'on' }}
         run: |
           if [ '${{ needs.prepare.outputs.modelStartsEnabled }}' = 'true' ]; then
-            printf '%s\n' '{"planDigest":"${{ needs.matrix_plan.outputs.planDigest }}"}'
+            if [ '${{ needs.matrix_plan.outputs.hasRepairCells }}' = 'true' ]; then
+              printf '%s\n' '{"planDigest":"${{ needs.matrix_plan.outputs.planDigest }}","repairPlanDigest":"${{ needs.matrix_plan.outputs.repairPlanDigest }}"}'
+            else
+              printf '%s\n' '{"planDigest":"${{ needs.matrix_plan.outputs.planDigest }}"}'
+            fi
           fi | deno run \
           --allow-read \
           --allow-write \
@@ -779,7 +987,7 @@ jobs:
           src/host/hosted-runtime.ts
 
   finalize:
-    needs: [prepare, matrix_plan, matrix_cell, repair]
+    needs: [maintenance, prepare, matrix_plan, matrix_cell, repair_cell, repair]
     if: always() && github.ref == 'refs/heads/sentinel-supervisor'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -836,6 +1044,17 @@ jobs:
           SENTINEL_SUPERVISOR_TOKEN: ${{ steps.app-token.outputs.token }}
           SENTINEL_SELF_TOKEN: ${{ steps.self-token.outputs.token }}
           SENTINEL_SELF_TOKEN_MINT_GRANT: ${{ steps.self-token.outputs.mint-grant }}
+          SENTINEL_UPKEEP_DEFERRAL: ${{ needs.maintenance.outputs.upkeepDeferral }}
+          SENTINEL_DELIVERY_COUNTS: ${{ needs.maintenance.outputs.deliveryCounts }}
+          SENTINEL_TIER_COUNTS: ${{ needs.maintenance.outputs.tierCounts }}
+          # Throughput watchdog (self-improvement): a missed threshold files at
+          # most one issue per cycle on this repository for Sentinel to repair.
+          # Default on; set the repository variable SENTINEL_SELF_IMPROVE to
+          # `off` to stop evaluating and filing.
+          SENTINEL_SELF_IMPROVE: ${{ vars.SENTINEL_SELF_IMPROVE || 'on' }}
+          # #328: the fan-out plan digest when repository cells ran; finalize
+          # authenticates their deltas and applies them in one trusted write.
+          SENTINEL_REPAIR_PLAN_DIGEST: ${{ needs.matrix_plan.outputs.hasRepairCells == 'true' && needs.matrix_plan.outputs.repairPlanDigest || '' }}
         run: deno task supervisor:run
       - name: Chain the next dispatcher run
         if: always() && github.ref == 'refs/heads/sentinel-supervisor'
