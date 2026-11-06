@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import { SHA1 as ATTEMPT_RUNTIME } from "../state/helpers.ts";
 /** Actual maintenance consumer and charged state transitions over disposable Git. */
 import assert from "node:assert/strict";
@@ -391,6 +392,7 @@ Deno.test("uncertainty maintenance retains thirteen charged admissions and reque
   try {
     const beforeRelease = await f.release.readRelease();
     const deps = {
+      ciMinutes: INACTIVE_CI_MINUTES,
       state: f.state,
       clock,
       githubFor: () => {
@@ -449,6 +451,7 @@ Deno.test("uncertainty maintenance retains thirteen admissions with an advancing
     let failure: unknown;
     try {
       await runDarkAutonomy({
+        ciMinutes: INACTIVE_CI_MINUTES,
         state: f.state,
         clock: advancingClock,
         githubFor: () => {
@@ -497,6 +500,7 @@ Deno.test("uncertainty maintenance parks five submitted preservation admissions 
     const beforeRelease = await f.release.readRelease();
     assert.ok(before.ok && before.value.status === "found");
     const result = await runDarkAutonomy({
+      ciMinutes: INACTIVE_CI_MINUTES,
       state: f.state,
       clock,
       githubFor: () => {
@@ -583,6 +587,7 @@ Deno.test("uncertainty maintenance parks five submitted preservation admissions 
           readRelease: () => Promise.resolve(portOk(successor)),
         };
         const result = await runDarkAutonomy({
+          ciMinutes: INACTIVE_CI_MINUTES,
           state,
           clock,
           githubFor: () => {

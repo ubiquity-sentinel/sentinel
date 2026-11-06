@@ -5,6 +5,7 @@
  * while every ai.ubq.fi record is protected: none is written or delivered,
  * and the custody output stays not ready.
  */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { runHostedAutonomy } from "../../ops/hosted-autonomy.ts";
 import {
@@ -78,6 +79,7 @@ Deno.test("custody degraded: an unprovable ai.ubq.fi queue still lets the self r
     const coordinator = await darkQueueCoordinatorFixture(scoped);
     const ready: boolean[] = [];
     const result = await runHostedAutonomy({
+      ciMinutes: INACTIVE_CI_MINUTES,
       state: rig.state,
       githubFor: () => github,
       queueCustody: darkQueueFixture(scoped),

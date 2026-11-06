@@ -1,4 +1,5 @@
 /** Count-only throttles must not hide eligible recovery or discard charges. */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import { parseRepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
@@ -91,6 +92,7 @@ Deno.test("readmission throughput: every eligible spent CI head is read in one p
     },
   });
   const deps: HostedAutonomyDepsV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     state,
     githubFor: () => surface,
     clock: { now: () => T0 + 5_000_000 },

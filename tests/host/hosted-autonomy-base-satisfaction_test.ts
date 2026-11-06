@@ -1,4 +1,5 @@
 /** Maintenance must retain the admission the runtime needs for base review. */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
@@ -207,6 +208,7 @@ Deno.test("base satisfaction maintenance: real pass preserves admission across r
     const writes = rig.writes;
     for (const [index, route] of [ROUTE, "d".repeat(12)].entries()) {
       const result = await runHostedAutonomy({
+        ciMinutes: INACTIVE_CI_MINUTES,
         state: rig.state,
         githubFor: rig.githubFor,
         clock: { now: () => NOW + index * 60_000 },

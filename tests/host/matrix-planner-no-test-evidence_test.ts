@@ -3,6 +3,7 @@
  * verify must be parked by the trusted planner, before any reservation or
  * matrix cell exists. Its own admission park is unchanged for the serial lane.
  */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
 import { parseRepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
@@ -72,6 +73,7 @@ Deno.test("matrix planner: a no-test-evidence target parks uncharged and plans n
   assert.ok(seeded.ok && seeded.value.status === "applied");
   let modelCalls = 0;
   const deps = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     configs: [config],
@@ -197,6 +199,7 @@ Deno.test("matrix planner: a stale retained implementation intent is still parke
   let modelCalls = 0;
   const report = await planMatrixWave(
     {
+      ciMinutes: INACTIVE_CI_MINUTES,
       clock,
       state,
       configs: [config],

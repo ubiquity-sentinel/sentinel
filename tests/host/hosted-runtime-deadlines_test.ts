@@ -1,4 +1,5 @@
 /** Hosted hosted-runtime-deadlines_test responsibility. */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { parseHostedExecutionIntentV1 } from "../../src/contracts/hosted-supervisor.ts";
 import { HOSTED_RUNTIME_ID } from "../../src/contracts/hosted-supervisor.ts";
@@ -86,6 +87,7 @@ Deno.test("hosted runtime: source preparation is charged against the one absolut
     detail: "hosted repair run deadline reached",
   } as const;
   const result = await runActionsTargetCycles({
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state: capability,
     configs: [self, foreign, third],
@@ -147,6 +149,7 @@ Deno.test("hosted runtime: source preparation is charged against the one absolut
   const controlComposed: string[] = [];
   const controlDeadlines: number[] = [];
   const control = await runActionsTargetCycles({
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock: controlClock,
     state: capability,
     configs: [foreign],

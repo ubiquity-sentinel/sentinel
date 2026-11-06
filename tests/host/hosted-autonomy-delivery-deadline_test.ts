@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import {
   HOSTED_AUTONOMY_PASS_DEADLINE_MS,
@@ -77,6 +78,7 @@ async function fixture(protectedRows = false, rerun = false) {
   rig.githubFor = () => github;
   const clock = { now: () => now };
   const deps = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     state: rig.state,
     githubFor: rig.githubFor,
     clock,
@@ -285,6 +287,7 @@ Deno.test("delivery deadline: an admitted merge completes verification and CAS r
       return result;
     };
     const deps = {
+      ciMinutes: INACTIVE_CI_MINUTES,
       state: rig.state,
       githubFor: () => github,
       clock: { now: () => now },
