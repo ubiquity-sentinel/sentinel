@@ -342,6 +342,140 @@ Deno.test("input gate: a failed batch falls back to per-record reads and is repo
   assert.equal(reads(), 24);
 });
 
+Deno.test("input gate: unavailable batches bound fallback latency across a hot tier", async () => {
+  const rig = makeRig(fleet());
+  rig.github.failBatch = true;
+  const readIssue = rig.github.readIssue.bind(rig.github);
+  let active = 0;
+  let peak = 0;
+  let waves = 0;
+  const waiting: (() => void)[] = [];
+  // Advance one second per simultaneous wave, never sleep in real time.
+  rig.github.readIssue = async (number) => {
+    active++;
+    peak = Math.max(peak, active);
+    await new Promise<void>((resolve) => {
+      if (waiting.length === 0) {
+        queueMicrotask(() => {
+          waves++;
+          rig.clock.advance(1_000);
+          for (const resume of waiting.splice(0)) resume();
+        });
+      }
+      waiting.push(resolve);
+    });
+    active--;
+    return await readIssue(number);
+  };
+
+  const first = await pass(rig);
+  assert.equal(new Set(first.stepped).size, 74);
+  assert.equal(stamped(rig), 74);
+  assert.equal(first.summary.batchUnavailable, 3);
+  assert.equal(first.summary.recordsRead, 74);
+  assert.equal(peak, 4, "fallback reads must overlap but stay bounded");
+  assert.equal(waves, 20, "25 + 25 + 24 records take 7 + 7 + 6 waves");
+  assert.equal(
+    rig.github.calls.filter((call) => call.startsWith("readRef:")).length,
+    3,
+    "concurrent records share one base-tip read per repository",
+  );
+
+  rig.clock.advance(5 * MINUTE);
+  waves = 0;
+  const again = await pass(rig);
+  assert.deepEqual(again.stepped, []);
+  assert.equal(again.summary.recordsSkipped, 74);
+  assert.equal(again.summary.batchUnavailable, 3);
+  assert.equal(waves, 20, "unchanged records retain the bounded fallback");
+  assert.deepEqual(rig.state.repair!.reservations, [], "no model charge");
+});
+
+Deno.test("input gate: failed fallback issue reads never count as unchanged", async () => {
+  const rig = makeRig(
+    Array.from({ length: 8 }, (_, index) => pendingArtifact(REPOS[0], index)),
+  );
+  rig.github.failBatch = true;
+  await pass(rig);
+  assert.equal(stamped(rig), 8);
+
+  const readIssue = rig.github.readIssue.bind(rig.github);
+  rig.github.readIssue = (number) => {
+    if (number === 100) {
+      return Promise.resolve(portError("unavailable", "lost"));
+    }
+    if (number === 101) throw new Error("lost response");
+    return readIssue(number);
+  };
+  rig.clock.advance(5 * MINUTE);
+  const again = await pass(rig);
+  assert.deepEqual(again.stepped.sort(), ["issue-alpha-0", "issue-alpha-1"]);
+  assert.equal(again.summary.recordsRead, 6);
+  assert.equal(again.summary.recordsSkipped, 6);
+  assert.equal(again.summary.batchUnavailable, 1);
+  assert.deepEqual(rig.state.repair!.reservations, []);
+});
+
+Deno.test("input gate: concurrent fallbacks share failed base-tip observations", async () => {
+  for (const throws of [false, true]) {
+    const rig = makeRig(
+      Array.from({ length: 8 }, (_, index) => pendingArtifact(REPOS[0], index)),
+    );
+    rig.github.failBatch = true;
+    let reads = 0;
+    rig.github.readRef = () => {
+      reads++;
+      if (throws) throw new Error("lost response");
+      return Promise.resolve(portError("unavailable", "lost"));
+    };
+    const first = await pass(rig);
+    assert.equal(
+      reads,
+      1,
+      "a failed shared read must not become a request storm",
+    );
+    assert.equal(first.stepped.length, 8);
+    assert.equal(first.summary.recordsRead, 0);
+    assert.equal(first.summary.batchUnavailable, 1);
+    assert.equal(
+      stamped(rig),
+      0,
+      "failed inputs are not empty successful inputs",
+    );
+    assert.equal(
+      rig.github.calls.filter((call) => call.startsWith("readIssue:")).length,
+      0,
+    );
+    assert.deepEqual(rig.state.repair!.reservations, []);
+  }
+});
+
+Deno.test("input gate: fallback prefetch stops admitting reads at the run deadline", async () => {
+  const rig = makeRig(fleet());
+  rig.github.failBatch = true;
+  const readIssue = rig.github.readIssue.bind(rig.github);
+  let expire = true;
+  rig.github.readIssue = async (number) => {
+    await Promise.resolve();
+    if (expire) {
+      expire = false;
+      rig.clock.advance(90 * MINUTE);
+    }
+    return await readIssue(number);
+  };
+
+  const result = await pass(rig);
+  assert.equal(
+    rig.github.calls.filter((call) => call.startsWith("readIssue:")).length,
+    4,
+    "only already-started fallback reads settle after the deadline",
+  );
+  assert.equal(rig.github.batches.length, 1, "no later repository read starts");
+  assert.deepEqual(result.stepped, []);
+  assert.equal(stamped(rig), 0, "no closing stamp write past the deadline");
+  assert.deepEqual(rig.state.repair!.reservations, []);
+});
+
 Deno.test("input gate: a historical record without a stamp still parses and is stepped", async () => {
   const legacy = pendingArtifact(REPOS[1], 7);
   assert.equal("stepInputs" in legacy, false);
