@@ -324,9 +324,9 @@ export async function runActionsMatrixAggregateCycles(
       prepared.add(key);
     },
   }, { matrixIntakeOwnsBranches: true });
-  // Bound ordinary observations across targets, but retain one reconciliation
-  // slot per pending durable intent. Native consumers keep their full drain.
-  const advanceLimit = DEFAULT_STEP_LIMIT +
+  // Allow every configured target to start while bounding ordinary observations,
+  // plus one reconciliation slot per pending intent. Native consumers fully drain.
+  const advanceLimit = Math.max(input.configs.length, DEFAULT_STEP_LIMIT) +
     read.value.snapshot.work.filter((record) => record.intent !== null).length;
   let advances = 0;
   const advance = async () => {
