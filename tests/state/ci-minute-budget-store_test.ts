@@ -1,3 +1,14 @@
+import {
+  acceptedCiMinutePolicy,
+  INACTIVE_CI_MINUTE_POLICY,
+  parseCiMinuteLedger,
+  validateCiMinuteTransition,
+} from "../../src/contracts/ci-minute-budget.ts";
+import type {
+  CiMinuteCoordinatorV1,
+  CiMinuteObserverV1,
+  CiMinuteReconcilerFactoryV1,
+} from "../../src/contracts/ci-minute-budget.ts";
 import assert from "node:assert/strict";
 import { ciMinuteDigest } from "../../src/contracts/ci-minute-budget.ts";
 import {
@@ -331,4 +342,193 @@ Deno.test("CI private scope: Scope200 alone, expired, wrong-repo, read-only and 
       assert.equal(JSON.stringify(scope).includes(f.scopeInput.token), false);
     }
   }
+});
+
+Deno.test("CI phase1 source policy is exact retained-estimate data without activating current consumers", () => {
+  const policy = acceptedCiMinutePolicy();
+  assert.equal(policy.activated, true);
+  assert.equal(policy.accounting, "retained_estimates");
+  assert.equal(policy.meterRefunds, false);
+  assert.equal(policy.calendar, "utc_month");
+  assert.equal(policy.bootstrap, "unknown_month_floor");
+  assert.deepEqual([
+    policy.managedLimit,
+    policy.securityReserve,
+    policy.unmanagedReserve,
+  ], [1450, 150, 400]);
+  assert.deepEqual(
+    policy.targets.map(
+      (t) => [t.repositoryId, t.job, t.timeoutMinutes, t.ceilingMinutes],
+    ),
+    [[1337190500, "validation", 20, 25], [1254699258, "deno", 30, 35]],
+  );
+  policy.targets[0].ceilingMinutes = 999;
+  assert.equal(acceptedCiMinutePolicy().targets[0].ceilingMinutes, 25);
+  assert.equal(INACTIVE_CI_MINUTE_POLICY.activated, false);
+});
+
+Deno.test("CI phase1 terminal estimate provenance retains debit and proves execution month only", () => {
+  const policy = acceptedCiMinutePolicy();
+  const ledger: CiMinuteLedgerV1 = {
+    version: 1,
+    month: "2028-01",
+    policyDigest: ciPolicyDigest(policy),
+    updatedAt: NOW,
+    sequence: 1,
+    baselineMinutes: 0,
+    watermark: null,
+    reservations: [{
+      effectDigest: ACCEPTANCE,
+      policyDigest: ciPolicyDigest(policy),
+      ceilingMinutes: 25,
+      state: "terminal_estimated",
+      createdAt: NOW,
+      settledAt: NOW,
+      chargedMinutes: 25,
+      proofDigest: ACCEPTANCE,
+      accounting: {
+        kind: "retained_estimate",
+        executionMonth: "2027-12",
+        terminalProofDigest: ACCEPTANCE,
+        startedAt: Date.UTC(2027, 11, 31, 23, 58),
+        completedAt: Date.UTC(2027, 11, 31, 23, 59),
+      },
+    }],
+    observed: [],
+  };
+  assert.equal(parseCiMinuteLedger(ledger).reservations[0].chargedMinutes, 25);
+  const lower = structuredClone(ledger);
+  lower.reservations[0].chargedMinutes = 1;
+  assert.throws(() => parseCiMinuteLedger(lower));
+  const cross = structuredClone(ledger);
+  cross.reservations[0].accounting!.completedAt = Date.UTC(2028, 0, 1);
+  assert.throws(() => parseCiMinuteLedger(cross));
+  const missing = structuredClone(ledger);
+  delete missing.reservations[0].accounting;
+  assert.throws(() => parseCiMinuteLedger(missing));
+  const next = structuredClone(ledger);
+  next.sequence++;
+  next.reservations[0].chargedMinutes = 26;
+  validateCiMinuteTransition(ledger, next);
+  assert.throws(() => validateCiMinuteTransition(next, ledger));
+});
+
+Deno.test("CI phase1 bootstrap is a conservative floor and catalog is finite monotonic private state", () => {
+  const policy = acceptedCiMinutePolicy();
+  const ledger: CiMinuteLedgerV1 = {
+    version: 1,
+    month: "2028-01",
+    policyDigest: ciPolicyDigest(policy),
+    updatedAt: NOW,
+    sequence: 1,
+    baselineMinutes: 2000,
+    watermark: null,
+    reservations: [],
+    observed: [],
+    bootstrap: {
+      kind: "conservative_unknown_history",
+      month: "2028-01",
+      floorMinutes: 2000,
+      createdAt: NOW,
+      policyDigest: ciPolicyDigest(policy),
+    },
+    catalog: {
+      runs: [{
+        repositoryId: 101,
+        runId: 7,
+        head: ACCEPTANCE.slice(0, 40),
+        createdAt: Date.UTC(2027, 0, 1),
+        updatedAt: NOW,
+        runAttempt: 2,
+        checkedAttempt: 1,
+        status: "in_progress",
+        terminalProofDigest: null,
+        refreshRequired: true,
+      }],
+      cursor: 0,
+      passThrough: NOW,
+      complete: false,
+    },
+  };
+  const parsed = parseCiMinuteLedger(ledger);
+  assert.equal(parsed.bootstrap?.kind, "conservative_unknown_history");
+  assert.equal(parsed.catalog?.runs[0].runAttempt, 2);
+  const falseComplete = structuredClone(ledger);
+  falseComplete.catalog!.complete = true;
+  falseComplete.catalog!.cursor = 1;
+  assert.throws(() => parseCiMinuteLedger(falseComplete));
+  const badFloor = structuredClone(ledger);
+  badFloor.bootstrap!.floorMinutes = 0;
+  assert.throws(() => parseCiMinuteLedger(badFloor));
+  const dropped = structuredClone(ledger);
+  dropped.sequence++;
+  dropped.catalog!.runs = [];
+  assert.throws(() => validateCiMinuteTransition(ledger, dropped));
+  const duplicate = structuredClone(ledger);
+  duplicate.catalog!.runs.push({ ...duplicate.catalog!.runs[0] });
+  assert.throws(() => parseCiMinuteLedger(duplicate));
+  const next = structuredClone(ledger);
+  next.sequence++;
+  next.catalog!.runs[0].runAttempt = 3;
+  validateCiMinuteTransition(ledger, next);
+});
+
+Deno.test("CI phase1 driver/observer APIs keep effect-only ports unchanged and reader write-free", async () => {
+  const coordinator: CiMinuteCoordinatorV1 = {
+    active: false,
+    reserve: () => Promise.resolve({ kind: "inactive" }),
+    reconcile: () => Promise.resolve({ kind: "inactive" }),
+  };
+  assert.deepEqual(await coordinator.reconcile(1), { kind: "inactive" });
+  const factory: CiMinuteReconcilerFactoryV1 = (_input) => {
+    const observer: CiMinuteObserverV1 = () => Promise.resolve(null);
+    return observer;
+  };
+  const read = factory({
+    policy: acceptedCiMinutePolicy(),
+    request: () => Promise.resolve(null),
+    clock: { now: () => NOW },
+  });
+  assert.equal(typeof read, "function");
+});
+
+Deno.test("CI phase1 explicit terminal-unmetered proof is not a fabricated actual quantity", () => {
+  const policy = acceptedCiMinutePolicy();
+  const ledger: CiMinuteLedgerV1 = {
+    version: 1,
+    month: "2028-01",
+    policyDigest: ciPolicyDigest(policy),
+    updatedAt: NOW,
+    sequence: 1,
+    baselineMinutes: 0,
+    watermark: null,
+    reservations: [],
+    observed: [],
+    proofs: [{
+      digest: ACCEPTANCE,
+      effectDigest: null,
+      startedAt: NOW - 497000,
+      completedAt: NOW,
+      neverStarted: false,
+      terminal: true,
+      billedDurationMs: 0,
+      estimate: {
+        kind: "retained_estimate",
+        minutes: 25,
+        executionMonth: "2028-01",
+        terminalProofDigest: ACCEPTANCE,
+      },
+    }],
+  };
+  const parsed = parseCiMinuteLedger(ledger);
+  assert.equal(parsed.proofs![0].billedDurationMs, 0);
+  assert.equal(parsed.proofs![0].estimate?.minutes, 25);
+  const naked = structuredClone(ledger);
+  delete naked.proofs![0].estimate;
+  assert.throws(() => parseCiMinuteLedger(naked));
+  const cross = structuredClone(ledger);
+  cross.proofs![0].startedAt = Date.UTC(2027, 11, 31);
+  assert.throws(() => parseCiMinuteLedger(cross));
+  cross.proofs![0].estimate!.executionMonth = null;
+  parseCiMinuteLedger(cross);
 });

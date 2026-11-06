@@ -55,6 +55,72 @@ export const INACTIVE_CI_MINUTE_POLICY: Readonly<CiMinutePolicyV1> = Object
     ceilingQualification: null,
   });
 
+/** Accepted protected-source scheduling basis, not an invoice-perfect ceiling claim. */
+export interface CiMinuteSourcePolicyV1 extends CiMinutePolicyV1 {
+  calendar: "utc_month";
+  accounting: "retained_estimates";
+  meterRefunds: false;
+  bootstrap: "unknown_month_floor";
+  privateRemote: typeof CI_MINUTE_PRIVATE_REMOTE;
+  stateRef: typeof CI_MINUTE_REF;
+  targets: readonly {
+    owner: string;
+    name: string;
+    repositoryId: number;
+    ceilingMinutes: number;
+    workflowBlob: string;
+    job: string;
+    runner: "ubuntu-latest";
+    timeoutMinutes: number;
+  }[];
+}
+
+/** Consumers stay on INACTIVE until the dependent modules are integrated. */
+export const ACCEPTED_CI_MINUTE_POLICY: Readonly<CiMinuteSourcePolicyV1> =
+  Object.freeze({
+    ...INACTIVE_CI_MINUTE_POLICY,
+    activated: true,
+    calendar: "utc_month",
+    accounting: "retained_estimates",
+    meterRefunds: false,
+    bootstrap: "unknown_month_floor",
+    privateRemote: CI_MINUTE_PRIVATE_REMOTE,
+    stateRef: CI_MINUTE_REF,
+    ceilingQualification:
+      "b0134c1921657e336834a67d4ae52ae9aa491f5ff8f39f5d123148587919b0e4",
+    storageAcceptance: ciMinuteDigest({
+      domain: "ci-private-state-v1",
+      remote: CI_MINUTE_PRIVATE_REMOTE,
+      ref: CI_MINUTE_REF,
+    }),
+    targets: Object.freeze([
+      Object.freeze({
+        owner: "ubiquity",
+        name: "prospector",
+        repositoryId: 1337190500,
+        ceilingMinutes: 25,
+        workflowBlob: "bacb73da71714a27d76918771d06ff4ce1f45b82",
+        job: "validation",
+        runner: "ubuntu-latest" as const,
+        timeoutMinutes: 20,
+      }),
+      Object.freeze({
+        owner: "ubiquity",
+        name: "passport.ubq.fi",
+        repositoryId: 1254699258,
+        ceilingMinutes: 35,
+        workflowBlob: "f2c61d693d8439a7f42b47d35ebaedb37173b1c7",
+        job: "deno",
+        runner: "ubuntu-latest" as const,
+        timeoutMinutes: 30,
+      }),
+    ]),
+  });
+
+export function acceptedCiMinutePolicy(): CiMinuteSourcePolicyV1 {
+  return structuredClone(ACCEPTED_CI_MINUTE_POLICY);
+}
+
 export type CiEffectKindV1 =
   | "head_push"
   | "pr_open"
@@ -99,11 +165,20 @@ export interface CiMinuteReservationV1 {
     | "submitted"
     | "ambiguous"
     | "settled"
+    | "terminal_estimated"
     | "confirmed_not_submitted";
   createdAt: number;
   settledAt: number | null;
   chargedMinutes: number;
   proofDigest: string | null;
+  /** Quantity provenance; timestamps close execution exposure, never measure invoices. */
+  accounting?: {
+    kind: "retained_estimate" | "provider_actual" | "never_started";
+    executionMonth: string | null;
+    terminalProofDigest: string;
+    startedAt: number | null;
+    completedAt: number | null;
+  };
   binding?: {
     effect: CiEffectV1;
     repositoryId: number;
@@ -153,6 +228,13 @@ export interface CiMinuteJobProofV1 {
     attempt: number;
     jobId: number;
   };
+  /** Explicit conservative quantity; a zero/missing provider meter never becomes actual usage. */
+  estimate?: {
+    kind: "retained_estimate";
+    minutes: number;
+    executionMonth: string | null;
+    terminalProofDigest: string;
+  };
 }
 
 export interface CiMinuteObservationV1 {
@@ -163,6 +245,7 @@ export interface CiMinuteObservationV1 {
   progress?: CiMinuteProgressV1 | null;
   completedAttempts?: readonly string[];
   observedAt?: number;
+  catalog?: CiMinuteRunCatalogV1;
 }
 
 export interface CiMinuteLedgerV1 {
@@ -180,6 +263,45 @@ export interface CiMinuteLedgerV1 {
   progress?: CiMinuteProgressV1 | null;
   completedAttempts?: string[];
   proofs?: CiMinuteJobProofV1[];
+  /** Conservative floor, not an additive invented actual-usage receipt. */
+  bootstrap?: CiMinuteBootstrapV1;
+  catalog?: CiMinuteRunCatalogV1;
+}
+
+export interface CiMinuteBootstrapV1 {
+  kind: "conservative_unknown_history";
+  month: string;
+  floorMinutes: number;
+  createdAt: number;
+  policyDigest: string;
+}
+
+export interface CiMinuteKnownRunV1 {
+  repositoryId: number;
+  runId: number;
+  head: string;
+  createdAt: number | null;
+  updatedAt: number | null;
+  runAttempt: number;
+  checkedAttempt: number;
+  status:
+    | "queued"
+    | "in_progress"
+    | "waiting"
+    | "requested"
+    | "pending"
+    | "completed"
+    | "unknown";
+  terminalProofDigest: string | null;
+  refreshRequired: boolean;
+}
+
+/** Finite private catalog; capacity exhaustion holds rather than retiring by age. */
+export interface CiMinuteRunCatalogV1 {
+  runs: CiMinuteKnownRunV1[];
+  cursor: number;
+  passThrough: number | null;
+  complete: boolean;
 }
 
 export interface CiMinuteStoreV1 {
@@ -208,6 +330,34 @@ export interface CiMinuteControllerV1 {
   readonly active: boolean;
   reserve(effect: CiEffectV1, deadline: number): Promise<CiMinuteDecisionV1>;
 }
+
+/** Native-turn driver is separate so effect-only ports and fixtures remain unchanged. */
+export interface CiMinuteCoordinatorV1 extends CiMinuteControllerV1 {
+  reconcile(deadline: number): Promise<CiMinuteReconcileDecisionV1>;
+}
+
+export type CiMinuteReconcileDecisionV1 =
+  | { kind: "inactive" }
+  | { kind: "ready"; month: string; watermark: number }
+  | { kind: "pending"; retryAt: number; reason: string }
+  | { kind: "unavailable"; reason: string };
+
+/** Reader returns normalized evidence/state only; the controller owns every CAS write. */
+export type CiMinuteObserverV1 = (
+  month: string,
+  deadline: number,
+  ledger: Readonly<CiMinuteLedgerV1>,
+) => Promise<CiMinuteObservationV1 | null>;
+
+export interface CiMinuteReconcilerInputV1 {
+  policy: Readonly<CiMinutePolicyV1>;
+  request(path: string, deadline: number): Promise<unknown | null>;
+  clock: { now(): number };
+}
+
+export type CiMinuteReconcilerFactoryV1 = (
+  input: CiMinuteReconcilerInputV1,
+) => CiMinuteObserverV1;
 
 export function ciMinuteDigest(value: unknown): string {
   return createHash("sha256").update(canonicalStringify(value), "utf8").digest(
@@ -325,7 +475,7 @@ export function parseCiMinuteLedger(value: unknown): CiMinuteLedgerV1 {
   keys(
     value,
     "version month policyDigest updatedAt sequence baselineMinutes watermark reservations observed",
-    "progress completedAttempts proofs",
+    "progress completedAttempts proofs bootstrap catalog",
   );
   if (
     value.version !== 1 || typeof value.month !== "string" ||
@@ -345,7 +495,7 @@ export function parseCiMinuteLedger(value: unknown): CiMinuteLedgerV1 {
     keys(
       item,
       "effectDigest policyDigest ceilingMinutes state createdAt settledAt chargedMinutes proofDigest",
-      "binding",
+      "binding accounting",
     );
     if (
       !digest(item.effectDigest) || ids.has(item.effectDigest) ||
@@ -359,6 +509,7 @@ export function parseCiMinuteLedger(value: unknown): CiMinuteLedgerV1 {
         "submitted",
         "ambiguous",
         "settled",
+        "terminal_estimated",
         "confirmed_not_submitted",
       ].includes(String(item.state)) ||
       (item.settledAt !== null &&
@@ -367,6 +518,7 @@ export function parseCiMinuteLedger(value: unknown): CiMinuteLedgerV1 {
       (item.proofDigest !== null && !digest(item.proofDigest))
     ) throw new Error("invalid CI reservation");
     const terminal = item.state === "settled" ||
+      item.state === "terminal_estimated" ||
       item.state === "confirmed_not_submitted";
     if (
       terminal !== (item.settledAt !== null && item.proofDigest !== null) ||
@@ -376,6 +528,20 @@ export function parseCiMinuteLedger(value: unknown): CiMinuteLedgerV1 {
     ) throw new Error("invalid CI charge");
     ids.add(item.effectDigest);
     if (item.binding !== undefined) validateCiMinuteBinding(item.binding);
+    if (item.accounting !== undefined) {
+      validateCiMinuteAccounting(item.accounting);
+    }
+    if (item.state === "terminal_estimated") {
+      const accounting = item.accounting as Record<string, unknown> | undefined;
+      if (
+        accounting?.kind !== "retained_estimate" ||
+        accounting.executionMonth === null ||
+        Number(item.chargedMinutes) < Number(item.ceilingMinutes) ||
+        accounting.terminalProofDigest !== item.proofDigest
+      ) {
+        throw new Error("invalid terminal CI estimate");
+      }
+    }
   }
   ids.clear();
   for (const item of value.observed) {
@@ -394,11 +560,106 @@ export function parseCiMinuteLedger(value: unknown): CiMinuteLedgerV1 {
     validateCiMinuteProgress(value.progress, String(value.month));
   }
   if (value.proofs !== undefined) validateCiMinuteProofs(value.proofs);
+  if (value.bootstrap !== undefined) {
+    keys(value.bootstrap, "kind month floorMinutes createdAt policyDigest");
+    const bootstrap = value.bootstrap;
+    if (
+      bootstrap.kind !== "conservative_unknown_history" ||
+      bootstrap.month !== value.month ||
+      bootstrap.policyDigest !== value.policyDigest ||
+      bootstrap.floorMinutes !== value.baselineMinutes ||
+      !Number.isSafeInteger(bootstrap.createdAt) ||
+      Number(bootstrap.createdAt) < 0 ||
+      Number(bootstrap.createdAt) > Number(value.updatedAt)
+    ) throw new Error("invalid conservative CI bootstrap");
+  }
+  if (value.catalog !== undefined) validateCiMinuteCatalog(value.catalog);
   const text = canonicalStringify(value);
   if (new TextEncoder().encode(text).length > CI_MINUTE_MAX_BYTES) {
     throw new Error("CI ledger bound");
   }
   return structuredClone(value) as unknown as CiMinuteLedgerV1;
+}
+
+function validateCiMinuteAccounting(value: unknown): void {
+  keys(value, "kind executionMonth terminalProofDigest startedAt completedAt");
+  if (
+    !["retained_estimate", "provider_actual", "never_started"].includes(
+      String(value.kind),
+    ) ||
+    !digest(value.terminalProofDigest) ||
+    (value.executionMonth !== null &&
+      (typeof value.executionMonth !== "string" ||
+        !/^\d{4}-(0[1-9]|1[0-2])$/.test(value.executionMonth)))
+  ) {
+    throw new Error("invalid CI accounting provenance");
+  }
+  if (value.kind === "never_started") {
+    if (value.startedAt !== null || value.completedAt !== null) {
+      throw new Error("invalid no-start provenance");
+    }
+  } else {
+    if (
+      ![value.startedAt, value.completedAt].every((n) =>
+        Number.isSafeInteger(n) && Number(n) >= 0
+      ) ||
+      Number(value.completedAt) < Number(value.startedAt)
+    ) throw new Error("invalid terminal CI timestamps");
+    if (
+      value.executionMonth !== null &&
+      (ciMonth(Number(value.startedAt)).month !== value.executionMonth ||
+        ciMonth(Number(value.completedAt)).month !== value.executionMonth)
+    ) throw new Error("unproved CI execution month");
+  }
+}
+
+function validateCiMinuteCatalog(value: unknown): void {
+  keys(value, "runs cursor passThrough complete");
+  if (
+    !Array.isArray(value.runs) || value.runs.length > CI_MINUTE_MAX_RECORDS ||
+    !Number.isSafeInteger(value.cursor) || Number(value.cursor) < 0 ||
+    Number(value.cursor) > value.runs.length ||
+    typeof value.complete !== "boolean" ||
+    (value.passThrough !== null &&
+      (!Number.isSafeInteger(value.passThrough) ||
+        Number(value.passThrough) < 0)) ||
+    (value.complete &&
+      (value.cursor !== value.runs.length || value.passThrough === null))
+  ) throw new Error("invalid CI catalog cursor");
+  const ids = new Set<string>();
+  for (const run of value.runs) {
+    keys(
+      run,
+      "repositoryId runId head createdAt updatedAt runAttempt checkedAttempt status terminalProofDigest refreshRequired",
+    );
+    const id = `${run.repositoryId}:${run.runId}`;
+    if (
+      ids.has(id) || (value.complete && run.refreshRequired === true) ||
+      ![run.repositoryId, run.runId, run.runAttempt].every((n) =>
+        Number.isSafeInteger(n) && Number(n) > 0
+      ) ||
+      !/^[0-9a-f]{40}$/.test(String(run.head)) ||
+      !Number.isSafeInteger(run.checkedAttempt) ||
+      Number(run.checkedAttempt) < 0 ||
+      Number(run.checkedAttempt) > Number(run.runAttempt) ||
+      [run.createdAt, run.updatedAt].some((n) =>
+        n !== null && (!Number.isSafeInteger(n) || Number(n) < 0)
+      ) ||
+      ![
+        "queued",
+        "in_progress",
+        "waiting",
+        "requested",
+        "pending",
+        "completed",
+        "unknown",
+      ].includes(String(run.status)) ||
+      typeof run.refreshRequired !== "boolean" ||
+      (run.terminalProofDigest !== null && (!digest(run.terminalProofDigest) ||
+        run.status !== "completed" || run.checkedAttempt !== run.runAttempt))
+    ) throw new Error("invalid known CI run");
+    ids.add(id);
+  }
 }
 
 function validateCiMinuteAttempts(value: unknown): void {
@@ -521,9 +782,27 @@ function validateCiMinuteProofs(value: unknown): void {
     keys(
       job,
       "digest effectDigest startedAt completedAt neverStarted terminal billedDurationMs",
-      "identity",
+      "identity estimate",
     );
-    ciJobMinutes(job as unknown as CiMinuteJobProofV1);
+    if (job.estimate === undefined) {
+      ciJobMinutes(job as unknown as CiMinuteJobProofV1);
+    } else {
+      keys(job.estimate, "kind minutes executionMonth terminalProofDigest");
+      const estimate = job.estimate;
+      if (
+        estimate.kind !== "retained_estimate" ||
+        !Number.isSafeInteger(estimate.minutes) ||
+        Number(estimate.minutes) < 1 ||
+        job.neverStarted !== false || job.terminal !== true
+      ) throw new Error("invalid CI proof estimate");
+      validateCiMinuteAccounting({
+        kind: estimate.kind,
+        executionMonth: estimate.executionMonth,
+        terminalProofDigest: estimate.terminalProofDigest,
+        startedAt: job.startedAt,
+        completedAt: job.completedAt,
+      });
+    }
     if (job.identity !== undefined) {
       keys(job.identity, "repositoryId runId attempt jobId");
       if (
@@ -561,12 +840,17 @@ export function validateCiMinuteTransition(
       row.createdAt !== old.createdAt ||
       canonicalStringify(row.binding ?? null) !==
         canonicalStringify(old.binding ?? null) ||
-      (["settled", "confirmed_not_submitted"].includes(old.state) &&
+      (["settled", "terminal_estimated", "confirmed_not_submitted"].includes(
+        old.state,
+      ) &&
         canonicalStringify(row) !== canonicalStringify(old) &&
-        !(old.state === "settled" && row.state === "settled" &&
+        !(["settled", "terminal_estimated"].includes(old.state) &&
+          row.state === old.state &&
           row.chargedMinutes > old.chargedMinutes &&
           row.settledAt === old.settledAt &&
-          row.proofDigest === old.proofDigest))
+          row.proofDigest === old.proofDigest &&
+          canonicalStringify(row.accounting ?? null) ===
+            canonicalStringify(old.accounting ?? null)))
     ) {
       throw new Error("CI reservation history changed");
     }
@@ -586,5 +870,22 @@ export function validateCiMinuteTransition(
     if (!(next.completedAttempts ?? []).includes(id)) {
       throw new Error("CI attempt history changed");
     }
+  }
+  if (
+    prior.bootstrap !== undefined &&
+    canonicalStringify(prior.bootstrap) !==
+      canonicalStringify(next.bootstrap ?? null)
+  ) {
+    throw new Error("CI bootstrap provenance changed");
+  }
+  for (const old of prior.catalog?.runs ?? []) {
+    const run = next.catalog?.runs.find((r) =>
+      r.repositoryId === old.repositoryId && r.runId === old.runId
+    );
+    if (
+      run === undefined || run.head !== old.head ||
+      (old.createdAt !== null && run.createdAt !== old.createdAt) ||
+      run.runAttempt < old.runAttempt || run.checkedAttempt < old.checkedAttempt
+    ) throw new Error("CI catalog history changed");
   }
 }
