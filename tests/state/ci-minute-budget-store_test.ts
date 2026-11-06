@@ -19,7 +19,11 @@ import {
   composePrivateCiMinutes,
   createHostedPrivateCiCapabilities,
 } from "../../src/host/hosted-app-principal.ts";
-import { readHostedPrivateCiScope } from "../../src/host/hosted-app-principal-native.ts";
+import {
+  readHostedPrivateCiData,
+  readHostedPrivateCiScope,
+} from "../../src/host/hosted-app-principal-native.ts";
+import { createPrivateCiEffectResolver } from "../../ops/hosted-autonomy-github-jobs.ts";
 import { principalNativeFixture } from "../host/hosted-app-principal-fixtures.ts";
 import { GitCiMinuteStore } from "../../src/state/ci-minute-budget-store.ts";
 import { DenoGitRunner } from "../../src/state/state-git.ts";
@@ -28,8 +32,12 @@ import {
   CI_MINUTE_PRIVATE_REMOTE,
   CI_MINUTE_REF,
   ciPolicyDigest,
+  ciTerminalEstimateDigest,
 } from "../../src/contracts/ci-minute-budget.ts";
-import type { CiMinuteLedgerV1 } from "../../src/contracts/ci-minute-budget.ts";
+import type {
+  CiMinuteJobProofV1,
+  CiMinuteLedgerV1,
+} from "../../src/contracts/ci-minute-budget.ts";
 import {
   createCiMinuteController,
   proposedCiMinutePolicy,
@@ -39,6 +47,16 @@ import { canonicalStringify } from "../../src/contracts/canonical.ts";
 
 const ACCEPTANCE = "a".repeat(64);
 const NOW = Date.UTC(2028, 0, 31);
+function estimatedJob(job: CiMinuteJobProofV1): CiMinuteJobProofV1 {
+  assert.ok(job.estimate);
+  return {
+    ...job,
+    estimate: {
+      ...job.estimate,
+      terminalProofDigest: ciTerminalEstimateDigest(job),
+    },
+  };
+}
 async function fixture() {
   await Deno.mkdir(".data/ci-minute-tests", { recursive: true });
   const tmp = await Deno.makeTempDir({
@@ -529,6 +547,7 @@ Deno.test("CI phase1 explicit terminal-unmetered proof is not a fabricated actua
       },
     }],
   };
+  ledger.proofs![0] = estimatedJob(ledger.proofs![0]);
   const parsed = parseCiMinuteLedger(ledger);
   assert.equal(parsed.proofs![0].billedDurationMs, 0);
   assert.equal(parsed.proofs![0].estimate?.minutes, 25);
@@ -539,6 +558,7 @@ Deno.test("CI phase1 explicit terminal-unmetered proof is not a fabricated actua
   cross.proofs![0].startedAt = Date.UTC(2027, 11, 31);
   assert.throws(() => parseCiMinuteLedger(cross));
   cross.proofs![0].estimate!.executionMonth = null;
+  cross.proofs![0] = estimatedJob(cross.proofs![0]);
   parseCiMinuteLedger(cross);
 });
 
@@ -560,21 +580,22 @@ Deno.test("CI capacity synthetic catalog and retained proofs serialize through r
       terminalProofDigest: ciMinuteDigest({ run: index }),
       refreshRequired: false,
     });
-    const proof = (index: number) => ({
-      digest: ciMinuteDigest({ job: index }),
-      effectDigest: null,
-      startedAt: NOW - 497000,
-      completedAt: NOW,
-      neverStarted: false,
-      terminal: true,
-      billedDurationMs: 0,
-      estimate: {
-        kind: "retained_estimate" as const,
-        minutes: 25,
-        executionMonth: "2028-01",
-        terminalProofDigest: ciMinuteDigest({ job: index }),
-      },
-    });
+    const proof = (index: number) =>
+      estimatedJob({
+        digest: ciMinuteDigest({ job: index }),
+        effectDigest: null,
+        startedAt: NOW - 497000,
+        completedAt: NOW,
+        neverStarted: false,
+        terminal: true,
+        billedDurationMs: 0,
+        estimate: {
+          kind: "retained_estimate" as const,
+          minutes: 25,
+          executionMonth: "2028-01",
+          terminalProofDigest: ciMinuteDigest({ job: index }),
+        },
+      });
     f.ledger.catalog = {
       runs: Array.from({ length: 4000 }, (_, index) => run(index)),
       cursor: 4000,
@@ -669,7 +690,7 @@ Deno.test("CI pacing production composition refuses changed source basis before 
   assert.equal(touched, 0);
 });
 
-Deno.test("CI pacing production native driver creates a private initial CAS, resumes accounting, and admits one due later-month effect", async () => {
+Deno.test("CI acceptance native composition reuses readiness and exempts public targets from pending private reconciliation", async () => {
   const f = await fixture();
   let now = NOW;
   let applied = false;
@@ -867,9 +888,170 @@ Deno.test("CI pacing production native driver creates a private initial CAS, res
       afterPending,
       "pending reconciliation is reused without a new observation or effect",
     );
+    assert.equal(
+      (await pendingTurn.reserve({
+        ...effect,
+        repository: { owner: "fixture", name: "public", installationId: 1 },
+      }, now + 60000)).kind,
+      "inactive",
+    );
+    assert.equal(
+      paths.length,
+      afterPending,
+      "public effects never consult pending private reconciliation",
+    );
   } finally {
     await f.cleanup();
   }
+});
+
+Deno.test("CI acceptance public composition effects bypass unavailable private authority and every private preflight", async () => {
+  const policy = acceptedCiMinutePolicy();
+  const effect = {
+    repository: { owner: "fixture", name: "public", installationId: 1 },
+    kind: "pr_open" as const,
+    head: "a".repeat(40),
+    base: "b".repeat(40),
+    ref: "refs/heads/synthetic",
+    pr: 1,
+  };
+  let authorityCalls = 0;
+  const capability = composePrivateCiMinutes({
+    policy,
+    clock: { now: () => NOW },
+    scratch: "/not-used/ci-minutes-private",
+    authority: () => {
+      authorityCalls++;
+      return Promise.resolve(null);
+    },
+    billingBasis: verifyCiMinuteSchedulingBasis,
+  });
+  assert.equal((await capability.reconcile(NOW + 60000)).kind, "unavailable");
+  assert.equal(authorityCalls, 1);
+  assert.equal(
+    (await capability.reserve(effect, NOW + 60000)).kind,
+    "inactive",
+  );
+  assert.equal(authorityCalls, 1);
+  assert.equal(
+    (await capability.reserve({
+      ...effect,
+      repository: {
+        owner: policy.targets[0].owner,
+        name: policy.targets[0].name,
+        installationId: 1,
+      },
+    }, NOW + 60000)).kind,
+    "unavailable",
+  );
+  const fail = () => {
+    throw new Error("public effect touched private preflight");
+  };
+  const untouched = composePrivateCiMinutes({
+    policy,
+    clock: { now: fail },
+    scratch: "/not-used/ci-minutes-private",
+    authority: fail,
+    billingBasis: fail,
+  });
+  assert.equal((await untouched.reserve(effect, 0)).kind, "inactive");
+});
+
+Deno.test("CI acceptance native request adapter allows only managed numeric workflow reads and carries exact rerun qualification", async () => {
+  const f = principalNativeFixture(),
+    policy = acceptedCiMinutePolicy(),
+    target = policy.targets[0];
+  const scope = `/repos/${target.owner}/${target.name}`,
+    sha = "a".repeat(40),
+    paths: string[] = [];
+  const input = {
+    ...f.scopeInput,
+    http: (request: Parameters<typeof f.scopeInput.http>[0]) => {
+      assert.equal(request.method, "GET");
+      paths.push(new URL(request.url).pathname);
+      const path = new URL(request.url).pathname;
+      let body: unknown = { id: 77, path: ".github/workflows/ci.yml" };
+      if (path === scope) {
+        body = {
+          id: target.repositoryId,
+          private: true,
+          default_branch: "main",
+        };
+      } else if (path === `${scope}/actions/runs/7`) {
+        body = {
+          id: 7,
+          repository: { id: target.repositoryId },
+          head_sha: sha,
+          run_attempt: 1,
+          status: "completed",
+          workflow_id: 77,
+          path: ".github/workflows/ci.yml",
+        };
+      } else if (path.includes("/contents/")) {
+        body = {
+          type: "file",
+          encoding: "base64",
+          sha: target.workflowBlob,
+          content: btoa(
+            `on: [push]\njobs:\n  ${target.job}:\n    runs-on: ubuntu-latest\n    timeout-minutes: ${target.timeoutMinutes}\n    steps:\n      - run: true\n`,
+          ),
+        };
+      }
+      return Promise.resolve({
+        status: 200,
+        headers: new Headers(),
+        bodyText: JSON.stringify(body),
+      });
+    },
+  };
+  for (const managed of policy.targets) {
+    assert.deepEqual(
+      await readHostedPrivateCiData(
+        input,
+        `/repos/${managed.owner}/${managed.name}/actions/workflows/77`,
+      ),
+      { id: 77, path: ".github/workflows/ci.yml" },
+    );
+  }
+  const before = paths.length;
+  for (
+    const path of [
+      "/repos/fixture/project/actions/workflows/77",
+      `${scope}/actions/workflows/name.yml`,
+      `${scope}/actions/workflows/77/dispatches`,
+      `${scope}/actions/workflows`,
+      `${scope}/actions/workflows/0`,
+      `${scope}/actions/workflows/-1`,
+    ]
+  ) {
+    assert.equal(await readHostedPrivateCiData(input, path), null, path);
+  }
+  assert.equal(
+    paths.length,
+    before,
+    "unsupported routes never reach HTTP transport",
+  );
+  const resolve = createPrivateCiEffectResolver({
+    policy,
+    request: (path, deadline) =>
+      readHostedPrivateCiData({ ...input, deadline }, path),
+  });
+  const facts = await resolve({
+    repository: { owner: target.owner, name: target.name, installationId: 1 },
+    kind: "rerun",
+    head: sha,
+    base: null,
+    ref: "refs/heads/synthetic",
+    pr: null,
+    runId: 7,
+    attempt: 2,
+  }, f.clock.now() + 1000);
+  assert.ok(facts);
+  assert.equal(
+    await verifyCiMinuteSchedulingBasis(policy, f.clock.now() + 1000, facts),
+    true,
+  );
+  assert.ok(paths.includes(`${scope}/actions/workflows/77`));
 });
 
 Deno.test("CI gap recovery real Git carries the same unresolved reservation across missing months until authenticated terminal closure", async () => {
@@ -970,7 +1152,7 @@ Deno.test("CI gap recovery real Git carries the same unresolved reservation acro
         ?.chargedMinutes,
       25,
     );
-    jobs = [{
+    jobs = [estimatedJob({
       digest: ACCEPTANCE,
       effectDigest: id,
       startedAt: november - 497000,
@@ -984,7 +1166,7 @@ Deno.test("CI gap recovery real Git carries the same unresolved reservation acro
         executionMonth: "2028-11",
         terminalProofDigest: ACCEPTANCE,
       },
-    }];
+    })];
     assert.equal((await controller().reconcile(now + 60000)).kind, "ready");
     now = Date.UTC(2029, 2, 31, 23);
     jobs = [];

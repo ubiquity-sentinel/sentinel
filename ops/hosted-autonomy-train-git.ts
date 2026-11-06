@@ -25,6 +25,11 @@ import { gitDeliveryTrainComposer } from "./hosted-autonomy-train-compose.ts";
 import type { DeliveryTrainComposerV1 } from "./hosted-autonomy-train-types.ts";
 import { isGatewayVpsRepository } from "../src/repair/vps-delivery.ts";
 import { isHostedSelf } from "./hosted-autonomy-policy.ts";
+import {
+  GitReviewSnapshot,
+  type PreparedWorkflowBlobV1,
+} from "../src/github/review-snapshot.ts";
+import type { GitSha } from "../src/contracts/brands.ts";
 
 /** Bound of one fetch or ref deletion. */
 const GIT_TIMEOUT_MS = 120_000;
@@ -39,6 +44,14 @@ export interface TrainGitOptionsV1 {
   /** The target's remote (default `https://github.com/<owner>/<name>.git`). */
   remoteUrlFor?(repository: RepositoryIdentityV1): string;
   gitPath?: string;
+  now?: () => number;
+  onPreparedWorkflowReader?(
+    repository: RepositoryIdentityV1,
+    reader: (
+      head: GitSha,
+      deadline: number,
+    ) => Promise<PreparedWorkflowBlobV1 | null>,
+  ): void;
 }
 
 async function run(
@@ -115,6 +128,16 @@ export function createTrainComposerFor(
       gitPath: git,
       extraEnv: auth,
     });
+    const workflow = new GitReviewSnapshot({
+      repositoryDir: localDir,
+      trustedPath: env.PATH,
+      gitExecutable: git,
+      now: options.now,
+    });
+    options.onPreparedWorkflowReader?.(
+      repository,
+      (head, deadline) => workflow.readWorkflowBlob(head, deadline),
+    );
     const composer = gitDeliveryTrainComposer(executor, {
       async ensureObjects(shas) {
         if (!await init() || shas.some((sha) => !SHA.test(sha))) return false;

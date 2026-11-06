@@ -63,6 +63,7 @@ import {
   writeTierCountsOutput,
 } from "../src/host/tier-counts-output.ts";
 import { createTrainComposerFor } from "./hosted-autonomy-train-git.ts";
+import type { PreparedWorkflowBlobV1 } from "../src/github/review-snapshot.ts";
 import { CurrentMatrixRecoveryIntegrityFailure } from "./hosted-autonomy-producer-recovery.ts";
 import { ClosedCWaveRecoveryIntegrityFailure } from "../src/host/modern-matrix-recovery.ts";
 import {
@@ -434,6 +435,13 @@ async function runHostedAutonomyMainResult(
           },
         });
       };
+      const preparedWorkflowReaders = new Map<
+        string,
+        (
+          head: GitSha,
+          deadline: number,
+        ) => Promise<PreparedWorkflowBlobV1 | null>
+      >();
       const ciMinutes = composePrivateCiMinutes({
         policy: acceptedCiMinutePolicy(),
         clock: ciClock,
@@ -441,6 +449,12 @@ async function runHostedAutonomyMainResult(
         deadlineAt: nativeTurnDeadline,
         authority: privateCiAuthority,
         billingBasis: verifyCiMinuteSchedulingBasis,
+        readPreparedWorkflow: (effect, limit) =>
+          effect.head === null
+            ? Promise.resolve(null)
+            : preparedWorkflowReaders.get(
+              hostedRepositoryKey(effect.repository),
+            )?.(effect.head as GitSha, limit) ?? Promise.resolve(null),
       });
       await ciMinutes.reconcile(nativeTurnDeadline);
       const githubFor = (
@@ -507,6 +521,13 @@ async function runHostedAutonomyMainResult(
             composerFor: createTrainComposerFor({
               scratch,
               tokenFor: () => apiToken,
+              now: ciClock.now,
+              onPreparedWorkflowReader: (repository, reader) => {
+                preparedWorkflowReaders.set(
+                  hostedRepositoryKey(repository),
+                  reader,
+                );
+              },
             }),
           },
           // #338: the pass's in-process collector, filled by the delivery and

@@ -9,7 +9,17 @@ import assert from "node:assert/strict";
 import type {
   CiEffectV1,
   CiMinuteControllerV1,
+  CiMinuteLedgerV1,
 } from "../../src/contracts/ci-minute-budget.ts";
+import {
+  ciMonth,
+  ciPolicyDigest,
+} from "../../src/contracts/ci-minute-budget.ts";
+import { createCiMinuteController } from "../../src/budget/ci-minutes.ts";
+import { portOk } from "../../src/contracts/ports.ts";
+import type { GitSha } from "../../src/contracts/brands.ts";
+import type { PreparedWorkflowBlobV1 } from "../../src/github/review-snapshot.ts";
+import { createPrivateCiEffectResolver } from "../../ops/hosted-autonomy-github-jobs.ts";
 import { createMetricsCollectorV1 } from "../../src/contracts/throughput-metrics-collector.ts";
 import { HOSTED_AUTONOMY_PASS_DEADLINE_MS } from "../../ops/hosted-autonomy-continuation.ts";
 import { makeRig, repairSnapshot, run } from "./hosted-autonomy-rig.ts";
@@ -23,6 +33,10 @@ import { T0 } from "../state/helpers.ts";
 import type { GitDeliveryTrainStore } from "../../src/state/delivery-train-store.ts";
 import { FOREIGN_REPO } from "./hosted-autonomy-fixtures.ts";
 import { DELIVERY_TRAIN_CI_WAIT_MS } from "../../src/contracts/delivery-train-ledger.ts";
+import {
+  createTrainComposerFor,
+  type TrainGitOptionsV1,
+} from "../../ops/hosted-autonomy-train-git.ts";
 
 const FIVE: MemberSpecV1[] = [0, 1, 2, 3, 4].map((index) => ({
   file: `feature-${index}.txt`,
@@ -39,10 +53,17 @@ async function trainPass(
     prepare?: (world: TrainWorldV1) => void;
     ledger?: "memory" | "git";
     ciMinutes?: CiMinuteControllerV1;
+    baseWorkflow?: string;
+    onPreparedWorkflowReader?: TrainGitOptionsV1["onPreparedWorkflowReader"];
   } = {},
 ) {
   const tmp = await Deno.makeTempDir({ prefix: `sentinel-${name}-world-` });
-  const world = await makeTrainWorld(tmp, specs, { ledger: options.ledger });
+  const world = await makeTrainWorld(tmp, specs, {
+    ledger: options.ledger,
+    baseWorkflow: options.baseWorkflow,
+    now: () => options.clock?.now() ?? T0,
+    onPreparedWorkflowReader: options.onPreparedWorkflowReader,
+  });
   options.prepare?.(world);
   const { rig, github } = await makeRig(name, {
     repair: repairSnapshot(
@@ -83,6 +104,251 @@ function counts(metrics: ReturnType<typeof createMetricsCollectorV1>) {
     }).counts;
   return { trainsBuilt, targetCiRunsTriggered, mergesCompleted };
 }
+
+Deno.test("CI acceptance train qualifies unpublished local commit before push and dispatch and restores identical SHA in a fresh directory", async () => {
+  const readers = new Map<
+    string,
+    (head: GitSha, deadline: number) => Promise<PreparedWorkflowBlobV1 | null>
+  >();
+  const key = `${FOREIGN_REPO.owner}/${FOREIGN_REPO.name}`;
+  const register: NonNullable<TrainGitOptionsV1["onPreparedWorkflowReader"]> = (
+    repo,
+    reader,
+  ) => {
+    readers.set(`${repo.owner}/${repo.name}`, reader);
+  };
+  const ciMinutes: CiMinuteControllerV1 = {
+    active: true,
+    reserve: (effect, deadline) => controller.reserve(effect, deadline),
+  };
+  const fixture = await trainPass("synthetic-prepared-ci", FIVE.slice(0, 2), {
+    ciMinutes,
+    baseWorkflow:
+      "on: [push, workflow_dispatch]\njobs:\n  validation:\n    runs-on: ubuntu-latest\n    timeout-minutes: 20\n    steps:\n      - run: true\n",
+    onPreparedWorkflowReader: register,
+  });
+  const { world, once, cleanup } = fixture;
+  const fresh = await Deno.makeTempDir({ prefix: "synthetic-train-restart-" });
+  let acknowledged = false, pushes = 0, dispatches = 0, prepared = "";
+  const policy = {
+    version: 1 as const,
+    activated: true,
+    monthlyLimit: 2000,
+    managedLimit: 1450,
+    securityReserve: 150,
+    unmanagedReserve: 400,
+    targets: [{
+      owner: FOREIGN_REPO.owner,
+      name: FOREIGN_REPO.name,
+      repositoryId: 101,
+      ceilingMinutes: 25,
+    }],
+    storageAcceptance: "a".repeat(64),
+    ceilingQualification: "b".repeat(64),
+  };
+  let ledger: CiMinuteLedgerV1 = {
+    version: 1,
+    month: ciMonth(T0).month,
+    policyDigest: ciPolicyDigest(policy),
+    updatedAt: T0,
+    sequence: 0,
+    baselineMinutes: 0,
+    watermark: null,
+    reservations: [],
+    observed: [],
+  };
+  let head = "1".repeat(40) as GitSha, sequence = 1;
+  const blob = await git(
+    world.bare,
+    "rev-parse",
+    `${world.base}:.github/workflows/ci.yml`,
+  );
+  const decorate = (
+    factory: NonNullable<typeof world.trainDeps.composerFor>,
+  ): NonNullable<typeof world.trainDeps.composerFor> =>
+  (repo) => {
+    const composer = factory(repo);
+    return composer === null ? null : {
+      ...composer,
+      async publish(input) {
+        assert.equal(
+          ledger.reservations.length,
+          2,
+          "push and dispatch are reserved before either effect",
+        );
+        assert.deepEqual(
+          ledger.reservations.map((row) => row.chargedMinutes),
+          [25, 25],
+        );
+        if (prepared !== "") {
+          assert.equal(
+            input.sha,
+            prepared,
+            "recovery must use the identical prepared commit",
+          );
+        }
+        prepared = input.sha;
+        pushes++;
+        const result = await composer.publish(input);
+        return acknowledged ? result : "ambiguous";
+      },
+      triggerCi() {
+        assert.equal(ledger.reservations.length, 2);
+        dispatches++;
+        return Promise.resolve(true);
+      },
+    };
+  };
+  world.trainDeps.composerFor = decorate(world.trainDeps.composerFor!);
+  const controller = createCiMinuteController({
+    policy,
+    clock: { now: () => T0 },
+    authorizePolicy: (basis, _deadline, facts) =>
+      Promise.resolve(
+        ciPolicyDigest(basis) === ciPolicyDigest(policy) &&
+          (facts === undefined ||
+            facts.workflowBlob === blob && facts.jobs === 1 &&
+              facts.runner === "ubuntu-latest" && facts.timeoutMinutes === 20),
+      ),
+    observe: (month) =>
+      Promise.resolve({ month, complete: true, watermark: T0, jobs: [] }),
+    resolve: createPrivateCiEffectResolver({
+      policy,
+      request: async (path) => {
+        assert.equal(
+          path.includes("/contents/"),
+          false,
+          "prepared train never requires remote workflow contents",
+        );
+        if (path.includes("/git/ref/")) {
+          const ref = "refs/" + path.split("/git/ref/")[1];
+          try {
+            return {
+              object: {
+                sha: await git(world.bare, "rev-parse", "--verify", ref),
+              },
+            };
+          } catch {
+            return { object: { sha: world.initialTip } };
+          }
+        }
+        if (path.includes("/actions/runs?")) {
+          return {
+            total_count: dispatches > 0 ? 1 : 0,
+            workflow_runs: dispatches > 0
+              ? [{ id: 1, head_sha: prepared }]
+              : [],
+          };
+        }
+        return { id: 101, private: true, default_branch: "development" };
+      },
+      readPreparedWorkflow: async (effect, deadline) => {
+        if (pushes === 0) {
+          let visible = false;
+          try {
+            await git(world.bare, "cat-file", "-e", `${effect.head}^{commit}`);
+            visible = true;
+          } catch { /* exact prepared object is still private */ }
+          assert.equal(visible, false);
+        }
+        return readers.get(key)?.(effect.head as GitSha, deadline) ?? null;
+      },
+    }),
+    store: {
+      read: () =>
+        Promise.resolve(portOk({ head, ledger: structuredClone(ledger) })),
+      readPrior: () => Promise.resolve(portOk({ head, ledger: null })),
+      write(input) {
+        assert.equal(input.expectedHead, head);
+        ledger = structuredClone(input.ledger);
+        head = String(++sequence).padStart(40, "0") as GitSha;
+        return Promise.resolve(portOk({ status: "applied" as const, head }));
+      },
+    },
+  });
+  try {
+    const first = await once();
+    assert.ok(prepared, JSON.stringify(first.actions));
+    assert.equal((await world.ledger()).train?.phase, "publishing");
+    assert.equal(dispatches, 0);
+    const restart = createTrainComposerFor({
+      scratch: fresh,
+      tokenFor: () => "synthetic-token",
+      remoteUrlFor: () => `file://${world.bare}`,
+      now: () => T0,
+      onPreparedWorkflowReader: register,
+    });
+    assert.ok(restart(FOREIGN_REPO));
+    assert.equal(
+      await readers.get(key)!(prepared as GitSha, T0 + 60000),
+      null,
+      "fresh directory has no prepared object yet",
+    );
+    world.trainDeps.composerFor = decorate(restart);
+    acknowledged = true;
+    const second = await once();
+    assert.deepEqual(world.merges, [500, 501], JSON.stringify(second.actions));
+    assert.equal(dispatches, 1);
+    assert.equal(ledger.reservations.length, 2);
+    assert.equal((await world.ledger()).train, null);
+  } finally {
+    await cleanup();
+    await Deno.remove(fresh, { recursive: true });
+  }
+});
+
+Deno.test("CI acceptance train refuses regenerated identity mismatch before CI admission or target publication", async () => {
+  let admissions = 0;
+  const fixture = await trainPass(
+    "synthetic-train-mismatch",
+    FIVE.slice(0, 2),
+    {
+      ciMinutes: {
+        active: true,
+        reserve: () => {
+          admissions++;
+          return Promise.resolve({
+            kind: "admitted",
+            reservationDigest: "a".repeat(64),
+          });
+        },
+      },
+    },
+  );
+  const original = fixture.world.trainDeps.composerFor!;
+  let compositions = 0;
+  fixture.world.trainDeps.composerFor = (repo) => {
+    const composer = original(repo);
+    return composer === null ? null : {
+      ...composer,
+      async compose(input) {
+        const steps = await composer.compose(input);
+        compositions++;
+        return compositions === 1 || steps === null
+          ? steps
+          : steps.map((step, index) =>
+            index === steps.length - 1 && step.status === "joined"
+              ? { ...step, commit: "f".repeat(40) }
+              : step
+          );
+      },
+    };
+  };
+  try {
+    const result = await fixture.once();
+    assert.ok(
+      result.actions.some((action) =>
+        action.endsWith(":restore_identity_mismatch")
+      ),
+      JSON.stringify(result.actions),
+    );
+    assert.equal(admissions, 0);
+    assert.deepEqual(await fixture.world.trainRefs(), []);
+    assert.equal((await fixture.world.ledger()).train?.phase, "publishing");
+  } finally {
+    await fixture.cleanup();
+  }
+});
 
 Deno.test("train: five reviewed records land on one train ref, one CI run and five ordered merges", async () => {
   const { rig, world, metrics, once, cleanup } = await trainPass(

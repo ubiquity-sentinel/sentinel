@@ -83,7 +83,75 @@ import {
 } from "./snapshot-git-wire.ts";
 import type { GitReadV1 } from "./snapshot-reader.ts";
 
+export interface PreparedWorkflowBlobV1 {
+  head: GitSha;
+  path: ".github/workflows/ci.yml";
+  workflowBlob: GitSha;
+  bytes: Uint8Array;
+}
+
 export class GitReviewSnapshot extends GitSnapshotCapture {
+  /** Exact local object evidence only; never reads working files or remote state. */
+  async readWorkflowBlob(
+    head: GitSha,
+    deadline: number,
+  ): Promise<PreparedWorkflowBlobV1 | null> {
+    if (
+      !isGitSha(head) || !Number.isSafeInteger(deadline) ||
+      deadline <= this.now()
+    ) return null;
+    const limit = Math.min(deadline, this.now() + this.totalDeadlineMs);
+    const commit = await this.read(
+      ["rev-parse", "--verify", "--quiet", `${head}^{commit}`],
+      [0],
+      SCALAR_READ_BYTES,
+      limit,
+    );
+    if (!commit.ok || this.text(commit.bytes)?.trim() !== head) return null;
+    const path = ".github/workflows/ci.yml" as const;
+    const tree = await this.read(
+      ["ls-tree", "-z", "--full-tree", head, "--", path],
+      [0],
+      MAX_TREE_ENTRY_BYTES,
+      limit,
+    );
+    if (!tree.ok) return null;
+    const text = this.text(tree.bytes),
+      entry = text === null ? null : parseProtectedTreeEntry(text, path);
+    if (
+      entry === null || entry.absent || entry.type !== "blob" ||
+      !["100644", "100755"].includes(entry.mode) || !isGitSha(entry.sha)
+    ) return null;
+    const size = await this.read(
+      ["cat-file", "-s", entry.sha],
+      [0],
+      SCALAR_READ_BYTES,
+      limit,
+    );
+    const scalar = size.ok ? this.text(size.bytes)?.trim() : undefined;
+    if (scalar === undefined || !/^[0-9]+$/.test(scalar)) return null;
+    const length = Number(scalar);
+    if (
+      !Number.isSafeInteger(length) || length < 1 || length > MAX_FILE_BYTES
+    ) return null;
+    const blob = await this.read(
+      ["cat-file", "blob", entry.sha],
+      [0],
+      length,
+      limit,
+    );
+    if (
+      !blob.ok || blob.bytes.length !== length || blob.bytes.includes(0) ||
+      this.text(blob.bytes) === null
+    ) return null;
+    return {
+      head,
+      path,
+      workflowBlob: entry.sha,
+      bytes: new Uint8Array(blob.bytes),
+    };
+  }
+
   /**
    * Bounded negative publication check for one exact candidate head.
    *

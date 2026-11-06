@@ -195,6 +195,40 @@ class RepositoryTrain extends TrainRun {
     }
     if (ci.active) {
       if (this.context.deadlineAt === undefined) return "done";
+      // Publishing intents can outlive their job's private object directory.
+      // Regenerate only from persisted reviewed identities before admission.
+      let restored = null;
+      try {
+        restored = await this.composer.compose({
+          tip: train.tip,
+          members: train.members.map((member) => ({
+            head: member.head,
+            base: member.base,
+          })),
+        });
+      } catch {
+        restored = null;
+      }
+      if (this.late()) return "deferred";
+      if (
+        restored === null || restored.length !== train.members.length ||
+        restored.some((step) => step.status !== "joined")
+      ) {
+        this.act(`train:${train.operationId}:restore_unavailable`);
+        return "done";
+      }
+      const final = restored.at(-1);
+      if (
+        final?.status !== "joined" || final.commit !== train.sha ||
+        restored.some((step, index) =>
+          step.status !== "joined" ||
+          step.commit !== train.members[index].commit ||
+          step.patch !== train.members[index].patch
+        )
+      ) {
+        this.act(`train:${train.operationId}:restore_identity_mismatch`);
+        return "done";
+      }
       const admission = await ci.reserve({
         repository: this.scope.repository,
         kind: "train_push",

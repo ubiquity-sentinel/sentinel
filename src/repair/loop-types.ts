@@ -127,7 +127,10 @@ export async function guardCiMinuteEffect(
     pr: record.target.pr,
     ...override,
   }, context.bounds.runDeadline);
-  if (decision.kind === "inactive" || decision.kind === "admitted") {
+  if (
+    decision.kind === "inactive" || decision.kind === "admitted" ||
+    (kind === "base_refresh" && decision.kind === "reconciled")
+  ) {
     return deps.clock.now() < context.bounds.runDeadline
       ? null
       : { kind: "margin", detail: "CI admission crossed operation deadline" };

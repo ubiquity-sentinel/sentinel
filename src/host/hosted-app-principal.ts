@@ -1,5 +1,5 @@
 /** Hosted App authority is private to the actual same-credential REST/Git factory. */
-import { isGitSha } from "../contracts/brands.ts";
+import { type GitSha, isGitSha } from "../contracts/brands.ts";
 import { canonicalStringify } from "../contracts/canonical.ts";
 import type {
   TakeoverPrincipalAuthority,
@@ -55,6 +55,10 @@ import {
   verifyCiMinuteSchedulingBasis,
 } from "../budget/ci-minutes.ts";
 import { GitCiMinuteStore } from "../state/ci-minute-budget-store.ts";
+import {
+  GitReviewSnapshot,
+  type PreparedWorkflowBlobV1,
+} from "../github/review-snapshot.ts";
 import { createPrivateCiEffectResolver } from "../../ops/hosted-autonomy-github-jobs.ts";
 import { createCiMinuteReconciler } from "../../ops/ci-minute-reconciliation.ts";
 import {
@@ -87,6 +91,10 @@ export function composePrivateCiMinutes(input: {
   /** Existing native-turn absolute bound; consumers may only shorten it. */
   deadlineAt?: number;
   authority(deadline: number): Promise<HostedPrivateCiCapabilities | null>;
+  readPreparedWorkflow?(
+    effect: CiEffectV1,
+    deadline: number,
+  ): Promise<PreparedWorkflowBlobV1 | null>;
   billingBasis?(
     policy: CiMinutePolicyV1,
     deadline: number,
@@ -99,6 +107,13 @@ export function composePrivateCiMinutes(input: {
   let observation: Promise<CiMinuteObservationV1 | null> | null = null;
   let driverDecision: CiMinuteReconcileDecisionV1 | null = null;
   const run = async (effect: CiEffectV1 | null, deadline: number) => {
+    if (
+      effect !== null &&
+      !input.policy.targets.some((target) =>
+        target.owner === effect.repository.owner &&
+        target.name === effect.repository.name
+      )
+    ) return { kind: "inactive" as const };
     nativeDeadline ??= deadline;
     deadline = Math.min(deadline, nativeDeadline);
     try {
@@ -154,6 +169,7 @@ export function composePrivateCiMinutes(input: {
         now: () => input.clock.now(),
         request: (path: string, limit: number) =>
           capability.request(path, limit),
+        readPreparedWorkflow: input.readPreparedWorkflow,
       };
       const controller = createCiMinuteController({
         policy: input.policy,
@@ -784,6 +800,11 @@ export function runtimeCiMinutes(
   stateRoot: string,
   principal: () => HostedAppPrincipalContext | null,
   deadlineAt: number,
+  prepared: {
+    sourcePathBySlug: ReadonlyMap<string, string>;
+    trustedPath: string;
+    gitExecutable: string;
+  },
 ): CiMinuteCoordinatorV1 {
   const scratch = stateRoot + "/ci-minutes-private";
   return composePrivateCiMinutes({
@@ -794,5 +815,18 @@ export function runtimeCiMinutes(
     authority: (limit) =>
       createHostedPrivateCiCapabilities(principal(), scratch, limit),
     billingBasis: verifyCiMinuteSchedulingBasis,
+    readPreparedWorkflow: (effect, limit) => {
+      const directory = prepared.sourcePathBySlug.get(
+        `${effect.repository.owner}/${effect.repository.name}`,
+      );
+      return directory === undefined || effect.head === null
+        ? Promise.resolve(null)
+        : new GitReviewSnapshot({
+          repositoryDir: directory,
+          trustedPath: prepared.trustedPath,
+          gitExecutable: prepared.gitExecutable,
+          now: () => clock.now(),
+        }).readWorkflowBlob(effect.head as GitSha, limit);
+    },
   });
 }

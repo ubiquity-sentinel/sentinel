@@ -19,7 +19,10 @@ import {
   neverStartedRunIndexes,
 } from "../src/github/never-started-job.ts";
 import type { createHostedAutonomyRequest } from "./hosted-autonomy-github-listing.ts";
-import { ciMinuteDigest } from "../src/contracts/ci-minute-budget.ts";
+import {
+  ciMinuteDigest,
+  ciTerminalEstimateDigest,
+} from "../src/contracts/ci-minute-budget.ts";
 import type { CiMinuteJobProofV1 } from "../src/contracts/ci-minute-budget.ts";
 import type {
   CiMinutePolicyV1,
@@ -27,6 +30,8 @@ import type {
 } from "../src/contracts/ci-minute-budget.ts";
 import { ciMonth } from "../src/contracts/ci-minute-budget.ts";
 import { parseBoundedYaml } from "./backup-ci-workflow-map.ts";
+import type { PreparedWorkflowBlobV1 } from "../src/github/review-snapshot.ts";
+import { MAX_FILE_BYTES } from "../src/github/snapshot-policy.ts";
 import type {
   CiEffectFactsV1,
   CiEffectV1,
@@ -393,6 +398,7 @@ export async function readCiMinuteWindow(input: {
           completedAt,
           neverStarted: neverStarted === true,
           terminal: true,
+          conclusion: (job.conclusion ?? null) as string | null,
           billedDurationMs: neverStarted === true && billedDurationMs === null
             ? 0
             : billedDurationMs,
@@ -423,14 +429,7 @@ export async function readCiMinuteWindow(input: {
               ciMonth(startedAt!).month === ciMonth(completedAt!).month
                 ? ciMonth(startedAt!).month
                 : null,
-            terminalProofDigest: ciMinuteDigest({
-              domain: "ci-terminal-estimate-v1",
-              identity: proof.identity,
-              startedAt,
-              completedAt,
-              status: job.status,
-              conclusion: job.conclusion ?? null,
-            }),
+            terminalProofDigest: ciTerminalEstimateDigest(proof),
           };
         }
         jobs.push(proof);
@@ -503,6 +502,10 @@ export function createPrivateCiEffectResolver(
   input: {
     policy: CiMinutePolicyV1;
     request(path: string, deadline: number): Promise<unknown | null>;
+    readPreparedWorkflow?(
+      effect: CiEffectV1,
+      deadline: number,
+    ): Promise<PreparedWorkflowBlobV1 | null>;
   },
 ) {
   return async (
@@ -522,20 +525,72 @@ export function createPrivateCiEffectResolver(
         repository?.id !== target.repositoryId || repository.private !== true ||
         typeof repository.default_branch !== "string"
       ) return null;
-      const raw = await input.request(
-        "/repos/" + scope + "/contents/.github/workflows/ci.yml?ref=" +
-          effect.head,
-        deadline,
-      ) as Record<string, unknown> | null;
+      let rerun: Record<string, unknown> | null = null;
+      if (effect.kind === "rerun") {
+        if (
+          !Number.isSafeInteger(effect.runId) || Number(effect.runId) < 1 ||
+          !Number.isSafeInteger(effect.attempt) || Number(effect.attempt) < 2
+        ) return null;
+        rerun = await input.request(
+          `/repos/${scope}/actions/runs/${effect.runId}`,
+          deadline,
+        ) as Record<string, unknown> | null;
+        if (
+          !rerun || rerun.id !== effect.runId ||
+          rerun.head_sha !== effect.head ||
+          (rerun.repository as Record<string, unknown> | undefined)?.id !==
+            target.repositoryId ||
+          rerun.path !== ".github/workflows/ci.yml" ||
+          !Number.isSafeInteger(rerun.workflow_id) ||
+          Number(rerun.workflow_id) < 1 ||
+          !Number.isSafeInteger(rerun.run_attempt) ||
+          ![effect.attempt, Number(effect.attempt) - 1].includes(
+            Number(rerun.run_attempt),
+          ) ||
+          (rerun.run_attempt !== effect.attempt && rerun.status !== "completed")
+        ) return null;
+        const workflow = await input.request(
+          `/repos/${scope}/actions/workflows/${rerun.workflow_id}`,
+          deadline,
+        ) as Record<string, unknown> | null;
+        if (
+          !workflow || workflow.id !== rerun.workflow_id ||
+          workflow.path !== ".github/workflows/ci.yml"
+        ) return null;
+      }
+      let decoded: Uint8Array, workflowBlob: string;
       if (
-        raw?.type !== "file" || raw.encoding !== "base64" ||
-        typeof raw.content !== "string" || typeof raw.sha !== "string" ||
-        !/^[0-9a-f]{40}$/.test(raw.sha)
-      ) return null;
-      const decoded = Uint8Array.from(
-        atob(raw.content.replace(/\s/g, "")),
-        (c) => c.charCodeAt(0),
-      );
+        ["base_refresh", "train_push", "train_dispatch"].includes(effect.kind)
+      ) {
+        const evidence = await input.readPreparedWorkflow?.(effect, deadline);
+        if (
+          !evidence || evidence.head !== effect.head ||
+          evidence.path !== ".github/workflows/ci.yml" ||
+          !/^[0-9a-f]{40}$/.test(evidence.workflowBlob) ||
+          !(evidence.bytes instanceof Uint8Array) ||
+          evidence.bytes.length < 1 || evidence.bytes.length > MAX_FILE_BYTES
+        ) return null;
+        decoded = evidence.bytes;
+        workflowBlob = evidence.workflowBlob;
+      } else {
+        const raw = await input.request(
+          `/repos/${scope}/contents/.github/workflows/ci.yml?ref=${
+            rerun?.head_sha ?? effect.head
+          }`,
+          deadline,
+        ) as Record<string, unknown> | null;
+        if (
+          raw?.type !== "file" || raw.encoding !== "base64" ||
+          typeof raw.content !== "string" ||
+          typeof raw.sha !== "string" || !/^[0-9a-f]{40}$/.test(raw.sha)
+        ) return null;
+        decoded = Uint8Array.from(
+          atob(raw.content.replace(/\s/g, "")),
+          (c) => c.charCodeAt(0),
+        );
+        if (decoded.length < 1 || decoded.length > MAX_FILE_BYTES) return null;
+        workflowBlob = raw.sha;
+      }
       const workflow = parseBoundedYaml(decoded) as
         | Record<string, unknown>
         | null;
@@ -643,24 +698,10 @@ export function createPrivateCiEffectResolver(
             ? "applied"
             : "unknown";
         }
-      } else if (
-        effect.kind === "rerun" && effect.runId !== undefined &&
-        effect.attempt !== undefined
-      ) {
-        const run = await input.request(
-          "/repos/" + scope + "/actions/runs/" + effect.runId,
-          deadline,
-        ) as Record<string, unknown> | null;
-        if (
-          run?.id === effect.runId && run.head_sha === effect.head &&
-          Number.isSafeInteger(run.run_attempt)
-        ) {
-          effectState = Number(run.run_attempt) >= effect.attempt
-            ? "applied"
-            : Number(run.run_attempt) === effect.attempt - 1
-            ? "not_applied"
-            : "unknown";
-        }
+      } else if (effect.kind === "rerun" && rerun !== null) {
+        effectState = rerun.run_attempt === effect.attempt
+          ? "applied"
+          : "not_applied";
       } else if (effect.kind === "train_dispatch") {
         const listing = await input.request(
           "/repos/" + scope +
@@ -682,7 +723,7 @@ export function createPrivateCiEffectResolver(
       }
       return {
         repositoryId: target.repositoryId,
-        workflowBlob: raw.sha,
+        workflowBlob,
         job: jobKey,
         jobs: count,
         runner: String(job["runs-on"]),

@@ -11,12 +11,14 @@ import {
   ciMinuteDigest,
   ciMonth,
   ciPolicyDigest,
+  ciTerminalEstimateDigest,
   parseCiMinuteLedger,
   validateCiMinuteTransition,
 } from "../../src/contracts/ci-minute-budget.ts";
 import type {
   CiEffectFactsV1,
   CiEffectV1,
+  CiMinuteJobProofV1,
   CiMinuteLedgerV1,
   CiMinuteObservationV1,
   CiMinuteObserverV1,
@@ -32,6 +34,7 @@ import type {
   LoopContextV1,
   RepairCycleDepsV1,
 } from "../../src/repair/loop-types.ts";
+import { guardCiMinuteEffect } from "../../src/repair/loop-types.ts";
 import {
   exactOpenPr,
   H0,
@@ -46,6 +49,16 @@ import { SHA3, T0 } from "../state/helpers.ts";
 const SHA = "a".repeat(40);
 const PROOF = "b".repeat(64);
 const EPOCH = Date.UTC(2028, 0, 31, 23);
+function estimatedJob(job: CiMinuteJobProofV1): CiMinuteJobProofV1 {
+  assert.ok(job.estimate);
+  return {
+    ...job,
+    estimate: {
+      ...job.estimate,
+      terminalProofDigest: ciTerminalEstimateDigest(job),
+    },
+  };
+}
 function effect(name = "first", head = SHA): CiEffectV1 {
   return {
     repository: { owner: "fixture", name, installationId: 1 },
@@ -759,6 +772,64 @@ function managedEffect(name = "prospector", head = SHA): CiEffectV1 {
   };
 }
 
+Deno.test("CI acceptance reconciled base refresh can finish native state while other effects and expired deadlines remain closed", async () => {
+  const rig = await makeRig("synthetic-reconciled-guard", {
+    fixtureDirectory: ".data/ci-minute-tests",
+  });
+  const record = preservedIssueWork("synthetic-reconciled-guard", H0);
+  const fail = () => {
+    throw new Error("native reconciliation must not start a model");
+  };
+  const deps: RepairCycleDepsV1 = {
+    clock: rig.clock,
+    state: rig.store,
+    configs: repairConfigs(),
+    controllerSha: SHA3,
+    github: rig.github,
+    githubCooldown: rig.githubCooldown,
+    incidents: rig.incidents,
+    replay: rig.replay,
+    model: rig.model,
+    budget: { reserveModelStart: fail, settleModelStart: fail },
+    ciMinutes: {
+      active: true,
+      reserve: () =>
+        Promise.resolve({
+          kind: "reconciled",
+          reservationDigest: "a".repeat(64),
+        }),
+    },
+  };
+  const context: LoopContextV1 = {
+    snapshot: seededSnapshot([record]),
+    head: null,
+    bounds: {
+      runDeadline: rig.clock.now() + 1000,
+      modelCutoff: rig.clock.now() + 1000,
+    },
+    executionBaseline: null,
+  };
+  try {
+    assert.equal(
+      await guardCiMinuteEffect(deps, context, record, "base_refresh"),
+      null,
+    );
+    assert.equal(
+      (await guardCiMinuteEffect(deps, context, record, "head_push"))?.kind,
+      "deferred",
+    );
+    rig.clock.advance(1000);
+    assert.equal(
+      (await guardCiMinuteEffect(deps, context, record, "base_refresh"))?.kind,
+      "margin",
+    );
+    assert.equal(rig.github.pushes.length, 0);
+    assert.equal(rig.model.requests.length, 0);
+  } finally {
+    await rig.ctx.cleanup();
+  }
+});
+
 Deno.test("CI pacing accepted source basis binds every exact authenticated profile field", async () => {
   const policy = acceptedCiMinutePolicy();
   assert.equal(
@@ -880,7 +951,7 @@ Deno.test("CI pacing explicit started-zero proofs retain 25 and 35 estimated min
   if (first.kind !== "admitted" || second.kind !== "admitted") return;
   f.jobs([first, second].map((result, index) => {
     const digest = ciMinuteDigest({ job: index });
-    return {
+    return estimatedJob({
       digest,
       effectDigest: result.reservationDigest,
       startedAt: EPOCH - 497000,
@@ -894,7 +965,7 @@ Deno.test("CI pacing explicit started-zero proofs retain 25 and 35 estimated min
         executionMonth: "2028-01",
         terminalProofDigest: digest,
       },
-    };
+    });
   }));
   assert.equal((await f.controller.reconcile(EPOCH + 60000)).kind, "ready");
   assert.deepEqual(
@@ -946,7 +1017,7 @@ Deno.test("CI pacing cross-boundary and unresolved work carry while a late prior
   assert.equal(first.kind, "admitted");
   assert.equal(second.kind, "admitted");
   if (first.kind !== "admitted" || second.kind !== "admitted") return;
-  f.jobs([{
+  f.jobs([estimatedJob({
     digest: PROOF,
     effectDigest: first.reservationDigest,
     startedAt: Date.UTC(2027, 11, 31, 23, 59),
@@ -960,11 +1031,11 @@ Deno.test("CI pacing cross-boundary and unresolved work carry while a late prior
       executionMonth: null,
       terminalProofDigest: PROOF,
     },
-  }]);
+  })]);
   await f.controller.reconcile(EPOCH + 60000);
   f.now(Date.UTC(2028, 1, 29, 23));
   const digest = ciMinuteDigest({ job: "late" });
-  f.jobs([{
+  f.jobs([estimatedJob({
     digest,
     effectDigest: second.reservationDigest,
     startedAt: EPOCH - 497000,
@@ -978,7 +1049,7 @@ Deno.test("CI pacing cross-boundary and unresolved work carry while a late prior
       executionMonth: "2028-01",
       terminalProofDigest: digest,
     },
-  }]);
+  })]);
   assert.equal(
     (await f.reserve(managedEffect("prospector", "e".repeat(40)))).kind,
     "admitted",

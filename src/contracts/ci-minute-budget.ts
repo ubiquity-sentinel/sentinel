@@ -221,6 +221,8 @@ export interface CiMinuteJobProofV1 {
   completedAt: number | null;
   neverStarted: boolean;
   terminal: boolean;
+  /** Authenticated terminal outcome retained for the terminal-evidence digest. */
+  conclusion?: string | null;
   /** Provider /timing job duration, not a subtraction of job timestamps. */
   billedDurationMs: number | null;
   identity?: {
@@ -453,6 +455,45 @@ export function ciJobMinutes(job: CiMinuteJobProofV1): number {
 
 function digest(value: unknown): value is string {
   return typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
+}
+
+/** Shared digest of retained terminal evidence; independent of job identity and meter quantity. */
+export function ciTerminalEstimateDigest(
+  job: Readonly<
+    Pick<
+      CiMinuteJobProofV1,
+      | "digest"
+      | "identity"
+      | "startedAt"
+      | "completedAt"
+      | "terminal"
+      | "neverStarted"
+      | "conclusion"
+    >
+  >,
+): string {
+  if (
+    !digest(job.digest) || job.terminal !== true ||
+    job.neverStarted !== false ||
+    job.startedAt === null || job.completedAt === null ||
+    !Number.isSafeInteger(job.startedAt) ||
+    !Number.isSafeInteger(job.completedAt) ||
+    job.startedAt < 0 || job.completedAt < job.startedAt ||
+    (job.conclusion !== undefined && job.conclusion !== null &&
+      (typeof job.conclusion !== "string" ||
+        !/^[a-z_]{1,40}$/.test(job.conclusion))) ||
+    (job.identity !== undefined && ciMinuteDigest(job.identity) !== job.digest)
+  ) {
+    throw new Error("invalid CI terminal evidence");
+  }
+  return ciMinuteDigest({
+    domain: "ci-terminal-estimate-v1",
+    identity: job.identity ?? { digest: job.digest },
+    startedAt: job.startedAt,
+    completedAt: job.completedAt,
+    status: "completed",
+    conclusion: job.conclusion ?? null,
+  });
 }
 
 function keys(
@@ -786,7 +827,7 @@ function validateCiMinuteProofs(value: unknown): void {
     keys(
       job,
       "digest effectDigest startedAt completedAt neverStarted terminal billedDurationMs",
-      "identity estimate",
+      "identity estimate conclusion",
     );
     if (job.estimate === undefined) {
       ciJobMinutes(job as unknown as CiMinuteJobProofV1);
@@ -797,7 +838,9 @@ function validateCiMinuteProofs(value: unknown): void {
         estimate.kind !== "retained_estimate" ||
         !Number.isSafeInteger(estimate.minutes) ||
         Number(estimate.minutes) < 1 ||
-        job.neverStarted !== false || job.terminal !== true
+        job.neverStarted !== false || job.terminal !== true ||
+        estimate.terminalProofDigest !==
+          ciTerminalEstimateDigest(job as unknown as CiMinuteJobProofV1)
       ) throw new Error("invalid CI proof estimate");
       validateCiMinuteAccounting({
         kind: estimate.kind,
@@ -806,6 +849,13 @@ function validateCiMinuteProofs(value: unknown): void {
         startedAt: job.startedAt,
         completedAt: job.completedAt,
       });
+    }
+    if (
+      job.conclusion !== undefined && job.conclusion !== null &&
+      (typeof job.conclusion !== "string" ||
+        !/^[a-z_]{1,40}$/.test(job.conclusion))
+    ) {
+      throw new Error("invalid CI terminal conclusion");
     }
     if (job.identity !== undefined) {
       keys(job.identity, "repositoryId runId attempt jobId");

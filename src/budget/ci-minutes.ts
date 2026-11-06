@@ -6,6 +6,7 @@ import {
   ciMinuteDigest,
   ciMonth,
   ciPolicyDigest,
+  ciTerminalEstimateDigest,
   INACTIVE_CI_MINUTE_POLICY,
   parseCiMinuteLedger,
 } from "../contracts/ci-minute-budget.ts";
@@ -552,7 +553,7 @@ export class CalendarCiMinutes implements CiMinuteCoordinatorV1 {
             : null;
         if (
           job.estimate !== undefined &&
-          (job.estimate.terminalProofDigest !== job.digest ||
+          (job.estimate.terminalProofDigest !== ciTerminalEstimateDigest(job) ||
             job.estimate.executionMonth !== executionMonth)
         ) {
           throw new Error("CI estimate provenance changed");
@@ -561,7 +562,7 @@ export class CalendarCiMinutes implements CiMinuteCoordinatorV1 {
           kind: "retained_estimate",
           minutes,
           executionMonth,
-          terminalProofDigest: job.digest,
+          terminalProofDigest: ciTerminalEstimateDigest(job),
         };
       }
       const oldProof = proofs.find((p) => p.digest === job.digest);
@@ -574,7 +575,8 @@ export class CalendarCiMinutes implements CiMinuteCoordinatorV1 {
           oldProof.startedAt !== job.startedAt ||
           oldProof.completedAt !== job.completedAt ||
           oldProof.neverStarted !== job.neverStarted ||
-          oldProof.terminal !== job.terminal
+          oldProof.terminal !== job.terminal ||
+          (oldProof.conclusion ?? null) !== (job.conclusion ?? null)
         ) {
           throw new Error("CI terminal proof changed");
         }
@@ -640,13 +642,15 @@ export class CalendarCiMinutes implements CiMinuteCoordinatorV1 {
           ? jobs[0].minutes
           : Math.max(reservation.chargedMinutes, jobs[0].minutes);
         reservation.settledAt = now;
-        reservation.proofDigest = jobs[0].digest;
+        reservation.proofDigest = jobProof.neverStarted
+          ? jobProof.digest
+          : jobProof.estimate!.terminalProofDigest;
         reservation.accounting = {
           kind: jobProof.neverStarted ? "never_started" : "retained_estimate",
           executionMonth: jobProof.neverStarted
             ? null
             : jobProof.estimate!.executionMonth,
-          terminalProofDigest: jobProof.digest,
+          terminalProofDigest: reservation.proofDigest,
           startedAt: jobProof.startedAt,
           completedAt: jobProof.completedAt,
         };

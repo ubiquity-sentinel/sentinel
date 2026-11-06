@@ -6,14 +6,23 @@ import {
   ciJobMinutes,
   ciMinuteDigest,
   ciPolicyDigest,
+  ciTerminalEstimateDigest,
   parseCiMinuteLedger,
+  validateCiMinuteTransition,
 } from "../../src/contracts/ci-minute-budget.ts";
 import type {
   CiMinuteLedgerV1,
   CiMinuteObservationV1,
   CiMinutePolicyV1,
   CiMinuteReconcilerFactoryV1,
+  CiMinuteStoreV1,
 } from "../../src/contracts/ci-minute-budget.ts";
+import { CalendarCiMinutes } from "../../src/budget/ci-minutes.ts";
+import { portOk } from "../../src/contracts/ports.ts";
+import type { GitSha } from "../../src/contracts/brands.ts";
+import { createPrivateCiEffectResolver } from "../../ops/hosted-autonomy-github-jobs.ts";
+import { createHostedAutonomyGitHub } from "../../ops/hosted-autonomy-github.ts";
+import { GitReviewSnapshot } from "../../src/github/review-snapshot.ts";
 
 const HEAD = "a".repeat(40);
 const NOW = Date.UTC(2028, 0, 2);
@@ -527,6 +536,344 @@ async function finishReader(
   assert.fail("bounded reader fixture did not complete");
 }
 
+function ciState(initial: CiMinuteLedgerV1) {
+  let ledger = structuredClone(initial), sequence = 1;
+  let head = String(sequence).padStart(40, "0") as GitSha;
+  const store: CiMinuteStoreV1 = {
+    read: (month) =>
+      Promise.resolve(
+        portOk({
+          head,
+          ledger: month === ledger.month ? structuredClone(ledger) : null,
+        }),
+      ),
+    readPrior: () => Promise.resolve(portOk({ head, ledger: null })),
+    write(input) {
+      if (input.expectedHead !== head) {
+        return Promise.resolve(portOk({ status: "conflict" as const, head }));
+      }
+      const next = parseCiMinuteLedger(input.ledger);
+      validateCiMinuteTransition(ledger, next);
+      ledger = next;
+      head = String(++sequence).padStart(40, "0") as GitSha;
+      return Promise.resolve(portOk({ status: "applied" as const, head }));
+    },
+  };
+  return { store, ledger: () => ledger, writes: () => sequence - 1 };
+}
+
+Deno.test("CI acceptance rerun consumer authenticates exact workflow before POST and settles the matching reader receipt once", async () => {
+  const originalFetch = globalThis.fetch, originalNow = Date.now;
+  Date.now = () => NOW;
+  try {
+    for (
+      const mode of [
+        "other_workflow",
+        "wrong_repository",
+        "wrong_id",
+        "changed_head",
+        "jumped_attempt",
+        "workflow_id",
+        "workflow_path",
+        "in_progress",
+        "supported",
+      ] as const
+    ) {
+      const wire = {
+        ...catalogRun(7, 1, Date.UTC(2027, 9, 1)),
+        workflow_id: 77,
+      };
+      const f = readerFixture([wire]);
+      f.jobs((id, attempt) => ({
+        ...job(id * 100 + attempt, id, attempt, 497),
+        ...(attempt === 1
+          ? {
+            started_at: new Date(Date.UTC(2027, 11, 20)).toISOString(),
+            completed_at: new Date(Date.UTC(2027, 11, 20) + 497000)
+              .toISOString(),
+          }
+          : {}),
+      }));
+      const initial = structuredClone(f.ledger());
+      delete initial.bootstrap;
+      initial.baselineMinutes = 0;
+      const state = ciState(initial), row = f.rows[0];
+      let posts = 0;
+      const request = async (
+        path: string,
+        resolver = true,
+      ): Promise<unknown | null> => {
+        if (path === "/repos/fixture/project") {
+          return { id: 101, private: true, default_branch: "main" };
+        }
+        if (path === "/repos/fixture/project/actions/runs/7") {
+          return {
+            ...row,
+            ...(mode === "other_workflow"
+              ? { path: ".github/workflows/other.yml" }
+              : {}),
+            ...(mode === "wrong_repository" ? { repository: { id: 102 } } : {}),
+            ...(mode === "wrong_id" ? { id: 8 } : {}),
+            ...(mode === "changed_head" && resolver
+              ? { head_sha: "b".repeat(40) }
+              : {}),
+            ...(mode === "jumped_attempt" && resolver
+              ? { run_attempt: 3 }
+              : {}),
+            ...(mode === "in_progress" ? { status: "in_progress" } : {}),
+          };
+        }
+        if (path === "/repos/fixture/project/actions/workflows/77") {
+          return {
+            id: mode === "workflow_id" ? 78 : 77,
+            path: mode === "workflow_path"
+              ? ".github/workflows/other.yml"
+              : ".github/workflows/ci.yml",
+          };
+        }
+        if (path.startsWith("/repos/fixture/project/contents/")) {
+          assert.equal(
+            path,
+            `/repos/fixture/project/contents/.github/workflows/ci.yml?ref=${HEAD}`,
+          );
+          return {
+            type: "file",
+            encoding: "base64",
+            sha: HEAD,
+            content: btoa(
+              "on: [push]\njobs:\n  validation:\n    runs-on: ubuntu-latest\n    timeout-minutes: 20\n    steps:\n      - run: true\n",
+            ),
+          };
+        }
+        return await f.request(path);
+      };
+      globalThis.fetch = async (input, init) => {
+        const path = new URL(
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+            ? input.href
+            : input.url,
+        ).pathname;
+        if (init?.method === "POST") {
+          assert.equal(
+            path,
+            "/repos/fixture/project/actions/runs/7/rerun-failed-jobs",
+          );
+          assert.equal(
+            state.ledger().reservations.length,
+            1,
+            "reservation precedes rerun POST",
+          );
+          posts++;
+          row.run_attempt = 2;
+          return new Response(null, { status: 201 });
+        }
+        const value = await request(path, false);
+        return new Response(JSON.stringify(value), {
+          status: value === null ? 404 : 200,
+        });
+      };
+      const controller = new CalendarCiMinutes({
+        policy: f.policy,
+        clock: { now: f.now },
+        store: state.store,
+        authorizePolicy: (_policy, _deadline, facts) =>
+          Promise.resolve(
+            facts === undefined ||
+              facts.workflowBlob === HEAD && facts.job === "validation" &&
+                facts.timeoutMinutes === 20 && facts.runner === "ubuntu-latest",
+          ),
+        resolve: createPrivateCiEffectResolver({
+          policy: f.policy,
+          request: (path) => request(path),
+        }),
+        observe: f.observe(request),
+      });
+      const github = createHostedAutonomyGitHub(
+        "synthetic-token",
+        { owner: "fixture", name: "project", installationId: 1 },
+        undefined,
+        controller,
+      );
+      const sent = await github.rerunFailedJobs!(7);
+      assert.equal(sent, mode === "supported", mode);
+      assert.equal(posts, mode === "supported" ? 1 : 0, mode);
+      if (mode !== "supported") {
+        assert.equal(state.ledger().reservations.length, 0, mode);
+        continue;
+      }
+      const replay = await controller.reserve({
+        repository: { owner: "fixture", name: "project", installationId: 1 },
+        kind: "rerun",
+        head: HEAD,
+        base: null,
+        ref: "refs/heads/main",
+        pr: null,
+        runId: 7,
+        attempt: 2,
+      }, NOW + 60000);
+      assert.equal(replay.kind, "reconciled");
+      assert.equal(posts, 1);
+      assert.equal(state.ledger().reservations.length, 1);
+      assert.equal(state.ledger().reservations[0].state, "terminal_estimated");
+      assert.equal(state.ledger().reservations[0].chargedMinutes, 25);
+      assert.equal(
+        state.ledger().proofs?.find((proof) => proof.effectDigest !== null)
+          ?.identity?.attempt,
+        2,
+      );
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+  }
+});
+
+Deno.test("CI acceptance prepared object qualification ignores working files and refuses foreign missing symlink oversized or changed workflows", async () => {
+  await Deno.mkdir(".data/m03-prepared-tests", { recursive: true });
+  const tmp = await Deno.realPath(
+    await Deno.makeTempDir({ dir: ".data/m03-prepared-tests" }),
+  );
+  const repository = `${tmp}/source`, foreign = `${tmp}/foreign`;
+  const trustedPath = Deno.env.get("PATH") ?? "/usr/bin:/bin";
+  await Deno.mkdir(repository);
+  await Deno.mkdir(foreign);
+  const git = async (...args: string[]) => {
+    const out = await new Deno.Command("git", {
+      args,
+      cwd: repository,
+      clearEnv: true,
+      env: {
+        PATH: trustedPath,
+        HOME: tmp,
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_CONFIG_SYSTEM: "/dev/null",
+        GIT_TERMINAL_PROMPT: "0",
+        GIT_AUTHOR_NAME: "synthetic",
+        GIT_AUTHOR_EMAIL: "synthetic@localhost",
+        GIT_COMMITTER_NAME: "synthetic",
+        GIT_COMMITTER_EMAIL: "synthetic@localhost",
+      },
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    assert.ok(out.success, new TextDecoder().decode(out.stderr));
+    return new TextDecoder().decode(out.stdout).trim();
+  };
+  try {
+    await git("init", "-q");
+    await git("-C", foreign, "init", "-q");
+    await Deno.mkdir(`${repository}/.github/workflows`, { recursive: true });
+    const path = `${repository}/.github/workflows/ci.yml`;
+    const yaml =
+      "on: [pull_request]\njobs:\n  validation:\n    runs-on: ubuntu-latest\n    timeout-minutes: 20\n    steps:\n      - run: true\n";
+    const commit = async () => {
+      await git("add", "-A");
+      await git("commit", "-q", "-m", "synthetic workflow");
+      return await git("rev-parse", "HEAD") as GitSha;
+    };
+    await Deno.writeTextFile(path, yaml);
+    const head = await commit();
+    const view = new GitReviewSnapshot({
+      repositoryDir: repository,
+      trustedPath,
+      now: () => NOW,
+    });
+    const evidence = await view.readWorkflowBlob(head, NOW + 60000);
+    assert.ok(evidence);
+    assert.equal(new TextDecoder().decode(evidence.bytes), yaml);
+    assert.equal(await view.readWorkflowBlob(head, NOW), null);
+    await Deno.writeTextFile(path, "mutable working file\n");
+    assert.equal(
+      (await view.readWorkflowBlob(head, NOW + 60000))?.workflowBlob,
+      evidence.workflowBlob,
+    );
+    const f = readerFixture([]), initial = structuredClone(f.ledger());
+    delete initial.bootstrap;
+    initial.baselineMinutes = 0;
+    const state = ciState(initial);
+    let source = repository;
+    const controller = new CalendarCiMinutes({
+      policy: f.policy,
+      clock: { now: f.now },
+      store: state.store,
+      authorizePolicy: (_basis, _deadline, facts) =>
+        Promise.resolve(
+          facts === undefined ||
+            facts.workflowBlob === evidence.workflowBlob &&
+              facts.runner === "ubuntu-latest" && facts.timeoutMinutes === 20 &&
+              facts.jobs === 1,
+        ),
+      observe: (month) =>
+        Promise.resolve({ month, complete: true, watermark: NOW, jobs: [] }),
+      resolve: createPrivateCiEffectResolver({
+        policy: f.policy,
+        request: (url) => {
+          assert.equal(url.includes("/contents/"), false);
+          return Promise.resolve(
+            url.includes("/git/ref/")
+              ? { object: { sha: "0".repeat(40) } }
+              : { id: 101, private: true, default_branch: "main" },
+          );
+        },
+        readPreparedWorkflow: (effect, deadline) =>
+          new GitReviewSnapshot({
+            repositoryDir: source,
+            trustedPath,
+            now: () => NOW,
+          }).readWorkflowBlob(effect.head as GitSha, deadline),
+      }),
+    });
+    const effect = {
+      repository: { owner: "fixture", name: "project", installationId: 1 },
+      kind: "base_refresh" as const,
+      head,
+      base: null,
+      ref: "refs/heads/synthetic",
+      pr: 1,
+    };
+    assert.equal(
+      (await controller.reserve(effect, NOW + 60000)).kind,
+      "admitted",
+    );
+    const writes = state.writes();
+    const refused = async (sha: GitSha) => {
+      assert.equal(
+        (await controller.reserve({ ...effect, head: sha }, NOW + 60000)).kind,
+        "unavailable",
+      );
+      assert.equal(
+        state.writes(),
+        writes,
+        "unsupported local evidence never debits or releases a CI effect",
+      );
+    };
+    source = foreign;
+    await refused(head);
+    source = repository;
+    await refused("f".repeat(40) as GitSha);
+    await Deno.remove(path);
+    const linked = await new Deno.Command("ln", {
+      args: ["-s", "other.yml", path],
+      cwd: repository,
+      clearEnv: true,
+      env: { PATH: trustedPath },
+      stdout: "null",
+      stderr: "piped",
+    }).output();
+    assert.ok(linked.success);
+    await refused(await commit());
+    await Deno.remove(path);
+    await Deno.writeTextFile(path, "#".repeat(512 * 1024 + 1));
+    await refused(await commit());
+    await Deno.writeTextFile(path, yaml + "# changed immutable blob\n");
+    await refused(await commit());
+  } finally {
+    await Deno.remove(tmp, { recursive: true });
+  }
+});
+
 Deno.test("CI reconciler authenticates older-created current-month reruns and binds their new reservation", async () => {
   const oldCreated = Date.UTC(2027, 9, 1),
     f = readerFixture([catalogRun(7, 2, oldCreated)]);
@@ -573,6 +920,105 @@ Deno.test("CI reconciler authenticates older-created current-month reruns and bi
   assert.equal(result.catalog?.runs[0].checkedAttempt, 2);
   assert.equal(result.catalog?.runs[0].createdAt, oldCreated);
   assert.equal(f.ledger().baselineMinutes, 1450);
+});
+
+Deno.test("CI acceptance actual reconciler terminal evidence settles through the controller and rejects substituted identity digests", async () => {
+  const f = readerFixture([catalogRun(7, 2, Date.UTC(2027, 9, 1))]),
+    effectDigest = "c".repeat(64);
+  f.jobs((id, attempt) => ({
+    ...job(id * 100 + attempt, id, attempt, 497),
+    ...(attempt === 1
+      ? {
+        started_at: new Date(Date.UTC(2027, 11, 20)).toISOString(),
+        completed_at: new Date(Date.UTC(2027, 11, 20) + 497000).toISOString(),
+      }
+      : {}),
+  }));
+  f.ledger().reservations.push({
+    effectDigest,
+    policyDigest: f.ledger().policyDigest,
+    ceilingMinutes: 25,
+    state: "submitted",
+    createdAt: NOW - 500000,
+    settledAt: null,
+    chargedMinutes: 25,
+    proofDigest: null,
+    binding: {
+      repositoryId: 101,
+      workflowBlob: HEAD,
+      job: "validation",
+      effect: {
+        repository: { owner: "fixture", name: "project", installationId: 0 },
+        kind: "rerun",
+        head: HEAD,
+        base: null,
+        ref: "refs/heads/main",
+        pr: null,
+        runId: 7,
+        attempt: 2,
+      },
+    },
+  });
+  let ledger = structuredClone(f.ledger()), sequence = 1;
+  let head = String(sequence).padStart(40, "0") as GitSha;
+  const store: CiMinuteStoreV1 = {
+    read: () =>
+      Promise.resolve(portOk({ head, ledger: structuredClone(ledger) })),
+    readPrior: () => Promise.resolve(portOk({ head, ledger: null })),
+    write(input) {
+      assert.equal(input.expectedHead, head);
+      ledger = parseCiMinuteLedger(input.ledger);
+      head = String(++sequence).padStart(40, "0") as GitSha;
+      return Promise.resolve(portOk({ status: "applied" as const, head }));
+    },
+  };
+  const observe = f.observe();
+  const controller = new CalendarCiMinutes({
+    policy: f.policy,
+    clock: { now: f.now },
+    store,
+    authorizePolicy: () => Promise.resolve(true),
+    resolve: () => Promise.resolve(null),
+    observe,
+  });
+  assert.equal((await controller.reconcile(NOW + 60000)).kind, "ready");
+  assert.equal(ledger.proofs?.length, 1);
+  const proof = ledger.proofs![0], reservation = ledger.reservations[0];
+  assert.equal(proof.billedDurationMs, 0);
+  assert.equal(
+    proof.estimate?.terminalProofDigest,
+    ciTerminalEstimateDigest(proof),
+  );
+  assert.notEqual(proof.estimate?.terminalProofDigest, proof.digest);
+  assert.equal(reservation.state, "terminal_estimated");
+  assert.equal(reservation.chargedMinutes, 25);
+  assert.equal(reservation.proofDigest, proof.estimate?.terminalProofDigest);
+  assert.equal(
+    reservation.accounting?.terminalProofDigest,
+    reservation.proofDigest,
+  );
+  const tampered = structuredClone(proof);
+  tampered.estimate!.terminalProofDigest = tampered.digest;
+  const blocked = new CalendarCiMinutes({
+    policy: f.policy,
+    clock: { now: f.now },
+    store,
+    authorizePolicy: () => Promise.resolve(true),
+    resolve: () => Promise.resolve(null),
+    observe: () =>
+      Promise.resolve({
+        month: "2028-01",
+        complete: true,
+        watermark: NOW,
+        jobs: [tampered],
+      }),
+  });
+  const before = sequence;
+  assert.deepEqual(await blocked.reconcile(NOW + 60000), {
+    kind: "unavailable",
+    reason: "invalid_evidence",
+  });
+  assert.equal(sequence, before);
 });
 
 Deno.test("CI reconciler resumes durable catalog and attempts with shared four-page/eight-object bounds", async () => {

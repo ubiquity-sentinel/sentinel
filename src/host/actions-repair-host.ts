@@ -403,13 +403,6 @@ export async function runActionsRepairHost(
   });
   const { isSelfTarget, tokenFor, loginFor, selfContext } = bindings;
   const takeoverContext = bindings.targetContext;
-  const ciMinutes = runtimeCiMinutes(
-    clock,
-    stateRoot,
-    () => isReadOnlyCellJob(deps.job) ? null : takeoverContext,
-    deadline,
-  );
-  await ciMinutes.reconcile(deadline);
   const gitExecutable = await resolveExecutable("git", trustedPath);
   const templateConfig = createLocalRepositoryConfig();
   const targets = await loadTargetConfigsV1({
@@ -470,9 +463,16 @@ export async function runActionsRepairHost(
     );
   }
 
-  // ONE admission budget for the whole run: it is constructed over every
-  // target config, so a reservation for any target resolves its policy against
-  // the shared 120-starts-per-hour cap instead of a per-target one.
+  const ciMinutes = runtimeCiMinutes(
+    clock,
+    stateRoot,
+    () => isReadOnlyCellJob(deps.job) ? null : takeoverContext,
+    deadline,
+    { sourcePathBySlug, trustedPath, gitExecutable },
+  );
+  await ciMinutes.reconcile(deadline);
+
+  // One shared 120-starts-per-hour admission budget covers every target.
   const budget = new RollingStartBudget({
     clock,
     state,

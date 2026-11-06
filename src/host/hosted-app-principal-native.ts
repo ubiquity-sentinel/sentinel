@@ -464,7 +464,7 @@ export async function readHostedPrivateCiData(
   const pathname = path.split("?")[0];
   if (
     path.length > 2048 || /[\r\n\0#]/.test(path) || pathname.includes("..") ||
-    !/^\/repos\/ubiquity\/(prospector|passport\.ubq\.fi)(?:\/(?:actions\/(?:runs(?:\/[0-9]+(?:\/timing|\/attempts\/[0-9]+\/jobs)?)?|jobs\/[0-9]+)|contents\/\.github\/workflows\/ci\.yml|git\/ref\/heads\/[A-Za-z0-9._/-]+|pulls(?:\/[0-9]+)?|commits\/[0-9a-f]{40}))?$/
+    !/^\/repos\/ubiquity\/(prospector|passport\.ubq\.fi)(?:\/(?:actions\/(?:runs(?:\/[0-9]+(?:\/timing|\/attempts\/[0-9]+\/jobs)?)?|jobs\/[0-9]+|workflows\/[1-9][0-9]*)|contents\/\.github\/workflows\/ci\.yml|git\/ref\/heads\/[A-Za-z0-9._/-]+|pulls(?:\/[0-9]+)?|commits\/[0-9a-f]{40}))?$/
       .test(pathname)
   ) return null;
   const timer = createDeadline(

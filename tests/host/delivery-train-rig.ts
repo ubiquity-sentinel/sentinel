@@ -21,7 +21,10 @@ import type {
   HostedAutonomyPullV1,
 } from "../../ops/hosted-autonomy.ts";
 import type { HostedAutonomyHeadRunV1 } from "../../ops/hosted-autonomy-types.ts";
-import { createTrainComposerFor } from "../../ops/hosted-autonomy-train-git.ts";
+import {
+  createTrainComposerFor,
+  type TrainGitOptionsV1,
+} from "../../ops/hosted-autonomy-train-git.ts";
 import {
   type DeliveryTrainJournalV1,
   type DeliveryTrainLedgerV1,
@@ -143,7 +146,12 @@ export interface TrainWorldV1 {
 export async function makeTrainWorld(
   tmp: string,
   specs: readonly MemberSpecV1[],
-  options: { ledger?: "memory" | "git" } = {},
+  options: {
+    ledger?: "memory" | "git";
+    baseWorkflow?: string;
+    now?: () => number;
+    onPreparedWorkflowReader?: TrainGitOptionsV1["onPreparedWorkflowReader"];
+  } = {},
 ): Promise<TrainWorldV1> {
   const dir = `${tmp}/target`;
   const bare = `${tmp}/target-remote.git`;
@@ -151,6 +159,13 @@ export async function makeTrainWorld(
   await git(dir, "init", "-q", "-b", FOREIGN_BRANCH);
   await Deno.writeTextFile(`${dir}/README.md`, "target\n");
   await Deno.writeTextFile(`${dir}/shared.txt`, "one\ntwo\nthree\n");
+  if (options.baseWorkflow !== undefined) {
+    await Deno.mkdir(`${dir}/.github/workflows`, { recursive: true });
+    await Deno.writeTextFile(
+      `${dir}/.github/workflows/ci.yml`,
+      options.baseWorkflow,
+    );
+  }
   await git(dir, "add", "-A");
   await git(dir, "commit", "-q", "-m", "B0");
   const base = await git(dir, "rev-parse", "HEAD") as GitSha;
@@ -223,6 +238,8 @@ export async function makeTrainWorld(
     scratch: `${tmp}/train-scratch`,
     tokenFor: () => "fixture-token",
     remoteUrlFor: () => `file://${bare}`,
+    now: options.now,
+    onPreparedWorkflowReader: options.onPreparedWorkflowReader,
   });
   const byPr = new Map(members.map((m) => [m.pr, m]));
   const mergedAs = new Map<number, { sha: string; parents: string[] }>();
