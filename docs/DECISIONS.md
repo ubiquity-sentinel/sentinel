@@ -71,7 +71,7 @@ candidate recorded in the build ledger. Policy consequences:
   issues this shape cost four review rounds and up to eight retry charges each.
 - **A repeat-failure park re-arms once per implementer prompt change.** The
   "repeated identical failure; owner action required" park now records the
-  implementer prompt template digest (` prompt=<12 hex>`); a changed digest, or
+  implementer prompt template digest (`prompt=<12 hex>`); a changed digest, or
   a legacy park with none, grants exactly one counted retry. An identical
   failure re-parks under the new digest. Issue-edit and route-change re-arms
   are unchanged. Installs that keep the same prompt never re-arm.
@@ -4651,3 +4651,17 @@ with a reason (`ci_outage_notice`, `native_parent`, `native_open_blockers`,
 `github_cooldown`, `base_unavailable`, `run_deadline`); the run-deadline case
 no longer stops silently. Issues opted out by the skip marker or label are
 still filtered before intake.
+
+## 2026-11-06: conservative private CI pacing with no paid usage
+
+The owner requested that private CI stay within a 2,000-minute monthly scheduling budget, authorized deployment and explicitly rejected paying for CI. The accepted source policy allocates 1,450 managed minutes, 150 security minutes and 400 minutes for other or unknown activity per UTC calendar month. Existing correctness, current-head/base, review, custody and merge gates remain required; calendar holds preserve produced work. The independent provider zero-paid-spend budget remains the spending backstop. This policy does not promise uninterrupted availability against unmanaged organization activity or a measured full-month result.
+
+The supported standard Linux jobs reserve 25 or 35 minutes as conservative execution estimates. These are not proved billing ceilings. Started jobs retain their estimated debit when consumed-minute metering is unavailable or unqualified; a timing response reporting zero is not a refund. Authenticated never-started proof is distinct. Proven terminal earlier-month execution retains its historical estimated charge without being treated as unresolved execution forever; incomplete, ambiguous and cross-month exposure remains carried. Increased exposure is recorded as debt rather than clamped away. Timestamps may identify execution periods or increase a clearly labelled estimate; they do not establish billed quantities.
+
+The policy is accepted in protected source and checked against authenticated workflow, job, runner and timeout facts. Both trusted runtime and maintenance compositions share the existing private state-only CAS ledger and retain their existing authority checks. Initial accounting conservatively withholds the current month's allowance rather than inventing unused minutes. Durable bounded discovery and reconciliation continue through existing native turns; no new workflow, scheduler, daemon, runner, environment flag, token or permission scope is introduced. State branches have no PR and contain no application history; private proofs, cursors and usage stay outside public artifacts and logs.
+
+When a current month has no ledger, recovery reads the latest earlier calendar ledger from the same validated current private state tree, including across skipped months. It preserves unresolved identities and debt until authenticated terminal evidence closes their exposure. The existing finite tree and byte bounds remain; corrupt, unreadable or unknown tree rows refuse recovery rather than becoming empty accounting. Recovery does not traverse commit history or invent an age cutoff.
+
+Full-catalog refreshes span bounded existing native turns. Incomplete slices hold managed effects until a complete pass is available, which can delay admission across many turns. A ready observation may serve later reserves only within its native composition's fixed deadline, policy and UTC month; every reserve still revalidates effect facts and current CAS debits. No updated-since API, retirement cutoff or atomic organization-wide snapshot is assumed.
+
+Source publication, canonical CI, deterministic installation and live guard acceptance are separate gates. The scoped CI integration coordinator reconciles concurrent source by ancestry-preserving fast-forward publication; the existing release controller retains exclusive pointer installation and exact-prior rollback authority. Publication requires verified sanitized task history with the same final tree as the accepted source; preserve original private preparation tips outside the publication graph and verify their sanitized counterparts. Other owners' work and runtime model policy remain unchanged.
