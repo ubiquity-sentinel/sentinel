@@ -30,13 +30,12 @@ this file only says what is left and where to look.
    (`gh api repos/ubiquity/ubq.fi-router/commits/<sha>/check-runs`). If it
    differs, correct the table entry; a wrong name parks every router delivery
    at its two-hour deadline.
-3. Watchdog first filing. After ten metrics cycles on the current runtime,
-   `sentinel report --since 2026-11-05` prints the Thresholds table; the first
-   `Throughput:` issue (label `priority:2`, marker
-   `<!-- sentinel:throughput-watchdog:<id> -->`) should appear on
-   `ubiquity-sentinel/sentinel`. Verify Sentinel picks it up through intake,
-   PR, native review, merge and auto-follow. Kill switch: repository variable
-   `SENTINEL_SELF_IMPROVE=off`.
+3. Watchdog loop, live. #359 and #360 (filed by the watchdog) were admitted
+   and implemented; their PRs follow the ordinary review/merge path. Verify
+   one of them merges and auto-installs, then that the threshold's next
+   evaluation reflects the fix (outcome rule). The closed-issue retirement
+   deadlock is fixed on `development`; confirm #341..#358 close on the next
+   cycles. Kill switch for filing: `SENTINEL_SELF_IMPROVE=off`.
 4. Trains on targets whose CI does not run on `sentinel-trains/**` pushes: add
    a push trigger for that ref pattern in the target's CI workflow, or trains
    wait two hours and fall back to per-record delivery (see #330 entry).

@@ -58,6 +58,18 @@ export function ownsPublishedArtifact(record: WorkRecordV1): boolean {
 }
 
 /**
+ * Pristine issue starts belong to the matrix planner, including its batched
+ * branch assignment and live admission checks. Never skip an intent, candidate,
+ * incident replay or published artifact: those still need serial reconciliation.
+ */
+export function matrixOwnsFreshImplementation(record: WorkRecordV1): boolean {
+  return record.source.kind === "issue" && record.nextStep === "work" &&
+    record.intent === null && record.target.head === null &&
+    record.target.pr === null && record.target.checkpoint === null &&
+    record.target.candidateState === undefined && !hasTakeoverCustody(record);
+}
+
+/**
  * A dead worker-local candidate (owner throughput, 2026-10-31): a preserved-null
  * issue record with NO pull request and NO recorded published head, so nothing
  * published can be overwritten. These rows were parked permanently by the

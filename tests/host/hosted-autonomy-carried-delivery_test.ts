@@ -260,8 +260,8 @@ Deno.test("carried merge (launcher): nothing short of the full proof merges", as
       refreshed618(),
       {},
       {
-        reviewed: [{ ...REVIEWED_CHANGES[1], path: "deno.json" }],
-        refreshed: [{ ...REVIEWED_CHANGES[1], path: "deno.json" }],
+        reviewed: [{ ...REVIEWED_CHANGES[1], path: "src/sentinel/probe.ts" }],
+        refreshed: [{ ...REVIEWED_CHANGES[1], path: "src/sentinel/probe.ts" }],
       },
       "protected_path",
     ],

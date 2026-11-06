@@ -96,6 +96,8 @@ export interface RepairCycleOptionsV1 {
   deadline: number;
   /** Bounded persisted transitions per run. */
   stepLimit?: number;
+  /** The aggregate delegates fresh branch assignment to batched matrix intake. */
+  matrixIntakeOwnsBranches?: boolean;
   /**
    * Trusted ORIGINAL run start instant (the entrypoint captured it once). The
    * 90-minute model cutoff and the 120-minute ceiling are anchored to this

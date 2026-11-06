@@ -12,6 +12,7 @@ import {
   emitRunSummary,
   lastRuntimeSummary,
 } from "../../src/host/run-summary.ts";
+import { parseTargetSlugsV1, TARGETS_MAX } from "../../src/host/targets.ts";
 import { CONTROLLER } from "./controller-identity-fixture.ts";
 
 const RUN = 40098864009;
@@ -265,4 +266,57 @@ Deno.test("run summary: foreign and truncated lines are not summaries", () => {
     }\n2026Z {"kind":"hosted_runtime_summary"`,
   );
   assert.equal(prior?.generation, 101, "a truncated last line falls back");
+});
+
+Deno.test("run summary: all configured targets through the shared bound retain their counts", async () => {
+  for (const length of [51, TARGETS_MAX]) {
+    const slugs = parseTargetSlugsV1(
+      Array.from(
+        { length },
+        (_, index) => `ubiquity/repo-${String(index).padStart(2, "0")}`,
+      ),
+    );
+    const targets = slugs.map(({ slug }, index) => ({
+      repository: slug,
+      openIssues: index + 3,
+      admitted: index % 3,
+      skippedIssues: [{ number: index + 1 }],
+    }));
+    const lines: string[] = [];
+    const markdown: string[] = [];
+    const summary = await emitRunSummary({
+      readJobs: () =>
+        Promise.resolve(portOk([{
+          name: "maintenance",
+          conclusion: "success",
+          summary: lastRuntimeSummary(jobLog(child({
+            targets,
+            admittedWorkCount: targets.reduce(
+              (sum, target) => sum + target.admitted,
+              0,
+            ),
+          }))),
+        }])),
+      log: (line) => lines.push(line),
+      stepSummaryPath: "/summary.md",
+      appendFile: (_path, body) => {
+        markdown.push(body);
+        return Promise.resolve();
+      },
+    }, { runId: RUN, runAttempt: 1 });
+    const expected = targets.map((target) => ({
+      repository: target.repository,
+      openIssues: target.openIssues,
+      admitted: target.admitted,
+      skipped: target.skippedIssues.length,
+    }));
+    assert.equal(summary?.targets.length, length);
+    assert.deepEqual(summary?.targets, expected);
+    assert.deepEqual(JSON.parse(lines[0]).targets, expected);
+    for (const target of expected) {
+      assert.ok(markdown[0].includes(
+        `| ${target.repository} | ${target.openIssues} | ${target.admitted} | ${target.skipped} |`,
+      ));
+    }
+  }
 });

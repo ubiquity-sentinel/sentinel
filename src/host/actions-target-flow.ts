@@ -2,7 +2,10 @@
 import { createRepairInvocation, type RepairInvocationV1 } from "../main.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
-import type { RepairCycleOutcomeV1 } from "../repair/loop.ts";
+import type {
+  RepairCycleOptionsV1,
+  RepairCycleOutcomeV1,
+} from "../repair/loop.ts";
 import { OPERATION_MARGIN_MS } from "../repair/loop-bounds.ts";
 import { reviewOperationKey } from "../repair/keys.ts";
 import { standingReviewAttempt } from "../repair/loop-review-records.ts";
@@ -11,7 +14,10 @@ import type {
   ActionsTargetCyclesResultV1,
 } from "./actions-target-cycles.ts";
 
-export function createActionsTargetFlow(input: ActionsTargetCyclesInputV1) {
+export function createActionsTargetFlow(
+  input: ActionsTargetCyclesInputV1,
+  cycleOptions: Pick<RepairCycleOptionsV1, "matrixIntakeOwnsBranches"> = {},
+) {
   const origin = input.runOrigin ?? input.clock.now();
   // A model-disabled bootstrap execution still prepares every target (the
   // bootstrap contract's source intake) and dispatches pre-merge CI; only the
@@ -141,6 +147,7 @@ export function createActionsTargetFlow(input: ActionsTargetCyclesInputV1) {
             legacyReviewCutoff: input.legacyReviewCutoff ?? null,
           };
           const options = {
+            ...cycleOptions,
             deadline: input.deadline,
             stepLimit: input.stepLimit,
             modelStartsEnabled: input.modelStartsEnabled,

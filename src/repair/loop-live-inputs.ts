@@ -7,7 +7,7 @@
  * cooldown), the repository is reported `unavailable` — never an empty
  * success — and each record's inputs come from the existing per-record reads
  * instead (`readIssue`, `readPullRequest`, `readChecks`, `readRef`), at most
- * once per record per pass, with bounded read concurrency. A record whose
+ * once per record per pass, with bounded read-only concurrency. A record whose
  * inputs cannot be read has no inputs (`null`): it is stepped as before, never
  * skipped.
  *
@@ -23,6 +23,9 @@ import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { checkGithubCooldown } from "./loop-bounds.ts";
 import { configFor } from "./loop-records.ts";
 import type { RepairCycleDepsV1, RunBoundsV1 } from "./loop-types.ts";
+
+/** Read-only fallback records in flight; effects remain serial. */
+const LIVE_INPUT_FALLBACK_CONCURRENCY = 4;
 
 /** One record's normalized live inputs. */
 export interface RecordLiveInputsV1 {
@@ -69,9 +72,6 @@ function pullNumber(record: WorkRecordV1): number | null {
   return record.target.pr ?? record.intent?.pr ?? null;
 }
 
-// Advisory reads only; stepping and all effects remain serial.
-const FALLBACK_READ_CONCURRENCY = 4;
-
 export class PassLiveInputs {
   private readonly repositories = new Map<string, RepositoryReadV1>();
   private readonly records = new Map<string, RecordLiveInputsV1 | null>();
@@ -112,20 +112,20 @@ export class PassLiveInputs {
     }
   }
 
-  /** Avoid a repository-sized chain of REST latency after a failed batch. */
-  private async primeFallback(group: readonly WorkRecordV1[]): Promise<void> {
+  /** A failed batch must not turn a hot tier into serial network round trips. */
+  private async primeFallback(records: readonly WorkRecordV1[]): Promise<void> {
     let next = 0;
     const worker = async () => {
-      while (next < group.length) {
-        if (this.deps.clock.now() >= this.bounds.runDeadline) return;
-        // Claim synchronously before awaiting so each record is read once.
-        const record = group[next++];
-        await this.inputsFor(record);
+      while (
+        next < records.length &&
+        this.deps.clock.now() < this.bounds.runDeadline
+      ) {
+        await this.inputsFor(records[next++]);
       }
     };
     await Promise.all(
       Array.from(
-        { length: Math.min(FALLBACK_READ_CONCURRENCY, group.length) },
+        { length: Math.min(LIVE_INPUT_FALLBACK_CONCURRENCY, records.length) },
         worker,
       ),
     );
@@ -281,11 +281,12 @@ export class PassLiveInputs {
     const key = `${repositoryKey(record.repository)}#${branch}`;
     const cached = this.fallbackTips.get(key);
     if (cached !== undefined) return cached;
-    // Cache the in-flight read too: concurrent workers share one base read.
-    const tip = this.deps.github.readRef(`refs/heads/${branch}`).then(
-      (read) => read.ok ? read.value?.sha ?? null : "failed" as const,
-      () => "failed" as const,
-    );
+    // Cache the in-flight read too: concurrent fallback records share the
+    // same repository/branch observation, including a failed observation.
+    const tip = (async () => {
+      const read = await this.deps.github.readRef(`refs/heads/${branch}`);
+      return read.ok ? read.value?.sha ?? null : "failed" as const;
+    })().catch(() => "failed" as const);
     this.fallbackTips.set(key, tip);
     return tip;
   }

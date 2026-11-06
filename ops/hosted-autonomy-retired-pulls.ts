@@ -34,7 +34,9 @@
  * repository whose GitHub surface is unavailable (`surface_unreadable`) or
  * lacks the listing or close capability (`capability_absent`) is a pass-level
  * fact, not a record's: one action line names the repository and its records
- * are skipped with no read, no stamp and no write. A
+ * are skipped with no read, no stamp and no write. A probe stamped no later than the retirement (the stale-step read of the
+ * still-open pull before the issue's closure retired the record) does not
+ * hold back the first read after the retirement. A
  * protected record is not read, and neither is a record the same hosted pass
  * just retired: its retirement is that cycle's one write, and the pull
  * request is settled from the next pass. The pass never throws and never fails the
@@ -219,13 +221,18 @@ export async function runHostedRetiredPullPass(
    */
   passStartedAt: number = Number.POSITIVE_INFINITY,
 ): Promise<string[]> {
-  // A record inside its probe backoff waits for a later pass.
+  // A record inside its probe backoff waits for a later pass. A probe
+  // stamped no later than the retirement (the stale-step human-merge read of
+  // the still-open pull, before its issue's closure retired it) was not this
+  // pass's read: the first read after a retirement is always due.
   const start = deps.clock.now();
   const pending = (record: WorkRecordV1) =>
     retiredPullClosurePending(record) &&
     !(record.blocker !== null && record.blocker.since >= passStartedAt) &&
     !queueRecordProtected(record, deps.queueCustody) &&
-    pullProbeDue(record, start);
+    (pullProbeDue(record, start) ||
+      (record.blocker !== null &&
+        pullProbedAt(record) <= record.blocker.since));
   try {
     if (discovery !== deps.state) {
       const seen = await readRepairSafely(discovery);

@@ -51,9 +51,9 @@ Deno.test("target policy: composed gateway candidate preserver rejects deploymen
         "stable fixture ancestor\n",
       );
     }
-    await Deno.mkdir(`${sourcePath}/ops`, { recursive: true });
+    await Deno.mkdir(`${sourcePath}/src/sentinel`, { recursive: true });
     await Deno.writeTextFile(
-      `${sourcePath}/ops/existing.ts`,
+      `${sourcePath}/src/sentinel/existing.ts`,
       "export const trusted = 1;\n",
     );
     assert.equal((await gitRun(sourcePath, ["add", "-A"], ctx.env)).ok, true);
@@ -69,11 +69,11 @@ Deno.test("target policy: composed gateway candidate preserver rejects deploymen
     ctx.base = (await gitRun(sourcePath, ["rev-parse", "HEAD"], ctx.env)).stdout
       .trim() as GitSha;
     await Deno.writeTextFile(
-      `${sourcePath}/ops/deploy.ts`,
+      `${sourcePath}/src/sentinel/deploy.ts`,
       "export const candidate = 1;\n",
     );
     assert.equal(
-      (await gitRun(sourcePath, ["add", "ops/deploy.ts"], ctx.env)).ok,
+      (await gitRun(sourcePath, ["add", "src/sentinel/deploy.ts"], ctx.env)).ok,
       true,
     );
     assert.equal(

@@ -132,6 +132,8 @@ export interface RepairEntrypointOptionsV1 {
   deadline: number;
   /** Bounded persisted transitions per run. */
   stepLimit?: number;
+  /** Fresh branch assignment belongs to the aggregate's batched matrix intake. */
+  matrixIntakeOwnsBranches?: boolean;
   /**
    * Trusted host startup result forwarded unchanged to the cycle. `false`
    * refuses NEW model starts through the existing pre-admission guards while
@@ -247,6 +249,7 @@ export function createRepairInvocation(
     {
       deadline: hardDeadline - OPERATION_MARGIN_MS,
       stepLimit: options.stepLimit,
+      matrixIntakeOwnsBranches: options.matrixIntakeOwnsBranches,
       runStartedAt,
       modelStartsEnabled: options.modelStartsEnabled,
       // A production bootstrap invocation must take the maintenance-only path

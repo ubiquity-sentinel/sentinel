@@ -8,6 +8,7 @@ import { resumeBaseSatisfaction } from "./loop-base-satisfaction.ts";
 import {
   declaredOperationFits,
   matrixAdmissionOnlyIds,
+  matrixOwnsFreshImplementation,
 } from "./loop-eligibility.ts";
 import { pollIntake } from "./loop-intake.ts";
 import { bridgeLegacyLoss } from "./loop-legacy-loss.ts";
@@ -490,6 +491,12 @@ async function* advanceSerialPass(
       // A record a review completion woke is always stepped.
       if (
         !bootstrap && !awakened.has(id) && await gate.skips(context, record)
+      ) continue;
+      if (
+        deps.externalImplementations === true &&
+        matrixOwnsFreshImplementation(record) &&
+        (record.target.branch !== null ||
+          options.matrixIntakeOwnsBranches === true)
       ) continue;
       if (
         declaredOperationFits(deps, context, record)
