@@ -6,12 +6,14 @@ import { asWorkItemId, type GitSha } from "../../src/contracts/brands.ts";
 import { portError } from "../../src/contracts/ports.ts";
 import { planMatrixWave } from "../../src/host/matrix-planner.ts";
 import { DurableGitHubCooldownGate } from "../../src/repair/github-cooldown.ts";
-import { candidateBranch } from "../../src/repair/keys.ts";
+import { candidateBranch, reviewOperationKey } from "../../src/repair/keys.ts";
 import { isMatrixImplementationReadyV1 } from "../../src/repair/loop-eligibility.ts";
 import type {
   LoopContextV1,
   RepairCycleDepsV1,
 } from "../../src/repair/loop-types.ts";
+import { observeReview } from "../../src/repair/loop-review-observation.ts";
+import { requestReviewFor } from "../../src/repair/loop-review-request.ts";
 import { executeWorkStep } from "../../src/repair/loop-work.ts";
 import { SHA1, SHA2, SHA3, T0, workRecord } from "../state/helpers.ts";
 import {
@@ -150,6 +152,71 @@ Deno.test("ai.ubq.fi: a closed unmerged preserved-null PR opens a fresh PR and r
   assert.ok(!r.github.calls.includes("push"));
   assert.ok(!r.github.calls.includes("preserveCandidate"));
   assert.equal(r.model.requests.length, 0);
+});
+
+Deno.test("closed preserved-null publication recovers after review retirement", async (t) => {
+  for (const phase of ["observation", "request"] as const) {
+    await t.step(phase, async () => {
+      const r = setup();
+      const record = phase === "observation"
+        ? {
+          ...r.record,
+          nextStep: "review" as const,
+          wait: {
+            reason: "review_pending" as const,
+            since: T0,
+            until: T0 + 60_000,
+          },
+          intent: {
+            kind: "review_request" as const,
+            key: reviewOperationKey(1149, SHA2),
+            startedAt: T0,
+            branch: r.branch,
+            expectedHead: SHA2,
+            observedBase: SHA1,
+            pr: 1149,
+            requestId: "closed-review",
+            resultId: null,
+          },
+        }
+        : r.record;
+      r.state.repair = seededSnapshot([record]);
+      const retiredStep = phase === "observation"
+        ? await observeReview(r.deps, r.context(), record)
+        : await requestReviewFor(r.deps, r.context(), record, 1149);
+      assert.equal(retiredStep.kind, "progress", JSON.stringify(retiredStep));
+      const retired = r.state.repair!.work[0]!;
+      assert.equal(retired.nextStep, "work");
+      assert.equal(retired.intent, null, "the dead review is not reconciled");
+      assert.equal(retired.target.pr, 1149, "retain replacement authority");
+      assert.equal(retired.counters.attempts, record.counters.attempts);
+      assert.equal(retired.counters.retries, record.counters.retries);
+      assert.equal(retired.counters.reviewRounds, record.counters.reviewRounds);
+      assert.equal(r.state.repair!.reservations.length, 0);
+      assert.ok(!r.github.calls.includes("createPr"));
+
+      // Resume from persisted state, not the review caller's in-memory record.
+      const step = await executeWorkStep(r.deps, r.context(), retired);
+      assert.equal(step.kind, "progress", JSON.stringify(step));
+      const after = r.state.repair!.work[0]!;
+      assert.notEqual(after.target.pr, null);
+      assert.notEqual(after.target.pr, 1149);
+      assert.equal(after.target.head, SHA2);
+      assert.deepEqual(
+        after.target.candidateState,
+        record.target.candidateState,
+      );
+      assert.equal(after.nextStep, "review");
+      assert.equal(after.counters.attempts, record.counters.attempts);
+      assert.equal(after.counters.retries, record.counters.retries);
+      assert.equal(r.github.reviewRequestIdentities[0]?.expectedHead, SHA2);
+      assert.equal(r.state.repair!.reservations.length, 1);
+      assert.equal(r.state.repair!.reservations[0]!.purpose, "review_request");
+      assert.equal(r.model.requests.length, 0);
+      assert.ok(!r.github.calls.includes("push"));
+      assert.ok(!r.github.calls.includes("preserveCandidate"));
+    });
+  }
 });
 
 Deno.test("closed preserved-null PR with a deleted branch restarts from the base without refunding history", async () => {
