@@ -16,6 +16,7 @@ import { githubGitAuthEnv } from "./local-github-auth.ts";
 import { createLocalRepositoryConfig } from "./local-config.ts";
 import { selectTrustedTargetPolicyV1 } from "./target-policy.ts";
 import { APP_LOGIN } from "./actions-target-cycles.ts";
+import { publicationProtectedPaths } from "../repair/owner-landing.ts";
 
 export interface PublishedRefreshValidationInput {
   record: WorkRecordV1;
@@ -218,10 +219,13 @@ export function createPublishedRefreshValidator(input: {
       if (
         (await runGit(sourcePath, ["init", "--bare", "-q"], false))?.code !== 0
       ) return false;
-      const protectedPaths = selectTrustedTargetPolicyV1(
-        createLocalRepositoryConfig(),
-        input.repository,
-      ).protectedPaths;
+      const protectedPaths = publicationProtectedPaths(
+        selectTrustedTargetPolicyV1(
+          createLocalRepositoryConfig(),
+          input.repository,
+        ).protectedPaths,
+        record,
+      );
       safeToRemove = false;
       const proof = await freshStoreProof({
         runGit,

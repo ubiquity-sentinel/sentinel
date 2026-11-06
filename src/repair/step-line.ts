@@ -13,6 +13,11 @@
  */
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import type { StepResultV1 } from "./loop-types.ts";
+import {
+  parsePassSummaryLine,
+  PASS_SUMMARY_LINE_KIND,
+  type PassSummaryLineV1,
+} from "./pass-summary-line.ts";
 
 export const STEP_LINE_KIND = "sentinel_step";
 
@@ -109,19 +114,101 @@ export function createStepLog(
   };
 }
 
-/** Every valid step line of one child's stdout, in order, bounded. */
-export function scanStepLines(stdout: string): StepLineV1[] {
-  const lines: StepLineV1[] = [];
+/**
+ * One advisory summary line for records the serial pass declined to step
+ * because their only remaining action is the matrix admission the planner
+ * owns (owner throughput, 2026-11-01, issue #297). It replaces the one
+ * `sentinel_step` deferral line per record with a single count, carries no
+ * `status` property (the launcher's child-status scan never reads it) and is
+ * never read back as evidence.
+ */
+export const MATRIX_SKIP_LINE_KIND = "sentinel_matrix_skip";
+
+/** The exact detail the deferred matrix step carries (same words, one line). */
+export const MATRIX_SKIP_DETAIL =
+  "implementation admission belongs to the matrix planner";
+
+/**
+ * Upper bound on the matrix-only record count one summary may report. The
+ * producer and the parser share it, so every count `matrixSkipLine` emits is
+ * accepted by `parseMatrixSkipLine`: a state larger than the launcher's
+ * per-step line bound still reports its one summary instead of being silently
+ * dropped.
+ */
+export const MAX_MATRIX_SKIP_RECORDS = 100_000;
+
+export interface MatrixSkipLineV1 {
+  kind: typeof MATRIX_SKIP_LINE_KIND;
+  records: number;
+  detail: typeof MATRIX_SKIP_DETAIL;
+}
+
+/** The summary line for `records` skipped matrix-only records, or null. */
+export function matrixSkipLine(records: number): string | null {
+  if (
+    !Number.isSafeInteger(records) || records <= 0 ||
+    records > MAX_MATRIX_SKIP_RECORDS
+  ) return null;
+  const line: MatrixSkipLineV1 = {
+    kind: MATRIX_SKIP_LINE_KIND,
+    records,
+    detail: MATRIX_SKIP_DETAIL,
+  };
+  return JSON.stringify(line);
+}
+
+/** Every advisory log line one child run may re-emit, in child order. */
+export type AdvisoryLogLineV1 =
+  | StepLineV1
+  | MatrixSkipLineV1
+  | PassSummaryLineV1;
+
+const MATRIX_SKIP_KEYS = ["detail", "kind", "records"].join();
+
+/** The strictly re-parsed matrix skip summary, or null for anything else. */
+export function parseMatrixSkipLine(value: unknown): MatrixSkipLineV1 | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const line = value as Record<string, unknown>;
+  if (
+    Object.keys(line).sort().join() !== MATRIX_SKIP_KEYS ||
+    line.kind !== MATRIX_SKIP_LINE_KIND ||
+    line.detail !== MATRIX_SKIP_DETAIL ||
+    !Number.isSafeInteger(line.records) ||
+    (line.records as number) <= 0 ||
+    (line.records as number) > MAX_MATRIX_SKIP_RECORDS
+  ) return null;
+  return {
+    kind: MATRIX_SKIP_LINE_KIND,
+    records: line.records as number,
+    detail: MATRIX_SKIP_DETAIL,
+  };
+}
+
+/**
+ * Every valid advisory line of one child's stdout, in order, bounded: the
+ * per-step lines, the one matrix-skip summary and the one pass summary the
+ * launcher re-emits, so the summaries survive the hosted child's stdout
+ * filter.
+ */
+export function scanStepLines(stdout: string): AdvisoryLogLineV1[] {
+  const lines: AdvisoryLogLineV1[] = [];
   for (const raw of stdout.split("\n")) {
     if (lines.length >= MAX_REEMITTED_STEP_LINES) break;
-    if (raw.length > 512 || !raw.includes(STEP_LINE_KIND)) continue;
+    if (
+      raw.length > 512 ||
+      !(raw.includes(STEP_LINE_KIND) || raw.includes(MATRIX_SKIP_LINE_KIND) ||
+        raw.includes(PASS_SUMMARY_LINE_KIND))
+    ) continue;
     let value: unknown;
     try {
       value = JSON.parse(raw);
     } catch {
       continue;
     }
-    const line = parseStepLine(value);
+    const line = parseStepLine(value) ?? parseMatrixSkipLine(value) ??
+      parsePassSummaryLine(value);
     if (line !== null) lines.push(line);
   }
   return lines;

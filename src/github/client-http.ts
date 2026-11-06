@@ -44,6 +44,7 @@ import {
   type GitHubApiClientOptionsV1,
   MAX_OPEN_ISSUE_PAGES,
   MAX_OPEN_ISSUES,
+  type MergePullShapeV1,
   type MergePutWireV1,
   type RawSendResult,
   type ReviewMutationOutcomeV1,
@@ -558,6 +559,7 @@ export abstract class GitHubClientHttp {
   abstract mergePull(
     number: number,
     sha: GitSha,
+    shape?: MergePullShapeV1,
   ): Promise<PortResultV1<MergePutWireV1>>;
 
   abstract assignIssue(

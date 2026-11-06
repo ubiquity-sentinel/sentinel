@@ -21,7 +21,13 @@ import {
   reviewTaskStatementDigest,
 } from "../contracts/review-receipt.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
+import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import { HostedSupervisorGitHubClient } from "./actions-supervisor-install-api.ts";
+import {
+  DELIVERY_COUNTS_ENV,
+  parseDeliveryCounts,
+} from "./delivery-counts-output.ts";
+import { parseTierCounts, TIER_COUNTS_ENV } from "./tier-counts-output.ts";
 import { hostedOrdinaryAdmitted } from "../contracts/hosted-supervisor-verification.ts";
 import { fetchHttpTransport } from "../github/http.ts";
 import type { HttpTransportV1 } from "../github/http.ts";
@@ -30,7 +36,31 @@ import type { ReplayRuntimeV1 } from "../replay/runtime.ts";
 import { createReleaseStateStore, DenoGitRunner } from "../state/mod.ts";
 import { HostedSupervisorCooldownGate } from "./hosted-cooldown.ts";
 import { createActionsMatrixArtifactTransport } from "./matrix-artifacts.ts";
-import { emitRunSummary, type RunSummaryDepsV1 } from "./run-summary.ts";
+import {
+  emitRunSummary,
+  type HostedRuntimeRunSummaryV1,
+  type RunJobSummaryV1,
+  type RunSummaryDepsV1,
+} from "./run-summary.ts";
+import type { FinalizeMetricsDepsV1 } from "./throughput-metrics-finalize.ts";
+import {
+  type FinalizeThroughputWatchdogDepsV1,
+  runFinalizeMetricsTailV1,
+  SELF_IMPROVE_ENV,
+} from "./throughput-watchdog-finalize.ts";
+import { createHostedAutonomyRequest } from "../../ops/hosted-autonomy-github-listing.ts";
+import { createHostedWatchdogIssues } from "../../ops/hosted-autonomy-watchdog-issues.ts";
+import { createHostedUpkeepIssues } from "../../ops/hosted-autonomy-upkeep-issues.ts";
+import { GitThroughputMetricsStore } from "../state/throughput-metrics-store.ts";
+import {
+  fallbackUpkeepNoticePort,
+  type FinalizeUpkeepDeferralDepsV1,
+  issueUpkeepNoticePort,
+  logUpkeepNoticePort,
+  metricsUpkeepStreakStore,
+  runFinalizeUpkeepDeferral,
+  UPKEEP_DEFERRAL_ENV,
+} from "./upkeep-deferral-finalize.ts";
 import type { MatrixArtifactTransportV1 } from "./matrix-artifact-port.ts";
 import {
   parseHostedEnvironment,
@@ -39,6 +69,11 @@ import {
 } from "./hosted-runtime.ts";
 import type { HostedRuntimeJobV1 } from "./hosted-runtime.ts";
 import { ensurePrivateDir, githubGitAuthEnv, joinPath } from "./local.ts";
+import {
+  REPAIR_PLAN_DIGEST_ENV,
+  type RepairFanoutFinalizeOutcomeV1,
+  repairFanoutHook,
+} from "./repair-fanout-finalize-host.ts";
 import type {
   HostedSupervisorEvidencePortV1,
   HostedSupervisorOutcomeV1,
@@ -115,6 +150,31 @@ export interface HostedSupervisorHostInputV1 {
     RunSummaryDepsV1,
     "log" | "stepSummaryPath" | "appendFile"
   >;
+  /**
+   * Finalize only (#338): the trusted writer of one throughput metrics
+   * record per cycle on the metrics sidecar ref. Advisory; absent, nothing
+   * is written.
+   */
+  throughputMetrics?: FinalizeMetricsDepsV1;
+  /**
+   * Finalize only (#327): the consecutive upkeep deferral streak and its one
+   * notice. Advisory; absent, the maintenance observation is ignored.
+   */
+  upkeepDeferral?: FinalizeUpkeepDeferralDepsV1;
+  /**
+   * Finalize only: the throughput watchdog (self-improvement loop), which
+   * files at most one issue per cycle on the self repository for a missed
+   * threshold. Advisory; absent, or `SENTINEL_SELF_IMPROVE=off`, nothing is
+   * evaluated or filed.
+   */
+  throughputWatchdog?: FinalizeThroughputWatchdogDepsV1;
+  /**
+   * Finalize only (#328): authenticate and apply the run's repository repair
+   * deltas in one trusted write before the release settlement. Advisory; it
+   * never throws. Absent, the run planned no repository cell. Its record
+   * counts feed the cycle's metrics record.
+   */
+  repairFanout?: () => Promise<RepairFanoutFinalizeOutcomeV1>;
 }
 
 export interface HostedSupervisorHostResultV1 {
@@ -143,6 +203,7 @@ export async function runHostedSupervisorHost(
   input: HostedSupervisorHostInputV1,
 ): Promise<HostedSupervisorHostResultV1> {
   const job = supervisorJob(input.env.GITHUB_JOB);
+  const hostStartedAtMs = input.clock.now();
   const identity = parseHostedEnvironment(input.env, job);
   const head = await readCleanGitHead(input.process, input.sourceDir);
   if (head !== identity.launcherSha) throw new Error(STATIC_SOURCE_CHECKOUT);
@@ -241,19 +302,75 @@ export async function runHostedSupervisorHost(
     evidence,
     ownerStartupRecoveryOnly: input.ownerStartupRecoveryOnly,
   };
+  let fanout: RepairFanoutFinalizeOutcomeV1["counts"] = null;
+  if (job === "finalize" && input.repairFanout !== undefined) {
+    fanout = (await input.repairFanout()).counts;
+  }
   const outcome = job === "prepare"
     ? await runHostedSupervisorPrepare(core)
     : await runHostedSupervisorFinalize(core);
   if (job === "finalize") {
+    let jobsRead: RunJobSummaryV1[] | null = null;
+    let runSummary: HostedRuntimeRunSummaryV1 | null = null;
+    // The same advisory state read also feeds the wait-cause histogram (#335).
+    let repairRead: RepairStateSnapshotV1 | null = null;
     if (input.runSummary !== undefined) {
-      await emitRunSummary({
+      runSummary = await emitRunSummary({
         ...input.runSummary,
-        readJobs: (runId, runAttempt, select) =>
-          client.readRunJobSummaries(runId, runAttempt, select),
+        // The same single job read also feeds the metrics record (#338).
+        readJobs: async (runId, runAttempt, select) => {
+          const read = await client.readRunJobSummaries(
+            runId,
+            runAttempt,
+            select,
+          );
+          if (read.ok) jobsRead = read.value;
+          return read;
+        },
         // The wedge report v0 (C5.5): one bounded advisory repair-state read.
-        readRepair: () => input.state.readRepair(),
+        readRepair: async () => {
+          const read = await input.state.readRepair();
+          if (read.ok && read.value.status === "found") {
+            repairRead = read.value.snapshot;
+          }
+          return read;
+        },
         now: () => input.clock.now(),
       }, { runId: identity.runId, runAttempt: identity.runAttempt });
+    }
+    // The streak write precedes the metrics append on the same sidecar so
+    // the cycle record can count the notice it claimed.
+    let ownerNoticesSent = 0;
+    if (input.upkeepDeferral !== undefined) {
+      const settled = await runFinalizeUpkeepDeferral(input.upkeepDeferral, {
+        runId: identity.runId,
+        observation: input.env[UPKEEP_DEFERRAL_ENV],
+        nowMs: input.clock.now(),
+      });
+      if (settled.notified) ownerNoticesSent = 1;
+    }
+    // The watchdog evaluates this cycle's exact record before it is
+    // appended, so the record can count the issue the watchdog filed.
+    if (
+      input.throughputMetrics !== undefined ||
+      input.throughputWatchdog !== undefined
+    ) {
+      await runFinalizeMetricsTailV1({
+        metrics: input.throughputMetrics,
+        watchdog: input.throughputWatchdog,
+        selfImprove: input.env[SELF_IMPROVE_ENV],
+      }, {
+        cycle: { runId: identity.runId, attempt: identity.runAttempt },
+        finalizeStartedAtMs: hostStartedAtMs,
+        nowMs: input.clock.now(),
+        jobs: jobsRead,
+        runSummary,
+        ownerNoticesSent,
+        deliveryCounts: parseDeliveryCounts(input.env[DELIVERY_COUNTS_ENV]),
+        tierCounts: parseTierCounts(input.env[TIER_COUNTS_ENV]),
+        repair: repairRead,
+        fanout,
+      });
     }
     return {
       job,
@@ -338,6 +455,11 @@ export async function main(): Promise<void> {
     [SELF_TOKEN_ENV]: Deno.env.get(SELF_TOKEN_ENV),
     [OUTPUT_ENV]: Deno.env.get(OUTPUT_ENV),
     [COOLDOWN_MODE_ENV]: Deno.env.get(COOLDOWN_MODE_ENV),
+    [UPKEEP_DEFERRAL_ENV]: Deno.env.get(UPKEEP_DEFERRAL_ENV),
+    [DELIVERY_COUNTS_ENV]: Deno.env.get(DELIVERY_COUNTS_ENV),
+    [TIER_COUNTS_ENV]: Deno.env.get(TIER_COUNTS_ENV),
+    [REPAIR_PLAN_DIGEST_ENV]: Deno.env.get(REPAIR_PLAN_DIGEST_ENV),
+    [SELF_IMPROVE_ENV]: Deno.env.get(SELF_IMPROVE_ENV),
   };
   const job = supervisorJob(env.GITHUB_JOB);
   const identity = parseHostedEnvironment(env, job);
@@ -386,6 +508,49 @@ export async function main(): Promise<void> {
   });
   const clock = new SystemClock();
   await ensureHostedReleaseState(state, clock.now());
+  // #338: finalize alone writes the metrics sidecar, with the same self
+  // state credentials and remote as the release state.
+  let throughputMetrics: FinalizeMetricsDepsV1 | undefined;
+  let upkeepDeferral: FinalizeUpkeepDeferralDepsV1 | undefined;
+  let throughputWatchdog: FinalizeThroughputWatchdogDepsV1 | undefined;
+  if (job === "finalize") {
+    const metricsScratch = joinPath(sentinelDir, "metrics-scratch");
+    await ensurePrivateDir(metricsScratch);
+    const port = new GitThroughputMetricsStore({
+      scratchDir: metricsScratch,
+      remoteUrl: REMOTE_URL,
+      runner: new DenoGitRunner(gitHome, githubGitAuthEnv(selfToken)),
+    });
+    throughputMetrics = { port };
+    // The self App token files the watchdog's issues on the self repository
+    // through the existing trusted issue port; no model worker holds it.
+    throughputWatchdog = {
+      metrics: port,
+      issues: createHostedWatchdogIssues(
+        createHostedAutonomyRequest(selfToken),
+        SUPERVISOR_REPOSITORY,
+      ),
+    };
+    const summaryPath = Deno.env.get(STEP_SUMMARY_ENV);
+    const appendSummary = summaryPath === undefined || summaryPath.length === 0
+      ? undefined
+      : (line: string) =>
+        Deno.writeTextFile(summaryPath, line, { append: true });
+    upkeepDeferral = {
+      store: metricsUpkeepStreakStore(port),
+      // Owner decision 2026-11-05: the notice is one owner issue on the self
+      // repository through the same self App token as the watchdog issues;
+      // the log line is the fallback when the issue is not delivered.
+      notice: fallbackUpkeepNoticePort({
+        issue: issueUpkeepNoticePort(createHostedUpkeepIssues(
+          createHostedAutonomyRequest(selfToken),
+          SUPERVISOR_REPOSITORY,
+        )),
+        log: logUpkeepNoticePort({ appendSummary }),
+        appendSummary,
+      }),
+    };
+  }
   const result = await runHostedSupervisorHost({
     env,
     sourceDir,
@@ -398,6 +563,18 @@ export async function main(): Promise<void> {
     runSummary: job === "finalize"
       ? { stepSummaryPath: Deno.env.get(STEP_SUMMARY_ENV) }
       : undefined,
+    throughputMetrics,
+    upkeepDeferral,
+    throughputWatchdog,
+    repairFanout: repairFanoutHook(job, env, {
+      sentinelDir,
+      gitHome,
+      selfToken,
+      nativeToken,
+      clock,
+      state,
+      identity,
+    }),
   });
   // Bounded trusted result only; no raw error or credential is ever logged.
   console.log(JSON.stringify({

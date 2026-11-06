@@ -319,6 +319,11 @@ Deno.test("historical release witness: refusal and partial CAS retry preserve ex
   }
 });
 
+const DEFERRED_MODES: ReadonlySet<string> = new Set([
+  "custody",
+  "old-proof-missing",
+]);
+
 Deno.test("historical newer current: unfinished foreign unavailable or drifting current cannot write", async () => {
   for (
     const mode of [
@@ -336,7 +341,10 @@ Deno.test("historical newer current: unfinished foreign unavailable or drifting 
     const f = await historicalWithNewerCurrent(mode);
     try {
       const before = await f.rig.state.readRepair();
-      assert.equal(await f.runMain(), 1);
+      // Unavailable saved custody is a bounded upkeep deferral (exit 0);
+      // conflicting provenance, changed bindings and unknown refusals still
+      // fail closed. Neither outcome writes.
+      assert.equal(await f.runMain(), DEFERRED_MODES.has(mode) ? 0 : 1, mode);
       assert.deepEqual(await f.rig.state.readRepair(), before);
       assert(!f.observed.includes(71));
       assert.equal(f.rig.merges, 0);

@@ -27,6 +27,7 @@ const SUCCESSORS = new Set([
   "prepare",
   "matrix_plan",
   "matrix_cell",
+  "repair_cell",
   "repair",
   "finalize",
 ]);

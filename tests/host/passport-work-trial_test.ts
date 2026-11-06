@@ -111,7 +111,7 @@ Deno.test("Passport trial: trusted policy permits product repairs and keeps cred
         owner: "ubiquity",
         name: "ai.ubq.fi",
       }).protectedPaths,
-      "src/auth/session.ts",
+      "src/sentinel/session.ts",
     ),
     true,
   );

@@ -24,6 +24,15 @@
  *      deferral: its next action is the review request, not a model start.
  */
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import { hasTakeoverCustody } from "../github/existing-pr-takeover-provenance.ts";
+import { candidateBranch } from "./keys.ts";
+import { checkGithubCooldown } from "./loop-bounds.ts";
+import { createPullRequestFor } from "./loop-publication-state.ts";
+import { reconcilePublishIntent } from "./loop-publication.ts";
+import { guardQueueOperation } from "./loop-queue-guard.ts";
+import { configFor, withPublishedHead } from "./loop-records.ts";
+import { persistWork } from "./loop-state.ts";
+import { clearWait } from "./transitions.ts";
 import { gateReviewOnCi } from "./loop-ci-first.ts";
 import type {
   LoopContextV1,
@@ -86,4 +95,99 @@ export async function gateExistingHeadContinuation(
 ): Promise<StepResultV1> {
   const gated = await gateReviewOnCi(deps, context, record);
   return gated ?? { kind: "deferred", detail: EXISTING_HEAD_GREEN_DETAIL };
+}
+
+/**
+ * Replace a closed own publication without pushing or inventing preservation
+ * evidence. Its exact published branch is sufficient for a replacement PR;
+ * ordinary live-head CI/review admission still follows. A deleted branch instead
+ * releases a fresh base start, with all historical charges/counters retained.
+ * The PR intent is durable before creation and reconciled after a lost reply.
+ */
+export async function recoverClosedExistingHead(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  record: WorkRecordV1,
+): Promise<StepResultV1 | null> {
+  const { branch, candidateState, head, pr } = record.target;
+  if (
+    record.source.kind !== "issue" || record.nextStep !== "work" ||
+    hasTakeoverCustody(record) || head === null ||
+    head === record.target.base ||
+    branch !== candidateBranch(record.id) ||
+    candidateState?.preserved !== null ||
+    // A published head alone proves no closed-unmerged PR. Only a retained
+    // PR or a durable replacement intent authorizes this recovery lane.
+    (pr === null && record.intent === null) ||
+    (pr === null && candidateState.publishedHead !== head)
+  ) return null;
+  const config = configFor(deps, record.repository);
+  if (config === null) return null;
+  if (record.intent !== null) {
+    if (record.intent.kind !== "pull_request" || pr !== null) return null;
+    return reconcilePublishIntent(deps, context, record, config);
+  }
+  const cooling = await checkGithubCooldown(
+    deps,
+    record.repository,
+    context.bounds,
+  );
+  if (cooling.kind !== "ok") {
+    return { kind: cooling.kind, detail: cooling.detail };
+  }
+  const guard = await guardQueueOperation(deps, context, record, "publication");
+  if (guard !== null) return guard;
+  if (pr !== null) {
+    const read = await deps.github.readPullRequest(pr);
+    if (!read.ok || read.value === null) {
+      return { kind: "deferred", detail: EXISTING_HEAD_UNREADABLE_DETAIL };
+    }
+    const live = read.value;
+    if (live.state !== "closed" || live.mergeSha !== null) return null;
+    if (
+      live.number !== pr || live.headRef !== branch ||
+      live.baseRef !== config.baseBranch
+    ) {
+      return {
+        kind: "deferred",
+        detail: "closed publication identity mismatch",
+      };
+    }
+  }
+  const ref = await deps.github.readRef(`refs/heads/${branch}`);
+  if (!ref.ok) {
+    return {
+      kind: "deferred",
+      detail: "closed publication branch unavailable",
+    };
+  }
+  if (ref.value !== null && ref.value.sha !== head) {
+    return { kind: "deferred", detail: EXISTING_HEAD_MOVED_DETAIL };
+  }
+  const now = deps.clock.now();
+  if (ref.value === null) {
+    // Only the observed closed-unmerged PR authorizes a restart. A missing
+    // branch with no retained PR identity is not proof of its disposition.
+    if (pr === null) {
+      return {
+        kind: "deferred",
+        detail: "closed publication branch unavailable",
+      };
+    }
+    return persistWork(deps, context, {
+      ...clearWait(record, now),
+      target: {
+        ...record.target,
+        checkpoint: null,
+        head: null,
+        pr: null,
+        candidateState: { preserved: null, publishedHead: null },
+      },
+    });
+  }
+  const proved = clearWait(withPublishedHead(record, head, now), now);
+  return createPullRequestFor(deps, context, {
+    ...proved,
+    target: { ...proved.target, pr: null },
+  }, config);
 }

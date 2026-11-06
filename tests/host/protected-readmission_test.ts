@@ -307,3 +307,12 @@ Deno.test("dropping a candidate refuses a record that lost its park shape", () =
   assert.throws(() => dropProtectedCandidates(moved, taken), TypeError);
   assert.equal(dropProtectedCandidates(snapshot, []), snapshot);
 });
+
+Deno.test("an owner-landing record is never the fresh protected park", () => {
+  assert.equal(protectedReadmissionShape(freshPark()), true);
+  const flagged = parseWorkRecordV1({
+    ...freshPark(),
+    ownerLanding: { paths: ["src/auth/"], since: T0 },
+  });
+  assert.equal(protectedReadmissionShape(flagged), false);
+});

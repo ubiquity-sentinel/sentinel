@@ -34,6 +34,40 @@ function response(status: number, body: string): HttpResponseV1 {
   return { status, headers: new Headers(), bodyText: body };
 }
 
+/** A changed fixture tree gets a new commit, just like the GitHub read API. */
+function treeFactsHttp(root: string, routes: ReadonlyMap<string, string>) {
+  let previousTree: string | undefined;
+  let revision = 0;
+  return (request: HttpRequestV1): Promise<HttpResponseV1> => {
+    if (request.url === `${root.replace(/\/contents$/, "")}/commits/main`) {
+      const tree = JSON.stringify([...routes]);
+      if (tree !== previousTree) {
+        revision += 1;
+        previousTree = tree;
+      }
+      return Promise.resolve(response(
+        200,
+        JSON.stringify({
+          sha: revision.toString(16).padStart(40, "0"),
+        }),
+      ));
+    }
+    if (!request.url.startsWith(root)) {
+      return Promise.resolve(response(404, "{}"));
+    }
+    const url = new URL(request.url);
+    assert.equal(
+      url.searchParams.get("ref"),
+      revision.toString(16).padStart(40, "0"),
+    );
+    url.searchParams.set("ref", "main");
+    const body = routes.get(url.href);
+    return Promise.resolve(
+      body === undefined ? response(404, "{}") : response(200, body),
+    );
+  };
+}
+
 function slug(owner: string, name: string): TargetSlugV1 {
   return { slug: `${owner}/${name}`, owner, name };
 }
@@ -128,6 +162,80 @@ Deno.test("targets: only a bounded, duplicate-free slug array is accepted", () =
       `expected rejection for ${JSON.stringify(input).slice(0, 60)}`,
     );
   }
+});
+
+Deno.test("targets: expanded settings through 64 entries preserve their order", () => {
+  for (const length of [33, 64]) {
+    const targets = Array.from(
+      { length },
+      (_unused, index) => `ubiquity/repo-${index}`,
+    );
+    assert.deepEqual(
+      parseTargetSlugsV1(targets).map((target) => target.slug),
+      targets,
+    );
+  }
+});
+
+Deno.test("targets: the 64-target setting resolves in order without resolver fan-out", async () => {
+  const targets = Array.from(
+    { length: 64 },
+    (_unused, index) => `ubiquity/repo-${index}`,
+  );
+  const reads: string[] = [];
+  const loaded = await loadTargetConfigsV1({
+    template: TEMPLATE,
+    readFile: () => Promise.resolve(JSON.stringify(targets)),
+    resolveDefaultBranch: async (target) => {
+      reads.push(`branch:${target.slug}`);
+      await Promise.resolve();
+      return "main";
+    },
+    resolveTreeFacts: async (target, branch) => {
+      assert.equal(branch, "main");
+      reads.push(`facts:${target.slug}`);
+      await Promise.resolve();
+      return { files: [], hasCiWorkflow: true };
+    },
+  });
+  assert.deepEqual(
+    reads,
+    targets.flatMap((target) => [
+      `branch:${target}`,
+      `facts:${target}`,
+    ]),
+  );
+  assert.deepEqual(
+    loaded.configs.map((config) =>
+      `${config.repository.owner}/${config.repository.name}@${config.baseBranch}`
+    ),
+    targets.map((target) => `${target}@main`),
+  );
+  assert.deepEqual(loaded.skipped, []);
+  assert.deepEqual(loaded.factsUnavailable, []);
+});
+
+Deno.test("targets: 65 entries fail closed before resolving any repository", async () => {
+  const targets = Array.from(
+    { length: 65 },
+    (_unused, index) => `ubiquity/repo-${index}`,
+  );
+  const loaded = await loadTargetConfigsV1({
+    template: TEMPLATE,
+    readFile: () => Promise.resolve(JSON.stringify(targets)),
+    resolveDefaultBranch: () => {
+      assert.fail("over-limit settings must not resolve default branches");
+    },
+    resolveTreeFacts: () => {
+      assert.fail("over-limit settings must not resolve tree facts");
+    },
+  });
+  assert.deepEqual(loaded, {
+    targets: [],
+    configs: [],
+    skipped: [],
+    factsUnavailable: [],
+  });
 });
 
 Deno.test("targets: an unreadable or malformed setting yields no targets", async () => {
@@ -247,15 +355,88 @@ Deno.test("targets: a bun target with CI gets the bun verify policy", async () =
   assert.equal(isNoTestEvidenceTargetV1(config), false);
 });
 
-Deno.test("targets: both manifests keep their script names separate", async () => {
+Deno.test("targets: prospector mixed manifests select the declared package manager", async () => {
+  for (const [index, toolchain] of ["bun", "npm", "yarn", "pnpm"].entries()) {
+    // Each manifest graph has its own commit, including across cached reads.
+    const revision = (index + 1).toString(16).padStart(40, "0");
+    const packageManager = `${toolchain}@1.3.3`;
+    const manifests: Record<string, string> = {
+      "/package.json": JSON.stringify({
+        packageManager,
+        scripts: { check: "tsc --noEmit" },
+      }),
+      "/deno.json": JSON.stringify({ tasks: { test: "deno test" } }),
+      "/.github/workflows/ci.yml":
+        `on: [pull_request]\njobs:\n  check:\n    steps:\n      - run: ${toolchain} ${
+          toolchain === "npm" ? "ci" : "install --frozen-lockfile"
+        } && ${toolchain} run check\n`,
+    };
+    const resolveTreeFacts = createTargetTreeFactsResolver({
+      token: "token-value",
+      http: (request) => {
+        const url = new URL(request.url);
+        if (url.pathname === "/repos/ubiquity/prospector/commits/main") {
+          return Promise.resolve(
+            response(200, JSON.stringify({ sha: revision })),
+          );
+        }
+        assert.equal(url.searchParams.get("ref"), revision);
+        const path = url.pathname.split("/contents")[1];
+        let body: unknown;
+        if (path === "") {
+          body = ["package.json", "deno.json", "bun.lock"].map((name) => ({
+            type: "file",
+            name,
+            path: name,
+          }));
+        } else if (path === "/.github/workflows") {
+          body = [{
+            type: "file",
+            name: "ci.yml",
+            path: ".github/workflows/ci.yml",
+          }];
+        } else {
+          const text = manifests[path];
+          assert.notEqual(text, undefined, `unexpected contents read: ${path}`);
+          body = { type: "file", encoding: "base64", content: btoa(text) };
+        }
+        return Promise.resolve(response(200, JSON.stringify(body)));
+      },
+    });
+    const tree = await resolveTreeFacts(slug("ubiquity", "prospector"), "main");
+    assert.ok(tree);
+    assert.equal(tree.packageManager, packageManager);
+    const loaded = await loadTargetConfigsV1({
+      template: TEMPLATE,
+      readFile: () => Promise.resolve('["ubiquity/prospector"]'),
+      resolveDefaultBranch: () => Promise.resolve("main"),
+      resolveTreeFacts,
+    });
+    assert.deepEqual(loaded.skipped, []);
+    assert.equal(loaded.configs.length, 1);
+    const config = loaded.configs[0]!;
+    const spec = config.commandRegistry.commands[config.commands.test];
+    assert.equal(config.adapter.kind, "github");
+    assert.equal(spec.executable, toolchain);
+    assert.deepEqual(
+      spec.args,
+      toolchain === "bun"
+        ? ["--no-env-file", "run", "check"]
+        : ["run", "check"],
+    );
+    assert.equal(isNoTestEvidenceTargetV1(config), false);
+  }
+});
+
+Deno.test("targets: Deno without package-manager markers keeps its task names separate", async () => {
   const loaded = await loadTargetConfigsV1({
     template: TEMPLATE,
     readFile: () => Promise.resolve('["ubiquity/prospector"]'),
     resolveDefaultBranch: () => Promise.resolve("main"),
     resolveTreeFacts: () =>
       Promise.resolve({
-        // deno.json is detected first, and only its own task may run.
-        files: ["deno.json", "package.json", "bun.lock"],
+        // With no package-manager declaration or lockfile, only a Deno task may run.
+        files: ["deno.json", "package.json"],
         manifestScripts: { deno: ["check"], package: ["test"] },
         hasCiWorkflow: true,
       }),
@@ -345,12 +526,7 @@ Deno.test("targets: a malformed sentinel.protected skips the target", async () =
     ],
   ]);
   const resolver = createTargetTreeFactsResolver({
-    http: (request) =>
-      Promise.resolve(
-        routes.has(request.url)
-          ? response(200, routes.get(request.url)!)
-          : response(404, "{}"),
-      ),
+    http: treeFactsHttp(root, routes),
     token: "token-value",
   });
   const loaded = await loadTargetConfigsV1({
@@ -458,12 +634,7 @@ Deno.test("targets: tree facts read the exact branch's markers and CI trigger", 
     `${rootUrl}/.github/workflows/ci.yml?ref=main`,
     file("ci.yml", "on:\n  pull_request:\n"),
   );
-  const http = (request: HttpRequestV1) => {
-    const body = routes.get(request.url);
-    return Promise.resolve(
-      body === undefined ? response(404, "{}") : response(200, body),
-    );
-  };
+  const http = treeFactsHttp(rootUrl, routes);
   const facts = createTargetTreeFactsResolver({ http, token: "token-value" });
   const read = await facts(slug("ubiquity", "prospector"), "main");
   assert.deepEqual(read, {

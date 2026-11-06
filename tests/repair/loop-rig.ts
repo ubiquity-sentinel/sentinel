@@ -105,6 +105,7 @@ export interface RigV1 {
   store: ReturnType<typeof createRepairStateStore>;
   releaseStore: ReturnType<typeof createReleaseStateStore>;
   github: FakeGithub;
+  githubCooldown: DurableGitHubCooldownGate;
   incidents: FakeIncidents;
   replay: FakeReplay;
   model: FakeModel;
@@ -300,6 +301,7 @@ export async function makeRig(
     store,
     releaseStore,
     github,
+    githubCooldown,
     incidents,
     replay,
     model,

@@ -41,14 +41,10 @@ Deno.test("target policy: gateway authority is protected without removing inheri
   }
   for (
     const path of [
-      "ops/",
       ".env",
       ".data/",
-      "deno.lock",
+      ".release/",
       "docs/DECISIONS.md",
-      "scripts/verify.sh",
-      "scripts/_bootstrap.sh",
-      "tools/lint/",
       "scripts/replay.ts",
       "scripts/replay-chat-stream.ts",
       "tests/helpers/sentinel-recorded-upstream.ts",
@@ -57,26 +53,26 @@ Deno.test("target policy: gateway authority is protected without removing inheri
   ) assert.ok(config.protectedPaths.includes(path), path);
 });
 
-Deno.test("target policy: the gateway's Bun configuration keeps the Deno-era protection", () => {
-  // The gateway moved to Bun: the files that took over deno.json, deno.lock and
-  // .prettierrc.json are protected exactly like the files they replaced, which
-  // also stay protected.
+Deno.test("target policy: the gateway's source, auth, ops and tooling are ordinary work", () => {
+  // Owner directive 2026-11-05: these merge autonomously after native review
+  // and green current-head CI; they are no longer owner-landing paths.
   const config = gateway();
   for (
     const path of [
+      "ops/",
+      "src/auth/",
+      "src/api-keys.ts",
+      "src/config.ts",
       "deno.json",
       "deno.lock",
-      ".prettierrc.json",
       "package.json",
       "bun.lock",
-      "bunfig.toml",
       "tsconfig.json",
-      "tsconfig.lint.json",
-      "knip.json",
-      ".prettierrc",
-      "scripts/knip.sh",
+      ".prettierrc.json",
+      "scripts/verify.sh",
+      "tools/lint/",
     ]
-  ) assert.ok(config.protectedPaths.includes(path), path);
+  ) assert.equal(config.protectedPaths.includes(path), false, path);
 });
 
 Deno.test("target policy: only Sentinel keeps the named template", () => {

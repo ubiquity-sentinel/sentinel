@@ -1,4 +1,6 @@
 /** Bounded authenticated matrix recovery interleaved with serial delivery. */
+import { delegatedRecordsOfRun } from "./repair-fanout-host.ts";
+import { HOSTED_RECORD_WAIT_CAUSES } from "../repair/loop-wait-cause.ts";
 import { createActionsTargetFlow } from "./actions-target-flow.ts";
 import { matrixDigestV1 } from "../contracts/matrix.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
@@ -195,6 +197,10 @@ export async function runActionsMatrixAggregateCycles(
   carrier?: MatrixNativeCarrierV1,
   options: MatrixAggregateOptionsV1 = {},
 ): Promise<ActionsTargetCyclesResultV1> {
+  // A model-disabled bootstrap execution is a maintenance/compatibility/health
+  // pass (issue #297).
+  const bootstrap = input.bootstrap === true ||
+    input.host?.execution.purpose === "bootstrap";
   const host = hostOf(input);
   let read = await input.state.readRepair();
   if (!read.ok || read.value.status !== "found") {
@@ -203,7 +209,7 @@ export async function runActionsMatrixAggregateCycles(
   // #183: progress comments compare against the state before this job's
   // ingestion, so a park or publication made while consuming cells reports.
   const progressBaseline = read.value.snapshot.work;
-  if (closedCWaveNeedsRecovery(read.value.snapshot)) {
+  if (!bootstrap && closedCWaveNeedsRecovery(read.value.snapshot)) {
     const recovered = await ingestClosedCWave({
       state: input.state,
       clock: input.clock,
@@ -252,19 +258,35 @@ export async function runActionsMatrixAggregateCycles(
   const lifecycleModelStarts = carrier === undefined
     ? false
     : input.modelStartsEnabled;
+  // A model-disabled bootstrap keeps the ordinary authenticated consumption:
+  // its initial scan still authenticates and ingests every charged producer
+  // (a successor bootstrap must overwrite the proof it supersedes), and the
+  // cycle still runs intake, maintenance, compatibility, health and
+  // preservation reconciliation. It never waits for a later producer and
+  // never walks the work queue (issue #297).
   const consumer = matrixConsumerWindowV1({
     now: input.clock.now(),
     deadline: input.deadline,
-    maxWaitMs: options.maxWaitMs ?? MATRIX_CONSUMER_MAX_WAIT_MS,
+    maxWaitMs: bootstrap ? 0 : options.maxWaitMs ?? MATRIX_CONSUMER_MAX_WAIT_MS,
     targets: input.configs.length,
     reviewsMayStart: lifecycleModelStarts,
   });
   const consumerUntil = consumer.until;
   const prepared = new Set<string>();
+  // #328: the records this run's repository cells step are never selected by
+  // this serial pass (only the verified plan of this run attempt counts).
+  const excludeRecords = await delegatedRecordsOfRun(input, carrier);
   const flow = createActionsTargetFlow({
     ...input,
+    ...(excludeRecords === undefined ? {} : { excludeRecords }),
     modelStartsEnabled: lifecycleModelStarts,
     externalImplementations: true,
+    // #335: the hosted serial aggregate persists wait causes
+    // (`HOSTED_RECORD_WAIT_CAUSES`, installed rollback-target rule).
+    recordWaitCauses: HOSTED_RECORD_WAIT_CAUSES,
+    // The trusted host alone posts progress comments; a model-disabled
+    // bootstrap is not a delivery pass and posts none.
+    progressComments: bootstrap ? undefined : input.progressComments,
     progressBaseline: input.progressBaseline ?? progressBaseline,
     prepareTarget: async (config) => {
       const key = config.repository.owner + "/" + config.repository.name;

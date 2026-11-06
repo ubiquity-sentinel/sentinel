@@ -242,7 +242,7 @@ Deno.test("hosted supervisor: no-execution settlement parses exactly and never f
       execution: { ...skipped.execution, id: "9:9:repair" },
     }),
   );
-  // Listing observation bounds use the same 999 ms tolerance.
+  // Intent ordering stays strict; positive platform skew is bounded to one hour.
   assert.ok(
     rejected(parseHostedNotStartedProofV1, {
       ...skipped,
@@ -252,7 +252,7 @@ Deno.test("hosted supervisor: no-execution settlement parses exactly and never f
   assert.ok(
     rejected(parseHostedNotStartedProofV1, {
       ...skipped,
-      finishedAt: T + 5000,
+      finishedAt: T + 3_600_000 + 5_000,
       observedAt: T + 500,
     }),
   );

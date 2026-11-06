@@ -5,11 +5,12 @@ import type {
   HostedExecutionSettlementV1,
   HostedNotStartedProofV1,
 } from "../contracts/hosted-supervisor.ts";
-import type { PortResultV1 } from "../contracts/ports.ts";
-import { portError, portOk } from "../contracts/ports.ts";
+import type { Clock, PortResultV1 } from "../contracts/ports.ts";
+import { portError, portOk, SystemClock } from "../contracts/ports.ts";
 import { tryParse } from "../contracts/validation.ts";
 import {
   HOSTED_ACTIONS_CLOCK_TOLERANCE_MS,
+  HOSTED_ACTIONS_POSITIVE_SKEW_MS,
   HOSTED_SUPERVISOR_REF,
   HOSTED_SUPERVISOR_REPOSITORY,
   HOSTED_SUPERVISOR_WORKFLOW_ID,
@@ -58,7 +59,7 @@ import {
   trustedActionsLogUrl,
 } from "./client-hosted-log-wire.ts";
 
-/** Optional deterministic wait seam for the bounded jobs-page re-read. */
+/** Optional wait seam on the client options or its injected clock. */
 export interface HostedExecutionWaitOptionsV1 {
   sleep?: (milliseconds: number) => Promise<void>;
 }
@@ -224,13 +225,14 @@ export abstract class GitHubClientHostedExecution
       ) {
         return hostedExecutionMetadataError(metadataWindowExhausted);
       }
-      // Actual (non-skipped) metadata must be coherent and not future.
+      // Native chronology stays strict; only platform/observer skew is bounded.
       const tolerance = HOSTED_ACTIONS_CLOCK_TOLERANCE_MS;
+      const platformTolerance = tolerance + HOSTED_ACTIONS_POSITIVE_SKEW_MS;
       if (
         step.startedAt + tolerance < repair.startedAt ||
         step.completedAt > repair.completedAt + tolerance ||
-        repair.completedAt > observedAt + tolerance ||
-        step.completedAt > observedAt + tolerance
+        repair.completedAt > observedAt + platformTolerance ||
+        step.completedAt > observedAt + platformTolerance
       ) {
         return hostedExecutionMetadataError(metadataWindowExhausted);
       }
@@ -260,8 +262,8 @@ export abstract class GitHubClientHostedExecution
         step.completedAt !== null && repair.completedAt !== null &&
         step.startedAt + tolerance >= repair.startedAt &&
         step.completedAt <= repair.completedAt + tolerance &&
-        repair.completedAt <= observedAt + tolerance &&
-        step.completedAt <= observedAt + tolerance
+        repair.completedAt <= observedAt + platformTolerance &&
+        step.completedAt <= observedAt + platformTolerance
       ) {
         return parseWith({
           execution: saved,
@@ -340,12 +342,19 @@ export abstract class GitHubClientHostedExecution
     }, parseHostedNotStartedProofV1);
   }
 
-  /** One finite timer; tests inject `sleep` and advance their clock instead. */
+  /** Custom clocks must own their wait; only SystemClock uses real timers. */
   protected async hostedExecutionWait(ms: number): Promise<void> {
     const sleep = (this.options as
       & GitHubApiClientOptionsV1
       & HostedExecutionWaitOptionsV1).sleep;
     if (sleep !== undefined) return sleep(ms);
+    const clock = this.options.clock as Clock & HostedExecutionWaitOptionsV1;
+    if (clock.sleep !== undefined) return clock.sleep(ms);
+    if (!(clock instanceof SystemClock)) {
+      throw new Error(
+        "hosted execution wait requires a sleep seam for custom clocks",
+      );
+    }
     await new Promise<void>((resolve) => setTimeout(resolve, ms));
   }
 

@@ -17,6 +17,7 @@ import type {
 } from "../../src/repair/loop-types.ts";
 import { DurableGitHubCooldownGate } from "../../src/repair/github-cooldown.ts";
 import { candidateBranch } from "../../src/repair/keys.ts";
+import { ciFixMarker } from "../../src/repair/ci-first-policy.ts";
 import { executeWorkStep } from "../../src/repair/loop-work.ts";
 import { SHA1, SHA2, SHA3, T0, workRecord } from "../state/helpers.ts";
 import {
@@ -30,6 +31,14 @@ import {
 } from "./helpers.ts";
 import { exactOpenPr, positiveLifecycle } from "./loop-candidate-fixtures.ts";
 import { seededSnapshot } from "./loop-rig.ts";
+import {
+  check,
+  ciFirstRig,
+  modelCharges,
+  reviewCharges,
+  SHA4,
+  taskRecord,
+} from "./ci-first-rig.ts";
 
 Deno.test(
   "review: a green existing-head continuation is requested on its exact published head",
@@ -197,3 +206,125 @@ Deno.test(
     assert.equal(state.repair!.work[0]!.intent, null);
   },
 );
+
+async function markedContinuationRig(conclusion: "failure" | "success") {
+  const scenario = await ciFirstRig("serial-continuation", {
+    wait: ciFixMarker(T0),
+    checks: {
+      [SHA3]: [check("ci", SHA3, conclusion)],
+      [SHA1]: [check("ci", SHA1, "success")],
+    },
+  });
+  const read = await scenario.rig.store.readRepair();
+  assert.ok(read.ok && read.value.status === "found");
+  const snapshot = read.value.snapshot;
+  taskRecord(snapshot).target.candidateState = {
+    preserved: null,
+    publishedHead: SHA3,
+  };
+  const written = await scenario.rig.store.writeRepair({
+    ...snapshot,
+    stateHead: read.value.head,
+    sequence: snapshot.sequence + 1,
+  }, read.value.head);
+  assert.ok(
+    written.ok && written.value.status === "applied",
+    JSON.stringify(written),
+  );
+  return scenario;
+}
+
+Deno.test("serial: a marked existing-head continuation fixes, reviews and merges", async () => {
+  const { rig, checkReads } = await markedContinuationRig("failure");
+  try {
+    const first = await rig.run();
+    assert.equal(first.status, "idle", JSON.stringify(first));
+    assert.equal(rig.model.requests.length, 1, "one charged CI correction");
+    const request = rig.model.requests[0]!;
+    assert.equal(
+      request.checkoutBase,
+      SHA3,
+      "continue the exact published head",
+    );
+    assert.equal(request.base, SHA1);
+    assert.match(request.reviewFindings?.[0]?.message ?? "", /ci \(failure\)/);
+    assert.ok(checkReads.includes(SHA3), "the head's live CI is re-derived");
+    assert.ok(
+      checkReads.includes(SHA1),
+      "the failure is attributed against its base",
+    );
+    const snapshot = await rig.snapshot();
+    const work = taskRecord(snapshot);
+    assert.equal(work.target.head, SHA4);
+    assert.equal(work.nextStep, "review");
+    assert.equal(work.wait?.reason, "review_pending");
+    assert.equal(work.counters.attempts, 2);
+    assert.equal(work.counters.retries, 1);
+    assert.equal(work.counters.reviewRounds, 1);
+    const fixes = modelCharges(snapshot).filter((row) =>
+      row.purpose === "retry"
+    );
+    assert.equal(fixes.length, 1);
+    assert.equal(fixes[0]!.outcome, "submitted");
+    assert.deepEqual(
+      rig.github.reviewRequestIdentities.map((row) => row.expectedHead),
+      [SHA4],
+      "only the corrected green head is reviewed",
+    );
+
+    rig.clock.advance(100_000_001);
+    rig.github.completeReview([], rig.clock.now());
+    const second = await rig.run();
+    assert.equal(second.status, "idle", JSON.stringify(second));
+    assert.equal(rig.github.calls.filter((call) => call === "merge").length, 1);
+    assert.equal(
+      rig.model.requests.length,
+      1,
+      "the correction is not repeated",
+    );
+    assert.equal(taskRecord(await rig.snapshot()).nextStep, "delivery");
+  } finally {
+    await rig.ctx.cleanup();
+  }
+});
+
+Deno.test("serial: a marked existing-head continuation that turned green clears its marker uncharged", async () => {
+  const { rig, checkReads, writes } = await markedContinuationRig("success");
+  try {
+    const result = await rig.run();
+    assert.equal(result.status, "idle", JSON.stringify(result));
+    assert.ok(checkReads.includes(SHA3), "the current head is checked again");
+    assert.equal(
+      rig.model.requests.length,
+      0,
+      "green CI never starts a correction",
+    );
+    assert.ok(
+      writes.some((snapshot) => {
+        const work = taskRecord(snapshot);
+        return work.nextStep === "work" && work.wait === null &&
+          work.target.head === SHA3;
+      }),
+      "the marker is durably cleared before the review request",
+    );
+    const snapshot = await rig.snapshot();
+    const work = taskRecord(snapshot);
+    assert.equal(work.wait?.reason, "review_pending");
+    assert.equal(work.target.head, SHA3);
+    assert.equal(work.nextStep, "review");
+    assert.equal(work.counters.attempts, 1);
+    assert.equal(work.counters.retries, 0);
+    assert.equal(
+      modelCharges(snapshot).length,
+      1,
+      "only the historical charge remains",
+    );
+    assert.equal(reviewCharges(snapshot).length, 1);
+    assert.deepEqual(
+      rig.github.reviewRequestIdentities.map((row) => row.expectedHead),
+      [SHA3],
+    );
+  } finally {
+    await rig.ctx.cleanup();
+  }
+});

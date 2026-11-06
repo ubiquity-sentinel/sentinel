@@ -17,6 +17,8 @@ import type {
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import type { PendingStepInputsV1 } from "./step-inputs.ts";
+import type { DeliveryTrainHoldV1 } from "../contracts/delivery-train-ledger.ts";
 
 export interface RepairCycleDepsV1 {
   clock: Clock;
@@ -65,6 +67,13 @@ export interface RepairCycleDepsV1 {
   /** Matrix-owned implementations settle only through authenticated artifact ingestion. */
   externalImplementations?: boolean;
   /**
+   * Persist `wait.cause` on the waits that know it (#335). Off by default:
+   * every rollback target's strict parser must accept the state this runtime
+   * writes, so the trusted host turns it on only once the installed rollback
+   * target parses the optional key.
+   */
+  recordWaitCauses?: boolean;
+  /**
    * The one-time legacy review class's cutoff (`review-round-cap.ts`): the
    * one instant no later than the first CI-first runtime's activation
    * (`LEGACY_REVIEW_CUTOFF`), handed over by the launcher to runs of a pinned
@@ -102,6 +111,27 @@ export interface RepairCycleOptionsV1 {
    * behavior changes, and an omitted value keeps the existing cutoff.
    */
   modelStartsEnabled?: boolean;
+  /**
+   * Trusted host confirmation that this is the model-disabled BOOTSTRAP
+   * execution. It performs intake, maintenance and health only and never walks
+   * the work queue: no record is stepped, so a large state cannot spend the
+   * bootstrap bound on deterministic work the next ordinary run owns. Omitted
+   * keeps the ordinary lifecycle unchanged.
+   */
+  bootstrap?: boolean;
+  /**
+   * Fan-out repository pass only (issue #328): told the id of each record
+   * about to be stepped, before its step runs, so the pass can attribute an
+   * interval to its record. It observes and never changes the pass.
+   */
+  onStep?: (id: string) => void;
+  /**
+   * Records this pass never selects for a step (issue #328): the trusted
+   * serial pass skips the records a repository cell steps, and a cell skips
+   * its repository's records that were not delegated to it. They stay
+   * visible to every other read of the pass.
+   */
+  excludeRecords?: ReadonlySet<string>;
 }
 
 export type RepairCycleOutcomeV1 =
@@ -138,6 +168,17 @@ export interface LoopContextV1 {
    * loaded); absent or null means no record is legacy.
    */
   legacyReviewCutoff?: number | null;
+  /**
+   * The serial pass's settled step stamps not yet written (issue #326). Every
+   * trusted write of this context folds them into the records they still
+   * describe; absent outside the serial pass (planner, ingester).
+   */
+  pendingStepInputs?: Map<string, PendingStepInputsV1>;
+  /**
+   * The launcher's open delivery trains read when the context was loaded
+   * (sentinel #330); absent or empty holds nothing.
+   */
+  deliveryTrainHolds?: readonly DeliveryTrainHoldV1[];
 }
 
 /** Effective run bounds: caller deadline clamped by the fixed ceiling. */
