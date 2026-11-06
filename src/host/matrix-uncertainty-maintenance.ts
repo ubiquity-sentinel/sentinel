@@ -1,3 +1,4 @@
+import { REFUSING_CI_MINUTES } from "../budget/ci-minutes.ts";
 /** Conservative custody of incomplete admissions; never an artifact or non-start proof. */
 import { RollingStartBudget } from "../budget/mod.ts";
 import { canonicalStringify } from "../contracts/canonical.ts";
@@ -567,6 +568,7 @@ export async function runMatrixUncertaintyMaintenance(
     }) as T;
   }
   const cycle = {
+    ciMinutes: REFUSING_CI_MINUTES,
     state: guarded,
     clock: deps.clock,
     configs: [],

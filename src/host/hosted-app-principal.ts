@@ -1,3 +1,4 @@
+import { proposedCiMinutePolicy } from "../budget/ci-minutes.ts";
 /** Hosted App authority is private to the actual same-credential REST/Git factory. */
 import { isGitSha } from "../contracts/brands.ts";
 import { canonicalStringify } from "../contracts/canonical.ts";
@@ -28,7 +29,30 @@ import { parseAppTokenNotAfterV1 } from "./hosted-app-token-window.ts";
 import {
   readHostedAppNativeJob,
   readHostedAppRepositoryScope,
+  readHostedPrivateCiData,
+  readHostedPrivateCiScope,
 } from "./hosted-app-principal-native.ts";
+import { DenoGitRunner, type GitRunnerV1 } from "../state/state-git.ts";
+import { githubGitAuthEnv } from "./local-github-auth.ts";
+import {
+  CI_MINUTE_PRIVATE_REMOTE,
+  CI_MINUTE_REF,
+} from "../contracts/ci-minute-budget.ts";
+import type {
+  CiEffectFactsV1,
+  CiEffectV1,
+  CiMinuteControllerV1,
+  CiMinutePolicyV1,
+} from "../contracts/ci-minute-budget.ts";
+import {
+  createCiMinuteController,
+  INACTIVE_CI_MINUTES,
+} from "../budget/ci-minutes.ts";
+import { GitCiMinuteStore } from "../state/ci-minute-budget-store.ts";
+import {
+  createPrivateCiEffectResolver,
+  createPrivateCiObservationReader,
+} from "../../ops/hosted-autonomy-github-jobs.ts";
 import {
   type HostedAppSourceEvidence,
   type HostedAppSourceInput,
@@ -43,6 +67,220 @@ import { parseHostedRuntimeRollout } from "./hosted-runtime-rollout.ts";
 
 export interface HostedAppPrincipalContext {
   readonly kind: "hosted_app_principal_context";
+}
+
+/** Function-only coordinator purpose; no token, grant or raw authenticated runner escapes. */
+export interface HostedPrivateCiCapabilities extends GitRunnerV1 {
+  verify(deadline: number): Promise<boolean>;
+  request(path: string, deadline: number): Promise<unknown | null>;
+}
+
+/** OFF returns before invoking authority, billing, clock, reader or store work. */
+export function composePrivateCiMinutes(input: {
+  policy: CiMinutePolicyV1;
+  clock: Clock;
+  scratch: string;
+  authority(deadline: number): Promise<HostedPrivateCiCapabilities | null>;
+  billingBasis?(
+    policy: CiMinutePolicyV1,
+    deadline: number,
+    facts?: CiEffectFactsV1,
+  ): Promise<boolean>;
+}): CiMinuteControllerV1 {
+  if (input.policy.activated === false) return INACTIVE_CI_MINUTES;
+  return Object.freeze({
+    active: true,
+    async reserve(effect: CiEffectV1, deadline: number) {
+      try {
+        if (
+          input.billingBasis === undefined ||
+          !await input.billingBasis(input.policy, deadline)
+        ) {
+          return {
+            kind: "unavailable" as const,
+            reason: "billing_basis_unavailable",
+          };
+        }
+        const capability = await input.authority(deadline);
+        if (capability === null || !await capability.verify(deadline)) {
+          return {
+            kind: "unavailable" as const,
+            reason: "private_ci_authority_unavailable",
+          };
+        }
+        const store = new GitCiMinuteStore({
+          scratchDir: input.scratch,
+          remoteUrl: CI_MINUTE_PRIVATE_REMOTE,
+          runner: capability,
+          storageAcceptance: input.policy.storageAcceptance ?? "",
+        });
+        const reads = {
+          policy: input.policy,
+          now: () => input.clock.now(),
+          request: (path: string, limit: number) =>
+            capability.request(path, limit),
+        };
+        return await createCiMinuteController({
+          policy: input.policy,
+          clock: input.clock,
+          store,
+          authorizePolicy: async (policy, limit, facts) =>
+            await input.billingBasis!(policy, limit, facts) &&
+            await capability.verify(limit),
+          resolve: createPrivateCiEffectResolver(reads),
+          observe: createPrivateCiObservationReader(reads),
+        }).reserve(effect, deadline);
+      } catch {
+        return {
+          kind: "unavailable" as const,
+          reason: "private_ci_composition_unavailable",
+        };
+      }
+    },
+  });
+}
+
+export async function createHostedPrivateCiCapabilities(
+  context: HostedAppPrincipalContext | null,
+  scratch: string,
+  deadline: number,
+): Promise<HostedPrivateCiCapabilities | null> {
+  if (context === null) return null;
+  const value = contexts.get(context);
+  if (
+    value === undefined ||
+    !value.source.targets.includes("ubiquity/prospector") ||
+    value.grant.permissions.contents !== "write" || !live(value, deadline) ||
+    !await freshHost(value, deadline)
+  ) return null;
+  if (
+    !scratch.startsWith("/") || !scratch.endsWith("/ci-minutes-private") ||
+    /[\r\n\0]/.test(scratch) ||
+    scratch.split("/").some((part) =>
+      ["..", ".sentinel-matrix", ".sentinel-repair"].includes(part)
+    )
+  ) return null;
+  const repository = {
+    owner: "ubiquity",
+    name: "prospector",
+    installationId: SENTINEL_APP_INSTALLATION_ID,
+  };
+  const verify = async (limit: number) => {
+    if (
+      !live(value, limit) || value.grant.permissions.contents !== "write" ||
+      !await freshHost(value, limit)
+    ) return false;
+    const scope = await readHostedPrivateCiScope({
+      http: value.host.http,
+      token: value.host.appToken,
+      clock: value.host.clock,
+      gate: value.host.gate,
+      deadline: Math.min(limit, value.notAfter, value.host.deadline),
+      repository,
+      grant: value.grant,
+    });
+    return scope.ok && live(value, limit) && await freshHost(value, limit);
+  };
+  if (!await verify(deadline)) return null;
+  await Deno.mkdir(scratch, { recursive: true, mode: 0o700 });
+  const stat = await Deno.lstat(scratch);
+  if (!stat.isDirectory || stat.isSymlink) return null;
+  await Deno.chmod(scratch, 0o700);
+  const root = await Deno.realPath(scratch);
+  if (root !== scratch.replace(/\/$/, "")) return null;
+  const runner = new DenoGitRunner(
+    root,
+    githubGitAuthEnv(value.host.appToken, CI_MINUTE_PRIVATE_REMOTE),
+  );
+  const failed = () => ({ ok: false, code: -1, stdout: "", stderr: "" });
+  return Object.freeze({
+    verify,
+    async request(path: string, limit: number) {
+      if (!live(value, limit)) return null;
+      return await readHostedPrivateCiData({
+        http: value.host.http,
+        token: value.host.appToken,
+        clock: value.host.clock,
+        gate: value.host.gate,
+        deadline: Math.min(limit, value.notAfter, value.host.deadline),
+      }, path);
+    },
+    async runGit(
+      args: string[],
+      options: Parameters<GitRunnerV1["runGit"]>[1],
+    ) {
+      if (
+        !live(value, deadline) || !options.cwd.startsWith(root + "/") ||
+        options.cwd.split("/").includes("..") || !ciStateGitArgs(args)
+      ) return failed();
+      if (args[0] === "push" && !await verify(deadline)) return failed();
+      const env = Object.fromEntries(
+        Object.entries(options.env ?? {}).filter(([key]) =>
+          [
+            "GIT_AUTHOR_NAME",
+            "GIT_AUTHOR_EMAIL",
+            "GIT_COMMITTER_NAME",
+            "GIT_COMMITTER_EMAIL",
+          ].includes(key)
+        ),
+      );
+      return await runner.runGit(args, { ...options, env });
+    },
+  });
+}
+
+/** Restrictive utility only; a command shape never grants credentials or authority. */
+export function ciStateGitArgs(args: readonly string[]): boolean {
+  const sha = (value: string | undefined) =>
+    value !== undefined && /^[0-9a-f]{40}$/.test(value);
+  const exact = (...expected: string[]) =>
+    canonicalStringify(args) === canonicalStringify(expected);
+  switch (args[0]) {
+    case "init":
+      return exact("init", "-q");
+    case "remote":
+      return exact("remote", "add", "origin", CI_MINUTE_PRIVATE_REMOTE);
+    case "ls-remote":
+      return exact("ls-remote", "origin", CI_MINUTE_REF);
+    case "fetch":
+      return exact(
+        "fetch",
+        "-q",
+        "--no-tags",
+        "--no-auto-gc",
+        "--depth=1",
+        "origin",
+        CI_MINUTE_REF,
+      );
+    case "rev-parse":
+      return exact("rev-parse", "FETCH_HEAD");
+    case "ls-tree":
+      return args.length === 3 && args[1] === "-r" && sha(args[2]);
+    case "cat-file":
+      return args.length === 3 && ["-s", "blob"].includes(args[1]) &&
+        sha(args[2]);
+    case "add":
+      return args.length >= 3 && args[1] === "--" &&
+        args.slice(2).every((path) =>
+          /^ci-minutes\/ubiquity\/\d{4}-(0[1-9]|1[0-2])\.json$/.test(path)
+        );
+    case "write-tree":
+      return exact("write-tree");
+    case "commit-tree": {
+      const parent = args.length === 6;
+      return (parent || args.length === 4) && sha(args[1]) &&
+        (!parent || (args[2] === "-p" && sha(args[3]))) &&
+        args[parent ? 4 : 2] === "-m" &&
+        /^sentinel CI accounting\n\nnonce: [0-9a-f]{64}$/.test(
+          args[parent ? 5 : 3],
+        );
+    }
+    case "push":
+      return args.length === 3 && args[1] === "origin" &&
+        new RegExp("^[0-9a-f]{40}:" + CI_MINUTE_REF + "$", "u").test(args[2]);
+    default:
+      return false;
+  }
 }
 export interface HostedAppPrincipalHandoffInput {
   source: HostedAppSourceInput;
@@ -484,4 +722,21 @@ export function composeHostedAppGitHub(
   // Admission is independent of the runtime custody floor. Only the verified
   // native launcher's distinct source policy can activate these effect paths.
   return composeLocalGitHub(local, undefined, value.capability.takeover);
+}
+
+/** Runtime factory keeps private construction out of the large repair host. */
+export function runtimeCiMinutes(
+  clock: Clock,
+  stateRoot: string,
+  principal: () => HostedAppPrincipalContext | null,
+): CiMinuteControllerV1 {
+  const scratch = stateRoot + "/ci-minutes-private";
+  return composePrivateCiMinutes({
+    policy: proposedCiMinutePolicy(),
+    clock,
+    scratch,
+    authority: (limit) =>
+      createHostedPrivateCiCapabilities(principal(), scratch, limit),
+    billingBasis: () => Promise.resolve(false),
+  });
 }

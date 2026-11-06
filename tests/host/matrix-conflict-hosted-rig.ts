@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /**
  * Rig for the HOSTED conflict-resolution route over real Git (no test
  * registrations). It composes the real hosted pieces around the real-Git
@@ -198,6 +199,7 @@ export async function hostedConflictRig(
   });
   await hosted.seed([await publishedCandidate(ctx, overrides)]);
   const deps: RepairCycleDepsV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock: hosted.clock,
     state: hosted.state,
     configs: hosted.configs,

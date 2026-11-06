@@ -1,4 +1,5 @@
 import type { ClosedCWaveRecoveryDepsV1 } from "../src/host/modern-matrix-recovery.ts";
+import type { CiMinuteControllerV1 } from "../src/contracts/ci-minute-budget.ts";
 import type { GitSha } from "../src/contracts/brands.ts";
 import type { runMatrixUncertaintyMaintenance } from "../src/host/matrix-uncertainty-maintenance.ts";
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
@@ -554,6 +555,8 @@ export type HostedClosedMatrixDepsV1 = ClosedCWaveRecoveryDepsV1 & {
 };
 
 export interface HostedAutonomyDepsV1 {
+  /** Trusted shared CI capability; production installs the explicit inactive instance. */
+  ciMinutes: CiMinuteControllerV1;
   /** Trusted queue composition. Production gateway maintenance refuses when missing. */
   queue?:
     import("./hosted-autonomy-queue-contracts.ts").HostedQueueCoordinatorDeps;

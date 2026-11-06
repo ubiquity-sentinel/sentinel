@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 import { createHostedHistoricalMatrixQuarantine } from "../../ops/hosted-autonomy-matrix-adapters.ts";
@@ -664,6 +665,7 @@ export async function historicalMalformedRig(
       });
     }
     return await withDarkQueueAuthority({
+      ciMinutes: INACTIVE_CI_MINUTES,
       ...deps,
       historicalMatrix: {
         ...historicalMatrix,

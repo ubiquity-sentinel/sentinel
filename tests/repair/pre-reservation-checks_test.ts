@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /**
  * #333: every deterministic admission/preservation precondition is decided
  * BEFORE the implementation reservation. A refused record is never reserved
@@ -331,6 +332,7 @@ function rig(record: WorkRecordV1, extra: Partial<RepairStateSnapshotV1> = {}) {
   const budget = new RollingStartBudget({ clock, state, configs });
   let reserveCalls = 0;
   const deps: RepairCycleDepsV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     configs,

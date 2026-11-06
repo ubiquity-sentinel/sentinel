@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /** Real private Git/state and production native reader; every HTTP response is synthetic. */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -1009,6 +1010,7 @@ export async function futureRecoveryFixture(
             GITHUB_OUTPUT: output,
           },
           deps: {
+            ciMinutes: INACTIVE_CI_MINUTES,
             state: {
               readRepair: () => state.readRepair(),
               readRelease: () => state.readRelease(),

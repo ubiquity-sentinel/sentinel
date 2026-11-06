@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /** Closed ai.ubq.fi publications recover without regenerating their live head. */
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
@@ -67,6 +68,7 @@ function setup(
   });
   const model = new FakeModel();
   const deps: RepairCycleDepsV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     configs,

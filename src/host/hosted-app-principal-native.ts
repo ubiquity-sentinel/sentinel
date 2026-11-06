@@ -412,3 +412,105 @@ export async function readHostedAppRepositoryScope(
     timer.dispose();
   }
 }
+
+/** Private CI purpose: same authenticated scope, plus current Contents-write and visibility. */
+export async function readHostedPrivateCiScope(
+  input: NativeReaderInput & {
+    repository: RepositoryIdentityV1;
+    grant: HostedAppMintGrant;
+  },
+): Promise<PortResultV1<HostedAppRepositoryScope>> {
+  if (
+    input.repository.owner !== "ubiquity" ||
+    input.repository.name !== "prospector" ||
+    input.grant.permissions.contents !== "write"
+  ) return refused();
+  const scope = await readHostedAppRepositoryScope(input);
+  if (
+    !scope.ok || scope.value.id !== 1337190500 ||
+    input.clock.now() >= input.grant.expiresAt
+  ) return refused();
+  const timer = createDeadline(
+    Math.min(30_000, Math.max(1, input.deadline - input.clock.now())),
+  );
+  try {
+    const current = await read(
+      input,
+      "/repos/ubiquity/prospector",
+      input.repository.installationId,
+      timer,
+    );
+    if (current === null) return refused();
+    const raw = object(current.body);
+    const identity = repositoryRow(raw);
+    return raw.private === true && identity.id === scope.value.id &&
+        identity.nodeId === scope.value.nodeId &&
+        identity.owner === "ubiquity" && identity.name === "prospector" &&
+        input.clock.now() < input.grant.expiresAt
+      ? portOk(scope.value)
+      : refused();
+  } catch {
+    return refused();
+  } finally {
+    timer.dispose();
+  }
+}
+
+/** Narrow read closure backing the private CI coordinator; never returns credentials. */
+export async function readHostedPrivateCiData(
+  input: NativeReaderInput,
+  path: string,
+): Promise<unknown | null> {
+  const pathname = path.split("?")[0];
+  if (
+    path.length > 2048 || /[\r\n\0#]/.test(path) || pathname.includes("..") ||
+    !/^\/repos\/ubiquity\/(prospector|passport\.ubq\.fi)(?:\/(?:actions\/(?:runs(?:\/[0-9]+(?:\/timing|\/attempts\/[0-9]+\/jobs)?)?|jobs\/[0-9]+)|contents\/\.github\/workflows\/ci\.yml|git\/ref\/heads\/[A-Za-z0-9._/-]+|pulls(?:\/[0-9]+)?|commits\/[0-9a-f]{40}))?$/
+      .test(pathname)
+  ) return null;
+  const timer = createDeadline(
+    Math.min(30_000, Math.max(1, input.deadline - input.clock.now())),
+  );
+  try {
+    const admission = await timer.race(
+      input.gate.beforeRequest(SENTINEL_APP_INSTALLATION_ID),
+    );
+    const remaining = input.deadline - input.clock.now();
+    if (!admission.ok || remaining <= 0 || input.token.trim() === "") {
+      return null;
+    }
+    const response = await timer.race(
+      input.http({
+        method: "GET",
+        url: `${api}${path}`,
+        headers: headerMap({
+          accept: "application/vnd.github+json",
+          authorization: `Bearer ${input.token}`,
+          "user-agent": "sentinel-private-ci",
+          "x-github-api-version": "2022-11-28",
+        }),
+        body: null,
+        redirect: "error",
+        deadlineMs: Math.min(30_000, remaining),
+      }),
+    );
+    if (input.clock.now() >= input.deadline) return null;
+    if (response.status === 404) return undefined;
+    if (response.status !== 200) {
+      const limit = await classifyGitHubRateLimit(response, input.clock.now());
+      if (limit !== null) {
+        await timer.race(
+          input.gate.recordRateLimit(SENTINEL_APP_INSTALLATION_ID, limit),
+        );
+      }
+      return null;
+    }
+    if (new TextEncoder().encode(response.bodyText).length > maximumBodyBytes) {
+      return null;
+    }
+    return JSON.parse(response.bodyText);
+  } catch {
+    return null;
+  } finally {
+    timer.dispose();
+  }
+}

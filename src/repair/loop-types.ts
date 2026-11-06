@@ -1,5 +1,12 @@
 /** Repair loop internals: types. */
 import type { BudgetControllerV1 } from "../budget/mod.ts";
+import type {
+  CiEffectKindV1,
+  CiEffectV1,
+  CiMinuteControllerV1,
+} from "../contracts/ci-minute-budget.ts";
+import { causedWait } from "./loop-wait-cause.ts";
+import { persistTransition } from "./loop-state.ts";
 import type { FixtureDigest, GitSha } from "../contracts/brands.ts";
 import type {
   Clock,
@@ -64,6 +71,8 @@ export interface RepairCycleDepsV1 {
   modelId?: string;
   /** The one production admission controller (RollingStartBudget). */
   budget: BudgetControllerV1;
+  /** Required trusted CI capability; hosts supply the explicit inactive capability by default. */
+  ciMinutes: CiMinuteControllerV1;
   /** Matrix-owned implementations settle only through authenticated artifact ingestion. */
   externalImplementations?: boolean;
   /**
@@ -81,6 +90,80 @@ export interface RepairCycleDepsV1 {
    * round is ever granted).
    */
   legacyReviewCutoff?: number | null;
+}
+
+/** Calendar holds are nonfailure state, never transport errors or model-start charges. */
+export async function guardCiMinuteEffect(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  record: WorkRecordV1,
+  kind: CiEffectKindV1,
+  override: Partial<Pick<CiEffectV1, "head" | "base" | "ref" | "pr">> = {},
+): Promise<StepResultV1 | null> {
+  if (deps.ciMinutes === undefined) {
+    return { kind: "state_error", detail: "CI admission capability missing" };
+  }
+  if (!deps.ciMinutes.active) return null;
+  const baseBranch = kind === "merge"
+    ? deps.configs.find((c) =>
+      c.repository.owner === record.repository.owner &&
+      c.repository.name === record.repository.name &&
+      c.repository.installationId === record.repository.installationId
+    )?.baseBranch
+    : undefined;
+  if (kind === "merge" && baseBranch === undefined) {
+    return { kind: "state_error", detail: "CI base branch missing" };
+  }
+  const decision = await deps.ciMinutes.reserve({
+    repository: record.repository,
+    kind,
+    head: record.target.head,
+    base: record.target.base,
+    ref: baseBranch !== undefined
+      ? `refs/heads/${baseBranch}`
+      : record.target.branch === null
+      ? ""
+      : `refs/heads/${record.target.branch}`,
+    pr: record.target.pr,
+    ...override,
+  }, context.bounds.runDeadline);
+  if (decision.kind === "inactive" || decision.kind === "admitted") {
+    return deps.clock.now() < context.bounds.runDeadline
+      ? null
+      : { kind: "margin", detail: "CI admission crossed operation deadline" };
+  }
+  if (decision.kind === "unavailable") {
+    return { kind: "deferred", detail: "CI minute evidence unavailable" };
+  }
+  if (decision.kind === "reconciled") {
+    return {
+      kind: "deferred",
+      detail: "CI effect awaits native reconciliation",
+    };
+  }
+  const now = deps.clock.now();
+  if (!Number.isSafeInteger(decision.retryAt) || decision.retryAt <= now) {
+    return { kind: "state_error", detail: "CI admission wait invalid" };
+  }
+  if (
+    record.wait?.reason === "backoff" && record.wait.until === decision.retryAt
+  ) {
+    return { kind: "deferred", detail: "CI minute calendar hold" };
+  }
+  return await persistTransition(deps, context, (draft) => {
+    const index = draft.work.findIndex((r) => r.id === record.id);
+    if (index < 0) throw new Error("CI wait record missing");
+    const current = draft.work[index];
+    draft.work[index] = {
+      ...current,
+      updatedAt: now,
+      wait: causedWait(deps, {
+        reason: "backoff",
+        since: current.wait?.reason === "backoff" ? current.wait.since : now,
+        until: decision.retryAt,
+      }, { port: "ci", status: "none", code: "minute_budget" }),
+    };
+  });
 }
 
 /** Read-only trusted identity lookup paired with the concrete fixture resolver. */

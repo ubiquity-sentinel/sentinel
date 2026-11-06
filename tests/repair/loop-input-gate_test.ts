@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /**
  * Batched live reads and the unchanged-input gate of the serial pass
  * (issue #326).
@@ -144,6 +145,7 @@ function makeRig(work: WorkRecordV1[]) {
   );
   const github = new BatchGithub({ baseSha: SHA1, openIssues: [] });
   const deps = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     configs,

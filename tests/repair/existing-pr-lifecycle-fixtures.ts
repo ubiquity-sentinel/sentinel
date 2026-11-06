@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import type { RepositoryIdentityV1 } from "../../src/contracts/shared.ts";
 /** Production serial/matrix routing with explicit unavailable native custody. */
 import assert from "node:assert/strict";
@@ -124,6 +125,7 @@ export function existingPrLifecycleRig(
   };
   Object.defineProperty(github, "existingPrTakeover", { value: takeover });
   const deps: RepairCycleDepsV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock: rig.clock,
     state: rig.state,
     configs: rig.configs,

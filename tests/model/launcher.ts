@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /**
  * The launcher oracle: ONE real protected maintenance pass
  * (`runHostedAutonomy`, every phase in its production order: closure-delivery,
@@ -263,6 +264,7 @@ export async function runLauncherPass(
   let result: HostedAutonomyResultV1;
   try {
     result = await runHostedAutonomy({
+      ciMinutes: INACTIVE_CI_MINUTES,
       state,
       githubFor: () => surface,
       clock: { now: () => now },

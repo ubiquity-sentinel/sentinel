@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /**
  * m04-repair run-bound acceptance: the plan §4 fixed 120-minute run ceiling,
  * the 90-minute no-new-model-work cutoff (implementation starts AND review
@@ -154,6 +155,7 @@ function makeRig(
     : new FakeReplay(options.replay);
   const model = new FakeModel({ head: SHA3, changedPaths: ["src/app.ts"] });
   const deps = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     configs,

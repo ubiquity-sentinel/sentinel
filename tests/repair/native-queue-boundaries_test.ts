@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /** Queue custody discovered after scheduling must stop actual runtime consumers. */
 import { parseRepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import { HOSTED_RECORD_WAIT_CAUSES } from "../../src/repair/loop-wait-cause.ts";
@@ -198,6 +199,7 @@ function harness(
   });
   state.repairHead = SHA1;
   const deps: RepairCycleDepsV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     configs,

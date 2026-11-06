@@ -142,6 +142,7 @@ export function createActionsTargetFlow(
             replay: capabilities.replay,
             model: input.model,
             budget: input.budget,
+            ciMinutes: input.ciMinutes,
             externalImplementations: input.externalImplementations,
             recordWaitCauses: input.recordWaitCauses,
             legacyReviewCutoff: input.legacyReviewCutoff ?? null,

@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import { SHA1 as ATTEMPT_RUNTIME } from "../state/helpers.ts";
 /** Closed C mixed ingestion, charge retention and fresh-mirror recovery. */
 import assert from "node:assert/strict";
@@ -328,6 +329,7 @@ Deno.test("closed C recovery: real mixed ingestion preserves charges and rehydra
     );
     const first = await ingestClosedCWave(deps);
     const maintenance = await runHostedAutonomy({
+      ciMinutes: INACTIVE_CI_MINUTES,
       state: r.store,
       clock: r.clock,
       githubFor: () => {
@@ -717,6 +719,7 @@ Deno.test("closed C recovery: real mixed ingestion preserves charges and rehydra
         "fully retired scope performs no old artifact/history IO",
       );
       const maintenance = await runHostedAutonomy({
+        ciMinutes: INACTIVE_CI_MINUTES,
         state: r.store,
         clock: r.clock,
         githubFor: () => null,

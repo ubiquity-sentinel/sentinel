@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { makeRepairRig, SHA1 } from "../integration/helpers.ts";
 import { repairConfigs } from "./helpers.ts";
@@ -223,6 +224,7 @@ Deno.test("loop-guard runtime: real entrypoint stops first loop and admits secon
       },
     });
     const result = await runRepairEntrypoint({
+      ciMinutes: INACTIVE_CI_MINUTES,
       clock: rig.clock,
       state: rig.store,
       configs,

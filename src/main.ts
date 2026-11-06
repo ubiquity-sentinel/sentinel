@@ -34,6 +34,7 @@ import {
 } from "./contracts/repository-config.ts";
 import type { RepositoryConfigV1 } from "./contracts/repository-config.ts";
 import type { BudgetControllerV1 } from "./budget/mod.ts";
+import type { CiMinuteControllerV1 } from "./contracts/ci-minute-budget.ts";
 import type {
   Clock,
   GitHubCooldownGateV1,
@@ -113,6 +114,7 @@ export interface RepairEntrypointDepsV1 {
   model: ImplementationPort;
   /** The one durable model-start admission controller. */
   budget: BudgetControllerV1;
+  ciMinutes: CiMinuteControllerV1;
   /** Trusted matrix ownership: no serial implementation fallback or uncertainty settlement. */
   externalImplementations?: boolean;
   /** The legacy review cutoff the launcher handed this run (null: none). */
@@ -243,6 +245,7 @@ export function createRepairInvocation(
       fixtureIdentities: deps.fixtureIdentities,
       model: deps.model,
       budget: deps.budget,
+      ciMinutes: deps.ciMinutes,
       externalImplementations: deps.externalImplementations,
       legacyReviewCutoff: deps.legacyReviewCutoff ?? null,
     },

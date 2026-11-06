@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /**
  * Several issue tasks of ONE repository with open pull requests, driven
  * through the REAL repair loop against a reviewer that always returns a clean,
@@ -562,6 +563,7 @@ export async function queueRig(
     return write(snapshot, expectedHead);
   };
   const deps = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     configs,

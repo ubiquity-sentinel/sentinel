@@ -110,6 +110,7 @@ import { readHostedAppCredentials } from "./hosted-app-credentials.ts";
 import {
   composeHostedAppGitHub,
   type HostedAppGitHubInput,
+  runtimeCiMinutes,
 } from "./hosted-app-principal.ts";
 import { createActionsTargetBindings } from "./actions-target-bindings.ts";
 import { readHostedSelfDependencyPreparer } from "./hosted-self-dependencies.ts";
@@ -227,12 +228,10 @@ export async function runActionsRepairHost(
   const reviewClientHome = joinPath(stateRoot, "clients", "review");
   const reviewTmpDir = joinPath(stateRoot, "tmp", "review");
   const reviewDenoDir = joinPath(stateRoot, "deno", "review");
-
   await ensurePrivateDir(stateRoot);
   await ensurePrivateDir(scratch);
   const backupCi = await hostBackupCi(readEnv, sourceDir, stateRoot, clock);
   const controllerSha = await readControllerSha(sourceDir, trustedPath);
-
   // The state store uses the same authenticated Git transport as publication,
   // but its role is fixed to repair. GitHub state never shares an index or
   // checkout with the source repository. It also reads the open delivery
@@ -296,7 +295,6 @@ export async function runActionsRepairHost(
     denoExecutable,
     trustedPath,
   };
-
   // The source mirror is private to this run. The SENTINEL mirror is seeded
   // from this run's own checkout (the exact runtime revision) and refreshed
   // here; a FOREIGN target cannot be served by it, because that mirror holds
@@ -338,7 +336,6 @@ export async function runActionsRepairHost(
         "sources",
         `${config.repository.owner}-${config.repository.name}`,
       );
-
   // The review client is configured apart from the implementation route:
   // always the gateway provider, endpoint and token, so the gateway-bound
   // structured reviewer never meets a DeepSeek-direct client config on the
@@ -354,7 +351,6 @@ export async function runActionsRepairHost(
     trustedPath,
     baseUrl: GATEWAY_BASE_URL,
   });
-
   const tracker = new LocalSessionTracker();
   const http = deps.http ?? fetchHttpTransport();
   // The private context binds the actual App token to clean protected source,
@@ -407,6 +403,11 @@ export async function runActionsRepairHost(
   });
   const { isSelfTarget, tokenFor, loginFor, selfContext } = bindings;
   const takeoverContext = bindings.targetContext;
+  const ciMinutes = runtimeCiMinutes(
+    clock,
+    stateRoot,
+    () => isReadOnlyCellJob(deps.job) ? null : takeoverContext,
+  );
   const gitExecutable = await resolveExecutable("git", trustedPath);
   // The committed setting is the only target source; the local template only
   // supplies trusted per-repository defaults and the self identity.
@@ -869,6 +870,7 @@ export async function runActionsRepairHost(
               unavailableTargetCapabilities(),
           model,
           budget,
+          ciMinutes,
           deadline,
           runOrigin,
           stepLimit: STEP_LIMIT,

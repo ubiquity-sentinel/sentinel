@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /**
  * Review-drain backlog regression (owner update 2026-10-02T22:05:51Z: "lift
  * all the limits"). The retroactive `review_quota` drain released at most a
@@ -127,6 +128,7 @@ Deno.test(
       assert.ok(written.ok && written.value.status === "applied");
 
       const outcome = await runRepairCycle({
+        ciMinutes: INACTIVE_CI_MINUTES,
         clock,
         state: store,
         configs,

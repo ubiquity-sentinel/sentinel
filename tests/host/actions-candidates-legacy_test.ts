@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /** Hosted actions-candidates-legacy_test responsibility. */
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
@@ -370,6 +371,7 @@ Deno.test(
       const model = new FakeModel();
       assert.equal(await objectPresent(sourcePath, ctx.env, ctx.head), false);
       const outcome = await runRepairCycle({
+        ciMinutes: INACTIVE_CI_MINUTES,
         clock,
         state,
         configs,

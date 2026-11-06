@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /** #335: the step loop records the concrete cause of its unavailable waits. */
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
@@ -57,6 +58,7 @@ async function issueRead503(recordWaitCauses: boolean) {
   });
   const model = new FakeModel();
   const deps: RepairCycleDepsV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     configs,

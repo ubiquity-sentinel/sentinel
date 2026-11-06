@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 // review snapshot publication_test.
 
 import assert from "node:assert/strict";
@@ -456,6 +457,7 @@ Deno.test(
           const model = new FakeModel();
           const run = () =>
             runRepairCycle({
+              ciMinutes: INACTIVE_CI_MINUTES,
               clock,
               state,
               configs,

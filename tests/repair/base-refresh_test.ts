@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /**
  * Durable candidate-base refresh through the REAL repair loop: intent
  * persistence before any preparation or side effect, deterministic prepared
@@ -371,6 +372,7 @@ function makeRig(github: GitHubPort) {
   const model = new FakeModel({ head: SHA3, changedPaths: ["src/app.ts"] });
   const run = (stepLimit = 16) =>
     runRepairCycle({
+      ciMinutes: INACTIVE_CI_MINUTES,
       clock,
       state,
       configs,

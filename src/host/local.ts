@@ -32,6 +32,7 @@ import {
 import { createRepairStateStore } from "../state/mod.ts";
 import { composeLocalReleaseReader } from "./local-release.ts";
 import { RollingStartBudget } from "../budget/mod.ts";
+import { INACTIVE_CI_MINUTES } from "../budget/ci-minutes.ts";
 import { unavailableTargetCapabilities } from "./gateway-capabilities.ts";
 import { fetchHttpTransport } from "../github/http.ts";
 import { DurableGitHubCooldownGate } from "../repair/github-cooldown.ts";
@@ -354,6 +355,7 @@ export async function runLocalRepairHost(
       incidents: capabilities.incidents,
       replay: capabilities.replay,
       model,
+      ciMinutes: INACTIVE_CI_MINUTES,
       budget: new RollingStartBudget({
         clock,
         state,

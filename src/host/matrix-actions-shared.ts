@@ -103,6 +103,7 @@ export function targetDeps(
     replay: capabilities.replay,
     model: input.model,
     budget: input.budget,
+    ciMinutes: input.ciMinutes,
     externalImplementations: true,
     // #335: hosted cells and ingest persist wait causes.
     recordWaitCauses: input.recordWaitCauses ?? HOSTED_RECORD_WAIT_CAUSES,

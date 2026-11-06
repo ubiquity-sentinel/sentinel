@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /**
  * Wave C run-bound acceptance through the ACTUAL production entrypoint
  * (`runRepairEntrypoint` in src/main.ts) with fake-clock fakes: the fixed
@@ -67,6 +68,7 @@ Deno.test(
       // 120 minutes; the before-run replay advances the clock past the
       // 90-minute cutoff mid-run.
       const outcome = await runRepairEntrypoint({
+        ciMinutes: INACTIVE_CI_MINUTES,
         clock,
         state: store,
         configs,
@@ -122,6 +124,7 @@ Deno.test(
       const replay = new FakeReplay();
       const model = new FakeModel();
       const outcome = await runRepairEntrypoint({
+        ciMinutes: INACTIVE_CI_MINUTES,
         clock,
         state: store,
         configs,
@@ -178,6 +181,7 @@ Deno.test(
       // 4-minute session + 5-minute reserved margin cannot fit a 5-minute
       // caller deadline: the operation is refused before any reservation.
       const outcome = await runRepairEntrypoint({
+        ciMinutes: INACTIVE_CI_MINUTES,
         clock,
         state: store,
         configs,
@@ -258,6 +262,7 @@ Deno.test(
       const replay = new FakeReplay();
       const model = new FakeModel({ head: SHA3, changedPaths: ["src/app.ts"] });
       const first = await runRepairEntrypoint({
+        ciMinutes: INACTIVE_CI_MINUTES,
         clock,
         state: store,
         configs,
@@ -280,6 +285,7 @@ Deno.test(
         "no PR creation after the total deadline",
       );
       const resumed = await runRepairEntrypoint({
+        ciMinutes: INACTIVE_CI_MINUTES,
         clock,
         state: store,
         configs,

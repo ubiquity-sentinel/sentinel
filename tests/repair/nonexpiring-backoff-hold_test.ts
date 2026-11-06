@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /**
  * Merge-queue Gate B: a null-until backoff is a durable hold in both R81 and
  * rollback R80. No queue implementation or new persisted shape is needed.
@@ -168,6 +169,7 @@ async function remainsHeld(runtime: Runtime, records: WorkRecordV1[]) {
   };
   const model = new FakeModel();
   const deps: Loop.RepairCycleDepsV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     configs,

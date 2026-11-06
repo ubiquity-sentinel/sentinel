@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /** Shared real-Git and in-memory repair-loop rigs. */
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
@@ -79,11 +80,16 @@ export function evidenceFixture(): ReturnType<typeof incidentEvidence> {
   });
 }
 
-export async function makeCtx(prefix: string) {
-  const tmp = await Deno.makeTempDir({
-    prefix: `sentinel-repair-test-${prefix}-`,
-    dir: ROOT,
-  });
+export async function makeCtx(prefix: string, fixtureDirectory = ROOT) {
+  if (fixtureDirectory !== ROOT) {
+    await Deno.mkdir(fixtureDirectory, { recursive: true });
+  }
+  const tmp = await Deno.realPath(
+    await Deno.makeTempDir({
+      prefix: `sentinel-repair-test-${prefix}-`,
+      dir: fixtureDirectory,
+    }),
+  );
   const env = testGitEnv(`${tmp}/git-home`);
   await Deno.mkdir(`${tmp}/git-home`, { recursive: true });
   const remote = await makeRemoteCtx(tmp, env);
@@ -138,9 +144,12 @@ export async function makeRig(
     externalImplementations?: boolean;
     /** The legacy review cutoff the launcher would hand the runtime. */
     legacyReviewCutoff?: number;
+    ciMinutes?:
+      import("../../src/contracts/ci-minute-budget.ts").CiMinuteControllerV1;
+    fixtureDirectory?: string;
   } = {},
 ): Promise<RigV1> {
-  const ctx = await makeCtx(prefix);
+  const ctx = await makeCtx(prefix, options.fixtureDirectory);
   const clock = new FakeClock(T0);
   const store = createRepairStateStore({
     scratchDir: `${ctx.tmp}/scratch`,
@@ -193,6 +202,7 @@ export async function makeRig(
       replay,
       model,
       budget,
+      ciMinutes: options.ciMinutes ?? INACTIVE_CI_MINUTES,
       ...(options.externalImplementations === undefined
         ? {}
         : { externalImplementations: options.externalImplementations }),
@@ -214,6 +224,7 @@ export async function makeRig(
       replay,
       model,
       budget,
+      ciMinutes: options.ciMinutes ?? INACTIVE_CI_MINUTES,
       ...(options.legacyReviewCutoff === undefined
         ? {}
         : { legacyReviewCutoff: options.legacyReviewCutoff }),
@@ -381,6 +392,7 @@ export function makeMemoryRig(github: FakeGithub) {
       replay,
       model,
       budget,
+      ciMinutes: INACTIVE_CI_MINUTES,
     }, { deadline: clock.now() + 60 * 60_000, stepLimit });
   const snapshot = async () => {
     const read = await state.readRepair();

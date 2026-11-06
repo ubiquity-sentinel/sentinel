@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import { SHA1 as ATTEMPT_RUNTIME } from "../state/helpers.ts";
 // Named end-to-end scenario for the durable memory loop breaker.
 //
@@ -114,6 +115,7 @@ Deno.test(
       configs,
     });
     const depsA: RepairCycleDepsV1 = {
+      ciMinutes: INACTIVE_CI_MINUTES,
       clock,
       state: storeA,
       configs,

@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /** Hosted candidate-handoff_test responsibility. */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -473,6 +474,7 @@ Deno.test(
         configs: [config],
       });
       const entrypointDeps = {
+        ciMinutes: INACTIVE_CI_MINUTES,
         clock,
         state,
         configs: [config],

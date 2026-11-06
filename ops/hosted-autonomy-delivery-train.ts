@@ -187,6 +187,47 @@ class RepositoryTrain extends TrainRun {
 
   async publish(): Promise<Outcome> {
     const train = this.train;
+    let dispatchAlreadyApplied = false;
+    const ci = this.context.deps.ciMinutes;
+    if (ci === undefined) {
+      this.act(`train:${train.operationId}:ci_capability_missing`);
+      return "done";
+    }
+    if (ci.active) {
+      if (this.context.deadlineAt === undefined) return "done";
+      const admission = await ci.reserve({
+        repository: this.scope.repository,
+        kind: "train_push",
+        head: train.sha,
+        base: train.tip,
+        ref: train.ref,
+        pr: null,
+      }, this.context.deadlineAt);
+      if (
+        admission.kind !== "admitted" && admission.kind !== "inactive" &&
+        admission.kind !== "reconciled"
+      ) {
+        this.act(`train:${train.operationId}:ci_minute_hold`);
+        return "done";
+      }
+      // Reserve the explicit dispatch before advancing the persisted phase:
+      // a budget hold must leave it on the ordinary publishing/retry path.
+      if (this.composer.triggerCi !== undefined) {
+        const dispatch = await ci.reserve({
+          repository: this.scope.repository,
+          kind: "train_dispatch",
+          head: train.sha,
+          base: train.tip,
+          ref: train.ref,
+          pr: null,
+        }, this.context.deadlineAt);
+        if (dispatch.kind === "reconciled") dispatchAlreadyApplied = true;
+        else if (dispatch.kind !== "admitted" && dispatch.kind !== "inactive") {
+          this.act(`train:${train.operationId}:ci_minute_hold`);
+          return "done";
+        }
+      }
+    }
     let outcome: "applied" | "rejected" | "ambiguous";
     try {
       outcome = await this.composer.publish({ ref: train.ref, sha: train.sha });
@@ -206,7 +247,7 @@ class RepositoryTrain extends TrainRun {
       })
     ) return "done";
     this.act(`train:${train.operationId}:published:ref=${train.ref}`);
-    if (this.composer.triggerCi !== undefined) {
+    if (this.composer.triggerCi !== undefined && !dispatchAlreadyApplied) {
       let requested = false;
       try {
         requested = await this.composer.triggerCi({

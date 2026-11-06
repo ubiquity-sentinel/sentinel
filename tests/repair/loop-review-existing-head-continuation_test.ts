@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /**
  * Owner throughput t10c: a green existing-published-head continuation is
  * reviewed through the normal request path under exact head custody.
@@ -74,6 +75,7 @@ Deno.test(
       sessionBound: { maxDurationMs: 240_000, maxOutputChars: 200_000 },
     });
     const deps: RepairCycleDepsV1 = {
+      ciMinutes: INACTIVE_CI_MINUTES,
       clock,
       state,
       configs,
@@ -162,6 +164,7 @@ Deno.test(
       sessionBound: { maxDurationMs: 240_000, maxOutputChars: 200_000 },
     });
     const deps: RepairCycleDepsV1 = {
+      ciMinutes: INACTIVE_CI_MINUTES,
       clock,
       state,
       configs,

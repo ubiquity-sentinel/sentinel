@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
 import { portError, portOk } from "../../src/contracts/ports.ts";
@@ -93,6 +94,7 @@ async function rig() {
   const model = new FakeModel();
   const run = () =>
     runRepairCycle({
+      ciMinutes: INACTIVE_CI_MINUTES,
       clock,
       state,
       configs,

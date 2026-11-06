@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { selectTrustedTargetPolicyV1 } from "../../src/host/target-policy.ts";
 import { createLocalRepositoryConfig } from "../../src/host/local-config.ts";
@@ -307,6 +308,7 @@ Deno.test("Passport trial: real Git maintenance readmits once and repair publish
       sessionBound: { maxDurationMs: 240000, maxOutputChars: 200000 },
     });
     const deps = {
+      ciMinutes: INACTIVE_CI_MINUTES,
       state: rig.state,
       clock,
       github,
@@ -870,6 +872,7 @@ async function exerciseTerminalReviewCorrection(
     });
     const model = new FakeModel();
     const terminalDeps = {
+      ciMinutes: INACTIVE_CI_MINUTES,
       state: rig.state,
       clock,
       github,
@@ -1110,6 +1113,7 @@ Deno.test("Passport correction: uncertain recovery refuses conflicting untrusted
       });
       const model = new FakeModel();
       const deps = {
+        ciMinutes: INACTIVE_CI_MINUTES,
         state,
         clock,
         github,

@@ -6,6 +6,10 @@
  * clock.
  */
 import assert from "node:assert/strict";
+import type {
+  CiEffectV1,
+  CiMinuteControllerV1,
+} from "../../src/contracts/ci-minute-budget.ts";
 import { createMetricsCollectorV1 } from "../../src/contracts/throughput-metrics-collector.ts";
 import { HOSTED_AUTONOMY_PASS_DEADLINE_MS } from "../../ops/hosted-autonomy-continuation.ts";
 import { makeRig, repairSnapshot, run } from "./hosted-autonomy-rig.ts";
@@ -34,6 +38,7 @@ async function trainPass(
     clock?: { now(): number };
     prepare?: (world: TrainWorldV1) => void;
     ledger?: "memory" | "git";
+    ciMinutes?: CiMinuteControllerV1;
   } = {},
 ) {
   const tmp = await Deno.makeTempDir({ prefix: `sentinel-${name}-world-` });
@@ -51,6 +56,9 @@ async function trainPass(
     await run(rig, surface, {
       deliveryTrain: world.trainDeps,
       metrics,
+      ...(options.ciMinutes === undefined
+        ? {}
+        : { ciMinutes: options.ciMinutes }),
       ...(clock === undefined ? {} : { clock }),
     });
   const cleanup = async () => {
@@ -439,5 +447,79 @@ Deno.test("train: CI that cannot start is unavailable, never red; after the wait
     assert.deepEqual(await world.trainRefs(), [], "the ended ref is deleted");
   } finally {
     await cleanup();
+  }
+});
+
+Deno.test("CI admission: train push hold preserves publishing intent and creates no target ref", async () => {
+  const effects: CiEffectV1[] = [];
+  const f = await trainPass("ci-train-push-hold", FIVE, {
+    ciMinutes: {
+      active: true,
+      reserve(e) {
+        effects.push(e);
+        return Promise.resolve({
+          kind: "held",
+          retryAt: Date.now() + 60_000,
+          reason: "calendar_allowance",
+        });
+      },
+    },
+  });
+  try {
+    const result = await f.once();
+    assert.ok(effects.some((e) => e.kind === "train_push"));
+    assert.ok(result.actions.some((a) => a.includes(":ci_minute_hold")));
+    assert.deepEqual(await f.world.trainRefs(), []);
+    assert.equal(f.world.merges.length, 0);
+    assert.equal((await f.world.ledger()).train?.phase, "publishing");
+  } finally {
+    await f.cleanup();
+  }
+});
+
+Deno.test("CI admission: explicit train-dispatch hold happens before push or published phase", async () => {
+  const effects: CiEffectV1[] = [];
+  let dispatches = 0;
+  const f = await trainPass("ci-train-dispatch-hold", FIVE, {
+    ciMinutes: {
+      active: true,
+      reserve(e) {
+        effects.push(e);
+        return Promise.resolve(
+          e.kind === "train_dispatch"
+            ? {
+              kind: "held",
+              retryAt: Date.now() + 60_000,
+              reason: "calendar_allowance",
+            }
+            : { kind: "admitted", reservationDigest: "f".repeat(64) },
+        );
+      },
+    },
+    prepare(world) {
+      const original = world.trainDeps.composerFor;
+      world.trainDeps.composerFor = (repository) => {
+        const composer = original(repository);
+        if (composer !== null) {
+          composer.triggerCi = () => {
+            dispatches++;
+            return Promise.resolve(true);
+          };
+        }
+        return composer;
+      };
+    },
+  });
+  try {
+    await f.once();
+    assert.deepEqual(effects.map((e) => e.kind), [
+      "train_push",
+      "train_dispatch",
+    ]);
+    assert.equal(dispatches, 0);
+    assert.deepEqual(await f.world.trainRefs(), []);
+    assert.equal((await f.world.ledger()).train?.phase, "publishing");
+  } finally {
+    await f.cleanup();
   }
 });

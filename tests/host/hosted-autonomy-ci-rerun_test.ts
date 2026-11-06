@@ -7,6 +7,8 @@
  * failed CI run re-run at most once per exact head, with no state written.
  */
 import assert from "node:assert/strict";
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
+import type { CiEffectV1 } from "../../src/contracts/ci-minute-budget.ts";
 import {
   DORMANT_HOSTED_SUPERVISOR_POLICY,
   withHostedProductionPolicy,
@@ -68,6 +70,7 @@ function historicalTest(
           await check(async (rig, github) =>
             runHostedAutonomy(
               await withHistoricalQueueAuthority({
+                ciMinutes: INACTIVE_CI_MINUTES,
                 state: rig.state,
                 githubFor: github === undefined ? rig.githubFor : () => github,
                 clock: { now: () => T0 + 5_000_000 },
@@ -1111,7 +1114,12 @@ Deno.test("ci re-run: the GitHub surface lists a head's runs completely and re-r
     }) as typeof fetch;
   };
   const surface = () =>
-    createHostedAutonomyGitHub("fixture-token", GATEWAY as never);
+    createHostedAutonomyGitHub(
+      "fixture-token",
+      GATEWAY as never,
+      undefined,
+      INACTIVE_CI_MINUTES,
+    );
   // GitHub's own wire format: whole seconds, UTC, `Z`.
   const CREATED = new Date(T0 - 60_000).toISOString().replace(".000Z", "Z");
   const wire = (overrides: Record<string, unknown> = {}) => ({
@@ -1218,6 +1226,116 @@ Deno.test("ci re-run: the GitHub surface lists a head's runs completely and re-r
       throw new Error("offline");
     });
     assert.equal(await surface().rerunFailedJobs!(RUN_ID), false);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+Deno.test("CI admission: inactive rerun adds no read and active hold makes no POST", async () => {
+  const original = globalThis.fetch;
+  const calls: string[] = [];
+  const effects: CiEffectV1[] = [];
+  const repository = { owner: "fixture", name: "project", installationId: 1 };
+  const head = "a".repeat(40);
+  globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
+    const method = init?.method ?? "GET";
+    calls.push(method);
+    return Promise.resolve(
+      new Response(
+        method === "GET"
+          ? JSON.stringify({
+            id: 17,
+            head_sha: head,
+            head_branch: "task",
+            run_attempt: 1,
+          })
+          : null,
+        { status: method === "GET" ? 200 : 204 },
+      ),
+    );
+  }) as typeof fetch;
+  try {
+    const off = createHostedAutonomyGitHub(
+      "fixture-token",
+      repository,
+      undefined,
+      INACTIVE_CI_MINUTES,
+    );
+    assert.equal(await off.rerunFailedJobs!(17), true);
+    assert.deepEqual(calls, ["POST"]);
+    calls.length = 0;
+    const held = createHostedAutonomyGitHub(
+      "fixture-token",
+      repository,
+      undefined,
+      {
+        active: true,
+        reserve(e) {
+          effects.push(e);
+          return Promise.resolve({
+            kind: "held",
+            retryAt: Date.now() + 60_000,
+            reason: "calendar_allowance",
+          });
+        },
+      },
+    );
+    assert.equal(await held.rerunFailedJobs!(17), false);
+    assert.deepEqual(calls, ["GET"]);
+    assert.equal(effects[0].kind, "rerun");
+    assert.equal(effects[0].attempt, 2);
+    assert.equal(effects[0].head, head);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+Deno.test("CI admission: launcher merge retains native binding and a hold makes no PUT", async () => {
+  const original = globalThis.fetch;
+  const calls: string[] = [];
+  const effects: CiEffectV1[] = [];
+  const repository = { owner: "fixture", name: "project", installationId: 1 };
+  const head = "a".repeat(40), base = "b".repeat(40);
+  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+    const method = init?.method ?? "GET", url = String(input);
+    calls.push(method);
+    const data = url.endsWith("/pulls/1")
+      ? {
+        number: 1,
+        state: "open",
+        merged: false,
+        head: { sha: head },
+        base: { sha: base, ref: "main" },
+        title: "fixture",
+        body: "Resolves #1",
+        user: { login: "fixture-bot" },
+      }
+      : { allow_squash_merge: true, allow_merge_commit: true };
+    return Promise.resolve(new Response(JSON.stringify(data), { status: 200 }));
+  }) as typeof fetch;
+  try {
+    const surface = createHostedAutonomyGitHub(
+      "fixture-token",
+      repository,
+      undefined,
+      {
+        active: true,
+        reserve(e) {
+          effects.push(e);
+          return Promise.resolve({
+            kind: "held",
+            retryAt: Date.now() + 60_000,
+            reason: "calendar_allowance",
+          });
+        },
+      },
+    );
+    assert.equal(await surface.merge(1, head), null);
+    assert.equal(calls.includes("PUT"), false);
+    assert.equal(effects.length, 1);
+    assert.equal(effects[0].kind, "merge");
+    assert.equal(effects[0].base, base);
+    assert.equal(effects[0].ref, "refs/heads/main");
   } finally {
     globalThis.fetch = original;
   }

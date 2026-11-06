@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /** Candidate eligibility, implementation uncertainty and P0 correction. */
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
@@ -539,6 +540,7 @@ Deno.test(
       sessionBound: { maxDurationMs: 240_000, maxOutputChars: 200_000 },
     });
     const deps: RepairCycleDepsV1 = {
+      ciMinutes: INACTIVE_CI_MINUTES,
       clock,
       state,
       configs,
@@ -675,6 +677,7 @@ Deno.test("no-CI generic targets park at admission, before any reservation", asy
     },
   };
   const deps: RepairCycleDepsV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     configs,
@@ -727,6 +730,7 @@ Deno.test("a capacity-refused admission waits bounded with a precise retry reaso
     sessionBound: { maxDurationMs: 240_000, maxOutputChars: 200_000 },
   });
   const deps: RepairCycleDepsV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     configs,

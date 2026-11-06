@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /** Legacy lost-candidate proof and bounded cycle fixtures. */
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
@@ -219,6 +220,7 @@ export function legacyLossCycles(
   });
   const run = (stepLimit: number) =>
     runRepairCycle({
+      ciMinutes: INACTIVE_CI_MINUTES,
       clock: base.clock,
       state: base.state,
       configs,

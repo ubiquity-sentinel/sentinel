@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /**
  * Serial-pass bounds (owner throughput, 2026-11-01, issue #297).
  *
@@ -157,6 +158,7 @@ function makeRig(
   const github = options.github ??
     new FakeGithub({ baseSha: SHA1, openIssues: [] });
   const deps = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     configs,

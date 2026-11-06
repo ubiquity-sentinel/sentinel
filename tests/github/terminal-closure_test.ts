@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import {
   parseReviewReceiptV1,
@@ -337,6 +338,7 @@ Deno.test("terminal lifecycle: real Git CAS controller and native adapter retry 
     const model = new FakeModel();
     const run = () =>
       runRepairCycle({
+        ciMinutes: INACTIVE_CI_MINUTES,
         state,
         clock: context.clock,
         configs,
