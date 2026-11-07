@@ -52,7 +52,7 @@ function pullNode(number: number, overrides: Record<string, unknown> = {}) {
         commit: { oid: HEAD, statusCheckRollup: { state: "SUCCESS" } },
       }],
     },
-    reviews: { nodes: [{ databaseId: 901 }] },
+    reviews: { nodes: [{ fullDatabaseId: "901" }] },
     ...overrides,
   };
 }
