@@ -121,6 +121,55 @@ Deno.test("self defects: supervisor matrix cell names retain their logical job",
   }
 });
 
+Deno.test("self defects: supervisor repair cell names retain their logical job", () => {
+  for (
+    const job of [
+      "repair_cell",
+      `repair_cell (${"0".repeat(64)})`,
+      `repair_cell (${"abcdef0123456789".repeat(4)})`,
+    ]
+  ) {
+    const context = { ...RUN, workflow: "sentinel-supervisor", job };
+    assert.equal(
+      extractSelfFailureSignature("no useful log output\n", context).key,
+      "sentinel-supervisor:repair_cell:job:observed",
+    );
+    assert.equal(
+      extractSelfFailureSignature(
+        "Process completed with exit code 1.\n",
+        context,
+      )
+        .key,
+      "sentinel-supervisor:repair_cell:exit:1",
+    );
+  }
+});
+
+Deno.test("self defects: malformed repair cell names remain redacted", () => {
+  for (
+    const job of [
+      `repair_cell (${"a".repeat(63)})`,
+      `repair_cell (${"a".repeat(65)})`,
+      `repair_cell (${"A".repeat(64)})`,
+      `repair_cell (${"g".repeat(64)})`,
+      `repair_cell (${"a".repeat(64)}) private-value`,
+      `private-value repair_cell (${"a".repeat(64)})`,
+      "repair_cell (private-value)",
+      `repair_cell (${"a".repeat(64)})\n`,
+      `repair_cell (${"a".repeat(64)})\nprivate-value`,
+    ]
+  ) {
+    assert.equal(
+      extractSelfFailureSignature("no useful log output\n", {
+        ...RUN,
+        workflow: "sentinel-supervisor",
+        job,
+      }).key,
+      "sentinel-supervisor:unknown-job:job:observed",
+    );
+  }
+});
+
 Deno.test("self defects: malformed matrix cell names remain redacted", () => {
   for (
     const job of [
