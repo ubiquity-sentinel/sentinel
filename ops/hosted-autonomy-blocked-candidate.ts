@@ -18,6 +18,7 @@ import {
 import { blockedCandidateBinding } from "../src/host/matrix-blocked-candidate.ts";
 import { MATRIX_PRESERVATION_UNCERTAINTY_DETAIL } from "../src/host/matrix-uncertainty-maintenance.ts";
 import {
+  candidateBranch,
   candidatePreservationRef,
   implementationIntentKey,
 } from "../src/repair/keys.ts";
@@ -92,7 +93,10 @@ export function isParkedPreservation(record: WorkRecordV1): boolean {
  * native-carrier repair job reads only its own run's artifacts, so its
  * own preservation finds nothing and only ever waits `unavailable`. Only the
  * exact producer's artifact holds those objects. No time, generation or
- * stall count enters this class, and none ever retires it.
+ * stall count enters this class, and none ever retires it: only the trusted
+ * validator's deterministic verdict on those exact objects, which the
+ * in-flight restore records for an unpublished candidate, ends it as the
+ * runtime's own refusal.
  */
 export function isInflightPreservation(record: WorkRecordV1): boolean {
   return record.nextStep === "work" && record.blocker === null &&
@@ -134,8 +138,10 @@ export interface BlockedCandidatePreservationInputV1 {
   readbackFailure(write: PortResultV1<StateWriteResultV1>): Error;
   /**
    * Record the trusted validator's deterministic refusal (see
-   * preserveBlockedCandidate). Only the parked runtime-mismatch restore sets
-   * it; every other caller keeps custody on any failure.
+   * preserveBlockedCandidate). Only the restores that hold the exact
+   * producer's rehydrated objects set it: the parked runtime-mismatch restore,
+   * and the in-flight restore for the unpublished shape the REFUSED
+   * disposition owns. Every other caller keeps custody on any failure.
    */
   recordRefusal?: true;
 }
@@ -202,7 +208,26 @@ export async function restoreInflightCandidate(
     reportUnfinishedPreservation(record.id, "binding_mismatch");
     return null;
   }
-  return await preserveBlockedCandidate(input);
+  // No repair job holds these objects, so no runtime preservation can ever
+  // see the validator's verdict on them: a deterministic refusal is recorded
+  // here, once, keeping the head and the charge, but only for the unpublished
+  // shape the REFUSED preservation disposition owns from there. A published
+  // candidate keeps custody, and any other answer is retried, as before.
+  return await preserveBlockedCandidate(
+    refusalOwnedShape(record) ? { ...input, recordRefusal: true } : input,
+  );
+}
+
+/**
+ * The unpublished, issue-backed shape the REFUSED preservation disposition
+ * (hosted-autonomy-preservation-disposition.ts) judges once the refusal is
+ * recorded; its pacing, base-advance and reservation-cap gates decide from
+ * there. A published candidate has no such owner, so it keeps custody.
+ */
+function refusalOwnedShape(record: WorkRecordV1): boolean {
+  return record.related.issueNumber !== null && record.target.pr === null &&
+    record.target.branch === candidateBranch(record.id) &&
+    record.target.candidateState?.publishedHead === null;
 }
 
 /**
