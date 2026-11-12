@@ -47,30 +47,7 @@ import {
   startExecution,
 } from "./actions-supervisor-source.ts";
 
-/** Prepare attempts after a compare-and-swap miss, including the first. */
-export const PREPARE_CONFLICT_ATTEMPTS = 3;
-
-/**
- * A compare-and-swap miss (or a snapshot that moved before admission) is never
- * treated as applied, so planning again from a fresh read of the current
- * snapshot is what the next dispatch would do anyway, only sooner. Every
- * attempt starts from a fresh read and every write stays an exact-head CAS
- * against that read; a miss that persists still ends in the same refusal.
- */
 export async function runHostedSupervisorPrepare(
-  input: HostedSupervisorInputV1,
-): Promise<HostedSupervisorOutcomeV1> {
-  let outcome = await prepareAttempt(input);
-  for (
-    let attempt = 1;
-    attempt < PREPARE_CONFLICT_ATTEMPTS && outcome.status === "pending" &&
-    outcome.detail === STATIC_CONFLICT;
-    attempt++
-  ) outcome = await prepareAttempt(input);
-  return outcome;
-}
-
-async function prepareAttempt(
   input: HostedSupervisorInputV1,
 ): Promise<HostedSupervisorOutcomeV1> {
   if (invalidRunIdentity(input.run)) return pending(STATIC_RUN);

@@ -45,8 +45,6 @@ import {
   runHostedSupervisorFinalize,
   runHostedSupervisorPrepare,
 } from "../../src/host/actions-supervisor.ts";
-import { PREPARE_CONFLICT_ATTEMPTS } from "../../src/host/actions-supervisor-controller.ts";
-import { STATIC_CONFLICT } from "../../src/host/actions-supervisor-state.ts";
 import type {
   HostedSupervisorEvidencePortV1,
   HostedSupervisorInputV1,
@@ -373,94 +371,5 @@ Deno.test(
       rig.state.current()?.hostedRuntimes[0].execution?.id,
       ordinary.id,
     );
-  },
-);
-
-/** Simulate another writer moving the release state to a fresh head. */
-function concurrentMove(rig: RigV1): void {
-  const current = rig.state.current();
-  if (current === null) throw new Error("missing release state");
-  rig.state.seed({
-    ...current,
-    sequence: current.sequence + 1,
-    updatedAt: rig.clock.now(),
-  });
-}
-
-/** Count write attempts and applied writes through the real store. */
-function countWrites(rig: RigV1): { attempts: number; applied: number } {
-  const counts = { attempts: 0, applied: 0 };
-  const write = rig.state.writeRelease.bind(rig.state);
-  rig.state.writeRelease = async (next, expectedHead) => {
-    counts.attempts++;
-    const result = await write(next, expectedHead);
-    if (result.ok && result.value.status === "applied") counts.applied++;
-    return result;
-  };
-  return counts;
-}
-
-Deno.test(
-  "prepare CAS retry: one moved snapshot before admission re-reads and admits ordinary work",
-  async () => {
-    const rig = await makeHealthyRig();
-    rig.clock.advance(DISPATCH_MS);
-    let proofs = 0;
-    rig.evidence.verifyMatrixOrdinaryRevision = () => {
-      if (proofs++ === 0) concurrentMove(rig);
-      return Promise.resolve(portOk(true));
-    };
-    const writes = countWrites(rig);
-    const ordinary = requireRun(await rig.prepare(2));
-    assert.equal(ordinary.purpose, "ordinary");
-    assert.equal(proofs, 2, "exactly one re-planned attempt");
-    assert.deepEqual(writes, { attempts: 1, applied: 1 });
-    assert.equal(
-      rig.state.current()?.hostedRuntimes[0].execution?.id,
-      ordinary.id,
-    );
-  },
-);
-
-Deno.test(
-  "prepare CAS retry: one write conflict re-reads and admits against the new head",
-  async () => {
-    const rig = await makeHealthyRig();
-    rig.clock.advance(DISPATCH_MS);
-    const writes = countWrites(rig);
-    const counted = rig.state.writeRelease;
-    let calls = 0;
-    rig.state.writeRelease = (next, expectedHead) => {
-      if (calls++ === 0) concurrentMove(rig);
-      return counted(next, expectedHead);
-    };
-    const ordinary = requireRun(await rig.prepare(2));
-    assert.equal(ordinary.purpose, "ordinary");
-    assert.deepEqual(writes, { attempts: 2, applied: 1 });
-    assert.equal(
-      rig.state.current()?.hostedRuntimes[0].execution?.id,
-      ordinary.id,
-    );
-  },
-);
-
-Deno.test(
-  "prepare CAS retry: a persistent miss ends in the same refusal after bounded attempts",
-  async () => {
-    const rig = await makeHealthyRig();
-    rig.clock.advance(DISPATCH_MS);
-    let proofs = 0;
-    rig.evidence.verifyMatrixOrdinaryRevision = () => {
-      proofs++;
-      concurrentMove(rig);
-      return Promise.resolve(portOk(true));
-    };
-    const writes = countWrites(rig);
-    const outcome = await rig.prepare(2);
-    assert.deepEqual(outcome, { status: "pending", detail: STATIC_CONFLICT });
-    assert.equal(PREPARE_CONFLICT_ATTEMPTS, 3);
-    assert.equal(proofs, PREPARE_CONFLICT_ATTEMPTS);
-    assert.deepEqual(writes, { attempts: 0, applied: 0 });
-    assert.equal(rig.state.current()?.hostedRuntimes[0].execution, null);
   },
 );
