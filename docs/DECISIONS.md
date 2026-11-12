@@ -3801,7 +3801,15 @@ standing approval above. Applied as follows.
   again, every waiting head is asked at the plain 30 minutes. Every run of a
   head is now re-run, not only the newest per workflow, because the launcher's
   green read needs every check run green and a Passport head has a pull_request
-  run and two push runs of one workflow. It writes no state.
+  run and two push runs of one workflow. It writes no state. Corrected
+  2026-11-12: the wait now doubles up to 24 hours. At 12 hours a run reached
+  attempt 40 after about 18 days, inside GitHub's 30-day window, and was never
+  asked again, so a stop that lasted until the monthly minute reset (Prospector
+  and Passport from 2026-11-05; the owner pays for no CI) left every pre-review
+  park on `<check>(not_started)` without a fresh run on its exact head, which
+  the green and CI-fix rules need to re-admit it. At 24 hours a run ends the
+  window near attempt 35; the 40-attempt cap, the per-pass bounds and the
+  CI-minute admission of each re-run are unchanged.
 - Unchanged: the merge gate's required-check verdict (`requiredChecksState`, a
   protected path) still never treats a never-started run as green; the
   launcher's green read (`hasAllChecksGreen`) is unchanged; every CI fix is

@@ -62,8 +62,16 @@ import type {
 
 /** A run is asked again at most this often (its latest attempt's age). */
 export const HOSTED_CI_RESUME_INTERVAL_MS = 30 * 60_000;
-/** The longest wait between two requests for a run during a stop. */
-export const HOSTED_CI_RESUME_MAX_BACKOFF_MS = 12 * 60 * 60_000;
+/**
+ * The longest wait between two requests for a run during a stop. A day keeps
+ * a run asked from its creation below `HOSTED_CI_RESUME_MAX_RUN_ATTEMPT` for
+ * all of GitHub's 30-day re-run window (about attempt 35 at its end), so a
+ * stop that lasts until the next monthly minute reset still ends with a
+ * re-run of every waiting head. Twelve hours spent the 40 attempts in about
+ * 18 days, after which a pre-review park whose CI never started was never
+ * re-run and never re-admitted (Prospector and Passport, 2026-11).
+ */
+export const HOSTED_CI_RESUME_MAX_BACKOFF_MS = 24 * 60 * 60_000;
 /**
  * A run at this attempt or later is never asked again: GitHub allows 50
  * re-runs of a run, and the rest stay for after billing returns and for the
