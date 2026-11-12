@@ -12,11 +12,17 @@ import {
 import type { ReviewResultV1 } from "../../src/github/review-result-contracts.ts";
 import { ATTEMPT_DETAIL_NO_CHANGE } from "../../src/repair/attempt-policy.ts";
 import {
+  BASE_REVIEW_HOLD_MS,
   baseReviewOrigin,
   holdNoChange,
 } from "../../src/repair/base-satisfaction-marker.ts";
-import type { BaseTaskReviewGitHubV1 } from "../../src/repair/loop-base-satisfaction.ts";
+import {
+  BASE_REVIEW_HOLD_EXPIRED,
+  type BaseTaskReviewGitHubV1,
+} from "../../src/repair/loop-base-satisfaction.ts";
 import { implementationIntent } from "../../src/repair/loop-implementation.ts";
+import { candidateBranch } from "../../src/repair/keys.ts";
+import { isWaiting, rankEligibleWork } from "../../src/repair/selection.ts";
 import { SHA1, SHA2, T0, workRecord } from "../state/helpers.ts";
 import { r80Available, withR80Parsers } from "../host/r80-contracts.ts";
 import {
@@ -27,6 +33,7 @@ import {
 } from "./loop-rig.ts";
 
 const ORIGIN = "a".repeat(64);
+const HOLD_UNTIL = T0 + BASE_REVIEW_HOLD_MS;
 const ignoreR80 = !await r80Available();
 
 async function fixture() {
@@ -117,7 +124,8 @@ async function fixture() {
         "native call follows durable exact intent",
       );
       assert.equal(current.intent?.kind, "issue_closure");
-      assert.equal(current.wait?.until, null);
+      // A further round keeps the hold's original bound.
+      assert.equal(current.wait?.until, HOLD_UNTIL);
       assert.equal(
         state.reservations.find((row) => row.id === input.admission)?.outcome,
         "reserved",
@@ -171,7 +179,7 @@ Deno.test("base satisfaction: charged no-change reviews exact base then closes o
   assert.equal(f.counts().runs, 1);
   assert.equal(f.counts().closes, 0);
   assert.equal(ready.work[0].nextStep, "work");
-  assert.equal(ready.work[0].wait?.until, null);
+  assert.equal(ready.work[0].wait?.until, HOLD_UNTIL);
   assert.ok(ready.work[0].intent?.resultId);
   assert.deepEqual(ready.reservations.map((row) => row.outcome).sort(), [
     "ambiguous",
@@ -328,7 +336,7 @@ Deno.test("base satisfaction: historical exact repeat-failure park enters the he
     work: [blocked],
   }, f.rig.state.repairHead);
   await f.rig.run();
-  assert.equal((await f.rig.snapshot()).work[0].wait?.until, null);
+  assert.equal((await f.rig.snapshot()).work[0].wait?.until, HOLD_UNTIL);
   assert.equal(
     f.counts().runs,
     0,
@@ -336,4 +344,77 @@ Deno.test("base satisfaction: historical exact repeat-failure park enters the he
   );
   await f.rig.run();
   assert.equal(f.counts().runs, 1);
+});
+
+/** The live held shape: candidate branch on target and intent, open-ended. */
+async function legacyHold(f: Awaited<ReturnType<typeof fixture>>) {
+  const state = await f.rig.snapshot();
+  const branch = candidateBranch(f.record.id);
+  const legacy: WorkRecordV1 = {
+    ...f.record,
+    target: { ...f.record.target, branch },
+    wait: { ...f.record.wait!, until: null },
+    intent: { ...f.record.intent!, branch },
+  };
+  await f.rig.state.writeRepair({
+    ...state,
+    stateHead: f.rig.state.repairHead,
+    sequence: state.sequence + 1,
+    work: [legacy],
+  }, f.rig.state.repairHead);
+  return legacy;
+}
+
+Deno.test("base satisfaction: a legacy open-ended hold gets a bounded window, then its review; ranking never steps it", async () => {
+  const f = await fixture();
+  const legacy = await legacyHold(f);
+  assert.equal(baseReviewOrigin(legacy, await f.rig.snapshot()), ORIGIN);
+  f.setBlocked(true);
+  f.rig.clock.advance(60_000);
+  await f.rig.run();
+  const bounded = await f.rig.snapshot();
+  assert.deepEqual(bounded.work[0].wait, {
+    ...legacy.wait!,
+    until: T0 + 60_000 + BASE_REVIEW_HOLD_MS,
+  });
+  assert.equal(bounded.work[0].intent?.requestId, ORIGIN);
+  assert.deepEqual(bounded.reservations, [f.original]);
+  // Expired or not, ranking leaves the hold to the base review.
+  const late = T0 + 10 * BASE_REVIEW_HOLD_MS;
+  assert.equal(isWaiting(bounded.work[0], late), true);
+  assert.equal(
+    rankEligibleWork(bounded, f.rig.configs, late).skipped[legacy.id],
+    "waiting",
+  );
+  await f.rig.run();
+  assert.equal(f.counts().runs, 0, "CI still pending: deferred, uncharged");
+  f.setBlocked(false);
+  await f.rig.run();
+  assert.equal(f.counts().runs, 1);
+  assert.equal(f.rig.model.requests.length, 0);
+});
+
+Deno.test("base satisfaction: a hold whose review keeps deferring parks at its bound with every charge kept", async () => {
+  const f = await fixture();
+  f.setBlocked(true);
+  f.rig.clock.advance(BASE_REVIEW_HOLD_MS - 1);
+  await f.rig.run();
+  const held = await f.rig.snapshot();
+  assert.equal(held.work[0].nextStep, "work");
+  assert.deepEqual(held.work[0].wait, f.record.wait);
+  f.rig.clock.advance(1);
+  await f.rig.run();
+  const parked = await f.rig.snapshot();
+  assert.equal(parked.work[0].nextStep, "blocked");
+  assert.deepEqual(parked.work[0].blocker, {
+    kind: "missing_evidence",
+    message: BASE_REVIEW_HOLD_EXPIRED,
+    since: HOLD_UNTIL,
+  });
+  // The ambiguous implementation charge is kept, never refunded or reused.
+  assert.deepEqual(parked.reservations, [f.original]);
+  assert.equal(parked.work[0].intent?.requestId, ORIGIN);
+  assert.equal(baseReviewOrigin(parked.work[0], parked), null);
+  assert.equal(f.counts().runs, 0);
+  assert.equal(f.rig.model.requests.length, 0);
 });

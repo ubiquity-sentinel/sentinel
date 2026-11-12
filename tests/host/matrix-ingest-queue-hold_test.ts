@@ -13,6 +13,7 @@ import {
   runMatrixCell,
 } from "../../src/host/matrix.ts";
 import { ATTEMPT_DETAIL_NO_CHANGE } from "../../src/repair/attempt-policy.ts";
+import { BASE_REVIEW_HOLD_MS } from "../../src/repair/base-satisfaction-marker.ts";
 import { candidateBranch } from "../../src/repair/keys.ts";
 import { decompositionChildId } from "../../src/repair/transitions.ts";
 import { createRunBounds, loadRepairContext } from "../../src/repair/loop.ts";
@@ -294,7 +295,10 @@ Deno.test("matrix queue hold: a consumed no-change result keeps its distinct bas
     assert.notEqual(after.reservations[0].settledAt, null);
     assert.equal(after.work[0].intent?.failure?.kind, "base_review");
     assert.equal(after.work[0].wait?.reason, "backoff");
-    assert.equal(after.work[0].wait?.until, null);
+    assert.equal(
+      after.work[0].wait?.until,
+      after.work[0].wait!.since + BASE_REVIEW_HOLD_MS,
+    );
   } finally {
     await f.rig.cleanup();
   }

@@ -48,6 +48,7 @@ type Client = Pick<
   | "readIssue"
   | "readRef"
   | "readBaseReviewChecks"
+  | "readChecks"
   | "createBaseReviewComment"
   | "readBaseReviewComment"
   | "closeIssue"
@@ -68,7 +69,10 @@ export interface BaseTaskReviewOptionsV1 {
   custody?: BaseReviewOwnerCustodyV1;
 }
 
-/** Fixed trusted CI policies for the owner-authorized targets. */
+/**
+ * Fixed trusted named CI policies for the owner-authorized targets; every
+ * other configured target uses its own merge gate on the base (`facts`).
+ */
 function requiredChecks(repository: RepositoryIdentityV1): readonly string[] {
   if (
     repository.owner === "ubiquity-sentinel" &&
@@ -106,7 +110,6 @@ export class BaseTaskReviewService implements BaseTaskReviewPortV1 {
       record.source.id === String(record.related.issueNumber) &&
       noChangeIssue(record) &&
       record.nextStep === "work" && record.wait?.reason === "backoff" &&
-      record.wait.until === null &&
       record.intent?.kind === "issue_closure" &&
       record.intent.key.startsWith("base-review:") &&
       record.intent.expectedHead === record.target.base &&
@@ -179,23 +182,27 @@ export class BaseTaskReviewService implements BaseTaskReviewPortV1 {
     if (expectedDigest !== undefined && task.digest !== expectedDigest) {
       return portError("conflict", "base review task changed");
     }
+    // A target without fixed named checks is judged on the exact base by its
+    // own merge gate (`decideCiGate` with its repository): positive CI
+    // evidence, nothing failed or pending. No evidence is never green.
     const names = requiredChecks(this.options.repository);
-    if (names.length === 0) {
-      return portError(
-        "unavailable",
-        "base review target CI policy unavailable",
+    const generic = names.length === 0;
+    const checks = generic
+      ? await this.options.client.readChecks(record.target.base)
+      : await this.options.client.readBaseReviewChecks(
+        record.target.base,
+        names,
       );
-    }
-    const checks = await this.options.client.readBaseReviewChecks(
-      record.target.base,
-      names,
-    );
     if (!checks.ok) return checks;
     if (
       checks.value.head !== record.target.base ||
       names.some((name) =>
         !checks.value.checks.some((check) => check.name === name)
-      ) || decideCiGate(checks.value.checks) !== "proceed"
+      ) ||
+      decideCiGate(
+          checks.value.checks,
+          generic ? this.options.repository : undefined,
+        ) !== "proceed"
     ) return portError("unavailable", "base review CI is not green");
     if (this.options.clock.now() >= deadline) {
       return portError("unavailable", "base review deadline reached");

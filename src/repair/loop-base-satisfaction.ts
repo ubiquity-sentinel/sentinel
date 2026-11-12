@@ -11,7 +11,12 @@ import {
   type BaseTaskReviewPortV1,
   parseBaseReviewEvidenceRef,
 } from "../github/base-review-evidence.ts";
-import { baseReviewOrigin, holdNoChange } from "./base-satisfaction-marker.ts";
+import {
+  BASE_REVIEW_HOLD_MS,
+  baseReviewHoldExpired,
+  baseReviewOrigin,
+  holdNoChange,
+} from "./base-satisfaction-marker.ts";
 import {
   persistAfterSettlement,
   settleReviewCharge,
@@ -39,6 +44,14 @@ import { markBlocked, markDone } from "./transitions.ts";
 export type BaseTaskReviewGitHubV1 = GitHubPort & {
   baseTaskReview?: BaseTaskReviewPortV1;
 };
+
+/** Park of a hold whose bound passed before any base review completed. */
+export const BASE_REVIEW_HOLD_EXPIRED =
+  "base review did not complete within its hold bound";
+
+/** Park of a satisfied review whose issue closure kept deferring. */
+export const BASE_CLOSURE_HOLD_EXPIRED =
+  "base closure did not complete within its hold bound";
 
 function park(record: WorkRecordV1, detail: string, now: number): WorkRecordV1 {
   return markBlocked(record, "missing_evidence", detail, now);
@@ -92,6 +105,20 @@ export async function resumeBaseSatisfaction(
       if (settled.kind !== "progress") return settled;
       return { kind: "progress" };
     }
+  }
+  // A hold written before the bound existed gets its full window now; every
+  // hold then ends here once its bound passes without a completed review.
+  if (record.wait !== null && record.wait.until === null) {
+    const now = deps.clock.now();
+    return persistWork(deps, context, {
+      ...record,
+      wait: { ...record.wait, until: now + BASE_REVIEW_HOLD_MS },
+      updatedAt: now,
+    });
+  }
+  const expired = baseReviewHoldExpired(record, deps.clock.now());
+  if (record.intent?.kind === "issue_closure") {
+    const admission = record.intent.requestId;
     if (record.intent.resultId !== null) {
       const proof = record.evidence.find((row) => {
         const binding = row.kind === "review_receipt"
@@ -122,14 +149,27 @@ export async function resumeBaseSatisfaction(
         return persistWork(deps, context, markDone(record, deps.clock.now()));
       }
       if (closed.error.kind !== "conflict" && closed.error.kind !== "invalid") {
-        return {
-          kind: "deferred",
-          detail: "base closure waits for exact native evidence",
-        };
+        return expired
+          ? persistWork(
+            deps,
+            context,
+            park(record, BASE_CLOSURE_HOLD_EXPIRED, deps.clock.now()),
+          )
+          : {
+            kind: "deferred",
+            detail: "base closure waits for exact native evidence",
+          };
       }
       // Source/base drift or invalid native evidence requires a fresh,
       // separately charged review. Review rounds are accounting only.
     }
+  }
+  if (expired) {
+    return persistWork(
+      deps,
+      context,
+      park(record, BASE_REVIEW_HOLD_EXPIRED, deps.clock.now()),
+    );
   }
   const latestStartAt = Math.min(
     context.bounds.modelCutoff,
@@ -206,7 +246,13 @@ export async function resumeBaseSatisfaction(
     ...currentBase,
     nextStep: "work",
     blocker: null,
-    wait: { reason: "backoff", since: now, until: null },
+    // A further round never extends the hold: the bound counts from the
+    // no-change outcome (or the first bounded visit of an older hold).
+    wait: {
+      reason: "backoff",
+      since: now,
+      until: record.wait?.until ?? now + BASE_REVIEW_HOLD_MS,
+    },
     counters: { ...record.counters, reviewRounds: round },
     intent: {
       kind: "issue_closure",
