@@ -18,7 +18,17 @@
  * no proof. The merge base is the one GitHub's compare names (a criss-cross
  * history has several; the runtime's git proof, which must hold before the
  * runtime writes its carried-merge marker, refuses those).
+ *
+ * Unequal sets may still carry the reviewed change across base drift
+ * (`treeChangesAcrossDrift`, the runtime's own rule in
+ * `src/github/carried-drift.ts`), decided over the exact blobs the Git Blobs
+ * API returns (`createReadBlob`), each checked against its object id.
  */
+import {
+  CARRIED_DRIFT_MAX_BLOB_BYTES,
+  carriedAcrossDrift,
+  type CarriedDriftVerdictV1,
+} from "../src/github/carried-drift.ts";
 import { MAX_COMPARE_RESPONSE_BYTES } from "./hosted-autonomy-github-listing.ts";
 
 /** One changed path of a merge-base patch (null: absent on that side). */
@@ -151,6 +161,44 @@ export async function treeChangesDigest(
   );
   return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0"))
     .join("");
+}
+
+/**
+ * Whether two unequal merge-base change sets carry the same reviewed change
+ * across base drift (`carriedAcrossDrift`) over `readBlob`; without a blob
+ * reader nothing is carried across drift (`changed`).
+ */
+export function treeChangesAcrossDrift(
+  readBlob: ((sha: string) => Promise<Uint8Array | null>) | undefined,
+  reviewed: readonly HostedTreeChangeV1[],
+  refreshed: readonly HostedTreeChangeV1[],
+): Promise<CarriedDriftVerdictV1> {
+  return readBlob === undefined
+    ? Promise.resolve({ kind: "changed" })
+    : carriedAcrossDrift(reviewed, refreshed, readBlob);
+}
+
+/** The bounded raw reader of one token (`createHostedAutonomyRawRead`). */
+type RawRead = (
+  path: string,
+  accept: string,
+  maxBytes: number,
+) => Promise<Uint8Array | null>;
+
+/**
+ * The surface member `readBlob` for one repository: the exact bytes of one
+ * blob (Git Blobs API, raw media type) within the carried drift bound, or
+ * null; the carried proof checks them against the blob's id.
+ */
+export function createReadBlob(rawRead: RawRead, scope: string) {
+  return function readBlob(sha: string): Promise<Uint8Array | null> {
+    if (objectId(sha) === null) return Promise.resolve(null);
+    return rawRead(
+      `/repos/${scope}/git/blobs/${sha}`,
+      "application/vnd.github.raw+json",
+      CARRIED_DRIFT_MAX_BLOB_BYTES,
+    );
+  };
 }
 
 /** The bounded JSON reader of one repository (`createHostedAutonomyRequest`). */
