@@ -10,14 +10,20 @@ import {
   type BaseTaskReviewPortV1,
 } from "../../src/github/base-review-evidence.ts";
 import type { ReviewResultV1 } from "../../src/github/review-result-contracts.ts";
-import { ATTEMPT_DETAIL_NO_CHANGE } from "../../src/repair/attempt-policy.ts";
+import {
+  ATTEMPT_DETAIL_NO_CHANGE,
+  attemptMemorySettlementMutationV1,
+} from "../../src/repair/attempt-policy.ts";
 import {
   BASE_REVIEW_HOLD_MS,
   baseReviewOrigin,
   holdNoChange,
+  MAX_NO_CHANGE_BASE_REVIEWS,
 } from "../../src/repair/base-satisfaction-marker.ts";
 import {
   BASE_REVIEW_HOLD_EXPIRED,
+  BASE_REVIEW_NOT_ESTABLISHED,
+  BASE_REVIEW_WORK_NEEDED_PARK,
   type BaseTaskReviewGitHubV1,
 } from "../../src/repair/loop-base-satisfaction.ts";
 import { implementationIntent } from "../../src/repair/loop-implementation.ts";
@@ -416,5 +422,97 @@ Deno.test("base satisfaction: a hold whose review keeps deferring parks at its b
   assert.equal(parked.work[0].intent?.requestId, ORIGIN);
   assert.equal(baseReviewOrigin(parked.work[0], parked), null);
   assert.equal(f.counts().runs, 0);
+  assert.equal(f.rig.model.requests.length, 0);
+});
+
+/** `count` durable no-change outcomes of the held task (attempt memory). */
+async function noChangeHistory(
+  f: Awaited<ReturnType<typeof fixture>>,
+  count: number,
+) {
+  const state = await f.rig.snapshot();
+  const draft = structuredClone(state);
+  for (let index = 0; index < count; index++) {
+    (await attemptMemorySettlementMutationV1({
+      record: draft.work[0],
+      detail: ATTEMPT_DETAIL_NO_CHANGE,
+      now: T0 + index,
+      runtimeSha: SHA1,
+    }))(draft);
+  }
+  await f.rig.state.writeRepair({
+    ...draft,
+    stateHead: f.rig.state.repairHead,
+    sequence: state.sequence + 1,
+  }, f.rig.state.repairHead);
+}
+
+Deno.test("base satisfaction: a review finding work still needed returns the task to implementation with its receipt", async () => {
+  for (const verdict of ["not_fulfilled", "uncertain"] as const) {
+    const f = await fixture();
+    f.result.taskAcceptance = { ...f.result.taskAcceptance!, verdict };
+    await noChangeHistory(f, 1);
+    // One step: the review itself; the implementation start is not run here.
+    await f.rig.run(1);
+    const state = await f.rig.snapshot();
+    const record = state.work[0];
+    assert.equal(f.counts().runs, 1, verdict);
+    assert.equal(record.nextStep, "work");
+    assert.equal(record.wait, null);
+    assert.equal(record.blocker, null);
+    assert.equal(record.intent, null);
+    assert.equal(record.target.base, SHA2);
+    assert.equal(record.counters.reviewRounds, 1);
+    assert.ok(
+      record.evidence.some((row) =>
+        row.kind === "review_receipt" &&
+        row.ref.startsWith("artifact:base-review/")
+      ),
+    );
+    // Both charges stay as settled: nothing is refunded or reused.
+    assert.deepEqual(state.reservations.map((row) => row.outcome).sort(), [
+      "ambiguous",
+      "submitted",
+    ]);
+    assert.equal(baseReviewOrigin(record, state), null);
+    assert.ok(
+      rankEligibleWork(state, f.rig.configs, f.rig.clock.now()).ordered
+        .includes(record.id),
+    );
+    assert.equal(f.rig.model.requests.length, 0);
+  }
+  // A review that says nothing about the work keeps the existing park.
+  const f = await fixture();
+  f.result.verdict = "unavailable";
+  f.result.taskAcceptance = null;
+  await f.rig.run();
+  const parked = (await f.rig.snapshot()).work[0];
+  assert.equal(parked.nextStep, "blocked");
+  assert.equal(parked.blocker?.message, BASE_REVIEW_NOT_ESTABLISHED);
+});
+
+Deno.test("base satisfaction: work-needed round trips park after the bounded no-change outcomes", async () => {
+  const f = await fixture();
+  f.result.taskAcceptance = {
+    ...f.result.taskAcceptance!,
+    verdict: "not_fulfilled",
+  };
+  await noChangeHistory(f, MAX_NO_CHANGE_BASE_REVIEWS);
+  await f.rig.run();
+  const state = await f.rig.snapshot();
+  const record = state.work[0];
+  assert.equal(f.counts().runs, 1);
+  assert.equal(record.nextStep, "blocked");
+  assert.equal(
+    record.blocker?.message,
+    `${BASE_REVIEW_WORK_NEEDED_PARK} ${MAX_NO_CHANGE_BASE_REVIEWS}`,
+  );
+  assert.ok(
+    record.evidence.some((row) => row.ref.startsWith("artifact:base-review/")),
+  );
+  assert.deepEqual(state.reservations.map((row) => row.outcome).sort(), [
+    "ambiguous",
+    "submitted",
+  ]);
   assert.equal(f.rig.model.requests.length, 0);
 });

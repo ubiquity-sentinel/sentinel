@@ -16,6 +16,8 @@ import {
   baseReviewHoldExpired,
   baseReviewOrigin,
   holdNoChange,
+  MAX_NO_CHANGE_BASE_REVIEWS,
+  noChangeOutcomes,
 } from "./base-satisfaction-marker.ts";
 import {
   persistAfterSettlement,
@@ -48,6 +50,18 @@ export type BaseTaskReviewGitHubV1 = GitHubPort & {
 /** Park of a hold whose bound passed before any base review completed. */
 export const BASE_REVIEW_HOLD_EXPIRED =
   "base review did not complete within its hold bound";
+
+/** A completed review gave neither satisfied acceptance nor "work needed". */
+export const BASE_REVIEW_NOT_ESTABLISHED =
+  "base review did not establish already-satisfied task acceptance";
+
+/**
+ * A review found work still needed after `MAX_NO_CHANGE_BASE_REVIEWS`
+ * no-change implementation outcomes (the count follows the prefix). It
+ * matches no launcher retry prefix: the owner decides the next step.
+ */
+export const BASE_REVIEW_WORK_NEEDED_PARK =
+  "base review found the task still needs work; no-change implementation outcomes:";
 
 /** Park of a satisfied review whose issue closure kept deferring. */
 export const BASE_CLOSURE_HOLD_EXPIRED =
@@ -311,13 +325,26 @@ export async function resumeBaseSatisfaction(
     intent: { ...held.intent!, resultId: binding.resultDigest },
     updatedAt: deps.clock.now(),
   };
-  const next = baseResultSatisfied(outcome.value.result, binding)
+  const result = outcome.value.result;
+  const task = result.taskAcceptance ?? null;
+  // The review answered that work is still needed at this exact base.
+  const workNeeded = result.verdict !== "unavailable" && task !== null &&
+    task.issueNumber === binding.issueNumber &&
+    task.taskDigest === binding.taskDigest &&
+    (task.verdict === "not_fulfilled" || task.verdict === "uncertain");
+  const outcomes = noChangeOutcomes(fresh.snapshot, record);
+  const at = withProof.updatedAt;
+  const next = baseResultSatisfied(result, binding)
     ? withProof
-    : park(
-      withProof,
-      "base review did not establish already-satisfied task acceptance",
-      deps.clock.now(),
-    );
+    : !workNeeded
+    ? park(withProof, BASE_REVIEW_NOT_ESTABLISHED, at)
+    : outcomes < MAX_NO_CHANGE_BASE_REVIEWS
+    // Back to a fresh implementation at the reviewed base, carrying the
+    // review receipt as evidence; that start is admitted and charged by the
+    // ordinary gates (identical-attempt refusal included). Every charge so
+    // far stays settled as it is.
+    ? { ...withProof, nextStep: "work" as const, wait: null, intent: null }
+    : park(withProof, `${BASE_REVIEW_WORK_NEEDED_PARK} ${outcomes}`, at);
   return persistAfterSettlement(
     deps,
     context.bounds,

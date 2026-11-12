@@ -37,6 +37,14 @@ function exactNoChangeFailure(record: WorkRecordV1): boolean {
 /** How long a no-change record waits for its base review before parking. */
 export const BASE_REVIEW_HOLD_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * No-change implementation outcomes from which a base review that finds the
+ * task still unsatisfied parks the record instead of returning it to
+ * implementation: each return costs one more charged implementation and one
+ * more charged base review, so the round trip is bounded.
+ */
+export const MAX_NO_CHANGE_BASE_REVIEWS = 3;
+
 export function holdNoChange(record: WorkRecordV1, now: number): WorkRecordV1 {
   if (record.intent?.kind !== "implementation") {
     throw new Error("missing no-change admission");
@@ -86,6 +94,30 @@ export function baseReviewHoldExpired(
 ): boolean {
   return record.wait !== null && record.wait.until !== null &&
     now >= record.wait.until;
+}
+
+/**
+ * Durable no-change implementation outcomes of this task across every base
+ * (attempt memory is not pruned and its counts never decrease); at least one
+ * for a record that reached base review.
+ */
+export function noChangeOutcomes(
+  snapshot: RepairStateSnapshotV1,
+  record: WorkRecordV1,
+): number {
+  let total = 0;
+  for (const memory of snapshot.attemptMemory) {
+    if (
+      memory.taskId !== record.id || memory.purpose !== "implementation" ||
+      memory.repository.owner !== record.repository.owner ||
+      memory.repository.name !== record.repository.name ||
+      memory.repository.installationId !== record.repository.installationId
+    ) continue;
+    for (const entry of memory.entries) {
+      if (entry.detail === ATTEMPT_DETAIL_NO_CHANGE) total += entry.count;
+    }
+  }
+  return Math.max(total, 1);
 }
 
 /** Original implementation admission, preserved even after review takes over. */
