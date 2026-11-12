@@ -347,7 +347,7 @@ Deno.test("backup CI composition: every production CI path is handed the one con
   assert.match(maintenance, /mode: readBackupCiMode\(env\),/);
   assert.match(
     maintenance,
-    /createHostedAutonomyGitHub\(\s*isHostedSelf\(repository\) \? selfToken : apiToken,\s*repository,\s*backupCi,\s*\)/,
+    /createHostedAutonomyGitHub\(\s*isHostedSelf\(repository\) \? selfToken : apiToken,\s*repository,\s*backupCi,\s*ciMinutes,\s*\)/,
   );
   assert.match(
     SOURCE("src/github/port-base.ts"),

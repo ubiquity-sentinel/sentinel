@@ -121,6 +121,21 @@ Deno.test("follow defers when the captured launcher is outside the first-parent 
   assert.equal(api.mutations, 0);
 });
 
+Deno.test("follow advances across an integration merge that carries the launcher as its second parent", async () => {
+  // development was fast-forwarded to a merge made on the feature branch, so
+  // the launcher is an ancestor of the tip but off its first-parent line.
+  const api = new FollowFake();
+  const side = "5".repeat(40);
+  api.installed = L;
+  api.parents.set(OLDER, [side, L]);
+  api.parents.set(side, [P]);
+  const result = await api.follow();
+  assert.equal(result.journal.decision, "advanced", result.journal.reason);
+  assert.equal(result.launcherSha, OLDER);
+  assert.equal(api.launcher, OLDER);
+  assert.equal(api.mutations, 1);
+});
+
 Deno.test("follow rejects green commits that do not descend from the installed revision", async () => {
   const api = new FollowFake();
   api.installed = "9".repeat(40);
