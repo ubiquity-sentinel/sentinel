@@ -69,7 +69,10 @@ import {
   persistWork,
   replaceWorkMutation,
 } from "./loop-state.ts";
-import { existingHeadContinuationShape } from "./loop-eligibility.ts";
+import {
+  existingHeadContinuationShape,
+  isRetirableStaleImplementationIntent,
+} from "./loop-eligibility.ts";
 import { verifyNoLiveLocalCandidateBranch } from "./loop-local-candidate.ts";
 import { legacyCutoff } from "./loop-review-round-cap.ts";
 import { RETIRED_TARGET_MESSAGE } from "./selection.ts";
@@ -152,6 +155,15 @@ export async function prepareImplementationStart(
     };
   }
   const now = deps.clock.now();
+  // A stale implementation intent (its run died after reserving and never
+  // settled) is retired before any new admission, exactly as a matrix host
+  // timeout retires it (`recordMatrixTimeout`). Admission requires a null
+  // intent, so admitting over it was refused `invalid` and parked for good.
+  // The dead reservation is kept as it is (charged, never refunded); this
+  // write is uncharged and the next pass admits through every normal gate.
+  if (isRetirableStaleImplementationIntent(record.intent, now)) {
+    return persistWork(deps, context, clearIntent(record, now));
+  }
   const bound = config.sessionBound;
   if (bound === null) {
     return persistWork(

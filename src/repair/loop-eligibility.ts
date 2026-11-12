@@ -135,6 +135,23 @@ export function isStaleImplementationIntent(
   return intent.startedAt <= now - STALE_IMPLEMENTATION_INTENT_TTL_MS;
 }
 
+/**
+ * True for a stale implementation intent that only names its dead admission:
+ * a charged `requestId` and no carried marker. A conflict-resolution or
+ * base-review marker (`failure`) and a self-merge binding belong to their own
+ * routes and are never retired here. Admission requires a null intent
+ * (`admittedImplementationWork`), so such an intent must be retired before the
+ * next start or the budget refuses it `invalid`.
+ */
+export function isRetirableStaleImplementationIntent(
+  intent: IncompleteOperationV1 | null,
+  now: number,
+): boolean {
+  return intent !== null && isStaleImplementationIntent(intent, now) &&
+    intent.requestId !== null && intent.failure === undefined &&
+    intent.selfMerge === undefined;
+}
+
 export function isMatrixImplementationReadyV1(
   record: WorkRecordV1,
   snapshot: RepairStateSnapshotV1,
