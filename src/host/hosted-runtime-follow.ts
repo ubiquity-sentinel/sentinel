@@ -56,6 +56,8 @@ export interface HostedRuntimeFollowDeps {
   maxPages?: number;
   /** Injected clock for the matrix-wave age bound; defaults to Date.now. */
   clock?: { now(): number };
+  /** Pause before re-reading an inconsistent listing; injected in tests. */
+  listPause?: () => Promise<void>;
 }
 
 /** The follow step has no state writer, App identity, model or promotion port. */
@@ -78,6 +80,7 @@ export async function runHostedRuntimeFollow(
     deps.token,
     deps.deadlineMs,
     deps.maxPages,
+    deps.listPause,
   );
   let launcherSha: string | null = null;
   let safeToDispatch = false;
