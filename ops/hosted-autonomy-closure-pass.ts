@@ -288,6 +288,11 @@ export async function runHostedClosurePass(
         releaseDeferred++;
         continue;
       }
+      const key = hostedDeliveryKey(record.repository, pr, head, base);
+      // A self delivery is ready only through its accepted release, so one
+      // still awaiting it (every one, while `sentinel-release` is disabled)
+      // costs no read here; an accepted one is authorized exactly as before.
+      if (isHostedSelf(record.repository) && !released.has(key)) continue;
       const scope = await scopeFor(record.repository);
       if (
         releaseAuthorizingReceipt(
@@ -296,9 +301,8 @@ export async function runHostedClosurePass(
           await readTrustedTask(scope.surface, record),
         ) === null
       ) continue;
-      const key = hostedDeliveryKey(record.repository, pr, head, base);
       if (isHostedSelf(record.repository)) {
-        if (released.has(key)) ready = true;
+        ready = true;
         continue;
       }
       const pull = await readPull(scope, pr);
