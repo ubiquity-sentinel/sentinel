@@ -368,6 +368,20 @@ export async function makeRig(
     dir: options.fixtureDir,
   });
   const ctx = await makeRemoteCtx(tmp, ENV);
+  // Fetches already skip auto-GC, but pushes can detach maintenance in the
+  // receiving bare repo. Keep those background writers out of this temp rig.
+  const configured = await gitRun(tmp, [
+    "--git-dir",
+    ctx.bare,
+    "config",
+    "receive.autogc",
+    "false",
+  ], ENV);
+  if (!configured.ok) {
+    throw new Error(
+      `fixture receive maintenance config failed: ${configured.stderr}`,
+    );
+  }
   const repair = createRepairStateStore({
     scratchDir: `${tmp}/repair`,
     remoteUrl: ctx.remoteUrl,
