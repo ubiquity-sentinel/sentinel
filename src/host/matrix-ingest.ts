@@ -416,6 +416,7 @@ export async function ingestMatrixResults(
         cell.reservationId,
         result.receipt,
         config,
+        result.detail,
       );
     } else {
       const failureDetail = result.detail ??
