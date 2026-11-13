@@ -18,9 +18,12 @@
  * own existing work records (and the cooldown/lesson bookkeeping a write
  * always refreshes), and every row it changed satisfies the shared transition
  * rule, and changed only delegated records. Any other interval is discarded
- * whole: the fork returns to the state before it, its changed records are
- * hidden for the rest of the pass and listed as deferred to the trusted
- * writer. A kept interval therefore never reserves, charges, settles,
+ * whole: the fork returns to the state before it, its changed records return
+ * to their planned rows, are never stepped again in this pass and are listed
+ * as deferred to the trusted writer. They stay readable, so a handed-back
+ * line front still holds the records behind it exactly as in the serial pass
+ * (a hidden front once let each of them attempt its own refresh and be handed
+ * back in turn). A kept interval therefore never reserves, charges, settles,
  * publishes, merges, reviews or closes anything. A delegated record deferred
  * to the trusted writer loses its step stamp in the delta, so the next plan
  * leaves it with the trusted serial pass, which performs the effect.
@@ -168,6 +171,10 @@ class IntervalJudge {
     private readonly repository: RepositoryIdentityV1,
     private readonly delegated: ReadonlySet<string>,
     private readonly clock: RepairCycleDepsV1["clock"],
+    /** The rows the pass was planned on. */
+    private readonly planned: ReadonlyMap<string, WorkRecordV1>,
+    /** The loop's exclusion: every record this pass must not step. */
+    private readonly excluded: Set<string>,
   ) {
     this.checkpoint = fork.checkpoint();
   }
@@ -198,9 +205,12 @@ class IntervalJudge {
 
   /**
    * Keep or discard the interval since the last checkpoint. A discarded
-   * interval also hides the record it stepped even when that step wrote
-   * nothing: its step needed an effect, so no later write of this pass may
-   * carry a step stamp (or anything else) for it.
+   * interval also hands back the record it stepped even when that step wrote
+   * nothing: its step needed an effect, so the delta carries no row of it.
+   * A handed-back record returns to its planned row and stays readable, so
+   * every later step reads the repository line the trusted pass reads (a
+   * front handed back still holds the records behind it), and the loop never
+   * steps it again.
    */
   close(force = false): void {
     const before = this.checkpoint.snapshot;
@@ -235,15 +245,22 @@ class IntervalJudge {
           ? [right]
           : [];
       });
-      this.fork.amend(stamps);
       const kept = new Set<string>(stamps.map((row) => row.id));
       const discarded = [
         ...moved.filter((id) => !kept.has(id)),
         ...(this.stepped === null ? [] : [this.stepped]),
       ];
+      this.fork.amend([
+        ...stamps,
+        ...discarded.flatMap((id) => {
+          const row = this.planned.get(id);
+          return row === undefined ? [] : [row];
+        }),
+      ]);
       for (const id of discarded) {
         this.fork.hidden.add(id);
         this.deferred.add(id);
+        this.excluded.add(id);
       }
     }
     this.stepped = null;
@@ -276,19 +293,23 @@ export async function runRepositoryRepairPass(
     deps.state,
   );
   const fence = new RepositoryPassFence();
+  // The loop never steps a record the plan kept trusted, nor one this pass
+  // has handed back (the judge adds each as it hands it back).
+  const excluded = new Set(
+    own.filter((record) => !delegated.has(record.id)).map((record) =>
+      record.id as string
+    ),
+  );
   const judge = new IntervalJudge(
     fork,
     fence,
     input.repository,
     delegated,
     deps.clock,
+    byId(own),
+    excluded,
   );
   const passDeps = fencedRepositoryDeps(deps, fork, configs, fence);
-  const excluded = new Set(
-    own.filter((record) => !delegated.has(record.id)).map((record) =>
-      record.id as string
-    ),
-  );
   const outcome = await drive(passDeps, input, judge, excluded);
 
   const finalRows = byId(fork.current().work);

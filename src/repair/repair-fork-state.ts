@@ -6,8 +6,9 @@
  * base snapshot (only the repository's own work records) and applies the
  * loop's expected-head writes to its own memory under private synthetic
  * heads. Nothing it holds is ever written to the shared store; the trusted
- * writer later receives only the bounded delta built from it. Release reads
- * delegate to the read-only view the fork was created over.
+ * writer later receives only the bounded delta built from it, which never
+ * carries a handed-back record's row. Release reads delegate to the
+ * read-only view the fork was created over.
  */
 import type { GitSha } from "../contracts/brands.ts";
 import { canonicalStringify } from "../contracts/canonical.ts";
@@ -41,7 +42,12 @@ export class RepairForkState implements RepairStateDepsV1 {
   private issued = 0;
   /** Every synthetic head this fork issued; none may leave the fork. */
   readonly syntheticHeads = new Set<string>();
-  /** Record ids the pass no longer steps; reads leave them out. */
+  /**
+   * Record ids handed back to the trusted writer. Reads keep their rows (the
+   * pass restores each to its planned row), so every later step reads the
+   * same repository line the trusted pass reads; the pass never steps them
+   * again and no row of theirs leaves the fork.
+   */
   readonly hidden = new Set<string>();
   writes = 0;
   readonly readHostedRelease?: StateReadView["readHostedRelease"];
@@ -100,25 +106,21 @@ export class RepairForkState implements RepairStateDepsV1 {
     this.currentHead = this.nextHead();
   }
 
-  /** The fork's current snapshot including hidden rows (delta building). */
+  /** The fork's current snapshot (delta building). */
   current(): RepairStateSnapshotV1 {
     return this.snapshot;
   }
 
-  private visible(): RepairStateSnapshotV1 {
-    if (this.hidden.size === 0) return this.snapshot;
-    return {
-      ...this.snapshot,
-      work: this.snapshot.work.filter((record) => !this.hidden.has(record.id)),
-    };
-  }
-
+  /**
+   * Every row, hand-backs included: leaving one out would let the records it
+   * holds read a line without it and attempt the effect it holds back.
+   */
   readRepair(): Promise<
     PortResultV1<StateReadResultV1<RepairStateSnapshotV1>>
   > {
     return Promise.resolve(portOk({
       status: "found",
-      snapshot: this.visible(),
+      snapshot: this.snapshot,
       head: this.currentHead,
       ref: FORK_REF,
     }));
@@ -130,8 +132,8 @@ export class RepairForkState implements RepairStateDepsV1 {
 
   /**
    * Expected-head compare-and-swap on the fork, with the shared store's
-   * sequence rule. Rows the pass hid stay hidden: a write that omits them
-   * keeps them as they were, so a later checkpoint never loses them.
+   * sequence rule. A write that omits a handed-back row keeps it as it was,
+   * so a later checkpoint never loses it.
    */
   writeRepair(
     next: RepairStateSnapshotV1,
