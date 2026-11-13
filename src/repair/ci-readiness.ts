@@ -8,12 +8,14 @@ import {
   DELIVERY_QUEUE_IDLE_MS,
   DELIVERY_QUEUE_STALL_LIMIT,
   deliveryQueueAhead,
+  lineBefore,
+  reviewInFlight,
 } from "./delivery-queue.ts";
 import {
   releaseRequestMatchesDelivery,
   sameRepositoryIdentity,
 } from "./loop-records.ts";
-import type { LegacyCutoff } from "./review-round-cap.ts";
+import { type LegacyCutoff, reviewedHeadCarried } from "./review-round-cap.ts";
 
 type Snapshot = Pick<
   RepairStateSnapshotV1,
@@ -55,14 +57,26 @@ export function currentCiValidation(
     record.intent === null && record.wait?.reason === "ci_pending";
 }
 
-function live(record: WorkRecordV1, now: number): boolean {
+/**
+ * A head the stall rule, a running red-base hold or the pre-review CI bound
+ * has not released: it can still act on its own next step. Idleness is not
+ * read here, so an untouched refresh candidate still ORDERS the refreshes of
+ * its repository (`ready` below) instead of letting every idle sibling refresh
+ * onto one tip in the same pass.
+ */
+function actionable(record: WorkRecordV1, now: number): boolean {
   if (
     (record.counters.stalled ?? 0) >= DELIVERY_QUEUE_STALL_LIMIT ||
-    now - record.updatedAt >= DELIVERY_QUEUE_IDLE_MS ||
     isRedBaseHold(record.wait, now)
   ) return false;
   return record.wait?.reason !== "ci_pending" ||
     now - record.wait.since < PRE_REVIEW_CI_BOUND_MS;
+}
+
+/** Actionable and written within the idle bound: it may hold a validation. */
+function live(record: WorkRecordV1, now: number): boolean {
+  return actionable(record, now) &&
+    now - record.updatedAt < DELIVERY_QUEUE_IDLE_MS;
 }
 
 /**
@@ -87,6 +101,17 @@ function baseRefreshCanAct(record: WorkRecordV1, tip: GitSha): boolean {
  * Preserve validation already admitted on the tip, then reuse the delivery
  * line and oldest ready refresh. No new count limit, state or wait is added.
  * Existing idle/stall/CI bounds release a head that can no longer advance.
+ *
+ * Fairness (sentinel 2026-11-13): a record with no reviewed head to carry
+ * (`reviewedHeadCarried` false) loses no review by refreshing, and a sibling
+ * merely awaiting its own CI on the tip, or holding an unexecuted refresh of
+ * it, has paid no review a merge ahead of it would discard. Such a sibling
+ * therefore holds it only from ahead in line (`lineBefore`: oldest
+ * `createdAt`, then id, the delivery pass's own order), so a candidate
+ * published on the current tip can no longer overtake an older green head on
+ * every pass. A sibling whose review is in flight (`reviewInFlight`) keeps
+ * holding whatever their order, and a record that carries a reviewed head
+ * keeps the unchanged order, so no review is spent twice.
  */
 export function ciRefreshAhead(
   snapshot: Snapshot,
@@ -97,20 +122,23 @@ export function ciRefreshAhead(
 ): WorkRecordV1 | null {
   const delivery = deliveryQueueAhead(snapshot, record, tip, now, cutoff);
   if (delivery !== null) return delivery;
+  const carried = reviewedHeadCarried(snapshot, record);
   const candidates = snapshot.work.filter((other) =>
     other.id !== record.id &&
     sameRepositoryIdentity(other.repository, record.repository) &&
-    publishedCiCandidate(other) && live(other, now) &&
+    publishedCiCandidate(other) && actionable(other, now) &&
     !snapshot.releaseRequests.some((request) =>
       releaseRequestMatchesDelivery(request, other)
     )
   ).sort(compareCiReadiness);
-  const validating = candidates.find((other) =>
-    baseRefreshCanAct(other, tip) ||
-    (other.target.base === tip &&
-      (other.wait?.reason === "ci_pending" || other.nextStep === "review" ||
-        other.intent?.kind === "review_request"))
-  );
+  const validating = candidates.find((other) => {
+    if (!live(other, now)) return false;
+    const onTip = other.target.base === tip;
+    if (onTip && reviewInFlight(other)) return true;
+    const ciOnTip = onTip && other.wait?.reason === "ci_pending";
+    return (baseRefreshCanAct(other, tip) || ciOnTip) &&
+      (carried || lineBefore(other, record));
+  });
   if (validating !== undefined) return validating;
   const ready = candidates.find((other) =>
     other.intent === null && other.target.base !== tip &&
