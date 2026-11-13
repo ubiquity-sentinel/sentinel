@@ -30,6 +30,7 @@ import {
   workRecord,
 } from "../state/helpers.ts";
 import { runRepairCycle } from "../../src/repair/loop.ts";
+import { STEP_LINE_KIND } from "../../src/repair/step-line.ts";
 import { queueRig } from "./delivery-queue-rig.ts";
 
 const RECORDS = 5;
@@ -81,10 +82,24 @@ Deno.test("delivery queue: a record waiting its turn writes, charges and refresh
     ],
   });
   const before = await rig.snapshot();
-  await runRepairCycle(rig.deps, {
-    deadline: rig.clock.now() + 60 * 60_000,
-    stepLimit: 16,
-  });
+  const lines: string[] = [];
+  const original = console.log;
+  console.log = (...args: unknown[]) => lines.push(args.map(String).join(" "));
+  try {
+    await runRepairCycle(rig.deps, {
+      deadline: rig.clock.now() + 60 * 60_000,
+      stepLimit: 16,
+    });
+  } finally {
+    console.log = original;
+  }
+  // The hosted step log names why the record deferred, as one closed code.
+  const steps = lines.filter((line) => line.includes(STEP_LINE_KIND))
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  assert.deepEqual(
+    steps.map((step) => [step.recordId, step.outcome, step.reason]),
+    [[rig.records[1].id, "deferred", "delivery_line"]],
+  );
   const after = await rig.snapshot();
   assert.deepEqual(after.work, before.work, "no record rewritten");
   assert.deepEqual(after.reservations, before.reservations);

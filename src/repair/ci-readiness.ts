@@ -22,6 +22,13 @@ type Snapshot = Pick<
   "work" | "reviews" | "reservations" | "releaseRequests"
 >;
 
+/**
+ * Detail prefix of a pre-review base refresh deferred behind another record's
+ * validation (`ensureReviewFreshness`). Fixed text: the advisory step line
+ * reports it as the closed reason code `ci_line`.
+ */
+export const CI_VALIDATION_DEFERRED_PREFIX = "CI validation: ";
+
 /** A published identity, never an unpublished or superseded candidate. */
 export function publishedCiCandidate(record: WorkRecordV1): boolean {
   const { head, pr, branch, candidateState } = record.target;
