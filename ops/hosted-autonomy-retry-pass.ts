@@ -112,6 +112,7 @@ import {
   takeProtectedReadmissions,
 } from "./hosted-autonomy-protected-readmission.ts";
 import { implementerPromptTemplateDigest } from "../src/repair/model-port-prompt-digest.ts";
+import { readBaseReviewWorkNeeded } from "./hosted-autonomy-base-review-verdicts.ts";
 
 /** Legacy class drift lines reported per pass (the rest are counted). */
 export const LEGACY_DRIFT_REPORTS_PER_PASS = 12;
@@ -482,6 +483,13 @@ export async function runHostedRetryPass(
     }
     issueDigests.set(record.id, digest);
   }
+  // The one-time base-review re-arm needs each historical park's verdict,
+  // recovered only from its digest-bound result comment.
+  const baseReviewWorkNeeded = await readBaseReviewWorkNeeded(
+    snapshot,
+    closedIssues,
+    scopeFor,
+  );
   const parks: RepeatFailureParkPlanV1[] = [];
   const planned = planHostedRetries(
     snapshot,
@@ -512,6 +520,7 @@ export async function runHostedRetryPass(
       onRepeatFailurePark: (park) => {
         if (!settled(park.id)) parks.push(park);
       },
+      baseReviewWorkNeeded,
     },
   );
   // JAM B6a: an R80-written not-fulfilled acceptance with an ordinary round
