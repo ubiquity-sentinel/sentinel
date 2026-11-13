@@ -12,6 +12,8 @@ import type {
   Clock,
   GitHubPort,
   ImplementationPort,
+  ModelRunReceiptV1,
+  PortResultV1,
   StateReadView,
 } from "../contracts/ports.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
@@ -269,11 +271,19 @@ export async function runMatrixCell(
 
   // Exactly one model session; the port owns the isolated, credential-free
   // checkout and validates the request against its configured model/effort.
-  const receipt = ciEvidence === undefined
-    ? await deps.model.runModel(cell.request)
-    : await deps.model.runModel(cell.request, {
-      untrustedCiEvidence: ciEvidence,
-    });
+  let receipt: PortResultV1<ModelRunReceiptV1>;
+  try {
+    receipt = ciEvidence === undefined
+      ? await deps.model.runModel(cell.request)
+      : await deps.model.runModel(cell.request, {
+        untrustedCiEvidence: ciEvidence,
+      });
+  } catch {
+    // A thrown port error is not proof of non-start. Emit the same bounded
+    // failure as an unavailable port result so the host can write its carrier
+    // and the ingester retains the charge. Never export private error text.
+    return refuse("failed", "model run failed (unavailable)");
+  }
   if (!receipt.ok) {
     // A completed session that left its checkout unchanged is its own model
     // outcome (`ATTEMPT_DETAIL_NO_CHANGE`); every other port error keeps the
