@@ -138,7 +138,34 @@ export class MatrixHistoricalRuntimeMismatch extends Error {
   }
 }
 
+/** This run's repository-cell hand-backs the serial job asks for (#328). */
+export interface RepairHandbackRequestV1 {
+  /** The run's fan-out plan digest, as its native outputs carried it. */
+  planDigest: string;
+  run: MatrixRunIdentityV1;
+  /** The saved execution's runtime revision and generation. */
+  runtime: { revision: GitSha; generation: number };
+  /** No read starts at or after it. */
+  until: number;
+  /** Stops a read still in flight (the serial pass ended). */
+  signal?: AbortSignal;
+}
+
+/** The delegated records one completed cell handed back to the trusted path. */
+export interface RepairHandbackV1 {
+  repository: RepositoryIdentityV1;
+  records: readonly string[];
+}
+
 export interface MatrixArtifactTransportV1 {
+  /**
+   * The records this run's completed repository cells handed back, read from
+   * their deltas authenticated exactly as finalize authenticates them; null
+   * when the plan cannot be authenticated. Absent: no same-run takeover.
+   */
+  repairHandbacks?(
+    request: RepairHandbackRequestV1,
+  ): Promise<readonly RepairHandbackV1[] | null>;
   /** Exact current attempt and exhaustive native jobs must all be completed. */
   confirmCompletedExecution?(
     execution: HostedExecutionIntentV1,

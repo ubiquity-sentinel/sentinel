@@ -11,7 +11,8 @@
  *   `.sentinel-repair/result.json` and prints one `sentinel_repair_cell`
  *   marker the launcher re-emits for finalize's authentication.
  * - The serial repair job reads the same verified plan and never selects a
- *   delegated record.
+ *   delegated record, except one a completed cell of this run handed back
+ *   (`repair-handback-takeover.ts`).
  *
  * Nothing here writes repair state.
  */
@@ -162,15 +163,16 @@ export const REPAIR_FANOUT_DELEGATION_KIND =
   "sentinel_repair_fanout_delegation";
 
 /**
- * The records the serial pass leaves to this run's repository cells. Total:
- * fan-out is an optimization, so an absent, unreadable, mismatched or
+ * The records the serial pass leaves to this run's repository cells, as a set
+ * the caller owns (it takes back each record a completed cell hands back).
+ * Total: fan-out is an optimization, so an absent, unreadable, mismatched or
  * foreign plan means no delegation this pass (one bounded advisory line) and
  * the serial pass steps every record exactly as before.
  */
 export async function delegatedRecordsOfRun(
   input: ActionsTargetCyclesInputV1,
   carrier: MatrixNativeCarrierV1 | undefined,
-): Promise<ReadonlySet<string> | undefined> {
+): Promise<Set<string> | undefined> {
   if (carrier?.repairPlanDigest === undefined) return undefined;
   try {
     const host = hostOf(input);
