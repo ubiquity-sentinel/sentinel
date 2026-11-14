@@ -322,6 +322,31 @@ Deno.test("hand-back reader: a completed cell that never authenticates is read a
   }]);
 });
 
+Deno.test("hand-back reader: a plan read that failed is read again within the same bound", async () => {
+  const { rig, fanout, envelopes } = await sealed();
+  const digest = await repairFanoutPlanDigestV1(fanout);
+  // GitHub did not serve the run attempt once: the next read authenticates.
+  const surface = actions(rig, fanout, envelopes);
+  surface.complete();
+  const json = surface.reader.json;
+  let failures = 1;
+  surface.reader.json = () =>
+    failures-- > 0 ? Promise.reject(new Error("HTTP 502")) : json();
+  const transient = await read(rig, surface, digest);
+  assert.deepEqual(transient.result, [{
+    repository: ALPHA,
+    records: ["issue-alpha-60"],
+  }]);
+  assert.equal(transient.waits, 1);
+  // A plan that never authenticates is read no more often than a delta.
+  const never = actions(rig, fanout, envelopes);
+  never.complete();
+  never.reader.json = () => Promise.reject(new Error("HTTP 502"));
+  const refused = await read(rig, never, digest);
+  assert.equal(refused.result, null);
+  assert.equal(refused.waits, REPAIR_HANDBACK_AUTH_READS - 1);
+});
+
 Deno.test("hand-back reader: gives up at its bound while a cell still runs", async () => {
   const { rig, fanout, envelopes } = await sealed();
   const surface = actions(rig, fanout, envelopes);

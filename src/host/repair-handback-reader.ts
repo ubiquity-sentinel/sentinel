@@ -12,9 +12,10 @@
  * each delta for this run, plan and repository, and returns the delegated
  * records each one handed back. The serial pass then steps them in this run.
  *
- * Read-only and bounded: no request starts at or after `until`, and a cell
- * whose delta cannot be authenticated yet (a log or artifact not served yet)
- * is read again a bounded number of times. A cell never read is simply not
+ * Read-only and bounded: no request starts at or after `until`, and the plan
+ * or a cell's delta that cannot be authenticated yet (a run, log or artifact
+ * not served yet) is read again a bounded number of times; a plan never
+ * authenticated hands nothing back. A cell never read is simply not
  * taken over: finalize drops its records' stamps as before, so the next plan
  * returns them to the serial pass. Nothing here writes state, applies a delta
  * or performs an effect.
@@ -125,7 +126,9 @@ export async function readRepairHandbacks(
             reader,
             archive,
           );
-          if (authenticated === null) return null;
+          // A plan GitHub did not serve (or not yet) is read again within
+          // the same bound as a cell's delta.
+          if (authenticated === null) throw new Error("plan unauthenticated");
           planned = authenticated.plan.cells.length;
           const binding = await repairFanoutBindingV1(authenticated.plan);
           for (const artifact of authenticated.artifacts) {
@@ -167,6 +170,8 @@ export async function readRepairHandbacks(
       ) break;
       await wait(REPAIR_HANDBACK_POLL_MS, controller.signal);
     }
+    // Read, but never authenticated: nothing is taken over.
+    if (reads > 0 && planned === null) return null;
     return [...read.values()].filter((entry) => entry.records.length > 0);
   } catch {
     return null;
