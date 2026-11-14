@@ -183,10 +183,13 @@ export async function delegatedRecordsOfRun(
     );
     return delegatedRecordsV1(plan);
   } catch {
+    // `outcome`, never `status`: this serial child's stdout also carries its
+    // one result record, and the launcher's child-status scan reads any line
+    // with its own `status` as a second record, so the run became unavailable.
     try {
       console.log(JSON.stringify({
         kind: REPAIR_FANOUT_DELEGATION_KIND,
-        status: "unavailable",
+        outcome: "unavailable",
       }));
     } catch { /* advisory */ }
     return undefined;
