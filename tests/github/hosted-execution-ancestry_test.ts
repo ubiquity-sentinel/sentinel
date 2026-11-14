@@ -67,11 +67,38 @@ Deno.test("hosted execution: revision ancestry accepts ahead/identical only with
     assert.ok(result.ok && result.value === false, JSON.stringify(result));
   }
 
-  // Malformed counters or a missing counter field are unavailable.
+  // total_commits counts GitHub's BASE..HEAD listing, which also lists base
+  // ancestors when commit dates are skewed (live 2026-11-14: 12 ahead, 18
+  // listed), so it never has to equal ahead_by + behind_by.
+  const skewed = makeRig();
+  skewed.http.on(
+    "GET",
+    COMPARE_PATH,
+    () => response(200, compareBody({ ahead_by: 12, total_commits: 18 })),
+  );
+  const skewedResult = await skewed.client.verifyHostedRevision(REVISION);
+  assert.ok(skewedResult.ok && skewedResult.value === true);
   for (
     const body of [
-      compareBody({ total_commits: 1 }),
+      compareBody({ status: "diverged", total_commits: 2 }),
+      compareBody({ status: "behind", total_commits: 0 }),
+    ]
+  ) {
+    const rig = makeRig();
+    rig.http.on("GET", COMPARE_PATH, () => response(200, body));
+    const result = await rig.client.verifyHostedRevision(REVISION);
+    assert.ok(result.ok && result.value === false, JSON.stringify(result));
+  }
+
+  // Malformed or impossible counters, or a missing counter field, are unavailable.
+  for (
+    const body of [
+      compareBody({ total_commits: 0 }),
+      compareBody({ total_commits: -1 }),
+      compareBody({ behind_by: 1 }),
+      compareBody({ status: "diverged", behind_by: 0 }),
       compareBody({ status: "identical", ahead_by: 1, total_commits: 1 }),
+      compareBody({ status: "identical", total_commits: 3 }),
       { status: "ahead", base_commit: { sha: REVISION } },
     ]
   ) {
