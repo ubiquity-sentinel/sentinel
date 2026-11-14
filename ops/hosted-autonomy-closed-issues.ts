@@ -12,6 +12,10 @@
  * key changes no verdict. Its key is still read while another record that is
  * not retired shares it (a decomposition part), exactly as before.
  *
+ * A complete open-issue listing answers the live open issues once per
+ * repository. Absence from that listing is not closure evidence: those
+ * issues, and repositories whose listing fails, keep their exact GETs.
+ *
  * The remaining reads are independent GETs and run at most
  * `CLOSED_ISSUE_READ_CONCURRENCY` at a time (live 2026-10-24: 388 sequential
  * reads, in a context phase of 85 seconds), started and applied in record
@@ -20,7 +24,10 @@
  */
 import { queueRecordProtected } from "./hosted-autonomy-queue-context.ts";
 import type { HostedAutonomyPassContextV1 } from "./hosted-autonomy-scopes.ts";
-import { hostedIssueKey } from "./hosted-autonomy-policy.ts";
+import {
+  hostedIssueKey,
+  hostedRepositoryKey,
+} from "./hosted-autonomy-policy.ts";
 import { isHostedRetired } from "./hosted-autonomy-closures.ts";
 import type { HostedAutonomyRecordV1 } from "./hosted-autonomy-types.ts";
 
@@ -92,6 +99,27 @@ export async function readHostedClosedIssues(
     ) continue;
     pending.push({ record, issueNumber });
   }
+  // Pass-local positive facts only. Never turn a missing issue, an incomplete
+  // listing or an unavailable repository into a closed-source verdict.
+  const openIssues = new Map<string, Promise<ReadonlySet<number> | null>>();
+  const listedOpen = (record: HostedAutonomyRecordV1) => {
+    const tiers = context.deps.repairTiers;
+    if (tiers === undefined) return Promise.resolve(null);
+    const key = hostedRepositoryKey(record.repository);
+    let listed = openIssues.get(key);
+    if (listed === undefined) {
+      listed = (async () => {
+        try {
+          const result = await tiers.listOpenIssueNumbers(record.repository);
+          return result.ok ? new Set(result.value) : null;
+        } catch {
+          return null;
+        }
+      })();
+      openIssues.set(key, listed);
+    }
+    return listed;
+  };
   const reads = await readInOrder(
     pending,
     CLOSED_ISSUE_READ_CONCURRENCY,
@@ -99,6 +127,9 @@ export async function readHostedClosedIssues(
       try {
         const scope = await scopeFor(record.repository);
         if (scope.surface === null) return { kind: "unreadable" };
+        if ((await listedOpen(record))?.has(issueNumber)) {
+          return { kind: "read", open: true };
+        }
         let open: boolean | null = null;
         try {
           open = await scope.surface.readIssueOpen(issueNumber);
