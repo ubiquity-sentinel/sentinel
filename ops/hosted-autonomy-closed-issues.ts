@@ -29,7 +29,40 @@ import {
   hostedRepositoryKey,
 } from "./hosted-autonomy-policy.ts";
 import { isHostedRetired } from "./hosted-autonomy-closures.ts";
-import type { HostedAutonomyRecordV1 } from "./hosted-autonomy-types.ts";
+import type {
+  HostedAutonomyDepsV1,
+  HostedAutonomyRecordV1,
+} from "./hosted-autonomy-types.ts";
+
+/** Share tier and closure listings only within one invocation of the runner. */
+export function withHostedOpenIssueCache(
+  deps: HostedAutonomyDepsV1,
+): HostedAutonomyDepsV1 {
+  const tiers = deps.repairTiers;
+  if (tiers === undefined) return deps;
+  const listings = new Map<
+    string,
+    ReturnType<typeof tiers.listOpenIssueNumbers>
+  >();
+  return {
+    ...deps,
+    repairTiers: {
+      ...tiers,
+      listOpenIssueNumbers(repository) {
+        const key = hostedRepositoryKey(repository);
+        let listed = listings.get(key);
+        if (listed === undefined) {
+          // Cache in-flight reads and failures too; unavailable is never empty.
+          listed = Promise.resolve().then(() =>
+            tiers.listOpenIssueNumbers(repository)
+          );
+          listings.set(key, listed);
+        }
+        return listed;
+      },
+    },
+  };
+}
 
 /** Source-issue reads in flight at once (far below GitHub's limits). */
 export const CLOSED_ISSUE_READ_CONCURRENCY = 4;

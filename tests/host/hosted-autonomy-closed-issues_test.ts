@@ -14,7 +14,10 @@ import {
   hostedIssueKey,
   hostedRepositoryKey,
 } from "../../ops/hosted-autonomy-policy.ts";
-import { readHostedClosedIssues } from "../../ops/hosted-autonomy-closed-issues.ts";
+import {
+  readHostedClosedIssues,
+  withHostedOpenIssueCache,
+} from "../../ops/hosted-autonomy-closed-issues.ts";
 import {
   createHostedAutonomyScopes,
   type HostedAutonomyPassContextV1,
@@ -117,6 +120,63 @@ Deno.test("maintenance: a hot tier of open issues uses one repository listing, n
   assert.deepEqual([...seen], work.map((row) => row.id));
   await readHostedClosedIssues(context, seen);
   assert.equal(listings, 1, "a continued pass keeps its source facts");
+});
+
+Deno.test("maintenance: tier and closure share an in-flight listing, but the next pass refreshes it", async () => {
+  let listings = 0;
+  let open = [1, 2];
+  const { context, reads } = harness(
+    [1, 2].map(issue),
+    () => {
+      listings++;
+      return Promise.resolve(portOk([...open]));
+    },
+    (number) => open.includes(number),
+  );
+  const deps = context.deps;
+  context.deps = withHostedOpenIssueCache(deps);
+  const tierRead = context.deps.repairTiers!.listOpenIssueNumbers(REPO);
+  const concurrentRead = context.deps.repairTiers!.listOpenIssueNumbers(REPO);
+  assert.equal(tierRead, concurrentRead);
+  await Promise.all([tierRead, readHostedClosedIssues(context)]);
+  assert.equal(listings, 1);
+  assert.deepEqual(reads, []);
+
+  open = [2];
+  // A rebuilt phase on this pass's fresh state head keeps the same source facts.
+  await readHostedClosedIssues(context);
+  assert.equal(listings, 1);
+  assert.deepEqual(reads, []);
+
+  context.deps = withHostedOpenIssueCache(deps);
+  await readHostedClosedIssues(context);
+  assert.equal(listings, 2);
+  assert.deepEqual(reads, [1]);
+  assert.deepEqual([...context.closedIssues], [hostedIssueKey(REPO, 1)]);
+});
+
+Deno.test("maintenance: a failed tier listing is shared without suppressing exact closure reads", async () => {
+  for (const mode of ["unavailable", "threw", "rejected"] as const) {
+    let listings = 0;
+    const { context, reads } = harness(
+      [1, 2].map(issue),
+      () => {
+        listings++;
+        if (mode === "threw") throw new Error("listing unavailable");
+        if (mode === "rejected") {
+          return Promise.reject(new Error("listing unavailable"));
+        }
+        return Promise.resolve(portError("unavailable", "partial listing"));
+      },
+      (number) => number !== 1,
+    );
+    context.deps = withHostedOpenIssueCache(context.deps);
+    await context.deps.repairTiers!.listOpenIssueNumbers(REPO).catch(() => {});
+    await readHostedClosedIssues(context);
+    assert.equal(listings, 1, mode);
+    assert.deepEqual(reads, [1, 2]);
+    assert.deepEqual([...context.closedIssues], [hostedIssueKey(REPO, 1)]);
+  }
 });
 
 Deno.test("maintenance: listing absence still needs an exact closed-issue read", async () => {
