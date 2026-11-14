@@ -67,6 +67,8 @@ import { markBlocked, setIntent } from "../src/repair/transitions.ts";
 import { closureIntentKey } from "../src/repair/keys.ts";
 import { parseRepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 
+const RETIREMENT_STATUS_READ_CONCURRENCY = 4;
+
 /** Gateway merge evidence alone never enters the foreign closure authority. */
 async function gatewayClosureGate(
   context: HostedAutonomyPassContextV1,
@@ -360,30 +362,49 @@ export async function runHostedClosurePass(
   // pull request is not read.
   const closedUnmerged = new Set<string>();
   const openUnmerged = new Set<string>();
-  for (const record of snapshot.work) {
-    if (
-      record.nextStep === "done" || isHostedRetired(record) ||
-      queueRecordProtected(record, deps.queueCustody)
-    ) continue;
-    const issueNumber = record.related.issueNumber;
-    if (
-      issueNumber === null ||
-      !closedIssues.has(hostedIssueKey(record.repository, issueNumber))
-    ) {
-      continue;
+  // These independent status reads authorize no effects. Drain a bounded
+  // pool before planning or writing retirements; keep effects in snapshot order.
+  let nextStatus = 0;
+  const readStatuses = async () => {
+    while (nextStatus < snapshot.work.length) {
+      const record = snapshot.work[nextStatus++];
+      if (
+        record.nextStep === "done" || isHostedRetired(record) ||
+        queueRecordProtected(record, deps.queueCustody)
+      ) continue;
+      const issueNumber = record.related.issueNumber;
+      if (
+        issueNumber === null ||
+        !closedIssues.has(hostedIssueKey(record.repository, issueNumber))
+      ) {
+        continue;
+      }
+      const pullRequest = record.target.pr;
+      if (pullRequest === null) continue;
+      // Its release request was recorded only once its pull request merged, so
+      // a deferred release is never closed unmerged: nothing to read.
+      if (gatewayReleaseDeferredIn(context, record)) continue;
+      const scope = await scopeFor(record.repository);
+      const pull = await readHostedPullStatus(scope, pullRequest);
+      if (pull === null) continue;
+      if (pull.merged === false) {
+        (pull.state === "closed" ? closedUnmerged : openUnmerged).add(
+          record.id,
+        );
+      }
     }
-    const pullRequest = record.target.pr;
-    if (pullRequest === null) continue;
-    // Its release request was recorded only once its pull request merged, so
-    // a deferred release is never closed unmerged: nothing to read.
-    if (gatewayReleaseDeferredIn(context, record)) continue;
-    const scope = await scopeFor(record.repository);
-    const pull = await readHostedPullStatus(scope, pullRequest);
-    if (pull === null) continue;
-    if (pull.merged === false) {
-      (pull.state === "closed" ? closedUnmerged : openUnmerged).add(record.id);
-    }
-  }
+  };
+  await Promise.all(
+    Array.from(
+      {
+        length: Math.min(
+          RETIREMENT_STATUS_READ_CONCURRENCY,
+          snapshot.work.length,
+        ),
+      },
+      readStatuses,
+    ),
+  );
   const retirements = planHostedRetirements(
     snapshot,
     closedIssues,
