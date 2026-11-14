@@ -34,6 +34,13 @@ export class FollowError extends Error {
   }
 }
 
+/** A read GitHub may answer on retry; its reason is the one finally thrown. */
+class TransientFollowRead extends FollowError {
+  constructor(reason: string, readonly retryAfterMs = 0) {
+    super(reason);
+  }
+}
+
 export function record(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new FollowError("malformed_response");
@@ -64,15 +71,61 @@ export function defaultListPause(): Promise<void> {
   );
 }
 
+function defaultPause(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Bounded retry of transient reads and inconsistent listings for one pass. */
+export interface FollowRetryPolicy {
+  /** Attempts per GET, including the first, for a 5xx, 429 or lost read. */
+  readonly readAttempts: number;
+  /** Complete listings attempted, including the first. */
+  readonly listAttempts: number;
+  /** Pause before retry `n` (1-based) of one read or listing. */
+  backoffMs(retry: number): number;
+  /** Longest honoured Retry-After; a longer or malformed one is not retried. */
+  readonly retryAfterCapMs: number;
+  /** Total pause one API instance may spend on all of its retries. */
+  readonly budgetMs: number;
+}
+
+/** The dispatch guard's unchanged policy: one read, fixed listing pauses. */
+const FOLLOW_GUARD_RETRY: FollowRetryPolicy = {
+  readAttempts: 1,
+  listAttempts: FOLLOW_LIST_ATTEMPTS,
+  backoffMs: () => FOLLOW_LIST_RETRY_PAUSE_MS,
+  retryAfterCapMs: 0,
+  budgetMs: Number.POSITIVE_INFINITY,
+};
+
+/**
+ * The follow scan's policy. A deferred scan leaves the supervisor on the old
+ * runtime for a whole ~30 minute cycle (2026-11-13: run 43504030921 deferred on
+ * one non-200 read, run 43520076144 on a listing still inconsistent after three
+ * reads 1 s apart), while those follow steps took 49 s and 33 s against the
+ * 100 s scan deadline. At most 30 s of pauses is added per pass: up to four
+ * reads (1, 2, 4 s), five listings (1, 2, 4, 8 s) and a 429 Retry-After of at
+ * most 10 s. The unchanged deadline, not the budget, still bounds the step.
+ */
+export const FOLLOW_SCAN_RETRY: FollowRetryPolicy = {
+  readAttempts: 4,
+  listAttempts: 5,
+  backoffMs: (retry) => 1_000 * 2 ** (retry - 1),
+  retryAfterCapMs: 10_000,
+  budgetMs: 30_000,
+};
+
 /** Uses the existing bounded HTTP helpers, with one deadline for the whole scan. */
 export class HostedRuntimeFollowApi {
   private readonly deadline: DeadlineV1;
+  private paused = 0;
   constructor(
     private readonly http: HttpTransportV1,
     private readonly token: string,
     deadlineMs = 100_000,
     private readonly maxPages = 10,
-    private readonly listPause: () => Promise<void> = defaultListPause,
+    private readonly pause: (ms: number) => Promise<void> = defaultPause,
+    private readonly retry: FollowRetryPolicy = FOLLOW_GUARD_RETRY,
   ) {
     this.deadline = createDeadline(deadlineMs);
   }
@@ -81,10 +134,52 @@ export class HostedRuntimeFollowApi {
     this.deadline.dispose();
   }
 
+  /**
+   * Only an idempotent read is retried, never the single ref mutation. 401,
+   * 403, 404, a conflict, a malformed body and every verdict computed from a
+   * successful read keep their first answer.
+   */
   async request(
     path: string,
     query: Record<string, string> = {},
     body?: Record<string, unknown>,
+  ): Promise<{ value: unknown; headers: Headers }> {
+    for (let attempt = 1;; attempt++) {
+      try {
+        return await this.requestOnce(path, query, body);
+      } catch (error) {
+        if (
+          body !== undefined || !(error instanceof TransientFollowRead) ||
+          attempt >= this.retry.readAttempts
+        ) throw error;
+        await this.pauseBeforeRetry(
+          error,
+          Math.max(this.retry.backoffMs(attempt), error.retryAfterMs),
+        );
+      }
+    }
+  }
+
+  /** One pause inside both the scan deadline and the pass's retry budget. */
+  private async pauseBeforeRetry(
+    error: FollowError,
+    ms: number,
+  ): Promise<void> {
+    if (this.deadline.fired() || this.paused + ms > this.retry.budgetMs) {
+      throw error;
+    }
+    this.paused += ms;
+    try {
+      await this.deadline.race(this.pause(ms));
+    } catch {
+      throw this.deadline.fired() ? new FollowError("follow_deadline") : error;
+    }
+  }
+
+  private async requestOnce(
+    path: string,
+    query: Record<string, string>,
+    body: Record<string, unknown> | undefined,
   ): Promise<{ value: unknown; headers: Headers }> {
     if (this.deadline.fired()) throw new FollowError("follow_deadline");
     const url = new URL(path, "https://api.github.com");
@@ -106,16 +201,18 @@ export class HostedRuntimeFollowApi {
         redirect: "error",
       }));
     } catch {
-      throw new FollowError(
-        this.deadline.fired() ? "follow_deadline" : "transport_unavailable",
-      );
+      if (this.deadline.fired()) throw new FollowError("follow_deadline");
+      throw new TransientFollowRead("transport_unavailable");
     }
     if (response.status !== 200) {
-      throw new FollowError(
-        [409, 412, 422].includes(response.status)
-          ? "ref_conflict"
-          : "github_read_unavailable",
-      );
+      if ([409, 412, 422].includes(response.status)) {
+        throw new FollowError("ref_conflict");
+      }
+      const wait = this.retryAfterMs(response.headers);
+      throw (response.status === 429 || response.status >= 500) &&
+          wait !== null
+        ? new TransientFollowRead("github_read_unavailable", wait)
+        : new FollowError("github_read_unavailable");
     }
     try {
       return {
@@ -125,6 +222,15 @@ export class HostedRuntimeFollowApi {
     } catch {
       throw new FollowError("malformed_json");
     }
+  }
+
+  /** 0 without Retry-After; null for a malformed one or one beyond the cap. */
+  private retryAfterMs(headers: Headers): number | null {
+    const raw = headers.get("retry-after")?.trim();
+    if (raw === undefined) return 0;
+    if (!/^\d{1,6}$/.test(raw)) return null;
+    const ms = Number(raw) * 1_000;
+    return ms <= this.retry.retryAfterCapMs ? ms : null;
   }
 
   async get(
@@ -161,15 +267,9 @@ export class HostedRuntimeFollowApi {
         if (
           !(error instanceof FollowError) ||
           error.reason !== "incomplete_pagination" ||
-          attempt >= FOLLOW_LIST_ATTEMPTS || this.deadline.fired()
+          attempt >= this.retry.listAttempts
         ) throw error;
-      }
-      try {
-        await this.deadline.race(this.listPause());
-      } catch {
-        throw new FollowError(
-          this.deadline.fired() ? "follow_deadline" : "incomplete_pagination",
-        );
+        await this.pauseBeforeRetry(error, this.retry.backoffMs(attempt));
       }
     }
   }
