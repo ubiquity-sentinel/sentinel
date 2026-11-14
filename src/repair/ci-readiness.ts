@@ -66,23 +66,26 @@ export function currentCiValidation(
 
 /**
  * A head the stall rule, a running red-base hold or the pre-review CI bound
- * has not released: it can still act on its own next step. The CI bound
- * releases only a head awaiting its CI on `tip`, where its step reads that CI:
- * a head on a moved base asks this line before its CI gate and the deferral
- * writes nothing, so its `ci_pending` is whatever an earlier poll left (live
- * sentinel 2026-11-13: 397, green since 17:16Z, still carried its 17:10Z wait
- * at midnight) and says nothing about its CI. Idleness is not read here, so an
- * untouched refresh candidate still ORDERS the refreshes of its repository
- * (`ready` below) instead of letting every idle sibling refresh onto one tip
- * in the same pass.
+ * has not released: it can still act on its own next step. The stall rule
+ * and the CI bound release only a head on `tip`, where its step reads its CI
+ * and re-arms its wait: a head on a moved base asks this line before its CI
+ * gate and the deferral writes nothing, so its `ci_pending` is whatever an
+ * earlier poll left (live sentinel 2026-11-13: 397, green since 17:16Z, still
+ * carried its 17:10Z wait at midnight) and its no-progress count whatever its
+ * steps on an earlier tip left. Its next step is the refresh, durable progress
+ * that clears that count, so it keeps its place in line: a head held past six
+ * hours on the tip by its red base (12 re-arms) otherwise waited behind every
+ * sibling that could act, idle ones included, once the base was repaired.
+ * Idleness is not read here, so an untouched refresh candidate still ORDERS
+ * the refreshes of its repository (`ready` below) instead of letting every
+ * idle sibling refresh onto one tip in the same pass.
  */
 function actionable(record: WorkRecordV1, tip: GitSha, now: number): boolean {
-  if (
-    (record.counters.stalled ?? 0) >= DELIVERY_QUEUE_STALL_LIMIT ||
-    isRedBaseHold(record.wait, now)
-  ) return false;
-  return record.target.base !== tip || record.wait?.reason !== "ci_pending" ||
-    now - record.wait.since < PRE_REVIEW_CI_BOUND_MS;
+  if (isRedBaseHold(record.wait, now)) return false;
+  if (record.target.base !== tip) return true;
+  return (record.counters.stalled ?? 0) < DELIVERY_QUEUE_STALL_LIMIT &&
+    (record.wait?.reason !== "ci_pending" ||
+      now - record.wait.since < PRE_REVIEW_CI_BOUND_MS);
 }
 
 /** Actionable and written within the idle bound: it may hold a validation. */
@@ -134,11 +137,12 @@ function baseRefreshCanAct(record: WorkRecordV1, tip: GitSha): boolean {
  * Heads on a moved base refresh oldest first (`lineBefore`), never by the wait
  * an earlier step left: ranking a leftover `ci_pending` last put 271 ahead of
  * 268 (green on its refreshed head since 19:47Z) at 20:39Z and, from 00:18Z,
- * 398 (an expired `unavailable` from 18:16Z) ahead of 268 and 397. A record
- * that cannot act (stalled) holds nobody and lost its place: it waits behind
- * every record that can, validating or ready, instead of refreshing beside
- * the front (312, stalled at 180, refreshed onto 386's tip at 23:00:17Z and
- * both were reviewed at 00:12Z and 00:13Z).
+ * 398 (an expired `unavailable` from 18:16Z) ahead of 268 and 397. A stalled
+ * head on a moved base keeps its place by age (`actionable`), so it is the
+ * front, and refreshes first, instead of refreshing beside a younger front
+ * (312, stalled at 180, refreshed onto 386's tip at 23:00:17Z and both were
+ * reviewed at 00:12Z and 00:13Z). A record that cannot act (held by its red
+ * base) holds nobody and waits behind every record that can.
  */
 export function ciRefreshAhead(
   snapshot: Snapshot,

@@ -20,6 +20,7 @@ import {
   currentCiValidation,
 } from "../../src/repair/ci-readiness.ts";
 import { PRE_REVIEW_CI_BOUND_MS } from "../../src/repair/ci-first-policy.ts";
+import { DELIVERY_QUEUE_STALL_LIMIT } from "../../src/repair/delivery-queue.ts";
 import {
   releaseRequest,
   REPO,
@@ -275,6 +276,33 @@ Deno.test("only the oldest ready moved-base candidate refreshes before validatio
   const snapshot = seededSnapshot([next, first]);
   assert.equal(ciRefreshAhead(snapshot, next, SHA2, T0 + 1000)?.id, first.id);
   assert.equal(ciRefreshAhead(snapshot, first, SHA2, T0 + 1000), null);
+});
+
+Deno.test("a stalled head on a moved base keeps its place in line; stuck on the tip it holds nobody", () => {
+  // Its no-progress count is what its steps on an earlier tip left (12
+  // re-arms of a red base's 30-minute hold); on a moved base its next step is
+  // the refresh, durable progress that clears the count.
+  const first = published("issue-1");
+  first.counters = { ...first.counters, stalled: DELIVERY_QUEUE_STALL_LIMIT };
+  const next = published("issue-2", SHA1, 8);
+  const snapshot = seededSnapshot([next, first]);
+  assert.equal(
+    ciRefreshAhead(snapshot, next, SHA2, T0 + 1000)?.id,
+    first.id,
+    "the stalled earlier head holds the later one",
+  );
+  assert.equal(
+    ciRefreshAhead(snapshot, first, SHA2, T0 + 1000),
+    null,
+    "and refreshes first",
+  );
+  first.target.base = SHA2;
+  first.wait = { reason: "ci_pending", since: T0, until: T0 + 300_000 };
+  assert.equal(
+    ciRefreshAhead(seededSnapshot([next, first]), next, SHA2, T0 + 1000),
+    null,
+    "a head stuck on the tip still holds nobody",
+  );
 });
 
 Deno.test("readiness: an exact booked delivery cannot hold a pending candidate's refresh", () => {
