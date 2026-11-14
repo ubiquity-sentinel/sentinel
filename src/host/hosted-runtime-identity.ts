@@ -27,6 +27,7 @@ import type { LocalModelDiagnosticV1 } from "./local.ts";
 import type { ModelBoundaryErrorCodeV1 } from "../repair/model-port-diagnostics.ts";
 import type { AdvisoryLogLineV1 } from "../repair/step-line.ts";
 import type { HostedMatrixPlanDiagnosticV1 } from "./matrix-plan-diagnostic.ts";
+import type { ReviewResultShapesV1 } from "./hosted-review-shape.ts";
 
 /** Exact fixed workflow ref the protected supervisor runs from. */
 export const HOSTED_RUNTIME_WORKFLOW_REF =
@@ -466,6 +467,12 @@ export interface HostedRuntimeLauncherResultV1 {
   reviewCommandRefusals?: ReviewCommandItemRefusalsV1;
   /** Strictly re-parsed observational terminals; never health or authority. */
   reviewTerminals?: ReviewTerminalAdvisoriesV1;
+  /**
+   * Strictly re-parsed text-free shapes of malformed native review results,
+   * printed so a refused result is diagnosable from the job log; never
+   * health, authority or review evidence.
+   */
+  reviewResultShapes?: ReviewResultShapesV1;
   /** Authenticated native matrix log carrier; never aggregate terminal proof. */
   matrixCarrier?: Record<string, unknown>;
   /**
