@@ -115,14 +115,25 @@ Deno.test("owner install ancestry: empty metadata pages retain identical and one
   await verifyComparison({ ahead_by: 1, total_commits: 1 }, "installed");
 });
 
+Deno.test("owner install ancestry: a listing that counts more commits than are ahead still proves ancestry (2026-11-14)", async () => {
+  // total_commits counts GitHub's BASE..HEAD listing, which also lists base
+  // ancestors when commit dates are skewed (live 6e74557...ab84c0d: 12, 18).
+  await verifyComparison({ ahead_by: 12, total_commits: 18 }, "installed");
+});
+
 Deno.test("owner install ancestry: metadata pagination preserves identity, divergence, counters and byte refusals", async () => {
   for (
     const fault of [
       { base_commit: { sha: UNRELATED } },
       { merge_base_commit: { sha: UNRELATED } },
       { status: "diverged", behind_by: 1, total_commits: 85 },
+      { status: "diverged", behind_by: 1 },
       { status: "behind", ahead_by: 0, behind_by: 1, total_commits: 1 },
-      { total_commits: 83 },
+      { status: "behind", ahead_by: 0, behind_by: 1, total_commits: 0 },
+      { status: "identical", ahead_by: 0, total_commits: 84 },
+      { behind_by: 1 },
+      { total_commits: 0 },
+      { ahead_by: -1 },
     ]
   ) {
     await verifyComparison(fault, "waiting");
