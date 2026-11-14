@@ -21,6 +21,7 @@
  */
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import { sameRepositoryV1 } from "../contracts/repair-delta.ts";
+import { REPAIR_HANDBACK_KIND } from "../repair/repair-fanout-lines.ts";
 import type {
   MatrixArtifactTransportV1,
   RepairHandbackRequestV1,
@@ -29,7 +30,8 @@ import type {
 
 /** Longest the serial job reads for its cells' hand-backs after it starts. */
 export const REPAIR_HANDBACK_WAIT_MS = 10 * 60_000;
-export const REPAIR_HANDBACK_KIND = "sentinel_repair_handback";
+/** The takeover's advisory line kind; the launcher re-emits the line. */
+export { REPAIR_HANDBACK_KIND };
 
 export interface RepairHandbackTakeoverV1 {
   /**
@@ -103,8 +105,9 @@ export function startRepairHandbackTakeover(input: {
       // (finalize hands its records back as before): only woken ones count.
       if (input.wake(config, ids)) woken += ids.length;
     }
-    // One advisory line; it carries no `status` property, so the launcher's
-    // child-status scan never reads it as the child's result.
+    // One advisory line the launcher re-emits into the job log; it carries no
+    // `status` property, so the child-status scan never reads it as the
+    // child's result.
     try {
       (input.log ?? console.log)(JSON.stringify({
         kind: REPAIR_HANDBACK_KIND,

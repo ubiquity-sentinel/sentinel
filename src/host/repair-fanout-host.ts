@@ -36,6 +36,7 @@ import {
   repairFanoutPlanDigestV1,
   type RepairFanoutPlanV1,
 } from "../repair/repair-fanout-plan.ts";
+import { REPAIR_FANOUT_DELEGATION_KIND } from "../repair/repair-fanout-lines.ts";
 import { runRepositoryRepairPass } from "../repair/repository-pass.ts";
 import {
   type ActionsTargetCyclesInputV1,
@@ -159,8 +160,8 @@ export async function readRepairFanoutPlan(
   return plan;
 }
 
-export const REPAIR_FANOUT_DELEGATION_KIND =
-  "sentinel_repair_fanout_delegation";
+/** The no-delegation advisory line kind; the launcher re-emits the line. */
+export { REPAIR_FANOUT_DELEGATION_KIND };
 
 /**
  * The records the serial pass leaves to this run's repository cells, as a set
