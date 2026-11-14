@@ -1,12 +1,32 @@
-import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
+import {
+  CalendarCiMinutes,
+  INACTIVE_CI_MINUTES,
+  proposedCiMinutePolicy,
+} from "../../src/budget/ci-minutes.ts";
 /** Closed ai.ubq.fi publications recover without regenerating their live head. */
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
 import { asWorkItemId, type GitSha } from "../../src/contracts/brands.ts";
-import { portError } from "../../src/contracts/ports.ts";
+import {
+  ciMinuteDigest,
+  ciMonth,
+  ciPolicyDigest,
+  parseCiMinuteLedger,
+  validateCiMinuteTransition,
+} from "../../src/contracts/ci-minute-budget.ts";
+import type {
+  CiEffectV1,
+  CiMinuteLedgerV1,
+} from "../../src/contracts/ci-minute-budget.ts";
+import { portError, portOk } from "../../src/contracts/ports.ts";
+import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import { planMatrixWave } from "../../src/host/matrix-planner.ts";
 import { DurableGitHubCooldownGate } from "../../src/repair/github-cooldown.ts";
-import { candidateBranch, reviewOperationKey } from "../../src/repair/keys.ts";
+import {
+  candidateBranch,
+  pullRequestIntentKey,
+  reviewOperationKey,
+} from "../../src/repair/keys.ts";
 import { isMatrixImplementationReadyV1 } from "../../src/repair/loop-eligibility.ts";
 import type {
   LoopContextV1,
@@ -545,4 +565,181 @@ Deno.test("closed publication does not treat an unavailable branch read as delet
   assert.deepEqual(r.state.repair!.work[0], r.record);
   assert.ok(!r.github.calls.includes("createPr"));
   assert.equal(r.state.repair!.reservations.length, 0);
+});
+
+/** Historical settled publication plus authenticated, not-yet-applied effects. */
+function activePublicationCi(
+  r: ReturnType<typeof setup>,
+  publicationAfter?: number,
+) {
+  const proof = "a".repeat(64);
+  const policy = {
+    ...proposedCiMinutePolicy(),
+    activated: true,
+    storageAcceptance: proof,
+    ceilingQualification: proof,
+    targets: [{ ...r.record.repository, repositoryId: 1, ceilingMinutes: 20 }],
+  };
+  const original: CiEffectV1 = {
+    repository: r.record.repository,
+    kind: "pr_open",
+    head: SHA2,
+    base: SHA1,
+    ref: `refs/heads/${r.branch}`,
+    pr: null,
+    ...(publicationAfter === undefined ? {} : { publicationAfter }),
+  };
+  const binding = {
+    effect: original,
+    repositoryId: 1,
+    workflowBlob: SHA1,
+    job: "validation",
+  };
+  const settled = {
+    effectDigest: ciMinuteDigest({
+      domain: "sentinel-ci-effect-v1",
+      ...binding,
+    }),
+    policyDigest: ciPolicyDigest(policy),
+    ceilingMinutes: 20,
+    state: "settled" as const,
+    createdAt: T0 - 60_000,
+    settledAt: T0,
+    chargedMinutes: 20,
+    proofDigest: proof,
+    binding,
+  };
+  let ledger: CiMinuteLedgerV1 = {
+    version: 1,
+    month: ciMonth(T0).month,
+    policyDigest: ciPolicyDigest(policy),
+    updatedAt: T0,
+    sequence: 1,
+    baselineMinutes: 0,
+    watermark: T0,
+    reservations: [settled],
+    observed: [],
+  };
+  let head: GitSha = SHA1;
+  const effects: CiEffectV1[] = [];
+  const controller = new CalendarCiMinutes({
+    policy,
+    clock: r.clock,
+    authorizePolicy: () => Promise.resolve(true),
+    store: {
+      read: () =>
+        Promise.resolve(portOk({ head, ledger: structuredClone(ledger) })),
+      readPrior: () => Promise.resolve(portOk({ head, ledger: null })),
+      write(input) {
+        assert.equal(input.expectedHead, head);
+        const next = parseCiMinuteLedger(input.ledger);
+        validateCiMinuteTransition(ledger, next);
+        ledger = structuredClone(next);
+        head = String(ledger.sequence).padStart(40, "0") as GitSha;
+        return Promise.resolve(portOk({ status: "applied" as const, head }));
+      },
+    },
+    resolve(effect) {
+      effects.push(structuredClone(effect));
+      return Promise.resolve({
+        repositoryId: 1,
+        workflowBlob: SHA1,
+        job: "validation",
+        jobs: 1,
+        runner: "ubuntu-latest",
+        timeoutMinutes: 20,
+        ceilingMinutes: 20,
+        qualificationDigest: proof,
+        triggered: true,
+        effectState: "not_applied",
+      });
+    },
+    observe: (month) =>
+      Promise.resolve({
+        month,
+        complete: true,
+        watermark: r.clock.now(),
+        jobs: [],
+      }),
+  });
+  return { controller, effects, settled, ledger: () => ledger };
+}
+
+Deno.test("closed publication replacements reserve CI minutes after the latest retired PR", async (t) => {
+  for (const phase of ["work", "observation", "request"] as const) {
+    for (const previous of [undefined, 1148]) {
+      await t.step(`${phase}/${previous ?? "original"}`, async () => {
+        const r = setup();
+        const ci = activePublicationCi(r, previous);
+        r.deps.ciMinutes = ci.controller;
+        const record = {
+          ...r.record,
+          nextStep: phase === "observation"
+            ? "review" as const
+            : "work" as const,
+          target: {
+            ...r.record.target,
+            ...(previous === undefined ? {} : { retiredOwnPr: previous }),
+          },
+        };
+        r.state.repair = seededSnapshot([record]);
+        const intentKeys: string[] = [];
+        const create = r.github.createPullRequest.bind(r.github);
+        r.github.createPullRequest = (request) => {
+          const intent = r.state.repair!.work[0]!.intent;
+          assert.equal(intent?.kind, "pull_request");
+          intentKeys.push(intent!.key);
+          return create(request);
+        };
+        for (let replacement = 0; replacement < 2; replacement++) {
+          const current: WorkRecordV1 = r.state.repair!.work[0]!;
+          const closedPr: number = current.target.pr!;
+          if (phase === "observation" || replacement > 0) {
+            const step = await observeReview(r.deps, r.context(), current);
+            assert.equal(step.kind, "progress", JSON.stringify(step));
+          } else if (phase === "request") {
+            const step = await requestReviewFor(
+              r.deps,
+              r.context(),
+              current,
+              closedPr,
+            );
+            assert.equal(step.kind, "progress", JSON.stringify(step));
+          }
+          // Resume only from the durable record, as a restarted worker does.
+          const retired = r.state.repair!.work[0]!;
+          const step = await executeWorkStep(r.deps, r.context(), retired);
+          assert.equal(step.kind, "progress", JSON.stringify(step));
+          const after: WorkRecordV1 = r.state.repair!.work[0]!;
+          assert.equal(after.target.retiredOwnPr, closedPr);
+          assert.equal(ci.effects.at(-1)!.publicationAfter, closedPr);
+          assert.equal(intentKeys.at(-1), pullRequestIntentKey(SHA2, closedPr));
+          assert.equal(ci.ledger().reservations.length, replacement + 2);
+          assert.deepEqual(ci.ledger().reservations[0], ci.settled);
+          assert.notEqual(after.target.pr, closedPr);
+          assert.equal(after.target.head, SHA2);
+          assert.deepEqual(
+            after.target.candidateState,
+            record.target.candidateState,
+          );
+          assert.equal(after.counters.attempts, record.counters.attempts);
+          assert.equal(after.counters.retries, record.counters.retries);
+          assert.equal(after.nextStep, "review");
+          const live = r.github.candidatePullRequests.get(after.target.pr!)!;
+          r.github.candidatePullRequests.set(live.number, {
+            ...live,
+            state: "closed",
+          });
+          r.clock.advance(60_000);
+        }
+        assert.equal(
+          r.github.calls.filter((call) => call === "createPr").length,
+          2,
+        );
+        assert.equal(r.model.requests.length, 0);
+        assert.ok(!r.github.calls.includes("push"));
+        assert.ok(!r.github.calls.includes("preserveCandidate"));
+      });
+    }
+  }
 });
