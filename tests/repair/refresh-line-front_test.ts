@@ -25,6 +25,7 @@ import assert from "node:assert/strict";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import { DELIVERY_QUEUE_STALL_LIMIT } from "../../src/repair/delivery-queue.ts";
 import { runRepairCycle } from "../../src/repair/loop.ts";
+import { STEP_INPUTS_MAX_SKIP_MS } from "../../src/repair/step-inputs.ts";
 import { STEP_LINE_KIND } from "../../src/repair/step-line.ts";
 import { T0 } from "../state/helpers.ts";
 import { queueRig } from "./delivery-queue-rig.ts";
@@ -121,23 +122,22 @@ function agedLine(
   });
 }
 
-/**
- * One serial pass over three published heads on a moved base, created a month
- * ago in issue order: the refreshed pull requests and every deferral. A
- * refreshed head's CI is still running, as live 386's was at 23:00:17Z.
- */
-async function pass(shape: (records: WorkRecordV1[]) => WorkRecordV1[]) {
-  const rig = await agedLine(3, shape);
-  for (const refreshed of [sha(0x5001), sha(0x5002), sha(0x5003)]) {
-    rig.github.checksByHead.set(refreshed, [{
+/** A refreshed head's CI is still running, as live 386's was at 23:00:17Z. */
+function ciRunning(rig: Rig): void {
+  for (const head of [sha(0x5001), sha(0x5002), sha(0x5003)]) {
+    rig.github.checksByHead.set(head, [{
       name: "validate",
       status: "in_progress",
       conclusion: null,
-      head: refreshed,
+      head,
       startedAt: T0,
       completedAt: null,
     }]);
   }
+}
+
+/** One serial repair cycle: its step lines. */
+async function cycle(rig: Rig): Promise<Record<string, unknown>[]> {
   const { lines } = await captured(() =>
     runRepairCycle(rig.deps, {
       deadline: rig.clock.now() + 90 * MINUTE,
@@ -145,12 +145,25 @@ async function pass(shape: (records: WorkRecordV1[]) => WorkRecordV1[]) {
       modelStartsEnabled: true,
     })
   );
-  const steps = lines.filter((entry) => entry.kind === STEP_LINE_KIND);
-  return {
-    refreshed: rig.github.preparedKeys.map((key) => Number(key.split(":")[0])),
-    deferred: steps.filter((entry) => entry.outcome === "deferred")
-      .map((entry) => [entry.recordId, entry.reason ?? null]),
-  };
+  return lines.filter((entry) => entry.kind === STEP_LINE_KIND);
+}
+
+/** Every deferral of `steps`, with its reason code. */
+function deferrals(steps: Record<string, unknown>[]): unknown[][] {
+  return steps.filter((entry) => entry.outcome === "deferred")
+    .map((entry) => [entry.recordId, entry.reason ?? null]);
+}
+
+/**
+ * One serial pass over three published heads on a moved base, created a month
+ * ago in issue order, while refreshed heads' CI runs: the refreshed pull
+ * requests and every deferral.
+ */
+async function pass(shape: (records: WorkRecordV1[]) => WorkRecordV1[]) {
+  const rig = await agedLine(3, shape);
+  ciRunning(rig);
+  const steps = await cycle(rig);
+  return { refreshed: refreshed(rig), deferred: deferrals(steps) };
 }
 
 Deno.test("refresh line: the oldest head goes first whatever wait an earlier step left", async () => {
@@ -170,6 +183,77 @@ Deno.test("refresh line: the oldest head goes first whatever wait an earlier ste
     ["issue-2", "ci_line"],
     ["issue-3", "ci_line"],
   ]);
+});
+
+Deno.test("refresh line: over two passes only the older head refreshes onto the tip, in either step order", async () => {
+  // Live 2026-11-13 20:39Z: 268 refreshed at 19:39Z and was green from
+  // 19:47Z, still carrying the `ci_pending` of its 19:40:12Z poll, when a
+  // direct push moved the tip at 20:13Z; 271's `unavailable` wait had
+  // expired 19 hours earlier. Four executions without progress demote 268 in
+  // selection, so 271 is stepped first; with none, 268 is.
+  for (const [stalled, first] of [[4, "issue-2"], [0, "issue-1"]] as const) {
+    const rig = await agedLine(2, ([older, newer]) => [
+      {
+        ...older!,
+        counters: stalled === 0
+          ? older!.counters
+          : { ...older!.counters, stalled },
+        wait: leftover("ci_pending", T0 - 59 * MINUTE),
+        updatedAt: T0 - 52 * MINUTE,
+      },
+      {
+        ...newer!,
+        wait: leftover("unavailable", T0 - 19 * HOUR),
+        updatedAt: T0 - 19 * HOUR,
+      },
+    ]);
+    ciRunning(rig);
+    const one = await cycle(rig);
+    assert.equal(one[0]?.recordId, first, "step order");
+    // Past the skip window of unchanged step inputs: both are stepped again.
+    rig.clock.advance(STEP_INPUTS_MAX_SKIP_MS + MINUTE);
+    const two = await cycle(rig);
+    assert.deepEqual(refreshed(rig), [101], `one head on the tip (${first})`);
+    for (const steps of [one, two]) {
+      assert.deepEqual(
+        deferrals(steps).filter(([id]) => id === "issue-2"),
+        [["issue-2", "ci_line"]],
+        `${first} stepped first`,
+      );
+    }
+  }
+});
+
+Deno.test("refresh line: old heads whose CI waits expired long ago on old bases lead the younger heads", async () => {
+  // Live 2026-11-14 06:11Z: 312 (PR 313, green, on 1780df08, `ci_pending`
+  // until 00:49Z, stalled once) and 397 (PR 399, green since 11-13 17:16Z,
+  // on 6a026528, `ci_pending` until 17:12Z, unwritten for 13 hours) were
+  // held on every run behind the younger 398 and 401.
+  const rig = await agedLine(4, ([r312, r397, r398, r401]) => [
+    {
+      ...r312!,
+      target: { ...r312!.target, base: sha(0x1780) },
+      counters: { ...r312!.counters, stalled: 1 },
+      wait: leftover("ci_pending", T0 - 5 * HOUR - 24 * MINUTE),
+      updatedAt: T0 - 5 * HOUR - 20 * MINUTE,
+    },
+    {
+      ...r397!,
+      target: { ...r397!.target, base: sha(0x6a02) },
+      wait: leftover("ci_pending", T0 - 13 * HOUR),
+      updatedAt: T0 - 13 * HOUR,
+    },
+    {
+      ...r398!,
+      wait: leftover("unavailable", T0 - 12 * HOUR),
+      updatedAt: T0 - 11 * HOUR,
+    },
+    { ...r401!, updatedAt: T0 - 3 * HOUR },
+  ]);
+  await passes(rig, 12, [101, 102, 103, 104]);
+  assert.deepEqual(rig.github.merged, [101, 102, 103, 104], "oldest first");
+  assert.deepEqual(refreshed(rig), [101, 102, 103, 104], "one refresh each");
+  onePerTip(rig);
 });
 
 Deno.test("refresh line: a stalled head on a moved base keeps its place instead of refreshing beside the front", async () => {
