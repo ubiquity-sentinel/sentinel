@@ -15,7 +15,14 @@ import type {
 import { observeReview } from "../../src/repair/loop-review-observation.ts";
 import { requestReviewFor } from "../../src/repair/loop-review-request.ts";
 import { executeWorkStep } from "../../src/repair/loop-work.ts";
-import { SHA1, SHA2, SHA3, T0, workRecord } from "../state/helpers.ts";
+import {
+  reservation,
+  SHA1,
+  SHA2,
+  SHA3,
+  T0,
+  workRecord,
+} from "../state/helpers.ts";
 import {
   FakeClock,
   FakeGithub,
@@ -104,7 +111,7 @@ function setup(
   };
 }
 
-Deno.test("closed publication requires a retained PR or a durable replacement intent", async (t) => {
+Deno.test("closed publication without retirement evidence requires a PR or replacement intent", async (t) => {
   for (const branchRefSha of [SHA2, null]) {
     await t.step(
       branchRefSha === null ? "deleted branch" : "live branch",
@@ -215,6 +222,139 @@ Deno.test("closed preserved-null publication recovers after review retirement", 
       assert.equal(r.model.requests.length, 0);
       assert.ok(!r.github.calls.includes("push"));
       assert.ok(!r.github.calls.includes("preserveCandidate"));
+    });
+  }
+});
+
+Deno.test("retired preserved-null publication recovers after review intent recovery", async (t) => {
+  for (const phase of ["review wait", "ambiguous review intent"] as const) {
+    await t.step(phase, async () => {
+      const r = setup();
+      const record = {
+        ...r.record,
+        counters: { ...r.record.counters, reviewRounds: 1 },
+        wait: phase === "review wait"
+          ? { reason: "review_pending" as const, since: T0, until: T0 + 60_000 }
+          : null,
+        intent: {
+          kind: "review_request" as const,
+          key: reviewOperationKey(1149, SHA2),
+          startedAt: T0,
+          branch: r.branch,
+          expectedHead: SHA2,
+          observedBase: SHA1,
+          pr: 1149,
+          requestId: "closed-review",
+          resultId: null,
+        },
+      };
+      r.state.repair = {
+        ...seededSnapshot([record]),
+        reservations: [reservation("closed-review", {
+          repository: record.repository,
+          taskId: record.id,
+          head: SHA2,
+          purpose: "review_request",
+        })],
+      };
+      const recovery = await executeWorkStep(r.deps, r.context(), record);
+      assert.equal(recovery.kind, "progress", JSON.stringify(recovery));
+      const retired = r.state.repair!.work[0]!;
+      assert.equal(retired.nextStep, "work");
+      assert.equal(retired.wait, null);
+      assert.equal(retired.intent, null);
+      assert.equal(retired.target.pr, null);
+      assert.equal(retired.target.retiredOwnPr, 1149);
+      assert.deepEqual(retired.counters, record.counters);
+      assert.equal(r.state.repair!.reservations[0]!.outcome, "ambiguous");
+      assert.ok(!r.github.calls.includes("createPr"));
+
+      // The next wave consumes the persisted retirement, not the old PR.
+      const report = await planMatrixWave(r.deps, {
+        waveId: "retired-review-publication",
+        run: { runId: 1, runAttempt: 1, launcherSha: SHA1 },
+        runtimeSha: SHA1,
+        generation: 1,
+        deadline: T0 + 60 * 60_000,
+        plannedAt: T0,
+      });
+      assert.equal(report.plan.cells.length, 0);
+      const after = r.state.repair!.work[0]!;
+      assert.notEqual(after.target.pr, null, JSON.stringify(after.blocker));
+      assert.notEqual(after.target.pr, 1149);
+      assert.equal(after.target.head, SHA2);
+      assert.equal(after.target.base, SHA1);
+      assert.deepEqual(
+        after.target.candidateState,
+        record.target.candidateState,
+      );
+      assert.equal(after.nextStep, "review");
+      assert.equal(after.counters.attempts, record.counters.attempts);
+      assert.equal(after.counters.retries, record.counters.retries);
+      assert.equal(r.github.reviewRequestIdentities[0]?.expectedHead, SHA2);
+      assert.equal(r.state.repair!.reservations.length, 2);
+      assert.equal(r.state.repair!.reservations[0]!.outcome, "ambiguous");
+      assert.equal(r.state.repair!.reservations[1]!.purpose, "review_request");
+      assert.equal(r.model.requests.length, 0);
+      assert.ok(!r.github.calls.includes("push"));
+      assert.ok(!r.github.calls.includes("preserveCandidate"));
+    });
+  }
+});
+
+Deno.test("retired preserved-null publication reconciles replacement creation after restart", async () => {
+  const r = setup({ createOutcome: "ambiguous" });
+  const record = {
+    ...r.record,
+    target: { ...r.record.target, pr: null, retiredOwnPr: 1149 },
+  };
+  r.state.repair = seededSnapshot([record]);
+  const step = await executeWorkStep(r.deps, r.context(), record);
+  assert.equal(step.kind, "progress", JSON.stringify(step));
+  const pending = r.state.repair!.work[0]!;
+  assert.equal(pending.target.pr, null);
+  assert.equal(pending.intent?.kind, "pull_request");
+  assert.equal(pending.intent?.key, `pull_request:${SHA2}:after-pr:1149`);
+  assert.equal(r.state.repair!.reservations.length, 0);
+  const published = await r.github.readPullRequest(7);
+  assert.ok(published.ok && published.value?.state === "open");
+  r.github.findPullRequestByHeadRef = () => Promise.resolve(published);
+  await executeWorkStep(r.deps, r.context(), pending);
+  await executeWorkStep(r.deps, r.context(), r.state.repair!.work[0]!);
+  const after = r.state.repair!.work[0]!;
+  assert.equal(after.target.pr, 7);
+  assert.equal(after.target.head, SHA2);
+  assert.equal(after.nextStep, "review");
+  assert.equal(after.counters.attempts, record.counters.attempts);
+  assert.equal(after.counters.retries, record.counters.retries);
+  assert.equal(r.github.calls.filter((call) => call === "createPr").length, 1);
+  assert.equal(r.github.reviewRequestIdentities.length, 1);
+  assert.equal(r.model.requests.length, 0);
+  assert.ok(!r.github.calls.includes("push"));
+});
+
+Deno.test("retired preserved-null publication requires its exact live published branch", async (t) => {
+  for (
+    const [name, publishedHead, branchRefSha] of [
+      ["moved branch", SHA2, SHA3],
+      ["deleted branch", SHA2, null],
+      ["unbound published head", SHA3, SHA2],
+    ] as const
+  ) {
+    await t.step(name, async () => {
+      const r = setup({ branchRefSha }, publishedHead);
+      const record = {
+        ...r.record,
+        target: { ...r.record.target, pr: null, retiredOwnPr: 1149 },
+      };
+      r.state.repair = seededSnapshot([record]);
+      const step = await executeWorkStep(r.deps, r.context(), record);
+      assert.equal(step.kind, "deferred", JSON.stringify(step));
+      assert.deepEqual(r.state.repair!.work[0], record);
+      assert.deepEqual(r.state.repair!.reservations, []);
+      assert.ok(!r.github.calls.includes("createPr"));
+      assert.ok(!r.github.calls.includes("push"));
+      assert.equal(r.model.requests.length, 0);
     });
   }
 });
