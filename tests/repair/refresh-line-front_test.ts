@@ -42,14 +42,15 @@ function refreshed(rig: Rig): number[] {
 }
 
 /**
- * Runtime passes 16 minutes apart until every pull request of `prs` merged
- * or `limit` passes ran; after each one at most one record of the repository
- * holds a refresh or a review in flight.
+ * `limit` runtime passes 16 minutes apart, or fewer once every pull request
+ * of `prs` merged; after each one at most one record of the repository holds
+ * a refresh or a review in flight.
  */
-async function passes(rig: Rig, prs: readonly number[], limit: number) {
+async function passes(rig: Rig, limit: number, prs: readonly number[] = []) {
   for (
     let run = 0;
-    run < limit && !prs.every((pr) => rig.github.merged.includes(pr));
+    run < limit &&
+    !(prs.length > 0 && prs.every((pr) => rig.github.merged.includes(pr)));
     run++
   ) {
     await captured(() =>
@@ -221,9 +222,41 @@ Deno.test("refresh line: a head stalled by its red base takes its turn by age on
       updatedAt: T0 - HOUR,
     },
   ]);
-  await passes(rig, [101, 102, 103], 12);
+  await passes(rig, 12, [101, 102, 103]);
   assert.deepEqual(rig.github.merged, [101, 102, 103], "oldest first");
   assert.deepEqual(refreshed(rig), [101, 102, 103], "one refresh each");
   onePerTip(rig);
   await untouched(rig, 104);
+});
+
+Deno.test("refresh line: an older head whose wait never ends yields its place once nothing wrote it for the idle bound", async () => {
+  // issue-1, the oldest, took a native queue-custody hold (`backoff` with no
+  // end) an hour ago: selection never steps it, so it never reaches the line.
+  const rig = await agedLine(3, ([held, second, third]) => [
+    {
+      ...held!,
+      wait: { reason: "backoff", since: T0 - HOUR, until: null },
+      updatedAt: T0 - HOUR,
+    },
+    second!,
+    third!,
+  ]);
+  // Inside the idle bound it keeps its place, so a hold released soon
+  // refreshes first: four passes, 48 minutes, nothing refreshes.
+  await passes(rig, 4);
+  assert.deepEqual(refreshed(rig), []);
+  // Past it the next oldest is the front and the line moves, one at a time;
+  // the held record is neither parked nor charged, and nothing touched it.
+  await passes(rig, 12, [102, 103]);
+  assert.deepEqual(rig.github.merged, [102, 103]);
+  assert.deepEqual(refreshed(rig), [102, 103], "one refresh each");
+  onePerTip(rig);
+  await untouched(rig, 101);
+  assert.equal(
+    (await rig.snapshot()).reservations.some((row) =>
+      row.taskId === rig.records[0].id
+    ),
+    false,
+    "nothing charged to the held record",
+  );
 });

@@ -20,7 +20,10 @@ import {
   currentCiValidation,
 } from "../../src/repair/ci-readiness.ts";
 import { PRE_REVIEW_CI_BOUND_MS } from "../../src/repair/ci-first-policy.ts";
-import { DELIVERY_QUEUE_STALL_LIMIT } from "../../src/repair/delivery-queue.ts";
+import {
+  DELIVERY_QUEUE_IDLE_MS,
+  DELIVERY_QUEUE_STALL_LIMIT,
+} from "../../src/repair/delivery-queue.ts";
 import {
   releaseRequest,
   REPO,
@@ -303,6 +306,30 @@ Deno.test("a stalled head on a moved base keeps its place in line; stuck on the 
     null,
     "a head stuck on the tip still holds nobody",
   );
+});
+
+Deno.test("a moved-base head whose wait never ends yields its place once nothing wrote it for the idle bound", () => {
+  // A native queue-custody hold (`backoff` with no end) skips the stall
+  // counter and selection never steps the record, so it never reaches the
+  // line until something else writes it.
+  const held = published("issue-1");
+  held.wait = { reason: "backoff", since: T0, until: null };
+  held.updatedAt = T0;
+  const next = published("issue-2", SHA1, 8);
+  const ahead = (now: number) =>
+    ciRefreshAhead(seededSnapshot([next, held]), next, SHA2, now)?.id ?? null;
+  assert.equal(
+    ahead(T0 + DELIVERY_QUEUE_IDLE_MS - 1),
+    held.id,
+    "inside the idle bound it keeps its place",
+  );
+  assert.equal(ahead(T0 + DELIVERY_QUEUE_IDLE_MS), null, "then holds nobody");
+  // A head that can still be stepped keeps its place however long nothing
+  // wrote it (live 397: green, unwritten for 13 hours, still the front): a
+  // deferral writes nothing, so idleness cannot tell it from a head idle only
+  // because the line held it.
+  held.wait = { reason: "ci_pending", since: T0, until: T0 + 120_000 };
+  assert.equal(ahead(T0 + 30 * 24 * 60 * 60_000), held.id);
 });
 
 Deno.test("readiness: an exact booked delivery cannot hold a pending candidate's refresh", () => {
