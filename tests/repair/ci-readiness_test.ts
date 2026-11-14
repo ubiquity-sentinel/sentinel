@@ -247,10 +247,19 @@ Deno.test("readiness releases expired, superseded and old-base waits", () => {
   );
   other.target.base = SHA1;
   assert.equal(currentCiValidation(other, SHA2), false);
+  // A head on a moved base asks the line before its CI gate and its deferral
+  // writes nothing, so its `ci_pending` is an earlier poll's (live 268 and
+  // 397, green for hours): it orders nothing, and the line order decides.
   assert.equal(
-    ciRefreshAhead(seededSnapshot([record, other]), record, SHA2, T0 + 1000),
+    ciRefreshAhead(seededSnapshot([record, other]), record, SHA2, T0 + 1000)
+      ?.id,
+    other.id,
+    "an earlier head on a moved base goes first whatever wait it carries",
+  );
+  assert.equal(
+    ciRefreshAhead(seededSnapshot([record, other]), other, SHA2, T0 + 1000),
     null,
-    "pending historical head holds no ready refresh",
+    "a later head on a moved base holds no earlier one",
   );
   other.target.base = SHA2;
   other.target.candidateState = { publishedHead: SHA1, preserved: null };
