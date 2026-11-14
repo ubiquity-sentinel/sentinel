@@ -59,8 +59,11 @@ export function startRepairHandbackTakeover(input: {
   exclude: Set<string> | undefined;
   configs: readonly RepositoryConfigV1[];
   request: Omit<RepairHandbackRequestV1, "planDigest" | "signal">;
-  /** Wake records of one target (`createActionsTargetFlow().wake`). */
-  wake: (config: RepositoryConfigV1, ids: readonly string[]) => void;
+  /**
+   * Wake records of one target (`createActionsTargetFlow().wake`); false when
+   * that target's cycle already ended, so nothing was woken.
+   */
+  wake: (config: RepositoryConfigV1, ids: readonly string[]) => boolean;
   log?: (line: string) => void;
 }): RepairHandbackTakeoverV1 | null {
   const read = input.transport.repairHandbacks;
@@ -96,8 +99,9 @@ export function startRepairHandbackTakeover(input: {
       // Only a record the plan still delegates, each once.
       const ids = handback.records.filter((id) => exclude.delete(id));
       if (ids.length === 0) continue;
-      woken += ids.length;
-      input.wake(config, ids);
+      // A target whose cycle already ended steps nothing more in this run
+      // (finalize hands its records back as before): only woken ones count.
+      if (input.wake(config, ids)) woken += ids.length;
     }
     // One advisory line; it carries no `status` property, so the launcher's
     // child-status scan never reads it as the child's result.

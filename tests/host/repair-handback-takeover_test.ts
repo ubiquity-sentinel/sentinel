@@ -125,11 +125,12 @@ async function aggregate(
   rig: Rig,
   work: string,
   reader: MatrixArtifactTransportV1,
+  overrides: Partial<ActionsTargetCyclesInputV1> = {},
 ) {
   const { root, digest } = await published(rig, work);
   const { lines } = await captured(() =>
     runActionsMatrixAggregateCycles(
-      aggregateInput(rig, root),
+      { ...aggregateInput(rig, root), ...overrides },
       reader,
       { planDigest: "d".repeat(64), repairPlanDigest: digest },
       { maxWaitMs: 20 * MINUTE },
@@ -174,6 +175,26 @@ Deno.test("hand-back takeover: the serial pass steps the record a completed cell
     assert.equal(asked[0].planDigest, digest);
     assert.deepEqual(asked[0].run, RUN);
     assert.deepEqual(asked[0].runtime, { revision: SHA2, generation: 3 });
+  });
+});
+
+Deno.test("hand-back takeover: a hand-back of a target whose cycle already ended is not counted as woken", async () => {
+  const rig = await line();
+  await inTemp(async (work) => {
+    // The target's preparation failed: its cycle ended before the read.
+    const { stepped, handback } = await aggregate(
+      rig,
+      work,
+      transport([{ repository: FRONT, records: ["issue-1"] }]),
+      { prepareTarget: () => Promise.reject(new Error("checkout failed")) },
+    );
+    assert.deepEqual(stepped, []);
+    assert.equal(rig.github.refreshes, 0);
+    assert.deepEqual(handback, [{
+      kind: REPAIR_HANDBACK_KIND,
+      outcome: "read",
+      records: 0,
+    }]);
   });
 });
 
