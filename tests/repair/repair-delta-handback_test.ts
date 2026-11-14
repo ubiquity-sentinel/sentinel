@@ -234,6 +234,51 @@ Deno.test("hand-back: a delta bound to the whole delegated scope still lands whi
   ]);
 });
 
+Deno.test("hand-back: a whole-scope delta's row of a handed-back record may only drop its stamp", async () => {
+  // Each passes the shared transition rule; none is the stamp drop that an
+  // earlier cell emitted for a hand-back.
+  const shapes: [string, (planned: WorkRecordV1) => WorkRecordV1][] = [
+    ["moved", (planned) => ({ ...planned, updatedAt: planned.updatedAt + 1 })],
+    ["dropped and moved", (planned) => {
+      const { stepInputs: _stamp, ...unstamped } = planned;
+      return { ...unstamped, updatedAt: planned.updatedAt + 1 };
+    }],
+    ["restamped", (planned) => ({
+      ...planned,
+      stepInputs: { ...OLD_STAMP, deadline: OLD_STAMP.deadline + MINUTE },
+    })],
+  ];
+  for (const [name, shape] of shapes) {
+    const rig = await line();
+    const { fanout, cell, envelope } = await fanOut(rig);
+    const planned = await row(rig, "issue-1");
+    const legacy = await sealRepairDeltaV1({
+      ...envelope.delta,
+      baseDigest: await repairProjectionDigestV1(
+        await rig.snapshot(),
+        cell.repository,
+        new Set(cell.records),
+      ),
+      transitions: [{
+        before: await canonicalDigestV1(planned),
+        after: shape(planned),
+      }, ...kept(envelope)],
+    });
+    const before = structuredClone(await rig.snapshot());
+    const { value: result } = await apply(rig, fanout, cell.cellId, legacy);
+    assert.deepEqual(
+      result.rejected.map((entry) => entry.reason),
+      ["transition_refused"],
+      name,
+    );
+    for (const record of before.work) {
+      const { stepInputs: _stamp, ...rest } = await row(rig, record.id);
+      const { stepInputs: _planned, ...expected } = record;
+      assert.deepEqual(rest, expected, name + ": only stamp hand-backs land");
+    }
+  }
+});
+
 Deno.test("hand-back: a delta that keeps and hands back one record is refused", async () => {
   const rig = await line();
   const { fanout, cell, envelope } = await fanOut(rig);

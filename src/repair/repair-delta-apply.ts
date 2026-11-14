@@ -9,17 +9,20 @@
  * stepped them) must still be exactly the one it was planned on, each
  * replaced row must still be its recorded `before`, and every transition must
  * satisfy the shared rule. A delta sealed before hand-backs left its binding
- * binds the whole delegated scope and is validated exactly as before. All
- * accepted deltas land together in ONE expected-head, non-force write through
- * the existing repair-state writer (`persistTransition`), so the hot/cold
- * layout, intent persistence and the maintenance index stay its own. A
- * rejected delta contributes nothing (no partial write); its repository is
- * recomputed by the next pass. A lost compare-and-swap re-reads and
- * re-validates every delta before trying again, bounded.
+ * binds the whole delegated scope and is validated as before, except that its
+ * row of a handed-back record may only drop that record's stamp (the one row
+ * such a cell emitted for a hand-back). All accepted deltas land together in
+ * ONE expected-head, non-force write through the existing repair-state writer
+ * (`persistTransition`), so the hot/cold layout, intent persistence and the
+ * maintenance index stay its own. A rejected delta contributes nothing (no
+ * partial write); its repository is recomputed by the next pass. A lost
+ * compare-and-swap re-reads and re-validates every delta before trying again,
+ * bounded.
  *
  * Nothing here reserves, charges, settles, refunds or creates a record.
  */
 import type { GitSha } from "../contracts/brands.ts";
+import { canonicalStringify } from "../contracts/canonical.ts";
 import {
   canonicalDigestV1,
   openRepairDeltaV1,
@@ -28,6 +31,7 @@ import {
 } from "../contracts/repair-delta.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
+import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { persistTransition } from "./loop-state.ts";
 import type {
   LoopContextV1,
@@ -130,22 +134,31 @@ interface OpenedDeltaV1 {
  * The records a delta's base digest binds: the delegated scope less the
  * records the cell handed back, which the trusted path owns from then on (the
  * serial pass may already have stepped them), or, for a delta sealed before
- * hand-backs left its binding, the whole delegated scope. Null when neither
- * projection is the one the cell read: something it read has moved.
+ * hand-backs left its binding (`whole`), the whole delegated scope. Null when
+ * neither projection is the one the cell read: something it read has moved.
  */
 async function boundScope(
   { delta, scope }: OpenedDeltaV1,
   snapshot: RepairStateSnapshotV1,
-): Promise<ReadonlySet<string> | null> {
+): Promise<{ records: ReadonlySet<string>; whole: boolean } | null> {
   const back = new Set(delta.deferredToTrusted);
   const kept = new Set([...scope].filter((id) => !back.has(id)));
   const digest = (bound: ReadonlySet<string>) =>
     repairProjectionDigestV1(snapshot, delta.repository, bound);
-  if (await digest(kept) === delta.baseDigest) return kept;
+  if (await digest(kept) === delta.baseDigest) {
+    return { records: kept, whole: false };
+  }
   if (kept.size < scope.size && await digest(scope) === delta.baseDigest) {
-    return scope;
+    return { records: scope, whole: true };
   }
   return null;
+}
+
+/** `after` is exactly the stamped `before` without its step stamp. */
+function dropsOnlyStamp(before: WorkRecordV1, after: WorkRecordV1): boolean {
+  if (before.stepInputs === undefined) return false;
+  const { stepInputs: _stamp, ...unstamped } = before;
+  return canonicalStringify(unstamped) === canonicalStringify(after);
 }
 
 async function validate(
@@ -159,15 +172,22 @@ async function validate(
   const bound = await boundScope(entry, snapshot);
   if (bound === null) return "base_moved";
   // A record is either kept or handed back, never both.
-  if (delta.transitions.some((row) => !bound.has(row.after.id))) {
+  if (delta.transitions.some((row) => !bound.records.has(row.after.id))) {
     return "transition_refused";
   }
+  const back = new Set(delta.deferredToTrusted);
   for (const transition of delta.transitions) {
     const current = snapshot.work.find((row) => row.id === transition.after.id);
     if (current === undefined) return "base_moved";
     if (await canonicalDigestV1(current) !== transition.before) {
       return "base_moved";
     }
+    // A whole-scope delta's row of a handed-back record is only the stamp
+    // drop an earlier cell emitted for it, never any other change.
+    if (
+      bound.whole && back.has(current.id) &&
+      !dropsOnlyStamp(current, transition.after)
+    ) return "transition_refused";
     if (
       repairTransitionRefusalV1(current, transition.after, delta.repository) !==
         null
