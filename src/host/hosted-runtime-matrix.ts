@@ -72,10 +72,12 @@ export function nativeMatrixStdin(
   return JSON.stringify(obj);
 }
 
-export async function readNativeMatrixStdin(): Promise<string | undefined> {
+export async function readNativeMatrixStdin(
+  source: AsyncIterable<Uint8Array> = Deno.stdin.readable,
+): Promise<string | undefined> {
   const parts: Uint8Array[] = [];
   let total = 0;
-  for await (const part of Deno.stdin.readable) {
+  for await (const part of source) {
     total += part.byteLength;
     if (total > 512) failIdentity();
     parts.push(part);

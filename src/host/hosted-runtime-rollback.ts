@@ -8,6 +8,7 @@ import {
   REMOTE_URL,
 } from "./hosted-runtime-identity.ts";
 import { readNativeMatrixStdin, runtimeJob } from "./hosted-runtime-matrix.ts";
+import { REPAIR_CELL_CHILD_ENTRYPOINT } from "./hosted-runtime-repair-cell.ts";
 import type { ActionsTargetCyclesInputV1 } from "./actions.ts";
 import type { RepairStateWriter, StateReadView } from "../contracts/ports.ts";
 import type { GitRunnerV1 } from "../state/mod.ts";
@@ -102,14 +103,22 @@ export async function runHostedRollbackChild(input: {
       }),
     });
   } else {
-    const stdin = await readNativeMatrixStdin();
-    const runtime = await import(
-      new URL(`file://${root}/src/host/matrix-actions.ts`).href
-    );
-    await runtime.runActionsMatrixHost({
-      state,
-      ...(stdin === undefined ? {} : { carrier: JSON.parse(stdin) }),
-    });
+    const stdin = await readNativeMatrixStdin(input.stdin);
+    const carrier = stdin === undefined ? {} : { carrier: JSON.parse(stdin) };
+    if (job === "repair_cell") {
+      // #328: the runtime's own repository cell executable, the one the
+      // launcher's native path runs (its matrix host refuses this job). Its
+      // marker binds the runtime revision; its cell state refuses every write.
+      const cell = await import(
+        new URL(`file://${root}/${REPAIR_CELL_CHILD_ENTRYPOINT}`).href
+      );
+      await cell.runRepairCellHost({ state, ...carrier });
+    } else {
+      const runtime = await import(
+        new URL(`file://${root}/src/host/matrix-actions.ts`).href
+      );
+      await runtime.runActionsMatrixHost({ state, ...carrier });
+    }
   }
 }
 
