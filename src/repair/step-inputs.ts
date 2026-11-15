@@ -94,9 +94,11 @@ export function stepFingerprint(
         review.pullRequest.number === pr &&
         sameRepositoryIdentity(review.repository, record.repository)
       ),
+    // Admission appends reservations; Git reloads them in ID order. Only
+    // their content, not that storage ordering, is an input to the step.
     reservations: snapshot.reservations.filter((row) =>
       row.taskId === record.id
-    ),
+    ).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
     releaseRequests: snapshot.releaseRequests.filter((request) =>
       releaseRequestMatchesDelivery(request, record)
     ),
