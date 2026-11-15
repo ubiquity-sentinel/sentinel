@@ -31,6 +31,14 @@ import {
   type RepairFanoutDelegationLineV1,
   type RepairHandbackLineV1,
 } from "./repair-fanout-lines.ts";
+import {
+  HOST_PHASE_KIND,
+  type HostPhaseLineV1,
+  parseHostPhaseLine,
+  parseTargetTimingLine,
+  TARGET_TIMING_KIND,
+  type TargetTimingLineV1,
+} from "./timing-lines.ts";
 
 export const STEP_LINE_KIND = "sentinel_step";
 
@@ -218,7 +226,9 @@ export type AdvisoryLogLineV1 =
   | MatrixSkipLineV1
   | PassSummaryLineV1
   | RepairHandbackLineV1
-  | RepairFanoutDelegationLineV1;
+  | RepairFanoutDelegationLineV1
+  | HostPhaseLineV1
+  | TargetTimingLineV1;
 
 const MATRIX_SKIP_KEYS = ["detail", "kind", "records"].join();
 
@@ -250,13 +260,16 @@ const ADVISORY_KINDS = [
   PASS_SUMMARY_LINE_KIND,
   REPAIR_HANDBACK_KIND,
   REPAIR_FANOUT_DELEGATION_KIND,
+  HOST_PHASE_KIND,
+  TARGET_TIMING_KIND,
 ];
 
 /**
  * Every valid advisory line of one child's stdout, in order, bounded: the
- * per-step lines, the one matrix-skip summary, the one pass summary and the
- * serial job's fan-out hand-back and delegation lines the launcher re-emits,
- * so they survive the hosted child's stdout filter.
+ * per-step lines, the one matrix-skip summary, the one pass summary, the
+ * serial job's fan-out hand-back and delegation lines and the host phase and
+ * target timing lines the launcher re-emits, so they survive the hosted
+ * child's stdout filter.
  */
 export function scanStepLines(stdout: string): AdvisoryLogLineV1[] {
   const lines: AdvisoryLogLineV1[] = [];
@@ -273,7 +286,8 @@ export function scanStepLines(stdout: string): AdvisoryLogLineV1[] {
     }
     const line = parseStepLine(value) ?? parseMatrixSkipLine(value) ??
       parsePassSummaryLine(value) ?? parseRepairHandbackLine(value) ??
-      parseRepairFanoutDelegationLine(value);
+      parseRepairFanoutDelegationLine(value) ?? parseHostPhaseLine(value) ??
+      parseTargetTimingLine(value);
     if (line !== null) lines.push(line);
   }
   return lines;

@@ -9,6 +9,10 @@ import type {
 import { OPERATION_MARGIN_MS } from "../repair/loop-bounds.ts";
 import { reviewOperationKey } from "../repair/keys.ts";
 import { standingReviewAttempt } from "../repair/loop-review-records.ts";
+import {
+  logTargetTiming,
+  type TargetTimingCountsV1,
+} from "../repair/timing-lines.ts";
 import type {
   ActionsTargetCyclesInputV1,
   ActionsTargetCyclesResultV1,
@@ -42,9 +46,33 @@ export function createActionsTargetFlow(
     wake: new Set<string>(),
     completions: new Set<string>(),
     unsubscribe: null as (() => void) | null,
+    // Advisory monotonic wall times (`sentinel_target_timing`); never read
+    // back and never the injected run clock.
+    timing: null as TargetTimingCountsV1 | null,
   }));
   const slug = (config: RepositoryConfigV1) =>
     config.repository.owner + "/" + config.repository.name;
+  /** Await `work`, adding its monotonic wall time to one timing field. */
+  const timed = async <T>(
+    slot: (typeof slots)[number],
+    field: Exclude<keyof TargetTimingCountsV1, "advances">,
+    work: () => Promise<T>,
+  ): Promise<T> => {
+    const started = performance.now();
+    try {
+      return await work();
+    } finally {
+      slot.timing ??= {
+        prepareMs: 0,
+        premergeMs: 0,
+        progressMs: 0,
+        cycleMs: 0,
+        advances: 0,
+        finishMs: 0,
+      };
+      slot.timing[field] += performance.now() - started;
+    }
+  };
   const snapshot = async () => {
     try {
       const read = await input.state.readRepair();
@@ -99,7 +127,9 @@ export function createActionsTargetFlow(
         }
         if (slot.status === "new") {
           try {
-            await input.prepareTarget?.(config);
+            await timed(slot, "prepareMs", async () => {
+              await input.prepareTarget?.(config);
+            });
           } catch (error) {
             failed.push(
               slug(config) + ": " +
@@ -117,7 +147,9 @@ export function createActionsTargetFlow(
           }
           addressed.push(slug(config));
           try {
-            await input.premergeCi?.(config);
+            await timed(slot, "premergeMs", async () => {
+              await input.premergeCi?.(config);
+            });
           } catch (error) {
             console.log(
               JSON.stringify({
@@ -134,7 +166,8 @@ export function createActionsTargetFlow(
             input;
           slot.before = input.progressComments === undefined
             ? null
-            : input.progressBaseline ?? await snapshot();
+            : input.progressBaseline ??
+              await timed(slot, "progressMs", snapshot);
           const github = input.composeGithub(config);
           const deps = {
             clock: input.clock,
@@ -168,7 +201,13 @@ export function createActionsTargetFlow(
           };
           if (input.runCycle !== undefined) {
             // The existing deterministic test seam; never used by production.
-            outcome = await input.runCycle(deps, options);
+            const runCycle = input.runCycle;
+            outcome = await timed(
+              slot,
+              "cycleMs",
+              () => runCycle(deps, options),
+            );
+            slot.timing!.advances++;
             slot.status = "done";
             return true;
           }
@@ -206,7 +245,14 @@ export function createActionsTargetFlow(
           }
           slot.completions.clear();
         }
-        const result = await slot.invocation!.advance([...slot.wake]);
+        const invocation = slot.invocation!;
+        const woken = [...slot.wake];
+        const result = await timed(
+          slot,
+          "cycleMs",
+          () => invocation.advance(woken),
+        );
+        slot.timing!.advances++;
         slot.wake.clear();
         if (result.kind !== "progress") {
           outcome = result.outcome;
@@ -261,19 +307,30 @@ export function createActionsTargetFlow(
         pending.delete(index);
         const slot = slots[index];
         try {
-          if (slot.invocation !== null) {
-            outcomes.set(index, await slot.invocation.finish());
+          const invocation = slot.invocation;
+          if (invocation !== null) {
+            outcomes.set(
+              index,
+              await timed(slot, "finishMs", () => invocation.finish()),
+            );
           }
         } catch (error) {
           faults.set(index, error);
         }
-        if (input.progressComments !== undefined && slot.before !== null) {
+        const progressComments = input.progressComments;
+        const before = slot.before;
+        if (progressComments !== undefined && before !== null) {
           try {
-            const after = await snapshot();
-            if (after !== null) {
-              await input.progressComments(slot.config, slot.before, after);
-            }
+            await timed(slot, "progressMs", async () => {
+              const after = await snapshot();
+              if (after !== null) {
+                await progressComments(slot.config, before, after);
+              }
+            });
           } catch { /* advisory progress comments never fail lifecycle work */ }
+        }
+        if (slot.timing !== null) {
+          logTargetTiming(slug(slot.config), slot.timing);
         }
       }
       // Keep the public disposition and first-fault precedence in setting

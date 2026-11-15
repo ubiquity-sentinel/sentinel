@@ -39,6 +39,7 @@ import {
   type MatrixNativeCarrierV1,
   targetDeps,
 } from "./matrix-actions-shared.ts";
+import { logHostPhase } from "../repair/timing-lines.ts";
 
 async function transportFor(
   input: ActionsTargetCyclesInputV1,
@@ -212,6 +213,12 @@ export async function runActionsMatrixAggregateCycles(
   // pass (issue #297).
   const bootstrap = input.bootstrap === true ||
     input.host?.execution.purpose === "bootstrap";
+  // Advisory monotonic phase times (`sentinel_host_phase`): the child's own
+  // setup is its process uptime here; scans and advances are summed below.
+  logHostPhase("setup", performance.now());
+  let scanMs = 0;
+  let cyclesMs = 0;
+  let handbackMs = 0;
   const host = hostOf(input);
   let read = await input.state.readRepair();
   if (!read.ok || read.value.status !== "found") {
@@ -358,7 +365,12 @@ export async function runActionsMatrixAggregateCycles(
   let advances = 0;
   const advance = async () => {
     if (carrier === undefined && advances >= advanceLimit) return false;
-    if (!await flow.advance()) return false;
+    const started = performance.now();
+    try {
+      if (!await flow.advance()) return false;
+    } finally {
+      cyclesMs += performance.now() - started;
+    }
     advances++;
     return true;
   };
@@ -378,6 +390,7 @@ export async function runActionsMatrixAggregateCycles(
   // no-op.
   try {
     for (;;) {
+      const scanStarted = performance.now();
       const scan = await input.state.readRepair();
       if (!scan.ok || scan.value.status !== "found") {
         throw new Error("matrix aggregate cannot read authoritative state");
@@ -389,7 +402,10 @@ export async function runActionsMatrixAggregateCycles(
       const initialScan = firstScan;
       const requests = initialScan ? charged : own;
       firstScan = false;
-      if (requests.length === 0) break;
+      if (requests.length === 0) {
+        scanMs += performance.now() - scanStarted;
+        break;
+      }
       const unresolved = new Set(
         requests.map((request) => request.reservationId),
       );
@@ -426,6 +442,7 @@ export async function runActionsMatrixAggregateCycles(
           scan: initialScan ? "initial" : "own",
           requests: requests.length,
         }));
+        scanMs += performance.now() - scanStarted;
         break;
       }
       let progressed = false;
@@ -489,6 +506,7 @@ export async function runActionsMatrixAggregateCycles(
           }
         }
       }
+      scanMs += performance.now() - scanStarted;
       // Hydrate every available bundle in this authenticated scan before any
       // target retries preservation; a later target may belong to another wave.
       // Ready work still advances before waiting for any missing producer.
@@ -542,7 +560,10 @@ export async function runActionsMatrixAggregateCycles(
       /* include the mandatory empty initial scan */
     }
     // The cells' hand-backs, once they completed (bounded): stepped now.
-    if (takeover !== null && await takeover.settle()) {
+    const settleStarted = performance.now();
+    const settled = takeover !== null && await takeover.settle();
+    handbackMs = performance.now() - settleStarted;
+    if (settled) {
       while (await advance()) { /* the handed-back records */ }
     }
   } catch (error) {
@@ -555,5 +576,11 @@ export async function runActionsMatrixAggregateCycles(
     throw error;
   }
   takeover?.close();
-  return await flow.finish();
+  logHostPhase("scan", scanMs);
+  logHostPhase("cycles", cyclesMs);
+  logHostPhase("handback", handbackMs);
+  const finishStarted = performance.now();
+  const finished = await flow.finish();
+  logHostPhase("finish", performance.now() - finishStarted);
+  return finished;
 }
