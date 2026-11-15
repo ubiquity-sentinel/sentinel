@@ -45,6 +45,7 @@ const authorityPaths = [
   // Host composition that selects and binds the credentials, and the hosted
   // admission predicate that admits model work.
   "src/host/actions-repair-host.ts",
+  "src/host/actions-target-preparation.ts",
   "src/host/actions-supervisor-host.ts",
   "src/host/hosted-app-principal.ts",
   "src/contracts/hosted-supervisor-verification.ts",

@@ -56,6 +56,9 @@ export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
     "src/host/hosted-app-grant.ts",
     "src/host/actions-target-cycles.ts",
     "src/host/actions-repair-host.ts",
+    // Its per-target mirror preparation: which remote each foreign mirror is
+    // seeded and fetched from with the selected write credential.
+    "src/host/actions-target-preparation.ts",
     "src/host/actions-supervisor-host.ts",
     "src/host/hosted-app-principal.ts",
     "src/contracts/hosted-supervisor-verification.ts",
