@@ -17,6 +17,7 @@ import { parseThroughputReportWindowV1 } from "../../src/state/throughput-report
 
 import {
   type CycleFacts,
+  cycleRecord,
   cycles,
   H,
   M,
@@ -309,17 +310,50 @@ Deno.test("watchdog: met since an instant counts only cycles at or after it", ()
   // The window ending at after[13] still holds 16 fast cycles; the one
   // ending at after[14] holds 15 and is missed.
   const since = (index: number) => after[index].finishedAtMs;
-  assert.equal(thresholdMetSinceV1(threshold, input, since(13)), true);
-  assert.equal(thresholdMetSinceV1(threshold, input, since(14)), false);
+  assert.equal(thresholdMetSinceV1(threshold, input, since(13), 1), true);
+  assert.equal(thresholdMetSinceV1(threshold, input, since(14), 1), false);
+  // The windows ending at after[4] to after[13] are ten met in a row.
+  assert.equal(thresholdMetSinceV1(threshold, input, since(4), 10), true);
+  assert.equal(thresholdMetSinceV1(threshold, input, since(5), 10), false);
+  assert.equal(thresholdMetSinceV1(threshold, input, since(0), 14), true);
+  assert.equal(thresholdMetSinceV1(threshold, input, since(0), 15), false);
   // A met window that aged out of the hot records reads as never met.
   const aged = { ...input, records: after };
-  assert.equal(thresholdMetSinceV1(threshold, aged, 0), false);
+  assert.equal(thresholdMetSinceV1(threshold, aged, 0, 1), false);
   // Records after the evaluation instant are not seen.
   const early = { ...input, nowMs: NOW - H };
-  assert.equal(thresholdMetSinceV1(threshold, early, 0), false);
+  assert.equal(thresholdMetSinceV1(threshold, early, 0, 1), false);
 });
 
-Deno.test("watchdog: met since an instant equals each cycle's own evaluation", () => {
+Deno.test("watchdog: met since an instant needs full windows of cycles the threshold reads", () => {
+  const threshold = THROUGHPUT_WATCHDOG_THRESHOLDS[0];
+  assert.equal(threshold.id, "maintenance_repair_median");
+  // Over a short history the windows over fast[9] to fast[28] (10 to 29
+  // cycles) are met, yet only the full one ending at fast[29] counts.
+  const fast = cycles(30, () => ({ maintenanceMin: 4, repairMin: 2 }), NOW, M);
+  const young = { records: fast, daily: [], nowMs: NOW };
+  assert.equal(
+    verdict(fast.slice(0, 29), threshold.id, [], NOW).verdict,
+    "met",
+  );
+  assert.equal(thresholdMetSinceV1(threshold, young, 0, 1), true);
+  assert.equal(thresholdMetSinceV1(threshold, young, 0, 2), false);
+  // A cycle whose repair job did not run enters no window: its own
+  // evaluation re-judges the window before it and is not a second one.
+  const skipped = cycleRecord({
+    runId: 3000,
+    finishedAtMs: NOW + M,
+    maintenanceMin: 4,
+  });
+  const records = [...fast, skipped];
+  assert.equal(verdict(records, threshold.id, [], NOW + M).verdict, "met");
+  const input = { records, daily: [], nowMs: NOW + M };
+  assert.equal(thresholdMetSinceV1(threshold, input, 0, 1), true);
+  assert.equal(thresholdMetSinceV1(threshold, input, 0, 2), false);
+  assert.equal(thresholdMetSinceV1(threshold, input, NOW + M, 1), false);
+});
+
+Deno.test("watchdog: met since an instant equals each cycle's own full-window evaluation", () => {
   // Twelve days every two hours: met by every threshold, then missed.
   const records = cycles(
     144,
@@ -350,18 +384,21 @@ Deno.test("watchdog: met since an instant equals each cycle's own evaluation", (
   );
   const input = { records, daily: [], nowMs: NOW };
   const own = (threshold: ThresholdRow, sinceMs: number) =>
-    records.some((record) =>
-      record.finishedAtMs >= sinceMs &&
-      evaluateThroughputWatchdogV1(
-          { records, daily: [], nowMs: record.finishedAtMs },
-          [threshold],
-        )[0].verdict === "met"
-    );
+    records.some((record) => {
+      if (record.finishedAtMs < sinceMs) return false;
+      const [judged] = evaluateThroughputWatchdogV1(
+        { records, daily: [], nowMs: record.finishedAtMs },
+        [threshold],
+      );
+      return judged.verdict === "met" &&
+        (judged.window.kind === "days" ||
+          judged.cycles >= judged.window.size);
+    });
   const seen = new Set<boolean>();
   for (const threshold of THROUGHPUT_WATCHDOG_THRESHOLDS) {
     for (const index of [0, 60, 80, 100, 143]) {
       const sinceMs = records[index].finishedAtMs;
-      const met = thresholdMetSinceV1(threshold, input, sinceMs);
+      const met = thresholdMetSinceV1(threshold, input, sinceMs, 1);
       assert.equal(met, own(threshold, sinceMs), `${threshold.id} ${index}`);
       seen.add(met);
     }

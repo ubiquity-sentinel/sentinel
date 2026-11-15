@@ -9,7 +9,8 @@
  *   request references it (another threshold may still be filed);
  * - outcome check after its issue closes: the measurement and runtime at
  *   close are recorded, and the threshold is filed again only when it was
- *   met in at least one cycle since the close and is missed again once
+ *   met over a full window in `THROUGHPUT_WATCHDOG_MET_RUN` consecutive
+ *   cycles since the close and is missed again once
  *   `THROUGHPUT_WATCHDOG_OUTCOME_CYCLES` cycles ran on a runtime newer than
  *   the one at close, or at once when the measurement is more than 10%
  *   worse than at close; a threshold still missed after its fix merged is
@@ -37,6 +38,7 @@ import {
 import type { ThroughputThresholdV1 } from "./throughput-watchdog-thresholds.ts";
 import {
   THROUGHPUT_WATCHDOG_LABELS,
+  THROUGHPUT_WATCHDOG_MET_RUN,
   THROUGHPUT_WATCHDOG_OUTCOME_CYCLES,
   THROUGHPUT_WATCHDOG_TITLE_PREFIX,
   throughputWatchdogBodyV1,
@@ -180,9 +182,11 @@ export function planThroughputWatchdogV1(input: {
     verdict !== undefined && !verdict.informational &&
     verdict.verdict === "missed" && measuredMilliV1(verdict) !== null;
   // After its issue closed, a still-missed threshold is filed again only on
-  // a change: more than 10% worse than at close, or met in a cycle since the
-  // close and missed again once the outcome cycles ran on a newer runtime. A
-  // met cycle that is no longer in the hot records files nothing.
+  // a change: more than 10% worse than at close, or met over a full window
+  // in a run of consecutive cycles since the close (a single met window can
+  // be noise in which cycles fill it) and missed again once the outcome
+  // cycles ran on a newer runtime. A run no longer in the hot records files
+  // nothing.
   const refileAfterClose = (
     threshold: ThroughputThresholdV1,
     closed: ThroughputWatchdogClosedV2,
@@ -191,7 +195,12 @@ export function planThroughputWatchdogV1(input: {
     (closed.measuredMilli !== null &&
       measuredWorseV1(closed.measuredMilli, measured)) ||
     (closed.newerCycles >= THROUGHPUT_WATCHDOG_OUTCOME_CYCLES &&
-      thresholdMetSinceV1(threshold, input.history, closed.atMs));
+      thresholdMetSinceV1(
+        threshold,
+        input.history,
+        closed.atMs,
+        THROUGHPUT_WATCHDOG_MET_RUN,
+      ));
   for (const [id, row] of openById) {
     const verdict = byId.get(id);
     const threshold = table.get(id);

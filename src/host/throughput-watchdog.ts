@@ -126,6 +126,29 @@ function judged(
   };
 }
 
+/**
+ * True when `record` is one of the cycles `threshold`'s window is taken
+ * from: a phase median reads only records with all its phases (and enough
+ * records read), the planned-cells count only records with both counts,
+ * and every other threshold every record.
+ */
+function counted(
+  threshold: ThroughputThresholdV1,
+  record: ThroughputMetricsRecordV1,
+): boolean {
+  const metric = threshold.metric;
+  if (metric.kind === "phase_median") {
+    return metric.phases.every((phase) => record.phaseMs[phase] !== null) &&
+      (metric.minRecordsRead === undefined ||
+        (record.counts.recordsRead ?? -1) >= metric.minRecordsRead);
+  }
+  if (metric.kind === "cells_planned") {
+    return record.counts.cellsPlanned !== null &&
+      record.counts.readyRecordsNotPlanned !== null;
+  }
+  return true;
+}
+
 /** Latest `windowCycles` eligible rows, or an insufficient verdict. */
 function latest(
   threshold: ThroughputThresholdV1,
@@ -154,11 +177,7 @@ function evaluateOne(
 ): ThroughputVerdictV1 {
   const metric = threshold.metric;
   if (metric.kind === "phase_median") {
-    const eligible = records.filter((record) =>
-      metric.phases.every((phase) => record.phaseMs[phase] !== null) &&
-      (metric.minRecordsRead === undefined ||
-        (record.counts.recordsRead ?? -1) >= metric.minRecordsRead)
-    );
+    const eligible = records.filter((record) => counted(threshold, record));
     const rows = latest(
       threshold,
       eligible,
@@ -175,10 +194,7 @@ function evaluateOne(
     return judged(threshold, median(values) / MINUTE_MS, rows, "median");
   }
   if (metric.kind === "cells_planned") {
-    const eligible = records.filter((record) =>
-      record.counts.cellsPlanned !== null &&
-      record.counts.readyRecordsNotPlanned !== null
-    );
+    const eligible = records.filter((record) => counted(threshold, record));
     const rows = latest(
       threshold,
       eligible,
@@ -304,25 +320,34 @@ export function evaluateThroughputWatchdogV1(
 }
 
 /**
- * True when `threshold` was `met` at a cycle record finishing at or after
- * `sinceMs`, each record judged as its own finalize judged it: over the
- * records up to it, with its finish as the evaluation instant. A record that
- * has left the hot tier is not seen, so a met verdict that aged out reads as
- * never met (the watchdog then files nothing). Pure.
+ * True when `threshold` was `met` in at least `run` consecutive evaluations
+ * of the cycle records finishing at or after `sinceMs`, each record judged
+ * as its own finalize judged it: over the records up to it, with its finish
+ * as the evaluation instant. Only a record its window is taken from counts:
+ * any other re-judges the window before it, so it neither extends nor
+ * breaks a run. A met verdict over fewer cycles than the full cycle window
+ * (the oldest hot records, over a short history) counts as not met; a day
+ * window is judged by its own day minimum. A record that has left the hot
+ * tier is not seen, so a run that aged out reads as never met (the watchdog
+ * then files nothing). Pure.
  */
 export function thresholdMetSinceV1(
   threshold: ThroughputThresholdV1,
   input: ThroughputWatchdogInputV1,
   sinceMs: number,
+  run: number,
 ): boolean {
   const records = ordered(input.records, input.nowMs);
-  for (let index = records.length - 1; index >= 0; index--) {
+  let length = 0;
+  for (let index = 0; index < records.length; index++) {
     const at = records[index].finishedAtMs;
-    if (at < sinceMs) return false;
+    if (at < sinceMs || !counted(threshold, records[index])) continue;
     const prefix = records.slice(0, index + 1);
-    if (evaluateOne(threshold, prefix, input.daily, at).verdict === "met") {
-      return true;
-    }
+    const verdict = evaluateOne(threshold, prefix, input.daily, at);
+    const full = verdict.window.kind === "days" ||
+      verdict.cycles >= verdict.window.size;
+    length = verdict.verdict === "met" && full ? length + 1 : 0;
+    if (length >= Math.max(run, 1)) return true;
   }
   return false;
 }

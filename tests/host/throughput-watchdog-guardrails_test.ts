@@ -1,10 +1,11 @@
 /**
  * Throughput watchdog guardrails at the finalize boundary (fake sidecar and
  * tracker, injected clock and runtime): per-threshold in-flight exclusion,
- * the outcome check after close (10 cycles on a newer runtime and a met
- * cycle since the close, or at once when more than 10% worse), edits only
- * when the window advanced 10 cycles, and the 3-per-UTC-day bound. The
- * once-per-missed-threshold rule is in `throughput-watchdog-refile_test.ts`.
+ * the outcome check after close (10 cycles on a newer runtime and 10 met
+ * cycles in a row since the close, or at once when more than 10% worse),
+ * edits only when the window advanced 10 cycles, and the 3-per-UTC-day
+ * bound. The once-per-missed-threshold rule is in
+ * `throughput-watchdog-refile_test.ts`.
  */
 import assert from "node:assert/strict";
 import {
@@ -216,7 +217,8 @@ Deno.test("watchdog guardrail: outcome check waits for 10 cycles on a newer runt
     entry(metrics, "maintenance_repair_median").closed!.newerCycles,
     10,
   );
-  // Missed again later, after a met cycle since the close: re-filed.
+  // Missed again later, after 29 met windows in a row since the close:
+  // re-filed.
   add(10, NOW + 31 * DAY, 6000);
   const refiled = await run(
     metrics,

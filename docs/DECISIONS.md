@@ -4774,3 +4774,19 @@ was not added: finalize keeps only each job log's runtime summary, not its
 `sentinel_host_phase`/`sentinel_target_timing` lines, and the stored records
 carry only job-level phases, so medians over the window would need new plumbing
 and a new stored shape. Rollback: revert these commits; no state format changed.
+
+Addendum (2026-11-15, review follow-up): one met window no longer re-arms a
+closed threshold. "Met since the close" now means met in 10 consecutive
+evaluations since the close (`THROUGHPUT_WATCHDOG_MET_RUN`), still computed by
+`thresholdMetSinceV1` from the stored records; a missed or insufficient
+evaluation ends a run. Only a cycle its window is taken from counts (one whose
+repair job did not run re-judges the previous window, so it neither extends nor
+breaks a run), and a met window over fewer cycles than its full window (the
+oldest kept records, when the close is older) counts as not met. Reason: the
+repair median, 5.25 against 5.0 and falling, moves about ±6% with which cycles
+fill the window; the review fed the last 60 live repair durations scaled to
+1.03× the limit, the median dipped to met once (4.98) and the next miss (5.05)
+filed. Accepting one window at ≤ 0.9× the limit as an alternative was not
+adopted: the stored maintenance+repair series has single-window median dips of
+15% of the limit. The more-than-10%-worse clause, the stored state and its
+version are unchanged; the issue body's outcome-rule sentence states the run.
