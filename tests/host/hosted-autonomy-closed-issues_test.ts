@@ -401,3 +401,39 @@ Deno.test("maintenance: shared exact issue reads retain repository and installat
     repositories.map((repository) => hostedIssueKey(repository, 1)),
   );
 });
+
+Deno.test("maintenance: retired decomposition parts keep independent reads without priming the live cache", async () => {
+  for (const retiredFirst of [false, true]) {
+    const live = [0, 1].map((part) =>
+      workRecord(`live-part-${part}`, {
+        related: { incidentId: null, issueNumber: 1 },
+      })
+    );
+    const retired = workRecord("retired-part", {
+      related: { incidentId: null, issueNumber: 1 },
+      nextStep: "blocked",
+      blocker: { kind: "other", message: HOSTED_AUTONOMY_RETIRED, since: T0 },
+    });
+    const work = retiredFirst
+      ? [retired, ...live]
+      : [live[0]!, retired, live[1]!];
+    let calls = 0;
+    const { context, reads } = harness(work, undefined, () => ++calls === 1);
+    const seen = new Set<string>();
+    await readHostedClosedIssues(context, seen);
+    assert.deepEqual(reads, [1, 1], "the live parts share only their own read");
+    assert.deepEqual([...context.closedIssues], [hostedIssueKey(REPO, 1)]);
+    assert.deepEqual([...seen], work.map((record) => record.id));
+    assert.deepEqual(
+      planHostedRetirements(context.snapshot, context.closedIssues).map((row) =>
+        row.id
+      ),
+      work.filter((record) => record.id !== retired.id).map((record) =>
+        record.id
+      ),
+      "positive closure still retires live parts without retiring old work again",
+    );
+    await readHostedClosedIssues(context, seen);
+    assert.deepEqual(reads, [1, 1], "the continuation reads no record twice");
+  }
+});

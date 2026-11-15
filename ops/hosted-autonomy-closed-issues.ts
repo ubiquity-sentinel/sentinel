@@ -16,8 +16,9 @@
  * repository. Absence from that listing is not closure evidence: those
  * issues, and repositories whose listing fails, keep their exact GETs.
  *
- * Records sharing a source issue share its in-flight GET, including failures,
- * within this read only. Repository and installation identities stay isolated.
+ * Live records sharing a source issue share its in-flight GET, including
+ * failures, within this read only. Retired decomposition parts retain their
+ * independent reads. Repository and installation identities stay isolated.
  * The remaining reads are independent GETs and run at most
  * `CLOSED_ISSUE_READ_CONCURRENCY` at a time (live 2026-10-24: 388 sequential
  * reads, in a context phase of 85 seconds), started and applied in record
@@ -160,8 +161,12 @@ export async function readHostedClosedIssues(
     pending,
     CLOSED_ISSUE_READ_CONCURRENCY,
     ({ record, issueNumber }): Promise<IssueRead> => {
-      const key = hostedIssueKey(record.repository, issueNumber);
-      const cached = issueReads.get(key);
+      // A retired part kept eligible by a live sibling must neither consume
+      // nor populate that sibling's shared read.
+      const key = isHostedRetired(record)
+        ? null
+        : hostedIssueKey(record.repository, issueNumber);
+      const cached = key === null ? undefined : issueReads.get(key);
       if (cached !== undefined) return cached;
       const read = (async (): Promise<IssueRead> => {
         try {
@@ -181,7 +186,7 @@ export async function readHostedClosedIssues(
           return { kind: "threw", error };
         }
       })();
-      issueReads.set(key, read);
+      if (key !== null) issueReads.set(key, read);
       return read;
     },
   );
