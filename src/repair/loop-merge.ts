@@ -14,6 +14,7 @@ import { guardQueueOperation } from "./loop-queue-guard.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import { parseMergeRequestV1 } from "../contracts/merge-request.ts";
 import { selfMergeExecution } from "./loop-self-merge.ts";
+import { mergeDetailCode } from "./merge-event-codes.ts";
 import type { MergeOutcomeV1, PortErrorV1 } from "../contracts/ports.ts";
 import {
   parseReleaseRequestV1,
@@ -68,19 +69,6 @@ import {
   setWait,
 } from "./transitions.ts";
 
-/**
- * Closed operational emission for one failed delivery port call: the PR
- * number, the closed port error kind and an allow-listed code for the
- * adapter's own static details. It never carries a message, body, URL, path
- * or credential, and the line can never change the wait, intent or outcome.
- */
-const MERGE_DETAIL_CODES: readonly (readonly [string, string])[] = [
-  ["candidate restore has no exact durable binding", "candidate_binding"],
-  ["candidate restore remote identity is not exact", "candidate_remote"],
-  ["candidate restore fetch did not verify", "candidate_fetch"],
-  ["ancestry check failed", "ancestry_unavailable"],
-];
-
 /** Source-CAS self merge has a distinct closing protocol; takeover never widens it. */
 async function holdAdoptedSelfMerge(
   deps: RepairCycleDepsV1,
@@ -102,25 +90,25 @@ async function holdAdoptedSelfMerge(
     );
 }
 
+/**
+ * Closed operational emission for one failed delivery port call: the PR
+ * number, the closed port error kind and the fixed code of the adapter's own
+ * static detail (`merge-event-codes.ts`). It never carries a message, body,
+ * URL, path or credential, and the line can never change the wait, intent or
+ * outcome.
+ */
 function emitMergePortError(
   event: "merge_port_error" | "merge_reconcile_read_error",
   prNumber: number,
   error: PortErrorV1,
 ): void {
-  let detailCode: string | null = null;
-  for (const [detail, code] of MERGE_DETAIL_CODES) {
-    if (error.detail === detail) {
-      detailCode = code;
-      break;
-    }
-  }
   console.log(JSON.stringify({
     version: "v1",
     kind: "sentinel_merge_event",
     event,
     prNumber,
     errorKind: error.kind,
-    detailCode,
+    detailCode: mergeDetailCode(error.detail),
   }));
 }
 

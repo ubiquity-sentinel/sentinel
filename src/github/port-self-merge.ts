@@ -10,6 +10,7 @@ import type {
   SelfMergeProofV1,
 } from "../contracts/self-merge.ts";
 import { parseSelfMergeProof } from "../contracts/self-merge.ts";
+import { SELF_MERGE_TRUSTED_PIPELINE } from "./self-merge-git.ts";
 import type { GitExecutorV1 } from "./git-executor.ts";
 import type { GitHubApiClient } from "./client.ts";
 import type { Clock } from "../contracts/ports.ts";
@@ -102,7 +103,10 @@ export async function executeSelfMerge(
     if (!tested.ok) return tested;
     if (!workflow.ok) return workflow;
     const native = ci.value.proof;
-    for (const key of ["workflows", "operations", "config", "lock"] as const) {
+    // What CI runs must be the base's (a PR could otherwise make its own CI
+    // pass vacuously); the code CI tests, `ops/` launcher code included, may
+    // change (owner decision 2026-11-15).
+    for (const [key] of SELF_MERGE_TRUSTED_PIPELINE) {
       if (
         base.value.pipeline[key] === null ||
         base.value.pipeline[key] !== tested.value.pipeline[key]

@@ -24,7 +24,25 @@ import {
 import { completedCleanReceipt } from "./merge-helpers.ts";
 import type { HttpRequestV1, HttpResponseV1 } from "../../src/github/http.ts";
 
-export async function selfMergeFixture() {
+/**
+ * Base files besides the pinned native CI sources: the CI definition under
+ * `ops/` (shard runner, its timing table, the size gate) and one launcher file.
+ */
+const BASE_OPS = [
+  "ops/ci-shards.ts",
+  "ops/ci-test-timings.json",
+  "ops/code-size.ts",
+  "ops/hosted-autonomy-runner.ts",
+];
+
+export interface SelfMergeFixtureOptionsV1 {
+  /** Files the candidate commit writes (path -> content); default `value.ts`. */
+  candidate?: Readonly<Record<string, string>>;
+}
+
+export async function selfMergeFixture(
+  options: SelfMergeFixtureOptionsV1 = {},
+) {
   const temp = await Deno.makeTempDir({
     dir: Deno.cwd(),
     prefix: "sentinel-native-self-merge-",
@@ -60,6 +78,7 @@ export async function selfMergeFixture() {
       ".github/workflows/ci.yml",
       "test-local.ts",
       "ops/native-ci-proof.ts",
+      ...BASE_OPS,
     ]
   ) {
     await Deno.writeTextFile(
@@ -74,8 +93,16 @@ export async function selfMergeFixture() {
   await git(["-C", work, "commit", "-q", "-m", "base"]);
   const base = await git(["-C", work, "rev-parse", "HEAD"]) as GitSha;
   await git(["-C", work, "push", "-q", remote, "HEAD:refs/heads/development"]);
-  await Deno.writeTextFile(`${work}/value.ts`, "export const value = 1;\n");
-  await git(["-C", work, "commit", "-q", "-am", "candidate"]);
+  const candidate = options.candidate ?? {
+    "value.ts": "export const value = 1;\n",
+  };
+  for (const [path, text] of Object.entries(candidate)) {
+    const dir = path.slice(0, Math.max(0, path.lastIndexOf("/")));
+    if (dir !== "") await Deno.mkdir(`${work}/${dir}`, { recursive: true });
+    await Deno.writeTextFile(`${work}/${path}`, text);
+  }
+  await git(["-C", work, "add", "-A"]);
+  await git(["-C", work, "commit", "-q", "-m", "candidate"]);
   const head = await git(["-C", work, "rev-parse", "HEAD"]) as GitSha;
   const executor = new DenoGitExecutor({ localDir: work, remoteUrl: remote });
   const built = await executor.integrateBase(base, head);

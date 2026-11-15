@@ -7,6 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { portError } from "../../src/contracts/ports.ts";
+import { parseSentinelMergeEventV1 } from "../../src/host/hosted-runtime-diagnostics.ts";
 import { reviewOperationKey, reviewReceiptId } from "../../src/repair/keys.ts";
 import { CHECK_POLL_MS } from "../../src/repair/loop-bounds.ts";
 import { SHA1, SHA3 } from "../state/helpers.ts";
@@ -59,6 +60,55 @@ Deno.test("self merge: a pre-write trusted validation refusal re-arms the ordina
       (state.work[0].wait?.until ?? 0) - (state.work[0].wait?.since ?? 0),
       CHECK_POLL_MS,
     );
+    assert.equal(state.work[0].intent?.kind, "merge");
+  } finally {
+    await rig.ctx.cleanup();
+  }
+});
+
+/** The closed merge event lines one repair run emitted. */
+async function mergeEvents(run: () => Promise<unknown>) {
+  const emitted: string[] = [];
+  const originalLog = console.log;
+  try {
+    console.log = ((...args: unknown[]) => {
+      emitted.push(args.map((arg) => String(arg)).join(" "));
+    }) as typeof console.log;
+    await run();
+  } finally {
+    console.log = originalLog;
+  }
+  return emitted.flatMap((line) => {
+    try {
+      const value = JSON.parse(line) as Record<string, unknown>;
+      return value.kind === "sentinel_merge_event" ? [value] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+Deno.test("self merge: a refused CI definition change logs a fixed detail code the launcher accepts", async () => {
+  // Live PRs #385, #402, #409, #412 and #415 logged this refusal with
+  // `detailCode: null`, which named no reason.
+  const { rig } = await refusalRig(
+    "self-merge-refusal-code",
+    portError("invalid", "self merge trusted CI pipeline changed"),
+  );
+  try {
+    const events = await mergeEvents(() => rig.run());
+    assert.deepEqual(events, [{
+      version: "v1",
+      kind: "sentinel_merge_event",
+      event: "merge_port_error",
+      prNumber: 7,
+      errorKind: "invalid",
+      detailCode: "self_merge_ci_pipeline_changed",
+    }]);
+    assert.deepEqual(parseSentinelMergeEventV1(events[0]), events[0]);
+    // Diagnosis only: the wait, intent and outcome are unchanged.
+    const state = await rig.snapshot();
+    assert.equal(state.work[0].wait?.reason, "unavailable");
     assert.equal(state.work[0].intent?.kind, "merge");
   } finally {
     await rig.ctx.cleanup();

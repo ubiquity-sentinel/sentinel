@@ -1,4 +1,26 @@
 import type { GitSha } from "../contracts/brands.ts";
+
+/**
+ * The trusted CI pipeline a self merge requires unchanged from the PR's base
+ * to the commit CI tested: what CI runs and how, never the code it tests. The
+ * `.github` tree (workflows, actions), the shard runner and its timing table,
+ * the size gate the harness runs, `deno.json` and `deno.lock`; the workflow,
+ * harness and emitter are pinned separately as `sources`. Launcher and
+ * maintenance code elsewhere under `ops/` is ordinary tested code (owner
+ * decision 2026-11-15).
+ */
+export const SELF_MERGE_TRUSTED_PIPELINE = [
+  ["workflows", ".github"],
+  ["shards", "ops/ci-shards.ts"],
+  ["timings", "ops/ci-test-timings.json"],
+  ["size", "ops/code-size.ts"],
+  ["config", "deno.json"],
+  ["lock", "deno.lock"],
+] as const;
+
+export type SelfMergePipelineKeyV1 =
+  typeof SELF_MERGE_TRUSTED_PIPELINE[number][0];
+
 export interface SelfMergeCommitV1 {
   sha: GitSha;
   tree: GitSha;
@@ -8,12 +30,7 @@ export interface SelfMergeCommitV1 {
     harness: GitSha | null;
     emitter: GitSha | null;
   };
-  pipeline: {
-    workflows: GitSha | null;
-    operations: GitSha | null;
-    config: GitSha | null;
-    lock: GitSha | null;
-  };
+  pipeline: Record<SelfMergePipelineKeyV1, GitSha | null>;
 }
 export interface SelfMergeClosureV1 {
   merge: GitSha;

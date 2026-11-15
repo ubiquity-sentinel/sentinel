@@ -26,6 +26,10 @@ import { joinPath } from "./local.ts";
 import type { LocalModelDiagnosticV1 } from "./local.ts";
 import type { ModelBoundaryErrorCodeV1 } from "../repair/model-port-diagnostics.ts";
 import type { AdvisoryLogLineV1 } from "../repair/step-line.ts";
+import {
+  MERGE_DETAIL_CODES,
+  type MergeDetailCodeV1,
+} from "../repair/merge-event-codes.ts";
 import type { HostedMatrixPlanDiagnosticV1 } from "./matrix-plan-diagnostic.ts";
 import type { ReviewResultShapesV1 } from "./hosted-review-shape.ts";
 
@@ -332,15 +336,14 @@ export const MERGE_EVENT_KINDS = [
 
 export type MergeEventKindV1 = typeof MERGE_EVENT_KINDS[number];
 
-/** Closed detail codes for the adapter's own static delivery failures. */
-export const MERGE_EVENT_DETAIL_CODES = [
-  "candidate_binding",
-  "candidate_remote",
-  "candidate_fetch",
-  "ancestry_unavailable",
-] as const;
+/**
+ * Closed detail codes for the adapter's own static delivery failures: exactly
+ * the codes the runtime emits (`src/repair/merge-event-codes.ts`).
+ */
+export const MERGE_EVENT_DETAIL_CODES: readonly MergeDetailCodeV1[] =
+  MERGE_DETAIL_CODES.map(([, code]) => code);
 
-export type MergeEventDetailCodeV1 = typeof MERGE_EVENT_DETAIL_CODES[number];
+export type MergeEventDetailCodeV1 = MergeDetailCodeV1;
 
 /**
  * Runtime-emitted closed delivery event for one failed merge port call. It

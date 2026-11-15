@@ -7,6 +7,7 @@
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import { DenoGitExecutor } from "../../src/github/git-executor.ts";
+import { SELF_MERGE_TRUSTED_PIPELINE } from "../../src/github/self-merge-git.ts";
 
 async function git(args: string[]): Promise<string> {
   const r = await new Deno.Command("git", {
@@ -43,6 +44,10 @@ async function fixture(withLock: boolean) {
     ".github/workflows/ci.yml",
     "test-local.ts",
     "ops/native-ci-proof.ts",
+    "ops/ci-shards.ts",
+    "ops/ci-test-timings.json",
+    "ops/code-size.ts",
+    "ops/hosted-autonomy-runner.ts",
     "deno.json",
     ...(withLock ? ["deno.lock"] : []),
   ];
@@ -57,7 +62,8 @@ async function fixture(withLock: boolean) {
 
 /**
  * A git wrapper that forwards every call to the real git, except the trusted
- * `<sha>:ops` path read, which exits with `status` like a killed child.
+ * `<sha>:ops/ci-shards.ts` path read, which exits with `status` like a killed
+ * child.
  */
 async function failingGit(temp: string, status: number): Promise<string> {
   const path = `${temp}/fake-git.sh`;
@@ -67,7 +73,7 @@ async function failingGit(temp: string, status: number): Promise<string> {
       "#!/bin/sh",
       'for arg in "$@"; do',
       '  case "$arg" in',
-      `    *:ops) exit ${status} ;;`,
+      `    *:ops/ci-shards.ts) exit ${status} ;;`,
       "  esac",
       "done",
       'exec git "$@"',
@@ -88,6 +94,10 @@ Deno.test("self merge read: present paths resolve and an absent path is null", a
     }).readSelfMergeCommit!(present.sha);
     assert.ok(full.ok, JSON.stringify(full));
     if (!full.ok) return;
+    assert.deepEqual(
+      Object.keys(full.value.pipeline),
+      SELF_MERGE_TRUSTED_PIPELINE.map(([key]) => key),
+    );
     for (const value of Object.values(full.value.pipeline)) {
       assert.match(String(value), /^[0-9a-f]{40}$/);
     }
@@ -101,7 +111,12 @@ Deno.test("self merge read: present paths resolve and an absent path is null", a
     assert.ok(partial.ok, JSON.stringify(partial));
     if (!partial.ok) return;
     assert.equal(partial.value.pipeline.lock, null);
-    assert.match(String(partial.value.pipeline.operations), /^[0-9a-f]{40}$/);
+    assert.match(String(partial.value.pipeline.shards), /^[0-9a-f]{40}$/);
+    // Launcher and maintenance code under `ops/` is not part of the pipeline.
+    assert.equal(
+      Object.keys(partial.value.pipeline).some((key) => key === "operations"),
+      false,
+    );
   } finally {
     await Deno.remove(present.temp, { recursive: true });
     await Deno.remove(absent.temp, { recursive: true });

@@ -4790,3 +4790,55 @@ filed. Accepting one window at ≤ 0.9× the limit as an alternative was not
 adopted: the stored maintenance+repair series has single-window median dips of
 15% of the limit. The more-than-10%-worse clause, the stored state and its
 version are unchanged; the issue body's outcome-rule sentence states the run.
+
+## 2026-11-15: self-merge no longer refuses ops/ changes
+
+Live record: Sentinel PRs #385, #402, #409, #412 and #415, the Sentinel PRs that
+touched `ops/` (each one or two `ops/` files plus tests), were each refused by
+the serial repair job's self merge with
+`{"event":"merge_port_error","errorKind":"invalid","detailCode":null}`, re-armed
+the two-minute wait and were squash-merged by the next cycle's maintenance
+delivery pass 7–10 minutes later, each with a clean current-head review and
+green head CI. Cause, reproduced through the real port and real Git
+(`tests/github/self-merge-ops_test.ts`): `executeSelfMerge` compared the objects
+at `.github`, `ops`, `deno.json` and `deno.lock` between the PR's base and the
+commit CI tested and refused any difference as "self merge trusted CI pipeline
+changed"; the whole `ops` tree counted, so every launcher edit was refused. The
+check exists so that a PR cannot change what CI runs and make its own head CI
+pass vacuously.
+
+Owner decision (2026-11-15, asked "Self-merge for ops/ PRs: drop the check that
+refuses them? Today they get refused, then merged a cycle later by another path
+anyway"): "drop it". Scope: launcher and maintenance code under `ops/`, which CI
+tests like any other code; not what CI runs. The pinned set
+(`SELF_MERGE_TRUSTED_PIPELINE`, `src/github/self-merge-git.ts`) is now the
+`.github` tree, the shard runner `ops/ci-shards.ts` and its
+`ops/ci-test-timings.json`, the size gate `ops/code-size.ts`, `deno.json` and
+`deno.lock`; the workflow, harness and emitter (`.github/workflows/ci.yml`,
+`test-local.ts`, `ops/native-ci-proof.ts`) must still equal the base's. A test
+ties the set to every `ops/` file `ci.yml` and `test-local.ts` run. Every other
+self merge gate is unchanged: native CI evidence read fresh and again before the
+`development` push, the exact-head review receipt, task acceptance, ref custody,
+the deterministic merge identity and its durable proof.
+
+Still refused, and where: a change to what CI runs is refused by the self merge
+before any write. A Sentinel candidate changing `.github/workflows/**` (or the
+two protected actions) reaches neither path: for the self target it is an
+unpublishable protected path parked before publication ("candidate touches a
+protected path"), and the maintenance delivery pass refuses it too
+(`protected_path`). Open for the owner, unchanged here: that pass has no
+equivalent of this check (a green `test-local` run and the self protected paths
+only), so a reviewed PR changing `test-local.ts`, `ops/native-ci-proof.ts`,
+`ops/ci-shards.ts`, `ops/ci-test-timings.json`, `ops/code-size.ts`, `deno.json`,
+`deno.lock` or an unprotected `.github` file is still refused here and
+squash-merged by it one cycle later.
+
+Diagnosis: every `invalid` self merge refusal now logs a fixed code
+(`src/repair/merge-event-codes.ts`; the launcher accepts exactly these codes),
+never the detail text. This refusal logs `self_merge_ci_pipeline_changed`; a
+pinned source mismatch logs `self_merge_ci_source`. Unchanged here: such a
+refusal re-arms the two-minute `unavailable` wait and keeps the merge intent
+(`loop-merge.ts`, `tests/repair/self-merge-refusal_test.ts`), which the
+2026-10-23 "Self-path corrections" wording (the refusal parks the record for the
+owner and clears the intent) does not match. Rollback: revert these commits; no
+state format changed.

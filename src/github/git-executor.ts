@@ -60,6 +60,7 @@ import { createDeadline } from "./http.ts";
 import { proveCarriedPatchWithGit } from "./git-carried-patch.ts";
 import {
   parseSelfMergeCommit,
+  SELF_MERGE_TRUSTED_PIPELINE,
   type SelfMergeClosureV1,
   type SelfMergeCommitV1,
 } from "./self-merge-git.ts";
@@ -572,16 +573,13 @@ export class DenoGitExecutor implements GitExecutorV1 {
     }
     const pipeline: SelfMergeCommitV1["pipeline"] = {
       workflows: null,
-      operations: null,
+      shards: null,
+      timings: null,
+      size: null,
       config: null,
       lock: null,
     };
-    for (
-      const [key, path] of [["workflows", ".github"], ["operations", "ops"], [
-        "config",
-        "deno.json",
-      ], ["lock", "deno.lock"]] as const
-    ) {
+    for (const [key, path] of SELF_MERGE_TRUSTED_PIPELINE) {
       const object = await this.selfMergePathObject(sha, path);
       if (!object.ok) return object;
       pipeline[key] = object.value;
