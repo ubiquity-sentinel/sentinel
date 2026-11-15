@@ -47,6 +47,10 @@
  *   identical outcome re-parks at once under the current digest, which then
  *   never re-arms it again; an install that leaves the prompt unchanged
  *   never re-arms.
+ * - Owner release: a park the owner released by its exact record and blocker
+ *   (`hosted-autonomy-owner-releases.ts`, 2026-11-15) re-arms once
+ *   (`owner_release`); its next identical outcome re-parks at once, with a
+ *   later `since`, which no release names.
  *
  * Charged reservations stay charged: nothing here settles, refunds or
  * deletes a charge, and parking only withholds a new one.
@@ -66,6 +70,10 @@ import {
   IMPLEMENTATION_RECEIPT_FAILURE_DETAILS,
 } from "../src/repair/attempt-policy.ts";
 import { sameRepository } from "./hosted-autonomy-policy.ts";
+import {
+  ownerReleased,
+  type OwnerReleaseV1,
+} from "./hosted-autonomy-owner-releases.ts";
 import {
   isPassportWorkTrial,
   passportTrialCanReconsider,
@@ -280,6 +288,11 @@ export interface RepeatFailureContextV1 {
    * Absent, no prompt re-arm happens and a park records no prompt.
    */
   prompt?: string;
+  /**
+   * The owner's exact released parks; absent means the recorded decision
+   * (`OWNER_RELEASES_2026_11_15`). Replaced for tests only.
+   */
+  ownerReleases?: readonly OwnerReleaseV1[];
 }
 
 export type RepeatFailureVerdictV1 =
@@ -296,7 +309,8 @@ export type RepeatFailureVerdictV1 =
       | "issue_edited"
       | "route_changed"
       | "prompt_changed"
-      | "passport_trial";
+      | "passport_trial"
+      | "owner_release";
   };
 
 function issueBaseline(
@@ -333,6 +347,10 @@ export function repeatFailureVerdict(
     ? null
     : repeatFailurePromptIdentity(context.prompt);
   if (parked !== null) {
+    // The owner's one-time release of this exact park, whatever else moved.
+    if (
+      context !== undefined && ownerReleased(record, context.ownerReleases)
+    ) return { kind: "rearm", park: parked, trigger: "owner_release" };
     if (context !== undefined && parked.route !== route) {
       return { kind: "rearm", park: parked, trigger: "route_changed" };
     }

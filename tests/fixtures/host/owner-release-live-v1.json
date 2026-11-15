@@ -1,0 +1,458 @@
+{
+  "attemptMemory": [
+    {
+      "base": "be9e35ee85fd6c64017fbe45c0c538425d3f1e9b",
+      "entries": [
+        {
+          "controllerSha": "026c6896008e269731ff1027f1f8bc4a6403de5d",
+          "count": 1,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "c81bcde568e519d4ce5db4565dd19d043ea2bd3434b3459964c2d040b7d65f46",
+          "firstAtMs": 1793559445437,
+          "lastAtMs": 1793559445437,
+          "stage": "model"
+        },
+        {
+          "controllerSha": "052135a93d404f828b688d0af1b03fdfaa0ae969",
+          "count": 2,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "d1d849d0f99aaef71c260640cd9dda997fca92c55639111cbe26ddf9b3ba7fd1",
+          "firstAtMs": 1793569295124,
+          "lastAtMs": 1793580278367,
+          "stage": "model"
+        },
+        {
+          "controllerSha": "1ce932549934bf39228d47c92315fdf1ee27b89e",
+          "count": 1,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "a0083b0870fb9c38497d28c16a38d28203cbd6f650796610d76d308b2306d114",
+          "firstAtMs": 1793584610672,
+          "lastAtMs": 1793584610672,
+          "stage": "model"
+        },
+        {
+          "controllerSha": "1273b2c33b9822be5ad9bcd988fe8dea5dc58951",
+          "count": 1,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "a574d1d1735dfd759bded52bdab25b6b56aa10d8f5af7dd1e6a2902a35cb4a39",
+          "firstAtMs": 1793881317129,
+          "lastAtMs": 1793881317129,
+          "stage": "model"
+        }
+      ],
+      "id": "0cb9e7c087f485f6fb7121aa6b89b661fbba832c5c2f38f3821b2e15c97e1b8d",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ubiquity-dollar",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-ubiquity-dollar-997",
+      "version": "v1"
+    },
+    {
+      "base": "9ca42481e44944999994c0a92b85def01af5cfbc",
+      "entries": [
+        {
+          "controllerSha": "be88696982cc8ce17ccb926188d5131ac74bad62",
+          "count": 2,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "97c6a79835ff5e880e1d32f80393a16cb6c9e86da2f3207c1cdf3e5f30786b50",
+          "firstAtMs": 1793438037875,
+          "lastAtMs": 1793441611510,
+          "stage": "model"
+        },
+        {
+          "controllerSha": "1273b2c33b9822be5ad9bcd988fe8dea5dc58951",
+          "count": 1,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "6fa0328180dd084566349ec1b8c4a416a71d3bf0a8ad63fa5322b47b2e320220",
+          "firstAtMs": 1793881293352,
+          "lastAtMs": 1793881293352,
+          "stage": "model"
+        }
+      ],
+      "id": "1fb516ee631efa3f974b74200f2067bcf75c01b73a08f28315c8e0e1abd57d9a",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity-sentinel"
+      },
+      "taskId": "issue-ubiquity-sentinel-177",
+      "version": "v1"
+    },
+    {
+      "base": "e05ba64f1142710e4a902a9ae088593a1ca411f5",
+      "entries": [
+        {
+          "controllerSha": "1838df313105bab219d71602695a7f758a65125e",
+          "count": 1,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "ae53e24968fc9c36b6ce0fd6d605ff2e3a4d2ccaf35284c6d0f1181f83c35019",
+          "firstAtMs": 1792494995250,
+          "lastAtMs": 1792494995250,
+          "stage": "model"
+        }
+      ],
+      "id": "ce0995e3c533058d02cc1c1cc937c91ff633b16078a9b4deaa08833174cabbd4",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity-sentinel"
+      },
+      "taskId": "issue-ubiquity-sentinel-177",
+      "version": "v1"
+    }
+  ],
+  "reservations": [
+    {
+      "attempt": 1,
+      "createdAt": 1792494857087,
+      "head": "e05ba64f1142710e4a902a9ae088593a1ca411f5",
+      "id": "d66da20664f2a077472c30a00fcb9d32481b124a8d9e11feb787ff2ebb76712f",
+      "kind": "budget_reservation",
+      "outcome": "ambiguous",
+      "proofRef": null,
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity-sentinel"
+      },
+      "settledAt": 1792494995250,
+      "taskId": "issue-ubiquity-sentinel-177",
+      "version": "v1"
+    },
+    {
+      "attempt": 2,
+      "createdAt": 1792570808215,
+      "head": "9ca42481e44944999994c0a92b85def01af5cfbc",
+      "id": "4f49059b18aae972f75421dcbdd7c8366adfff4273f079ca8239298dd7835525",
+      "kind": "budget_reservation",
+      "outcome": "submitted",
+      "proofRef": null,
+      "purpose": "retry",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity-sentinel"
+      },
+      "settledAt": 1792576098929,
+      "taskId": "issue-ubiquity-sentinel-177",
+      "version": "v1"
+    },
+    {
+      "attempt": 3,
+      "createdAt": 1793435844522,
+      "head": "9ca42481e44944999994c0a92b85def01af5cfbc",
+      "id": "1ca185caa77f335d692a04721050db4e60cdb63f7232b0ab956df215c3e4aabb",
+      "kind": "budget_reservation",
+      "outcome": "ambiguous",
+      "proofRef": null,
+      "purpose": "retry",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity-sentinel"
+      },
+      "settledAt": 1793438037875,
+      "taskId": "issue-ubiquity-sentinel-177",
+      "version": "v1"
+    },
+    {
+      "attempt": 4,
+      "createdAt": 1793439541469,
+      "head": "9ca42481e44944999994c0a92b85def01af5cfbc",
+      "id": "7767b6294bda002a7e2b3546b960517df78bd3dfbecdc02888793d6672399e2d",
+      "kind": "budget_reservation",
+      "outcome": "ambiguous",
+      "proofRef": null,
+      "purpose": "retry",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity-sentinel"
+      },
+      "settledAt": 1793441611510,
+      "taskId": "issue-ubiquity-sentinel-177",
+      "version": "v1"
+    },
+    {
+      "attempt": 5,
+      "createdAt": 1793877699319,
+      "head": "9ca42481e44944999994c0a92b85def01af5cfbc",
+      "id": "9b70ed9588fbf10a3178df40f6f82712b7927f00ba3fc02cdfa11128354c7d3e",
+      "kind": "budget_reservation",
+      "outcome": "ambiguous",
+      "proofRef": null,
+      "purpose": "retry",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity-sentinel"
+      },
+      "settledAt": 1793881293352,
+      "taskId": "issue-ubiquity-sentinel-177",
+      "version": "v1"
+    },
+    {
+      "attempt": 1,
+      "createdAt": 1793546141587,
+      "head": "be9e35ee85fd6c64017fbe45c0c538425d3f1e9b",
+      "id": "7b04e19a1a376f4c96f5c7b47e777e437aa5433fcab0d9e5822e7b7b425d33bb",
+      "kind": "budget_reservation",
+      "outcome": "ambiguous",
+      "proofRef": null,
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ubiquity-dollar",
+        "owner": "ubiquity"
+      },
+      "settledAt": 1793559445437,
+      "taskId": "issue-ubiquity-ubiquity-dollar-997",
+      "version": "v1"
+    },
+    {
+      "attempt": 2,
+      "createdAt": 1793564790766,
+      "head": "be9e35ee85fd6c64017fbe45c0c538425d3f1e9b",
+      "id": "ed21bd2a9630618b67a1abcf5dead6b1494e6ba46a8fba3808166c550fc628e4",
+      "kind": "budget_reservation",
+      "outcome": "ambiguous",
+      "proofRef": null,
+      "purpose": "retry",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ubiquity-dollar",
+        "owner": "ubiquity"
+      },
+      "settledAt": 1793569295124,
+      "taskId": "issue-ubiquity-ubiquity-dollar-997",
+      "version": "v1"
+    },
+    {
+      "attempt": 3,
+      "createdAt": 1793577530694,
+      "head": "be9e35ee85fd6c64017fbe45c0c538425d3f1e9b",
+      "id": "3c3411855addc1d77d46b479ad55a5279b48eeb09c6a8b22258381b1f58530d2",
+      "kind": "budget_reservation",
+      "outcome": "ambiguous",
+      "proofRef": null,
+      "purpose": "retry",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ubiquity-dollar",
+        "owner": "ubiquity"
+      },
+      "settledAt": 1793580278367,
+      "taskId": "issue-ubiquity-ubiquity-dollar-997",
+      "version": "v1"
+    },
+    {
+      "attempt": 4,
+      "createdAt": 1793582129240,
+      "head": "be9e35ee85fd6c64017fbe45c0c538425d3f1e9b",
+      "id": "3f8b31645f00c61aab496ce67fee319883e9a53523f66a6c29edc7d415650ebb",
+      "kind": "budget_reservation",
+      "outcome": "ambiguous",
+      "proofRef": null,
+      "purpose": "retry",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ubiquity-dollar",
+        "owner": "ubiquity"
+      },
+      "settledAt": 1793584610672,
+      "taskId": "issue-ubiquity-ubiquity-dollar-997",
+      "version": "v1"
+    },
+    {
+      "attempt": 5,
+      "createdAt": 1793877672226,
+      "head": "be9e35ee85fd6c64017fbe45c0c538425d3f1e9b",
+      "id": "86da4d0735053532655700c6edfe77f775777f20e5014fb6a494f760e0c82fd2",
+      "kind": "budget_reservation",
+      "outcome": "ambiguous",
+      "proofRef": null,
+      "purpose": "retry",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ubiquity-dollar",
+        "owner": "ubiquity"
+      },
+      "settledAt": 1793881317129,
+      "taskId": "issue-ubiquity-ubiquity-dollar-997",
+      "version": "v1"
+    }
+  ],
+  "source": {
+    "commit": "554559876818201e9bf32b81ed71a1b8b697f1ec",
+    "ref": "sentinel-state/repair",
+    "sequence": 96323
+  },
+  "work": [
+    {
+      "blocker": {
+        "kind": "other",
+        "message": "repeated identical failure; owner action required (close or edit the issue, or change the model route): 4x other|ba872ff9154d4db3 issue=c37a034f80c5 route=e4b22974d0b1 prompt=29921b7659c5: model run failed (unavailable)",
+        "since": 1793882330918
+      },
+      "classification": {
+        "priority": null,
+        "severity": "P2"
+      },
+      "controller": {
+        "sha": "1838df313105bab219d71602695a7f758a65125e"
+      },
+      "counters": {
+        "attempts": 5,
+        "retries": 0,
+        "reviewRounds": 0
+      },
+      "createdAt": 1792494798621,
+      "dependencies": [],
+      "evidence": [],
+      "failingRevision": null,
+      "fingerprint": null,
+      "firstSeenAt": 1792493826000,
+      "id": "issue-ubiquity-sentinel-177",
+      "intent": {
+        "branch": "sentinel/repair/issue-ubiquity-sentinel-177",
+        "expectedHead": null,
+        "key": "impl:9b70ed9588fbf10a3178df40f6f82712b7927f00ba3fc02cdfa11128354c7d3e",
+        "kind": "implementation",
+        "observedBase": "9ca42481e44944999994c0a92b85def01af5cfbc",
+        "pr": null,
+        "requestId": "9b70ed9588fbf10a3178df40f6f82712b7927f00ba3fc02cdfa11128354c7d3e",
+        "resultId": null,
+        "startedAt": 1793877699319
+      },
+      "kind": "work",
+      "nextStep": "blocked",
+      "related": {
+        "incidentId": null,
+        "issueNumber": 177
+      },
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity-sentinel"
+      },
+      "source": {
+        "id": "177",
+        "kind": "issue",
+        "revision": "e05ba64f1142710e4a902a9ae088593a1ca411f5"
+      },
+      "sourceSnapshotDigest": null,
+      "stepInputs": {
+        "deadline": 1793880285064,
+        "digest": "ddc5e06ff895bd7222dd3cc8afbd70dfe076f26af54d343995aec70622b59f2c"
+      },
+      "target": {
+        "base": "9ca42481e44944999994c0a92b85def01af5cfbc",
+        "branch": "sentinel/repair/issue-ubiquity-sentinel-177",
+        "candidateState": {
+          "preserved": null,
+          "publishedHead": null
+        },
+        "checkpoint": null,
+        "head": "9dfdda6981da9b6bf6f37abc4075e5d25294211c",
+        "pr": null
+      },
+      "updatedAt": 1793882330918,
+      "urgency": {
+        "activeProduction": false,
+        "reproducible5xx": false,
+        "severeSecurityOrDataLoss": false
+      },
+      "version": "v1",
+      "wait": null
+    },
+    {
+      "blocker": {
+        "kind": "other",
+        "message": "repeated identical failure; owner action required (close or edit the issue, or change the model route): 5x other|ba872ff9154d4db3 issue=4e16d2463c50 route=e4b22974d0b1 prompt=29921b7659c5: model run failed (unavailable)",
+        "since": 1793882330918
+      },
+      "classification": {
+        "priority": null,
+        "severity": "P2"
+      },
+      "controller": {
+        "sha": "dcd82edb16c04ebda2f886fce8f51564bd4a2c9a"
+      },
+      "counters": {
+        "attempts": 5,
+        "retries": 0,
+        "reviewRounds": 0
+      },
+      "createdAt": 1793531111126,
+      "dependencies": [],
+      "evidence": [],
+      "failingRevision": null,
+      "fingerprint": null,
+      "firstSeenAt": 1753280138000,
+      "id": "issue-ubiquity-ubiquity-dollar-997",
+      "intent": {
+        "branch": "sentinel/repair/issue-ubiquity-ubiquity-dollar-997",
+        "expectedHead": null,
+        "key": "impl:86da4d0735053532655700c6edfe77f775777f20e5014fb6a494f760e0c82fd2",
+        "kind": "implementation",
+        "observedBase": "be9e35ee85fd6c64017fbe45c0c538425d3f1e9b",
+        "pr": null,
+        "requestId": "86da4d0735053532655700c6edfe77f775777f20e5014fb6a494f760e0c82fd2",
+        "resultId": null,
+        "startedAt": 1793877672226
+      },
+      "kind": "work",
+      "nextStep": "blocked",
+      "related": {
+        "incidentId": null,
+        "issueNumber": 997
+      },
+      "repository": {
+        "installationId": 155687488,
+        "name": "ubiquity-dollar",
+        "owner": "ubiquity"
+      },
+      "source": {
+        "id": "997",
+        "kind": "issue",
+        "revision": "be9e35ee85fd6c64017fbe45c0c538425d3f1e9b"
+      },
+      "sourceSnapshotDigest": null,
+      "stepInputs": {
+        "deadline": 1793879829899,
+        "digest": "b8d80f46f31eef6248e03d707bc625b8e339855af7f51f6c121ab7308eb6c5d0"
+      },
+      "target": {
+        "base": "be9e35ee85fd6c64017fbe45c0c538425d3f1e9b",
+        "branch": "sentinel/repair/issue-ubiquity-ubiquity-dollar-997",
+        "checkpoint": null,
+        "head": null,
+        "pr": null
+      },
+      "updatedAt": 1793882330918,
+      "urgency": {
+        "activeProduction": false,
+        "reproducible5xx": false,
+        "severeSecurityOrDataLoss": false
+      },
+      "version": "v1",
+      "wait": null
+    }
+  ]
+}
