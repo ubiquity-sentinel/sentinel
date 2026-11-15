@@ -4842,3 +4842,84 @@ refusal re-arms the two-minute `unavailable` wait and keeps the merge intent
 2026-10-23 "Self-path corrections" wording (the refusal parks the record for the
 owner and clears the intent) does not match. Rollback: revert these commits; no
 state format changed.
+
+## 2026-11-15: one-time release of parked sentinel issues
+
+Owner decision (2026-11-15): asked "Which parked sentinel issues should I
+release? Thirteen are parked and never come back by themselves", the owner
+answered "all". Live sentinel-state/repair 554559876818 (sequence 96323) holds
+those thirteen open, parked issue records of `ubiquity-sentinel/sentinel`;
+intake skips an issue that has a record, so nothing re-admits them. Each was
+read in full with its charges and attempt memory and judged by what its normal
+path would do next. A state rewrite that only buys charges for the same park is
+not a release.
+
+Released by code: `issue-ubiquity-sentinel-177` alone
+(`ops/hosted-autonomy-owner-releases.ts`). Its exact park (record id,
+repository, blocker kind, message and `since` 2026-11-05T12:38:50Z: four
+transient "model run failed (unavailable)" outcomes, five charges) re-arms once
+through the repeat-failure bound's own trigger (`owner_release`), written by the
+retry pass as the ordinary uncharged work grant in its one CAS write. Only
+`nextStep`, `blocker`, `wait`, `intent` and `updatedAt` change; every charge,
+counter, attempt-memory row and the target stay. The runtime then refreshes the
+record's 2026-10-18 base (uncharged) and admits one start, attempt 6, at the
+tip: one implementation charge, then the ordinary bounds (an independent review
+ran the live rows through the real planner and ingester: an identical failure
+re-parks after that one charge; three no-change runs cost three charges before
+the no-change park; failures alternating between two kinds are charged each
+round and are not parked by the repeat-failure rule, an existing gap that
+applies to every unparked record). Every later charge is an ordinary grant
+through unchanged gates. An identical failure re-parks it at once with a later `since`, which the
+release never matches, so it applies at most once with no new persisted field.
+The same park on any other record (ubiquity-dollar 997 shares its signature,
+route, prompt and second) stays parked.
+
+Not released, and why (owner actions are closures or edits; no charge was
+refunded or reset):
+
+- 240, 270, 277 (candidate touches a protected path; 5, 3 and 3 charges): the
+  fix is protected by definition. 240 asks to extend the protected set itself;
+  the base reviews of 270 and 277 name `.github/workflows/supervisor.yml` and
+  `src/host/supervisor-dispatch.ts`. A release regenerates a protected candidate
+  and parks again after one charge. The owner lands or declines these directly.
+  240's shape still matches the `sentinel:retry` exit, at the same cost.
+- 383, 406 (protected path; 3 charges each): one-off self-observations (finalize
+  failed in its setup-deno step, run 42564269285; the repair cells of run
+  43597250279 failed, the log read showing the launcher's `carrier_count`
+  rejection). Their base reviews were "uncertain" and the observed failures sit
+  in workflow and launcher code; close, or re-file with the failing step.
+- 239, 266 (base review found work still needed after 3 no-change outcomes; 7
+  charges each): `MAX_NO_CHANGE_BASE_REVIEWS` (3) is an accounting bound.
+  Lifting it re-opens the round trip, at most one implementation and one base
+  review charge per extra round per record. 239's reviews alternate between
+  uncertain and not fulfilled, and one (2026-11-13) found it already satisfied
+  at base; close it. 266's not-fulfilled review names a concrete defect: the
+  self-defect log read keeps only the first 262,144 bytes, so a long failure
+  reaches the generic fallback. Filing that as a new issue gives the implementer
+  the verdict the record never passed it; close 266.
+- 218 (base review did not establish acceptance; 2 charges): its memory holds 16
+  no-change outcomes from one charge, over the same bound, so the 2026-11-13
+  historical re-arm already refused it; a one-off self-observation of
+  2026-10-25; close.
+- 176, 234 (historical matrix runtime mismatch; 2 and 1 charges): their
+  admissions settled ambiguous and their producer plans (41140349630:1,
+  41181358196:1) are past retention. Returning them to their no-change hold
+  would put expired producers in front of the current-matrix walk; the only
+  other release is a fresh charged start on a stale 2026-10-19 checkpoint (176)
+  or a single 2026-10-31 test-shards exit (234). Close both.
+- 249 (candidate preservation validation refused; 6 charges):
+  `PRESERVATION_REFUSED_MAX_RESERVATIONS` (6) is an accounting bound; each extra
+  allowed refusal is at most one more charge, and the park predates the
+  check-named refusal message, so the failing check is unknown. The fix is
+  documentation only (the follow-up pass header, and a superseding note for the
+  2026-10-16 follow-up entry); land it directly or approve one more charge.
+- 288 with PR 307 (review round ceiling, refreshed head red on test-local and
+  test-shards; 8 charges): b236f3a479 (2026-11-01) already fixed the defect;
+  close the issue and the pull request.
+
+Not changed: passing a base review's verdict text to the implementer needs a
+runtime read of the digest-bound result comment (the runtime GitHub port has
+none), a new request input and, if the prompt prose changes, a new template
+digest that re-arms all six fleet repeat-failure parks once; it is left for its
+own decision. Rollback: revert these commits; a released record is an ordinary
+work record and an unreleased park stays parked.

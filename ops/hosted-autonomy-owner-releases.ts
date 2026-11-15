@@ -24,7 +24,8 @@
  *   `hosted-autonomy-repeat-failure.ts`): an ordinary uncharged work grant
  *   through every gate of `planHostedRetries`. The runtime then refreshes the
  *   record's stale base and admits and charges one implementation start
- *   normally; an identical failure re-parks it at once.
+ *   normally; an identical failure re-parks it at once. Later attempts, if
+ *   any, are ordinary grants under the ordinary bounds, not capped here.
  */
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
