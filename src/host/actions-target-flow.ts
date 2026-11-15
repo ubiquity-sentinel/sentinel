@@ -83,6 +83,23 @@ export function createActionsTargetFlow(
       return null;
     }
   };
+  /**
+   * One read shared by every caller until it fails; a failed read is retried
+   * by the next caller, exactly as an unshared read would be.
+   */
+  const sharedSnapshot = () => {
+    let shared: Promise<readonly WorkRecordV1[] | null> | null = null;
+    return async () => {
+      const read = await (shared ??= snapshot());
+      if (read === null) shared = null;
+      return read;
+    };
+  };
+  // Progress comments' baseline when the caller passed none: one target's
+  // cycle changes only its own target's records, so the state before the
+  // first cycle is every target's state before its own cycle (the serial
+  // aggregate passes such a baseline itself).
+  const progressBaseline = sharedSnapshot();
   const notify = () => {
     for (const listener of [...listeners]) listener();
   };
@@ -167,7 +184,7 @@ export function createActionsTargetFlow(
           slot.before = input.progressComments === undefined
             ? null
             : input.progressBaseline ??
-              await timed(slot, "progressMs", snapshot);
+              await timed(slot, "progressMs", progressBaseline);
           const github = input.composeGithub(config);
           const deps = {
             clock: input.clock,
@@ -302,6 +319,14 @@ export function createActionsTargetFlow(
       ]));
       const outcomes = new Map<number, RepairCycleOutcomeV1>();
       const faults = new Map<number, unknown>();
+      // With no invocation (the planner's runCycle seam) every cycle settled
+      // inside `advance`, so no lifecycle work runs between the targets'
+      // progress comments and they share one after-state read. A settled
+      // invocation's continuation may write before the next target's
+      // comments, so real invocations keep one read each.
+      const afterState = slots.every((slot) => slot.invocation === null)
+        ? sharedSnapshot()
+        : snapshot;
       while (pending.size > 0) {
         const index = await Promise.race(pending.values());
         pending.delete(index);
@@ -322,7 +347,7 @@ export function createActionsTargetFlow(
         if (progressComments !== undefined && before !== null) {
           try {
             await timed(slot, "progressMs", async () => {
-              const after = await snapshot();
+              const after = await afterState();
               if (after !== null) {
                 await progressComments(slot.config, before, after);
               }
