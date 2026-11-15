@@ -20,6 +20,7 @@ import {
   parseReviewResultShape,
   type ReviewResultShapeFactsV1,
   SHAPE_BRACES,
+  SHAPE_ENDS,
   SHAPE_FIELDS,
   SHAPE_ISSUES,
   SHAPE_LAYERS,
@@ -44,6 +45,7 @@ const CODES: Record<string, readonly string[]> = {
   field: SHAPE_FIELDS,
   textStart: SHAPE_STARTS,
   braces: SHAPE_BRACES,
+  bodyEnd: SHAPE_ENDS,
   syntax: SHAPE_SYNTAX,
   syntaxOffset: SHAPE_OFFSETS,
   repair: SHAPE_REPAIRS,
@@ -198,6 +200,39 @@ Deno.test("shape facts: the object scan counts top-level objects outside strings
   }
 });
 
+Deno.test("shape facts: the scan reports the containers left open and the last token", () => {
+  const cases: [string, number, string][] = [
+    ['{"a":{"b":[1]}}', 0, "object_close"],
+    ['{"a":{"b":[1]}', 1, "object_close"],
+    ['{"a":{"b":[1]', 2, "array_close"],
+    ['{"a":{"b":[12', 3, "digit"],
+    ['{"a":{"b":["x"', 3, "string"],
+    ['{"a":{"b":["x",', 3, "comma"],
+    ['{"a":{"b":  \n', 2, "colon"],
+    ['{"a":[', 2, "open"],
+    ['{"a":{', 2, "open"],
+    ['{"a":"x } y', 1, "in_string"],
+    ['{"a":"x \\"', 1, "in_string"],
+    ['{"a":null', 1, "letter"],
+    ["", 0, "none"],
+    [" \n\t", 0, "none"],
+    // An escaped layer scans by its structure.
+    ['{\\"a\\":{\\"b\\":1}', 1, "object_close"],
+    [PRIVATE, 0, "letter"],
+    ["}x}", 0, "object_close"],
+  ];
+  for (const [body, open, end] of cases) {
+    const shape = facts(enveloped(body));
+    assert.deepEqual([shape.openContainers, shape.bodyEnd], [open, end], body);
+  }
+  // Without a close marker the whole text is scanned.
+  const unclosed = facts(NATIVE_REVIEW_OPEN + '{"a":[1,');
+  assert.deepEqual(
+    [unclosed.stage, unclosed.openContainers, unclosed.bodyEnd],
+    ["close_marker_absent", 2, "comma"],
+  );
+});
+
 Deno.test("shape facts: the text start and an unexpected error are closed codes", () => {
   const starts: [string, string][] = [
     ["", "empty"],
@@ -237,6 +272,8 @@ Deno.test("shape line: the strict parser accepts only the exact closed record", 
     { ...line, prefixBytes: -1 },
     { ...line, suffixBytes: 0.5 },
     { ...line, openMarkers: "1" },
+    { ...line, openContainers: -1 },
+    { ...line, bodyEnd: "object close" },
     { ...line, ownerRunId: "" },
     { ...line, requestId: "-leading" },
     { ...line, invocationId: "x".repeat(257) },

@@ -41,6 +41,8 @@ const NOTHING = {
   suffixBytes: 0,
   jsonCandidates: 1,
   braces: "balanced",
+  openContainers: 0,
+  bodyEnd: "object_close",
   syntax: "none",
   syntaxOffset: "none",
   repair: "none",
@@ -109,6 +111,74 @@ Deno.test("result shape: an unrecoverable envelope syntax slip names the parser 
     repairOffset: "lt256",
     layer: "absent",
   });
+});
+
+Deno.test("result shape: a body cut after a value and one missing its last brace are told apart", async (t) => {
+  // 2026-11-15: one live line read json_syntax, unexpected_end, unclosed, a
+  // 2047-byte body, both markers and nothing after the close marker. The same
+  // result complete (2063 bytes) is accepted; cut at 2047 bytes after its
+  // summary, or missing only its last brace, it is refused and the end of the
+  // scan tells the two apart.
+  let summary = "";
+  const prefix = (binding: unknown) =>
+    `{"binding":${JSON.stringify(binding)},"result":` +
+    `{"verdict":"clean","summary":"`;
+  const cut = (binding: unknown) => {
+    const head = prefix(binding);
+    summary = PRIVATE.padEnd(2047 - bytes(head) - 1, "x");
+    return `${head}${summary}"`;
+  };
+  const full = (binding: unknown) => `${cut(binding)},"findings":[]}}`;
+  await t.step("complete", async () => {
+    let body = "";
+    const { outcome, printed } = await nativeReview((binding) => {
+      body = full(binding);
+      return OPEN + body + CLOSE;
+    });
+    assert.equal(bytes(body), 2063);
+    assert.equal(outcome.status, "clean", outcome.detail ?? "");
+    assert.deepEqual(outcome.result, { ...CLEAN_RESULT, summary });
+    assert.equal(printed.some((line) => line.includes(EVENT)), false);
+  });
+  const cases = [{
+    name: "cut at 2047 bytes",
+    build: cut,
+    facts: {
+      messageBytes: 2102,
+      bodyBytes: 2047,
+      openContainers: 2,
+      bodyEnd: "string",
+    },
+  }, {
+    name: "last brace missing",
+    build: (binding: unknown) => full(binding).slice(0, -1),
+    facts: {
+      messageBytes: 2117,
+      bodyBytes: 2062,
+      openContainers: 1,
+      bodyEnd: "object_close",
+    },
+  }];
+  for (const item of cases) {
+    await t.step(item.name, async () => {
+      const { outcome, printed } = await nativeReview((binding) =>
+        OPEN + item.build(binding) + CLOSE
+      );
+      assert.equal(outcome.detail, `${MALFORMED_PREFIX}[json_syntax]`);
+      expectShape(printed, {
+        stage: "json_syntax",
+        textStart: "marker",
+        openMarkers: 1,
+        closeMarkers: 1,
+        braces: "unclosed",
+        syntax: "unexpected_end",
+        syntaxOffset: "end",
+        repair: "unchanged",
+        layer: "absent",
+        ...item.facts,
+      });
+    });
+  }
 });
 
 Deno.test("result shape: a well-formed envelope inside a wrapper is reported as wrapped with a parsing body", async () => {

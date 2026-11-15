@@ -12,6 +12,12 @@
  * terminal line already carries; no substring, digest or field value of the
  * review output is ever part of it.
  *
+ * The scan's end state (2026-11-15) says how a body the strict parser ran off
+ * the end of was left: the containers still open and the class of its last
+ * token. One live body (2047 bytes, both markers, nothing after the close
+ * marker) fit both a body cut after a complete value and one missing only
+ * its closing braces; these two facts tell them apart.
+ *
  * The line has no `status` property (the launcher's child-status scan never
  * reads it) and no `kind` (no job-log evidence scanner reads it). It is
  * advisory only: nothing reads it back as evidence. The launcher re-emits it
@@ -152,6 +158,26 @@ export const SHAPE_STARTS = [
 /** End state of the top-level object scan. */
 export const SHAPE_BRACES = ["balanced", "unclosed", "stray_close"] as const;
 
+/**
+ * The class of the scanned scope's last non-whitespace character: `in_string`
+ * when the scan ends inside a string, `string` for a closing quote, `open` for
+ * `{` or `[`, `letter` for an ASCII letter (a literal's end), `none` for an
+ * empty scope.
+ */
+export const SHAPE_ENDS = [
+  "none",
+  "in_string",
+  "object_close",
+  "array_close",
+  "string",
+  "comma",
+  "colon",
+  "open",
+  "digit",
+  "letter",
+  "other",
+] as const;
+
 /** Every count, length and index the line carries is at most this. */
 export const MAX_SHAPE_COUNT = 1_000_000;
 
@@ -176,6 +202,10 @@ export interface ReviewResultShapeFactsV1 {
   /** Top-level `{` objects in the body (the whole text when it has none). */
   jsonCandidates: number;
   braces: typeof SHAPE_BRACES[number];
+  /** Containers (`{` or `[`) still open at the end of that scan. */
+  openContainers: number;
+  /** The class of that scope's last token. */
+  bodyEnd: typeof SHAPE_ENDS[number];
   /** The strict parse of the body as written. */
   syntax: typeof SHAPE_SYNTAX[number];
   syntaxOffset: typeof SHAPE_OFFSETS[number];
@@ -201,6 +231,7 @@ const CODES: Readonly<Record<string, readonly string[]>> = {
   field: SHAPE_FIELDS,
   textStart: SHAPE_STARTS,
   braces: SHAPE_BRACES,
+  bodyEnd: SHAPE_ENDS,
   syntax: SHAPE_SYNTAX,
   syntaxOffset: SHAPE_OFFSETS,
   repair: SHAPE_REPAIRS,
@@ -217,6 +248,7 @@ const COUNTS = [
   "bodyBytes",
   "suffixBytes",
   "jsonCandidates",
+  "openContainers",
 ] as const;
 
 /** The printed key order. */
@@ -237,6 +269,8 @@ const KEYS: readonly string[] = [
   "suffixBytes",
   "jsonCandidates",
   "braces",
+  "openContainers",
+  "bodyEnd",
   "syntax",
   "syntaxOffset",
   "repair",

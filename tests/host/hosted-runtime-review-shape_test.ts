@@ -111,6 +111,7 @@ Deno.test("hosted runtime: a forged, unsettled or excess shape line is never re-
         { ...shape, messageBytes: -1 },
         { ...shape, bodyBytes: 1.5 },
         { ...shape, jsonCandidates: 1_000_001 },
+        { ...shape, bodyEnd: PRIVATE },
         { ...shape, recovered: "false" },
         { ...shape, requestId: "x".repeat(257) },
         { ...shape, invocationId: "https://private.invalid/value" },
