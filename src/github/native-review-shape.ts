@@ -268,8 +268,8 @@ function bodyFacts(body: string | null): BodyFacts {
       facts.repairOffset = rewritten.offset;
     }
   }
-  // An escaped layer and its rewrite are the other candidates (they begin
-  // with `{"` where the structural rewrite keeps `{\"`).
+  // An escaped layer and its rewrite are the other candidates (their quotes
+  // are unescaped where the structural rewrite keeps `\"`).
   for (const candidate of envelopeRecoveryCandidates(body)) {
     let value: unknown;
     try {
