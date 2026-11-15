@@ -112,13 +112,14 @@ async function settle(
     progress.filed = 0;
     return;
   }
-  const verdicts = evaluateThroughputWatchdogV1({
+  const history = {
     records: input.record === null
       ? ledger.records
       : [...ledger.records, input.record],
     daily: ledger.daily,
     nowMs: input.nowMs,
-  }, thresholds);
+  };
+  const verdicts = evaluateThroughputWatchdogV1(history, thresholds);
   progress.missed = verdicts.filter((v) =>
     v.verdict === "missed" && !v.informational
   ).map((v) => v.id);
@@ -136,6 +137,7 @@ async function settle(
     cycle: input.cycle,
     runtime: input.runtime,
     nowMs: input.nowMs,
+    history,
   });
   progress.createBlocked = plan.createBlocked;
   progress.blocked = plan.blocked;

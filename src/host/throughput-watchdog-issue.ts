@@ -114,6 +114,6 @@ export function throughputWatchdogBodyV1(
     "- A focused change reduces the measured value for the cause you find, with a regression test over fake ports.",
     "- Thresholds live in `src/host/throughput-watchdog-thresholds.ts`; do not raise a limit to make it pass.",
     "- Review, CI, P0 and accounting gates are unchanged.",
-    `- Outcome rule: this issue is re-evaluated after ${THROUGHPUT_WATCHDOG_OUTCOME_CYCLES} cycles on a newer runtime. After it closes, the threshold is re-filed only if it is still missed after ${THROUGHPUT_WATCHDOG_OUTCOME_CYCLES} cycles on a runtime newer than the one installed at close, or at once if the measurement gets more than 10% worse than at close.`,
+    `- Outcome rule: this issue is re-evaluated after ${THROUGHPUT_WATCHDOG_OUTCOME_CYCLES} cycles on a newer runtime. After it closes, the threshold is filed again only if it was met in at least one cycle since the close and is missed again after ${THROUGHPUT_WATCHDOG_OUTCOME_CYCLES} cycles on a runtime newer than the one installed at close, or at once if the measurement gets more than 10% worse than at close; a threshold still missed after its fix merged is otherwise only logged.`,
   ].join("\n");
 }

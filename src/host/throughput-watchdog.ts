@@ -303,6 +303,30 @@ export function evaluateThroughputWatchdogV1(
   );
 }
 
+/**
+ * True when `threshold` was `met` at a cycle record finishing at or after
+ * `sinceMs`, each record judged as its own finalize judged it: over the
+ * records up to it, with its finish as the evaluation instant. A record that
+ * has left the hot tier is not seen, so a met verdict that aged out reads as
+ * never met (the watchdog then files nothing). Pure.
+ */
+export function thresholdMetSinceV1(
+  threshold: ThroughputThresholdV1,
+  input: ThroughputWatchdogInputV1,
+  sinceMs: number,
+): boolean {
+  const records = ordered(input.records, input.nowMs);
+  for (let index = records.length - 1; index >= 0; index--) {
+    const at = records[index].finishedAtMs;
+    if (at < sinceMs) return false;
+    const prefix = records.slice(0, index + 1);
+    if (evaluateOne(threshold, prefix, input.daily, at).verdict === "met") {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** The measured value, x1000 and rounded (the stored comparison key). */
 export function measuredMilliV1(verdict: ThroughputVerdictV1): number | null {
   return verdict.measured === null ? null : Math.round(verdict.measured * 1000);

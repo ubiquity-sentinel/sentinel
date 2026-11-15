@@ -8,16 +8,19 @@
  * - none while that threshold's watchdog issue is open or an open pull
  *   request references it (another threshold may still be filed);
  * - outcome check after its issue closes: the measurement and runtime at
- *   close are recorded, and the threshold is re-filed only once
+ *   close are recorded, and the threshold is filed again only when it was
+ *   met in at least one cycle since the close and is missed again once
  *   `THROUGHPUT_WATCHDOG_OUTCOME_CYCLES` cycles ran on a runtime newer than
- *   the one at close and it is still missed, or at once when the
- *   measurement is more than 10% worse than at close;
+ *   the one at close, or at once when the measurement is more than 10%
+ *   worse than at close; a threshold still missed after its fix merged is
+ *   otherwise only logged (`outcome_pending`), never filed again;
  * - an open issue is edited only after its text is 10 cycles old;
  * - at most `THROUGHPUT_WATCHDOG_DAILY_BOUND` creates per UTC day in total.
  */
 import {
   EMPTY_THROUGHPUT_WATCHDOG_STATE,
   THROUGHPUT_WATCHDOG_COUNTER_CAP,
+  type ThroughputWatchdogClosedV2,
   type ThroughputWatchdogRuntimeV2,
   type ThroughputWatchdogStateV2,
 } from "../contracts/throughput-watchdog-state.ts";
@@ -27,7 +30,9 @@ import {
 } from "../contracts/throughput-metrics.ts";
 import {
   measuredMilliV1,
+  thresholdMetSinceV1,
   type ThroughputVerdictV1,
+  type ThroughputWatchdogInputV1,
 } from "./throughput-watchdog.ts";
 import type { ThroughputThresholdV1 } from "./throughput-watchdog-thresholds.ts";
 import {
@@ -109,6 +114,8 @@ export function planThroughputWatchdogV1(input: {
   /** The runtime this cycle ran on; null when unknown. */
   runtime: ThroughputWatchdogRuntimeV2 | null;
   nowMs: number;
+  /** The records and rollups `verdicts` were evaluated over. */
+  history: ThroughputWatchdogInputV1;
 }): ThroughputWatchdogPlanV1 {
   const prior = input.state ?? EMPTY_THROUGHPUT_WATCHDOG_STATE;
   const table = new Map(input.thresholds.map((row) => [row.id, row]));
@@ -172,6 +179,19 @@ export function planThroughputWatchdogV1(input: {
   const missed = (verdict: ThroughputVerdictV1 | undefined) =>
     verdict !== undefined && !verdict.informational &&
     verdict.verdict === "missed" && measuredMilliV1(verdict) !== null;
+  // After its issue closed, a still-missed threshold is filed again only on
+  // a change: more than 10% worse than at close, or met in a cycle since the
+  // close and missed again once the outcome cycles ran on a newer runtime. A
+  // met cycle that is no longer in the hot records files nothing.
+  const refileAfterClose = (
+    threshold: ThroughputThresholdV1,
+    closed: ThroughputWatchdogClosedV2,
+    measured: number,
+  ) =>
+    (closed.measuredMilli !== null &&
+      measuredWorseV1(closed.measuredMilli, measured)) ||
+    (closed.newerCycles >= THROUGHPUT_WATCHDOG_OUTCOME_CYCLES &&
+      thresholdMetSinceV1(threshold, input.history, closed.atMs));
   for (const [id, row] of openById) {
     const verdict = byId.get(id);
     const threshold = table.get(id);
@@ -221,9 +241,7 @@ export function planThroughputWatchdogV1(input: {
       blocked[id] = "open_pull_request";
     } else if (
       entry?.closed != null &&
-      entry.closed.newerCycles < THROUGHPUT_WATCHDOG_OUTCOME_CYCLES &&
-      !(entry.closed.measuredMilli !== null &&
-        measuredWorseV1(entry.closed.measuredMilli, measured))
+      !refileAfterClose(threshold, entry.closed, measured)
     ) {
       blocked[id] = "outcome_pending";
     } else if (daily.filed >= THROUGHPUT_WATCHDOG_DAILY_BOUND) {

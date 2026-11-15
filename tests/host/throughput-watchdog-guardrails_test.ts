@@ -1,16 +1,17 @@
 /**
  * Throughput watchdog guardrails at the finalize boundary (fake sidecar and
  * tracker, injected clock and runtime): per-threshold in-flight exclusion,
- * the outcome check after close (10 cycles on a newer runtime, or at once
- * when more than 10% worse), edits only when the window advanced 10 cycles,
- * and the 3-per-UTC-day bound.
+ * the outcome check after close (10 cycles on a newer runtime and a met
+ * cycle since the close, or at once when more than 10% worse), edits only
+ * when the window advanced 10 cycles, and the 3-per-UTC-day bound. The
+ * once-per-missed-threshold rule is in `throughput-watchdog-refile_test.ts`.
  */
 import assert from "node:assert/strict";
 import {
   measuredWorseV1,
   runtimeNewerV1,
 } from "../../src/host/throughput-watchdog-plan.ts";
-import { cycles, NOW } from "./throughput-watchdog-helpers.ts";
+import { cycles, M, NOW } from "./throughput-watchdog-helpers.ts";
 import {
   APP,
   DAY,
@@ -143,7 +144,7 @@ Deno.test("watchdog guardrail: another threshold's open issue or PR never blocks
   });
 });
 
-Deno.test("watchdog guardrail: outcome check waits for 10 cycles on a newer runtime", async () => {
+Deno.test("watchdog guardrail: outcome check waits for 10 cycles on a newer runtime and a met cycle", async () => {
   const metrics = fakeMetrics(slow(10));
   const issues = fakeTracker();
   await run(metrics, issues, 1, NOW, true, runtime(5));
@@ -185,8 +186,23 @@ Deno.test("watchdog guardrail: outcome check waits for 10 cycles on a newer runt
     9,
   );
   assert.equal(issues.creates.length, 1);
-  // The tenth newer cycle completes the check: met now, nothing is filed.
-  metrics.ledger = { ...metrics.ledger, records: slow(7, 5000) };
+  // The tenth newer cycle completes the check: met now (cycles recorded
+  // after the close), nothing is filed.
+  const after = (minutes: number, endMs: number, base: number) =>
+    cycles(
+      30,
+      () => ({ maintenanceMin: minutes - 2, repairMin: 2 }),
+      endMs,
+      M,
+      base,
+    );
+  const add = (minutes: number, endMs: number, base: number) => {
+    metrics.ledger = {
+      ...metrics.ledger,
+      records: [...metrics.ledger.records, ...after(minutes, endMs, base)],
+    };
+  };
+  add(7, NOW + 30 * DAY, 5000);
   const met = await run(
     metrics,
     issues,
@@ -200,13 +216,13 @@ Deno.test("watchdog guardrail: outcome check waits for 10 cycles on a newer runt
     entry(metrics, "maintenance_repair_median").closed!.newerCycles,
     10,
   );
-  // Still missed later: re-filed.
-  metrics.ledger = { ...metrics.ledger, records: slow(10, 6000) };
+  // Missed again later, after a met cycle since the close: re-filed.
+  add(10, NOW + 31 * DAY, 6000);
   const refiled = await run(
     metrics,
     issues,
     runId++,
-    NOW + 30 * DAY,
+    NOW + 31 * DAY,
     true,
     runtime(7),
   );

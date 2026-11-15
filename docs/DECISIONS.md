@@ -4732,3 +4732,45 @@ unchanged: a review request on the tip consults no line, so a candidate
 published on the tip, or an older head that refreshes beside a younger front
 once its hold ends, can still take a charged review on the front's tip.
 Rollback: revert these commits; no repair-state format changed.
+
+## 2026-11-15: throughput watchdog files once per missed threshold
+
+Owner decision (2026-11-15, relayed by the round's coordinator): stop the
+throughput watchdog from filing the same missed threshold over and over; its
+measurement and log lines stay. Live record, 2026-11-14 to 2026-11-15: #405,
+#408, #410, #411 and #414 (PRs #407, #409, #412, #413, #415) were all filed for
+`maintenance_repair_median` and `repair_median`. Each cost a charged
+implementation and one or two charged native reviews, and each merged fix
+parallelised a few reads: idle cycle wall time 1262 s → 1266 s,
+maintenance+repair 13.7 → 13.1 min against the 8.0 limit. The issue carries only
+the threshold and its median, and the outcome check re-filed whenever a
+threshold was still missed after 10 cycles on a newer runtime, with no limit. On
+the metrics ref at 2026-11-15 19:31Z, #411 and #414 were closed with 48 and 31
+newer cycles, held only by the daily bound until the next UTC day, and neither
+threshold was met in any of the 505 stored cycle records.
+
+Rule: once a threshold's issue is observed closed (merged fix or any other
+close; the watchdog does not read why), a still-missed threshold is filed again
+only on a material change: it was `met` in at least one cycle since the close
+and is missed again once 10 cycles ran on a newer runtime (a genuine
+regression), or at once when the measurement is more than 10% worse than at
+close (kept from the 2026-11-05 second guardrail set). "Met since the close" is
+judged by the same evaluation over the stored hot cycle records
+(`thresholdMetSinceV1`), each record over the records up to it; a met cycle no
+longer among the newest 2,000 records reads as never met, so the bound fails
+toward filing nothing. Otherwise the threshold stays `outcome_pending` in every
+cycle's `sentinel_throughput_watchdog` line. Thresholds are tracked
+independently; the first filing, the open-issue and open-PR exclusions, edits of
+an open marker issue, adoption of a reopened or unrecorded issue (the owner's
+way to ask for another attempt) and the 3-per-UTC-day bound are unchanged. This
+supersedes only the "re-file once 10 newer cycles ran and it is still missed"
+clause of the 2026-11-05 second set.
+
+Unchanged: what is measured and logged per cycle (the metrics record, the
+watchdog line, its keys and closed values) and `throughput/watchdog.json`, still
+version 2 with the same keys, so an older runtime reads it unchanged. The issue
+body's outcome-rule sentence now states this rule. Phase and target attribution
+was not added: finalize keeps only each job log's runtime summary, not its
+`sentinel_host_phase`/`sentinel_target_timing` lines, and the stored records
+carry only job-level phases, so medians over the window would need new plumbing
+and a new stored shape. Rollback: revert these commits; no state format changed.
