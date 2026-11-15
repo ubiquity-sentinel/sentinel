@@ -22,6 +22,7 @@ import type {
   GitHubCheckSuitesV1,
   GitHubChecksV1,
   GitHubCooldownGateV1,
+  GitHubIssueListOptionsV1,
   GitHubRefV1,
   IssueCloseOutcomeV1,
   MergeOutcomeV1,
@@ -168,8 +169,10 @@ export abstract class GitHubPortBase {
     return this.client.readIssue(issueNumber);
   }
 
-  listOpenIssues(): Promise<PortResultV1<GitHubIssueV1[]>> {
-    return this.client.listOpenIssues();
+  listOpenIssues(
+    options?: GitHubIssueListOptionsV1,
+  ): Promise<PortResultV1<GitHubIssueV1[]>> {
+    return this.client.listOpenIssues(options);
   }
 
   async findPullRequestByHeadRef(

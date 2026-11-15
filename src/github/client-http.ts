@@ -5,6 +5,7 @@ import type {
   GitHubChecksReadOptionsV1,
   GitHubCheckSuitesV1,
   GitHubChecksV1,
+  GitHubIssueListOptionsV1,
   GitHubIssueRelationsV1,
   GitHubIssueV1,
   GitHubPullRequestV1,
@@ -491,7 +492,9 @@ export abstract class GitHubClientHttp {
         : {}),
     });
   }
-  abstract listOpenIssues(): Promise<PortResultV1<GitHubIssueV1[]>>;
+  abstract listOpenIssues(
+    options?: GitHubIssueListOptionsV1,
+  ): Promise<PortResultV1<GitHubIssueV1[]>>;
 
   abstract readIssue(
     issueNumber: number,

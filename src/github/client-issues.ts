@@ -1,6 +1,7 @@
 // client issues.
 
 import type {
+  GitHubIssueListOptionsV1,
   GitHubIssueRelationsV1,
   GitHubIssueV1,
   PortResultV1,
@@ -29,7 +30,9 @@ export abstract class GitHubClientIssues extends GitHubClientHttp {
   // Reads
   // -------------------------------------------------------------------------
 
-  async listOpenIssues(): Promise<
+  async listOpenIssues(
+    options?: GitHubIssueListOptionsV1,
+  ): Promise<
     PortResultV1<GitHubIssueV1[]> & { skippedIssues?: SkippedIssueV1[] }
   > {
     const skippedIssues: SkippedIssueV1[] = [];
@@ -77,7 +80,10 @@ export abstract class GitHubClientIssues extends GitHubClientHttp {
       // Issue-vs-PR distinction: `/issues` lists pull requests too and GitHub
       // marks them with a `pull_request` key; a PR is never an issue here.
       if (item !== null) {
-        if (!enrich) {
+        // An issue the caller declines spends no read and carries no
+        // relations, exactly like one whose read failed: the caller never
+        // consults them. The remaining reads keep their listing order.
+        if (!enrich || options?.relationsFor?.(item) === false) {
           issues.push(item);
           continue;
         }

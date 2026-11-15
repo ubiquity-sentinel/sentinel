@@ -43,6 +43,18 @@ export interface GitHubChecksReadOptionsV1 {
   events?: boolean;
 }
 
+/** Optional narrowing of one open-issue listing. */
+export interface GitHubIssueListOptionsV1 {
+  /**
+   * Which listed issues need their native relations read (one GraphQL read
+   * each, in listing order). An issue it declines is returned without
+   * `relations`, exactly like one whose read failed, and spends no read.
+   * Absent, every listed issue is read as before. A caller declines only
+   * issues whose relations it never consults.
+   */
+  relationsFor?: (issue: GitHubIssueV1) => boolean;
+}
+
 export interface GitHubPort {
   /** Trusted issue-bound existing-PR capability; never available to model workers. */
   readonly existingPrTakeover?: ExistingPrTakeoverPort;
@@ -55,7 +67,9 @@ export interface GitHubPort {
    */
   readonly reviewerIdentity: string;
   readIssue(issueNumber: number): Promise<PortResultV1<GitHubIssueV1 | null>>;
-  listOpenIssues(): Promise<PortResultV1<GitHubIssueV1[]>>;
+  listOpenIssues(
+    options?: GitHubIssueListOptionsV1,
+  ): Promise<PortResultV1<GitHubIssueV1[]>>;
   /** Find the PR for a deterministic head branch; null when none exists. */
   findPullRequestByHeadRef(
     headRef: string,

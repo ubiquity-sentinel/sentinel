@@ -350,7 +350,23 @@ export async function pollIntake(
       return intakeFault(issueCooled.detail);
     }
     if (issueCooled.kind === "ok") {
-      const issues = await deps.github.listOpenIssues();
+      const recorded = (number: number): boolean =>
+        context.snapshot.work.some(
+          (record) =>
+            record.source.kind === "issue" &&
+            record.repository.owner === issueRepository.owner &&
+            record.repository.name === issueRepository.name &&
+            record.source.id === String(number),
+        );
+      // Native relations decide admission only for an open issue that
+      // reaches that decision below: not a CI outage notice and with no
+      // record yet. Every other listed issue is skipped before its relations
+      // would be consulted, so it spends no relations read.
+      const issues = await deps.github.listOpenIssues({
+        relationsFor: (issue) =>
+          issueOnlyIntake && issue.state === "open" &&
+          !isCiOutageNotice(issue) && !recorded(issue.number),
+      });
       const repository = `${issueRepository.owner}/${issueRepository.name}`;
       const skippedRows = "skippedIssues" in issues ? issues.skippedIssues : [];
       const skipped = issues.ok && Array.isArray(skippedRows)
@@ -401,14 +417,7 @@ export async function pollIntake(
             `${issueRepository.owner}/${issueRepository.name}#${issue.number}`;
           if (seenIssues.has(issueKey)) continue;
           seenIssues.add(issueKey);
-          const existing = context.snapshot.work.find(
-            (record) =>
-              record.source.kind === "issue" &&
-              record.repository.owner === issueRepository.owner &&
-              record.repository.name === issueRepository.name &&
-              record.source.id === String(issue.number),
-          );
-          if (existing !== undefined) continue;
+          if (recorded(issue.number)) continue;
 
           // Issue-only (github adapter) intake checks NATIVE dependency
           // relations when available. An issue that is itself a parent (has

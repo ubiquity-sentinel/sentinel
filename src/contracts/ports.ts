@@ -196,6 +196,7 @@ export type {
 export type {
   GitHubChecksReadOptionsV1,
   GitHubCooldownGateV1,
+  GitHubIssueListOptionsV1,
   GitHubPort,
 } from "./ports-github.ts";
 

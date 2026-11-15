@@ -643,8 +643,15 @@ const LOCAL_SKIP_LABEL = "sentinel:skip";
 export function scopeLocalRepairIssues(port: GitHubPort): GitHubPort {
   const listOpenIssues = port.listOpenIssues.bind(port);
   const readIssue = port.readIssue.bind(port);
-  port.listOpenIssues = async () => {
-    const listed = await listOpenIssues();
+  port.listOpenIssues = async (options) => {
+    // An opted-out issue never reaches the caller, so it spends no relations
+    // read; the caller's own narrowing still applies to every other issue.
+    const relationsFor = options?.relationsFor;
+    const listed = await listOpenIssues({
+      ...options,
+      relationsFor: (issue) =>
+        isLocalRepairIssue(issue) && (relationsFor?.(issue) ?? true),
+    });
     return listed.ok
       ? { ...listed, value: listed.value.filter(isLocalRepairIssue) }
       : listed;
