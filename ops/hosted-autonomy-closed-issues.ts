@@ -16,6 +16,8 @@
  * repository. Absence from that listing is not closure evidence: those
  * issues, and repositories whose listing fails, keep their exact GETs.
  *
+ * Records sharing a source issue share its in-flight GET, including failures,
+ * within this read only. Repository and installation identities stay isolated.
  * The remaining reads are independent GETs and run at most
  * `CLOSED_ISSUE_READ_CONCURRENCY` at a time (live 2026-10-24: 388 sequential
  * reads, in a context phase of 85 seconds), started and applied in record
@@ -153,26 +155,34 @@ export async function readHostedClosedIssues(
     }
     return listed;
   };
+  const issueReads = new Map<string, Promise<IssueRead>>();
   const reads = await readInOrder(
     pending,
     CLOSED_ISSUE_READ_CONCURRENCY,
-    async ({ record, issueNumber }): Promise<IssueRead> => {
-      try {
-        const scope = await scopeFor(record.repository);
-        if (scope.surface === null) return { kind: "unreadable" };
-        if ((await listedOpen(record))?.has(issueNumber)) {
-          return { kind: "read", open: true };
-        }
-        let open: boolean | null = null;
+    ({ record, issueNumber }): Promise<IssueRead> => {
+      const key = hostedIssueKey(record.repository, issueNumber);
+      const cached = issueReads.get(key);
+      if (cached !== undefined) return cached;
+      const read = (async (): Promise<IssueRead> => {
         try {
-          open = await scope.surface.readIssueOpen(issueNumber);
-        } catch {
-          open = null;
+          const scope = await scopeFor(record.repository);
+          if (scope.surface === null) return { kind: "unreadable" };
+          if ((await listedOpen(record))?.has(issueNumber)) {
+            return { kind: "read", open: true };
+          }
+          let open: boolean | null = null;
+          try {
+            open = await scope.surface.readIssueOpen(issueNumber);
+          } catch {
+            open = null;
+          }
+          return { kind: "read", open };
+        } catch (error) {
+          return { kind: "threw", error };
         }
-        return { kind: "read", open };
-      } catch (error) {
-        return { kind: "threw", error };
-      }
+      })();
+      issueReads.set(key, read);
+      return read;
     },
   );
   for (const [index, { record, issueNumber }] of pending.entries()) {

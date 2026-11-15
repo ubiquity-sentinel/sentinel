@@ -333,3 +333,71 @@ Deno.test("maintenance: done, retired, protected and unreadable surfaces do not 
   assert.deepEqual(context.actions, ["record:unreadable:surface_unreadable"]);
   assert.deepEqual([...context.closedIssues], []);
 });
+
+Deno.test("maintenance: shared source issues cost one exact read per pass, including unavailable answers", async () => {
+  const work = Array.from(
+    { length: 60 },
+    (_, index) =>
+      workRecord(`part-${index}`, {
+        related: { incidentId: null, issueNumber: index % 4 + 1 },
+      }),
+  );
+  let closed = 1;
+  const { context, reads } = harness(work, undefined, (number) => {
+    if (number === 4) throw new Error("issue unavailable");
+    return number === 3 ? null : number !== closed;
+  });
+  const seen = new Set<string>();
+  await readHostedClosedIssues(context, seen);
+  assert.deepEqual(
+    reads,
+    [1, 2, 3, 4],
+    "including in-flight reads and failures",
+  );
+  assert.equal(seen.size, work.length, "bookkeeping still covers every record");
+  assert.deepEqual([...context.closedIssues], [hostedIssueKey(REPO, 1)]);
+  const retirements = planHostedRetirements(
+    context.snapshot,
+    context.closedIssues,
+  );
+  assert.deepEqual(
+    retirements.map((row) => row.id),
+    work.filter((row) => row.related.issueNumber === 1).map((row) => row.id),
+    "only a positive closed-source observation can retire its parts",
+  );
+
+  closed = 2;
+  await readHostedClosedIssues(context);
+  assert.deepEqual(
+    reads,
+    [1, 2, 3, 4, 1, 2, 3, 4],
+    "the next pass reads afresh",
+  );
+  assert.deepEqual([...context.closedIssues], [hostedIssueKey(REPO, 2)]);
+});
+
+Deno.test("maintenance: shared exact issue reads retain repository and installation scope", async () => {
+  const repositories = [
+    REPO,
+    { ...REPO, installationId: REPO.installationId + 1 },
+    { ...REPO, name: "another-target" },
+  ];
+  const { context, reads } = harness(
+    repositories.flatMap((repository, index) =>
+      [0, 1].map((part) =>
+        workRecord(`scope-${index}-part-${part}`, {
+          repository,
+          related: { incidentId: null, issueNumber: 1 },
+        })
+      )
+    ),
+    undefined,
+    () => false,
+  );
+  await readHostedClosedIssues(context);
+  assert.deepEqual(reads, [1, 1, 1]);
+  assert.deepEqual(
+    [...context.closedIssues],
+    repositories.map((repository) => hostedIssueKey(repository, 1)),
+  );
+});
