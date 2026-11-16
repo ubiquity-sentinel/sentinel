@@ -40,7 +40,10 @@ import {
   NOW,
   TIP,
 } from "./hosted-autonomy-spent-fixtures.ts";
-import { heldPullsIssues } from "./hosted-autonomy-base-repair-fixtures.ts";
+import {
+  checkoutSource,
+  heldPullsIssues,
+} from "./hosted-autonomy-base-repair-fixtures.ts";
 
 const SCOPE = `/repos/${GATEWAY.owner}/${GATEWAY.name}`;
 const SLUG = `${GATEWAY.owner}/${GATEWAY.name}` as const;
@@ -122,8 +125,8 @@ async function pass(label: string, read: BackupCiReadV1) {
     // GitHub lists the held record's own App pull request.
     baseRepairIssues: heldPullsIssues([record.target.pr!], NOW, filed),
     // The rig routes the Sentinel repository here too: the installed
-    // runtime descends from the CI-fix cap's commit.
-    isAncestor: () => Promise.resolve(true),
+    // runtime's source is this checkout's, which carries the cap.
+    readFileAt: (path) => checkoutSource(path),
   };
   const rig = await liveRig(
     `backup-base-${label}`,

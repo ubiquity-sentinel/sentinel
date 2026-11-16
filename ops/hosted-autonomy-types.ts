@@ -304,17 +304,17 @@ export interface HostedAutonomyGitHubV1 {
    */
   baseAdvanced?(base: string, tip: string): Promise<boolean>;
   /**
-   * True when `ancestor` is `descendant` or one of its ancestors in THIS
-   * repository, from GitHub's compare `ancestor...descendant` read through
-   * the corrected ancestry check (`compareConfirmsAncestor`: base and merge
-   * base both `ancestor`, `ahead` or `identical`, nothing behind,
-   * `total_commits` bounded, never equated with `ahead_by`); false when
-   * GitHub answers otherwise; null when either id is not a full commit SHA or
-   * the compare cannot be read. Optional: a surface without it proves
-   * nothing (the base-repair installed-runtime gate reads it on the Sentinel
-   * repository).
+   * The exact text of the regular file at `path` in THIS repository at the
+   * exact commit `revision` (the contents API with that commit as the ref),
+   * or null when either is malformed (a full commit SHA, a plain path) or
+   * the file cannot be read whole and proven: GitHub's answer must be a
+   * regular file at exactly that path, its decoded bytes must have its size
+   * (at most `READ_FILE_AT_MAX_BYTES`) and hash to its blob id, and they
+   * must be UTF-8. Optional: a surface without it proves nothing (the
+   * base-repair installed-runtime gate reads the cap's source with it on the
+   * Sentinel repository).
    */
-  isAncestor?(ancestor: string, descendant: string): Promise<boolean | null>;
+  readFileAt?(path: string, revision: string): Promise<string | null>;
   /**
    * SHA-256 (lowercase hex) of the exact bytes of GitHub's merge-base diff of
    * `head` against `base` in THIS repository (compare `base...head`, diff

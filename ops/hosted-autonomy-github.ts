@@ -69,7 +69,7 @@ import {
   readSquashTrees,
 } from "./hosted-autonomy-merge-shape.ts";
 import {
-  createIsAncestor,
+  createReadFileAt,
   parseHostedAutonomyHeadPulls,
   parseHostedAutonomyPull,
   revisionIntegratedIntoBase,
@@ -837,7 +837,7 @@ export function createHostedAutonomyGitHub(
         return Number.isSafeInteger(number) && number > 0 ? number : null;
       },
     },
-    isAncestor: createIsAncestor(request, scope),
+    readFileAt: createReadFileAt(request, scope),
     async baseAdvanced(base: string, tip: string) {
       // The reviewed base is a strict ancestor of the tip: the exact compare
       // shape of `revisionIntegratedIntoBase`, with the tip strictly ahead.

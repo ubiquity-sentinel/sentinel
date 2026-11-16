@@ -1,49 +1,87 @@
 /**
- * The base-repair pass's installed-runtime gate (2026-11-16).
+ * The base-repair pass's installed-runtime gate (2026-11-16; reworked after
+ * the third review of the ai.ubq.fi enablement the same day).
  *
  * Filing runs in the launcher; the cap on a filed task's charged CI fixes
  * (`BASE_REPAIR_CI_FIX_CAP`, `src/repair/base-repair.ts`) runs in the
- * INSTALLED runtime. The two differ during an install and after a rollback,
- * whose target is the runtime installed before. The cap therefore landed
- * first, alone (`BASE_REPAIR_CAP_REVISION`), and as a second guard the
- * launcher files only while:
+ * INSTALLED runtime. The two differ during an install, after a rollback
+ * (whose target is the runtime installed before) and while the launcher and
+ * the runtime pointer stand at different commits. The launcher therefore
+ * files only while:
  *
  * - the release state names the installed runtime (the hosted runtime
  *   pointer every maintenance phase reads, never the launcher's checkout);
  * - no installation is in flight, since its bootstrap could still roll the
  *   pointer back to the runtime before it; and
- * - the installed revision is `BASE_REPAIR_CAP_REVISION` or a descendant of
- *   it, proven on the Sentinel repository by GitHub's compare through the
- *   corrected ancestry reading (`isAncestor`, `compareConfirmsAncestor`).
+ * - the installed revision's OWN source carries the cap: every file of
+ *   `BASE_REPAIR_CAP_SOURCES`, read from the Sentinel repository at exactly
+ *   that commit (`readFileAt`, blob-checked), shows what
+ *   `runtimeSourceCarriesCap` requires.
  *
- * Once all three hold, every runtime the pointer can reach by self-install
- * carries the cap: an install needs its candidate to descend from the
- * installed runtime, and a failed bootstrap rolls back to that runtime.
- * Anything unproven files nothing, with a fixed reason.
+ * The earlier proof, that the installed revision descends from the commit
+ * that landed the cap, did not show the cap was still there: a later revert
+ * of that commit stays its descendant, and the third review filed on such a
+ * runtime. The installed source answers that whatever history led to it, so
+ * no commit id is pinned here. The facts are text over that source; a test
+ * pins that they hold on this checkout, so a change that moves the cap fails
+ * CI instead of silently stopping filing. Anything unproven files nothing,
+ * with a fixed reason.
  */
 import { HOSTED_RUNTIME_ID } from "../src/contracts/hosted-supervisor.ts";
 import { installationTerminal } from "../src/contracts/hosted-supervisor-installation.ts";
+import { BASE_REPAIR_CI_FIX_CAP } from "../src/repair/base-repair.ts";
 import { HOSTED_AUTONOMY_SELF_SCOPE } from "./hosted-autonomy-policy.ts";
 import { readReleaseSafely } from "./hosted-autonomy-state.ts";
 import type { HostedAutonomyDepsV1 } from "./hosted-autonomy-types.ts";
 
 /**
- * The commit that landed the runtime's CI-fix cap of a base-repair task, the
- * end of stage 1 of the base-repair split (landed and installed ahead of
- * filing). It is referenced, never derived: if that stage landed under
- * another commit id, this constant must name it, and until it does every
- * pass files nothing (`runtime_uncapped`).
+ * The installed source files the gate reads: the cap's declaration and the
+ * CI-fix admission that enforces it (`prepareImplementationStart`).
  */
-export const BASE_REPAIR_CAP_REVISION =
-  "33789b2a90c821058de155c4860f2cf9f6eb8e2b";
+export const BASE_REPAIR_CAP_SOURCES = Object.freeze(
+  {
+    cap: "src/repair/base-repair.ts",
+    admission: "src/repair/loop-implementation.ts",
+  } as const,
+);
+
+export type BaseRepairCapSourcesV1 = Record<
+  keyof typeof BASE_REPAIR_CAP_SOURCES,
+  string
+>;
+
+/** The cap's one top-level declaration: a positive whole number. */
+const CAP_DECLARATION =
+  /^export const BASE_REPAIR_CI_FIX_CAP = ([1-9][0-9]{0,2});$/gm;
+
+/** The admission's call of the capped check, before any charge. */
+const CAP_ADMISSION = /\bawait baseRepairCiFixCapped\(/;
+
+/**
+ * Whether installed source text carries the cap: `cap` declares
+ * `BASE_REPAIR_CI_FIX_CAP` exactly once, at a value from 1 to this
+ * launcher's own (a larger one would break the bound the launcher states),
+ * and `admission` calls the capped check. A revert of the cap, a runtime
+ * from before it, or a runtime whose cap is larger than this launcher's,
+ * fails.
+ */
+export function runtimeSourceCarriesCap(
+  sources: BaseRepairCapSourcesV1,
+): boolean {
+  const declared = [...sources.cap.matchAll(CAP_DECLARATION)];
+  if (declared.length !== 1) return false;
+  const cap = Number(declared[0][1]);
+  return cap >= 1 && cap <= BASE_REPAIR_CI_FIX_CAP &&
+    CAP_ADMISSION.test(sources.admission);
+}
 
 /**
  * Why the installed runtime holds base-repair filing, as the pass's action
  * suffix, or null when it carries the cap: `runtime_unreadable` when the
- * release state, its runtime pointer or the ancestry cannot be read (a
- * transient fault), `runtime_installing` while an installation is in
- * flight, `runtime_uncapped` when GitHub answers that the installed revision
- * does not descend from `BASE_REPAIR_CAP_REVISION`.
+ * release state, its runtime pointer or one of the installed source files
+ * cannot be read, `runtime_installing` while an installation is in flight,
+ * `runtime_uncapped` when the installed source, read whole, does not carry
+ * the cap (`runtimeSourceCarriesCap`).
  */
 export async function baseRepairRuntimeHold(
   deps: Pick<HostedAutonomyDepsV1, "state" | "githubFor">,
@@ -64,16 +102,24 @@ export async function baseRepairRuntimeHold(
   ) {
     return "runtime_installing";
   }
-  if (runtime.activeRevision === BASE_REPAIR_CAP_REVISION) return null;
-  let proven: boolean | null = null;
+  const sources: Partial<BaseRepairCapSourcesV1> = {};
   try {
-    proven = await deps.githubFor(HOSTED_AUTONOMY_SELF_SCOPE)?.isAncestor?.(
-      BASE_REPAIR_CAP_REVISION,
-      runtime.activeRevision,
-    ) ?? null;
+    const self = deps.githubFor(HOSTED_AUTONOMY_SELF_SCOPE);
+    if (self?.readFileAt === undefined) return "runtime_unreadable";
+    for (
+      const [key, path] of Object.entries(BASE_REPAIR_CAP_SOURCES) as [
+        keyof BaseRepairCapSourcesV1,
+        string,
+      ][]
+    ) {
+      const text = await self.readFileAt(path, runtime.activeRevision);
+      if (typeof text !== "string") return "runtime_unreadable";
+      sources[key] = text;
+    }
   } catch {
-    proven = null;
+    return "runtime_unreadable";
   }
-  if (proven === null) return "runtime_unreadable";
-  return proven ? null : "runtime_uncapped";
+  return runtimeSourceCarriesCap(sources as BaseRepairCapSourcesV1)
+    ? null
+    : "runtime_uncapped";
 }

@@ -1,5 +1,4 @@
 import { isGitSha } from "../src/contracts/brands.ts";
-import { compareConfirmsAncestor } from "../src/host/owner-install-api.ts";
 import type {
   HostedAutonomyHeadPullV1,
   HostedAutonomyPullV1,
@@ -133,17 +132,33 @@ export function revisionIntegratedIntoBase(
     (mergeBase as Record<string, unknown>)["sha"] === revision;
 }
 
+/** Largest file `readFileAt` reads whole (the cap's sources are tens of KB). */
+export const READ_FILE_AT_MAX_BYTES = 256 * 1024;
+
+/** A plain repository path: safe segments, none of them `.` or `..`. */
+const PLAIN_PATH =
+  /^[A-Za-z0-9_-][A-Za-z0-9._-]*(?:\/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$/;
+
+/** Git's object id of a blob holding exactly `bytes`. */
+async function blobId(bytes: Uint8Array): Promise<string> {
+  const header = new TextEncoder().encode(`blob ${bytes.length}\0`);
+  const object = new Uint8Array(header.length + bytes.length);
+  object.set(header);
+  object.set(bytes, header.length);
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-1", object));
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 /**
- * The surface member `isAncestor` for one repository (see its contract in
- * `HostedAutonomyGitHubV1`). The compare is read at page 2 of one commit
- * per page: GitHub lists the changed files on the first page only, so a
- * long range stays a small answer, and every counter the check reads is
- * still there (live, 2026-11-16: a one-commit range answers page 2 with
- * status `ahead` and no commits or files). The answer is read through the
- * corrected check of 2026-11-14 (`compareConfirmsAncestor`), which never
- * equates `total_commits` with `ahead_by`.
+ * The surface member `readFileAt` for one repository (see its contract in
+ * `HostedAutonomyGitHubV1`): the contents API at exactly `revision`, read as
+ * JSON, so the answer names its own type, path, size and blob id. Only a
+ * regular file at exactly `path`, at most `READ_FILE_AT_MAX_BYTES`, whose
+ * decoded bytes have that size and hash to that blob id and decode as UTF-8,
+ * is returned; anything else is null.
  */
-export function createIsAncestor(
+export function createReadFileAt(
   request: (
     method: string,
     path: string,
@@ -151,15 +166,41 @@ export function createIsAncestor(
     maxBytes?: number,
   ) => Promise<unknown | null>,
   scope: string,
-): (ancestor: string, descendant: string) => Promise<boolean | null> {
-  return async (ancestor, descendant) => {
-    if (!isGitSha(ancestor) || !isGitSha(descendant)) return null;
-    if (ancestor === descendant) return true;
-    const compare = await request(
+): (path: string, revision: string) => Promise<string | null> {
+  return async (path, revision) => {
+    if (!isGitSha(revision) || !PLAIN_PATH.test(path)) return null;
+    const raw = await request(
       "GET",
-      `/repos/${scope}/compare/${ancestor}...${descendant}?per_page=1&page=2`,
+      `/repos/${scope}/contents/${path}?ref=${revision}`,
     );
-    if (compare === null || typeof compare !== "object") return null;
-    return compareConfirmsAncestor(compare, ancestor);
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+      return null;
+    }
+    const file = raw as Record<string, unknown>;
+    const size = file["size"];
+    const content = file["content"];
+    const sha = file["sha"];
+    if (
+      file["type"] !== "file" || file["path"] !== path ||
+      file["encoding"] !== "base64" || typeof content !== "string" ||
+      typeof sha !== "string" || !isGitSha(sha) ||
+      typeof size !== "number" || !Number.isSafeInteger(size) || size < 0 ||
+      size > READ_FILE_AT_MAX_BYTES
+    ) return null;
+    let bytes: Uint8Array;
+    try {
+      bytes = Uint8Array.from(
+        atob(content.replace(/\s/g, "")),
+        (char) => char.charCodeAt(0),
+      );
+    } catch {
+      return null;
+    }
+    if (bytes.length !== size || await blobId(bytes) !== sha) return null;
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch {
+      return null;
+    }
   };
 }

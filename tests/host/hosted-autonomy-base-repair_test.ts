@@ -41,6 +41,7 @@ import {
   NOW,
   TIP,
 } from "./hosted-autonomy-spent-fixtures.ts";
+import { checkoutSource } from "./hosted-autonomy-base-repair-fixtures.ts";
 
 const TAG = "base-repair:ubiquity/ai.ubq.fi";
 const DAY = 24 * 60 * 60_000;
@@ -130,8 +131,8 @@ async function pass(options: PassOptions) {
   const surface: HostedAutonomyGitHubV1 = {
     ...base,
     // The rig routes every repository here, the Sentinel one too: the
-    // installed runtime descends from the CI-fix cap's commit.
-    isAncestor: () => Promise.resolve(true),
+    // installed runtime's source is this checkout's, which carries the cap.
+    readFileAt: (path) => checkoutSource(path),
     failedChecks: (commit, conclusions) => {
       reads.push({ commit, conclusions });
       return Promise.resolve(

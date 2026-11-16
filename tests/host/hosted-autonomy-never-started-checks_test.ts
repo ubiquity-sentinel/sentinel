@@ -31,7 +31,10 @@ import {
   NOW,
   TIP,
 } from "./hosted-autonomy-spent-fixtures.ts";
-import { heldPullsIssues } from "./hosted-autonomy-base-repair-fixtures.ts";
+import {
+  checkoutSource,
+  heldPullsIssues,
+} from "./hosted-autonomy-base-repair-fixtures.ts";
 
 const SCOPE = `/repos/${GATEWAY.owner}/${GATEWAY.name}`;
 const ACTIONS = { id: 15368, slug: "github-actions" };
@@ -294,8 +297,8 @@ Deno.test("base repair pass: a base whose only failure never started files nothi
     // GitHub lists the held record's own App pull request.
     baseRepairIssues: heldPullsIssues([pr!], NOW, filed),
     // The rig routes the Sentinel repository here too: the installed
-    // runtime descends from the CI-fix cap's commit.
-    isAncestor: () => Promise.resolve(true),
+    // runtime's source is this checkout's, which carries the cap.
+    readFileAt: (path) => checkoutSource(path),
   };
   const rig = await liveRig(
     "never-started-base",

@@ -7,9 +7,9 @@
  * runtime opened) and issues, open or closed, each with its title, first
  * body line and creation instant. A test may move the tip, close or edit an
  * issue, or break a listing the way the review did. The release state names
- * the installed runtime (`RUNTIME`, a descendant of the base-repair CI-fix
- * cap's commit by default) and a fake Sentinel repository answers the
- * runtime gate's ancestry compare.
+ * the installed runtime (`RUNTIME`) and a fake Sentinel repository answers
+ * the runtime gate's source reads (by default this checkout's own files, so
+ * the installed runtime carries the base-repair CI-fix cap).
  */
 import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -21,7 +21,6 @@ import type {
 import type { ReleaseStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import { RED_BASE_RECHECK_MS } from "../../src/repair/ci-first-policy.ts";
 import { candidateBranch } from "../../src/repair/keys.ts";
-import { BASE_REPAIR_CAP_REVISION } from "../../ops/hosted-autonomy-base-repair-runtime.ts";
 import { isHostedSelf } from "../../ops/hosted-autonomy-policy.ts";
 import { runHostedAutonomy } from "../../ops/hosted-autonomy-runner.ts";
 import type {
@@ -40,7 +39,7 @@ import {
 import { releaseSnapshot } from "./hosted-autonomy-rig.ts";
 
 export const NOW = T0 + 6 * 60 * 60_000;
-/** The installed runtime: a descendant of the CI-fix cap's commit. */
+/** The installed runtime (its source: this checkout's, by default). */
 export const RUNTIME = "e9".repeat(20);
 export const HOUR = 60 * 60_000;
 export const DAY = 24 * HOUR;
@@ -362,25 +361,30 @@ export function redTargets(
   };
 }
 
-/** The installed runtime and the Sentinel repository's ancestry answers. */
+/**
+ * This checkout's own text of `path`: the installed runtime's source as the
+ * Sentinel repository answers it when the runtime is this very code.
+ */
+export function checkoutSource(path: string): Promise<string | null> {
+  return Deno.readTextFile(new URL(`../../${path}`, import.meta.url));
+}
+
+/** The installed runtime and the Sentinel repository's answers. */
 export interface MaintenanceOptions {
   /** The release state (default: the runtime pointer at `RUNTIME`). */
   release?: ReleaseStateSnapshotV1;
   /**
-   * The Sentinel repository's compare `ancestor...descendant` (default:
-   * `RUNTIME` descends from the cap's commit, nothing else does).
+   * The Sentinel repository's surface (default: `readFileAt` answers this
+   * checkout's source at any revision).
    */
-  isAncestor?: (
-    ancestor: string,
-    descendant: string,
-  ) => Promise<boolean | null>;
+  self?: Partial<HostedAutonomyGitHubV1>;
 }
 
 /**
  * The deps of one maintenance run at `now` over `records`, each target routed
  * to its own fake and the Sentinel repository to a fake that answers only
- * the ancestry compare (one `githubFor` per run, as the hosted main builds
- * it).
+ * the runtime gate's source reads (one `githubFor` per run, as the hosted
+ * main builds it).
  */
 export async function maintenanceDeps(
   records: WorkRecordV1[],
@@ -393,13 +397,9 @@ export async function maintenanceDeps(
     snapshotOf(records, []),
     options.release ?? releaseSnapshot([], RUNTIME as GitSha),
   );
-  const self = {
-    isAncestor: options.isAncestor ??
-      ((ancestor: string, descendant: string) =>
-        Promise.resolve(
-          ancestor === BASE_REPAIR_CAP_REVISION && descendant === RUNTIME,
-        )),
-  } as unknown as HostedAutonomyGitHubV1;
+  const self = (options.self ?? {
+    readFileAt: (path: string) => checkoutSource(path),
+  }) as unknown as HostedAutonomyGitHubV1;
   const deps = await withDarkQueueAuthority({
     ciMinutes: INACTIVE_CI_MINUTES,
     state: state as unknown as StateReadView & RepairStateWriter,

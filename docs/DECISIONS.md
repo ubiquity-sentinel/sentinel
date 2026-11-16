@@ -5061,7 +5061,8 @@ It lands only after the change of the 2026-11-16 entry "CI-fix cap for
 base-repair tasks, landed ahead of filing" has been the installed runtime for at
 least one full generation (so it is also the rollback target of the install that
 brings this one) and the owner has confirmed the cap's value. The runtime gate
-below enforces the installed-runtime half in code.
+below enforces the installed-runtime half in code, by reading the installed
+runtime's own source.
 
 - Mechanism: `BASE_REPAIR_FILING_ENABLED` is replaced by
   `BASE_REPAIR_FILING_TARGETS`, an exact `owner/name` allowlist holding only
@@ -5084,15 +5085,23 @@ below enforces the installed-runtime half in code.
   nothing):
   - Runtime gate
     ([ops/hosted-autonomy-base-repair-runtime.ts](../ops/hosted-autonomy-base-repair-runtime.ts)):
-    the launcher files only while the release state's installed runtime is the
-    cap's commit (`BASE_REPAIR_CAP_REVISION`) or a descendant of it, proven by
-    GitHub's compare on the Sentinel repository through the corrected ancestry
-    check (`compareConfirmsAncestor`, one small page), and no installation is in
-    flight (`runtime_installing`); otherwise `runtime_uncapped` or
-    `runtime_unreadable`. Every runtime the pointer can then reach by
-    self-install descends from it, so a filed task is capped wherever it runs.
-    If the cap's stage landed under another commit id,
-    `BASE_REPAIR_CAP_REVISION` must name it before this lands.
+    the launcher files only while no installation is in flight
+    (`runtime_installing`) and the installed runtime's OWN source carries the
+    cap: `src/repair/base-repair.ts` and `src/repair/loop-implementation.ts`,
+    read from the Sentinel repository at exactly the release state's runtime
+    revision (the contents API, each file checked against its blob id), must
+    declare `BASE_REPAIR_CI_FIX_CAP` once, from 1 to this launcher's value, and
+    call the capped check at the CI-fix admission (`runtimeSourceCarriesCap`);
+    otherwise `runtime_uncapped`, or `runtime_unreadable` when the pointer or a
+    file cannot be read. The third review (2026-11-16) filed on a runtime that
+    descended from the cap's commit with the cap reverted: the first version of
+    this gate proved only that ancestry, from a pinned commit id
+    (`BASE_REPAIR_CAP_REVISION`, removed with its compare read, so a wrong pin
+    can no longer stop filing under a transient-looking reason). A test pins the
+    facts to this checkout, so a change that moves the cap fails CI instead of
+    silently stopping filing. The gate holds new filings only: a later install
+    of a runtime without the cap stops filing, but an issue already filed is
+    then worked without it (close the issue to stop its charges).
   - Listing proof: the App listing (`creator=ubiquity-sentinel[bot]`) must
     answer, as the App's own pull requests, every pull request of the records
     held on the tip (`listing_unproven`; `held_pull_foreign` when GitHub names
@@ -5155,3 +5164,14 @@ issue already filed on ai.ubq.fi and does not stop a task already admitted from
 it: the runtime still recognises and works it as a base-repair task, with its CI
 fixes still capped (the cap is the earlier entry's and stays). Close the issue
 by hand to stop its charges.
+
+Correction to the cap's entry above ("CI-fix cap for base-repair tasks, landed
+ahead of filing"), whose text stays as written: its rollback sentence, "Filing
+stays off either way", held only while filing was off for every target. Once
+this entry is in, roll back in order: revert this entry's commits first (filing
+off for every target), close any open base-repair issue, and only then revert
+the cap's. Reverted alone, the cap leaves the installed runtime at the next
+install, so the gate above files nothing new, but a base-repair task already
+filed is then worked with uncapped charged CI fixes. Its "Why first" also no
+longer carries the guarantee alone: the gate reads the installed source instead
+of relying on the install order.
