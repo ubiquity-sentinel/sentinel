@@ -32,6 +32,7 @@ import {
   parsePassSummaryLine,
   PASS_SUMMARY_LINE_KIND,
 } from "../repair/pass-summary-line.ts";
+import { TARGETS_UNAVAILABLE_REASON } from "../repair/targets-deferral-line.ts";
 
 /**
  * #326/#338: the repair passes' re-emitted `sentinel_repair_pass` counts in
@@ -110,7 +111,10 @@ export interface HostedRuntimeRunSummaryV1 {
   admittedWorkCount: number | null;
   modelStarts: number | null;
   prsTouched: { repository: string; number: number; action: string }[];
-  /** `degraded`: every job was healthy, but the wedge report is not empty. */
+  /**
+   * `degraded`: every job was healthy, but a job deferred on unreadable
+   * targets (`targets_unavailable`) or the wedge report is not empty.
+   */
   outcome: "healthy" | "degraded" | "failed" | "unavailable";
   /** The wedge report v0, or null when the repair state was not read. */
   wedges: WedgeReportV0 | null;
@@ -303,12 +307,16 @@ export function aggregateRunSummary(
     job.conclusion === "failure" || job.summary?.outcome === "failed"
   );
   const unreadable = listed.filter((job) => job.summary === null);
+  // A job its child deferred on unreadable targets did no target work.
+  const deferred = listed.filter((job) =>
+    job.summary?.reasonCode === TARGETS_UNAVAILABLE_REASON
+  );
   const outcome: HostedRuntimeRunSummaryV1["outcome"] = failed !== undefined
     ? "failed"
     : summaries.length === 0 ||
         summaries.some((summary) => summary.outcome !== "healthy")
     ? "unavailable"
-    : wedges !== null && wedges.total > 0
+    : deferred.length > 0 || (wedges !== null && wedges.total > 0)
     ? "degraded"
     : "healthy";
   const generation = agreed(summaries.map((summary) => summary.generation));
@@ -338,6 +346,10 @@ export function aggregateRunSummary(
         ? "the run"
         : unreadable.map((job) => job.name).slice(0, 5).join(", ")
     }; their runtime summary was missing or not healthy.`
+    : deferred.length > 0
+    ? `Every committed target read was unavailable, so ${
+      deferred.map((job) => job.name).slice(0, 5).join(", ")
+    } deferred (${TARGETS_UNAVAILABLE_REASON}); check GitHub access to the committed targets.`
     : outcome === "degraded" && wedges !== null
     ? `Inspect the wedge report: ${wedgeSentence(wedges)}.`
     : "None; the next scheduled run continues.";

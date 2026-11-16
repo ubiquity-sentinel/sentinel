@@ -4982,9 +4982,12 @@ an empty setting and turned the run red. Reproduced through the real
 - An ordinary serial pass then settles healthy with the idle outcome "every
   committed target read was unavailable; the pass deferred", after the actual
   startup probe (an unready startup still fails it). Nothing after the target
-  load runs (queue custody, owner-successor review, target cycles, ingestion,
-  CI approval, model starts), so it writes no state. The launcher labels its
-  runtime summary `targets_unavailable`, never `healthy`.
+  load runs (CI-minute reconciliation, queue custody, owner-successor review,
+  target cycles, ingestion, CI approval, model starts), so it writes no state.
+  The launcher labels the job's runtime summary `targets_unavailable` from the
+  child's own deferral outcome (the line alone labels nothing), and finalize's
+  run summary is then `degraded` with a next action naming the deferral, never
+  `healthy` with "None".
 - The matrix planner publishes the queue-custody hold's empty zero-grant plan
   with plan diagnostic cause `targets_unavailable`. A repository cell writes its
   refusal and marker exactly as a cell whose own target is not configured;

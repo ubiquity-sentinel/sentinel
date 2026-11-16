@@ -11,6 +11,7 @@ import {
   aggregateRunSummary,
   emitRunSummary,
   lastRuntimeSummary,
+  runSummaryMarkdown,
 } from "../../src/host/run-summary.ts";
 import { parseTargetSlugsV1, TARGETS_MAX } from "../../src/host/targets.ts";
 import { CONTROLLER } from "./controller-identity-fixture.ts";
@@ -252,6 +253,44 @@ Deno.test("run summary: a failed job names itself, and an unreadable list stays 
     null,
     "a thrown reader never escapes",
   );
+});
+
+Deno.test("run summary: a job deferred on unreadable targets is never a healthy run", () => {
+  const deferred = child({
+    admittedWorkCount: 0,
+    modelStarts: 0,
+    reasonCode: "targets_unavailable",
+  });
+  const summary = aggregateRunSummary({ runId: RUN, runAttempt: 1 }, [
+    {
+      name: "matrix_plan",
+      conclusion: "success",
+      summary: lastRuntimeSummary(jobLog(child())),
+    },
+    {
+      name: "repair",
+      conclusion: "success",
+      summary: lastRuntimeSummary(jobLog(deferred)),
+    },
+  ]);
+  assert.equal(summary.outcome, "degraded");
+  assert.match(summary.explanation, /; degraded\.$/);
+  assert.equal(
+    summary.nextAction,
+    "Every committed target read was unavailable, so repair deferred " +
+      "(targets_unavailable); check GitHub access to the committed targets.",
+  );
+  const markdown = runSummaryMarkdown(summary);
+  assert.match(markdown, /Next action: Every committed target read/);
+  assert.doesNotMatch(markdown, /Next action: None/);
+  // A plain healthy run is unchanged.
+  const healthy = aggregateRunSummary({ runId: RUN, runAttempt: 1 }, [{
+    name: "repair",
+    conclusion: "success",
+    summary: lastRuntimeSummary(jobLog(child())),
+  }]);
+  assert.equal(healthy.outcome, "healthy");
+  assert.equal(healthy.nextAction, "None; the next scheduled run continues.");
 });
 
 Deno.test("run summary: foreign and truncated lines are not summaries", () => {
