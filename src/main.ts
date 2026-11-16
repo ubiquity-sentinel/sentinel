@@ -191,6 +191,13 @@ export interface RepairInvocationV1 {
   /** Session/journal settlement only; never writes repair state. */
   drain(): Promise<void>;
   finish(): Promise<RepairCycleOutcomeV1>;
+  /**
+   * True once `finish` handed at least one drained review to the post-drain
+   * continuation: the only repair-state write `finish` can make (the cycle's
+   * return and `drain` write none). False before `finish` and when nothing was
+   * continued.
+   */
+  finishMayWrite(): boolean;
 }
 
 export function createRepairInvocation(
@@ -304,6 +311,7 @@ export function createRepairInvocation(
   let report: ReviewDrainReportV1 | null = null;
   let drainFailed = false;
   let drainCause: unknown = null;
+  let continuedReviews = 0;
   const drain = (): Promise<void> =>
     drainedOnce ??= (async () => {
       if (advancing) {
@@ -372,12 +380,18 @@ export function createRepairInvocation(
         operation.outcome !== "faulted" &&
         (operation.phase === "ready" || operation.phase === "published")
       ).map((operation) => operation.operationKey);
+      continuedReviews = completedKeys.length;
       const continued = await postDrain.continuation(completedKeys);
       if (continued !== null) outcome = continued;
     }
     return outcome!;
   };
-  return { advance, drain, finish: () => finishedOnce ??= finish() };
+  return {
+    advance,
+    drain,
+    finish: () => finishedOnce ??= finish(),
+    finishMayWrite: () => continuedReviews > 0,
+  };
 }
 
 // ---------------------------------------------------------------------------

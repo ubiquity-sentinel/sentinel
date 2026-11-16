@@ -6,7 +6,9 @@
  * before the first cycle (the serial aggregate already passes such a
  * baseline). When every cycle settled inside `advance` (the planner's runCycle
  * seam), no lifecycle work runs between the targets' progress comments, so
- * they also share ONE after-state read. The comments' inputs are unchanged.
+ * they also share ONE after-state read. Real invocations share it too until a
+ * settled finish may have written (2026-11-16: the serial job's whole `finish`
+ * phase was one full read per target). The comments' inputs are unchanged.
  */
 import assert from "node:assert/strict";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
@@ -54,11 +56,14 @@ async function planned(withInvocations: boolean) {
       rig.state.writeRepair(...args),
   };
   const calls: ProgressCallV1[] = [];
+  /** Repair-state reads made before each target's comments. */
+  const readsAtCall: number[] = [];
   const progressComments = (
     config: RepositoryConfigV1,
     before: readonly WorkRecordV1[],
     after: readonly WorkRecordV1[],
   ) => {
+    readsAtCall.push(reads);
     calls.push({
       target: config.repository.name,
       before: ids(before),
@@ -87,7 +92,7 @@ async function planned(withInvocations: boolean) {
     };
   }
   await runActionsTargetCycles(input);
-  return { reads, calls };
+  return { reads, calls, readsAtCall };
 }
 
 Deno.test("progress snapshots: cycles settled inside advance share one baseline and one after-state", async () => {
@@ -113,12 +118,16 @@ Deno.test("progress snapshots: cycles settled inside advance share one baseline 
   ]);
 });
 
-Deno.test("progress snapshots: real target invocations still read each after-state alone", async () => {
-  const { reads, calls } = await planned(true);
-  // One shared baseline, then one after-state per target: a settled
-  // invocation's own continuation may write before the next target's
-  // comments.
+Deno.test("progress snapshots: real target invocations share one after-state until a finish may write", async () => {
+  const { calls, readsAtCall } = await planned(true);
+  // One shared baseline, then ONE after-state read for every target: no
+  // settled invocation continued a drained review, so no finish wrote between
+  // the comments. A finish that may write forces a reread
+  // (`progress-after-state_test.ts`).
   assert.equal(calls.length, 3);
-  assert.ok(reads >= 1 + calls.length, String(reads));
+  assert.deepEqual(
+    readsAtCall.map((count) => count - readsAtCall[0]),
+    [0, 0, 0],
+  );
   for (const call of calls) assert.deepEqual(call.before, ["existing"]);
 });

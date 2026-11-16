@@ -319,20 +319,21 @@ export function createActionsTargetFlow(
       ]));
       const outcomes = new Map<number, RepairCycleOutcomeV1>();
       const faults = new Map<number, unknown>();
-      // With no invocation (the planner's runCycle seam) every cycle settled
-      // inside `advance`, so no lifecycle work runs between the targets'
-      // progress comments and they share one after-state read. A settled
-      // invocation's continuation may write before the next target's
-      // comments, so real invocations keep one read each.
-      const afterState = slots.every((slot) => slot.invocation === null)
-        ? sharedSnapshot()
-        : snapshot;
+      // Every advance, ingestion and hand-back ended before `finish`, and this
+      // job is the repair ref's one writer while it runs (cells are read-only
+      // and finalize applies their deltas after it), so the only repair-state
+      // write left is a settled invocation's post-drain continuation. The
+      // targets' progress comments therefore share one after-state read until
+      // a finish may have written (or threw); that target and every later one
+      // read afresh. With no invocation (the planner's runCycle seam) nothing
+      // writes here at all.
+      let afterState = sharedSnapshot();
       while (pending.size > 0) {
         const index = await Promise.race(pending.values());
         pending.delete(index);
         const slot = slots[index];
+        const invocation = slot.invocation;
         try {
-          const invocation = slot.invocation;
           if (invocation !== null) {
             outcomes.set(
               index,
@@ -342,6 +343,10 @@ export function createActionsTargetFlow(
         } catch (error) {
           faults.set(index, error);
         }
+        if (
+          invocation !== null &&
+          (faults.has(index) || invocation.finishMayWrite())
+        ) afterState = sharedSnapshot();
         const progressComments = input.progressComments;
         const before = slot.before;
         if (progressComments !== undefined && before !== null) {
