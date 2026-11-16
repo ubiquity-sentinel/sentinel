@@ -23,12 +23,20 @@ import { reviewTaskStatementDigest } from "../../src/contracts/review-receipt.ts
 import type { RepairCycleDepsV1 } from "../../src/repair/loop-types.ts";
 import {
   BASE_REPAIR_AUTHOR,
+  BASE_REPAIR_CI_FIX_CAP,
+  BASE_REPAIR_CI_FIX_CAP_DETAIL,
   baseRepairMarker,
   isBaseRepairBody,
   isBaseRepairTask,
   ownBaseRed,
   parseBaseRepairMarker,
 } from "../../src/repair/base-repair.ts";
+import {
+  HOSTED_AUTONOMY_CI_FAILED_PREFIX,
+  HOSTED_AUTONOMY_CI_UNATTRIBUTED_PREFIX,
+  HOSTED_AUTONOMY_RETRYABLE,
+} from "../../ops/hosted-autonomy-policy.ts";
+import { PROTECTED_PATH_BLOCKER } from "../../ops/hosted-autonomy-protected-readmission.ts";
 import {
   attributeFailedChecks,
   CI_BASE_REPAIR_FINDING_PREFIX,
@@ -39,7 +47,11 @@ import {
 } from "../../src/repair/ci-rejection.ts";
 import { confirmCiCorrection } from "../../src/repair/loop-ci-correction.ts";
 import { confirmPreReviewCiFix } from "../../src/repair/loop-ci-first.ts";
-import { isCiFixMarker } from "../../src/repair/ci-first-policy.ts";
+import {
+  CI_FIX_EXHAUSTED_PREFIX,
+  CI_PRE_REVIEW_PARK_PREFIXES,
+  isCiFixMarker,
+} from "../../src/repair/ci-first-policy.ts";
 import { SHA1, SHA2, SHA3, workRecord } from "../state/helpers.ts";
 import { check, ciFirstRig, taskRecord } from "./ci-first-rig.ts";
 import { ciRig } from "./ci-correction-rig.ts";
@@ -279,6 +291,30 @@ Deno.test("base repair: a hosted fix says the base is red, an opening its rollba
   // An ordinary task's finding keeps its own opening, hosted or not.
   const ordinary = ciCorrectionFinding(SHA1, [check("deno", SHA3, "failure")]);
   assert.ok(ordinary.message.startsWith(CI_CORRECTION_FINDING_PREFIX));
+});
+
+Deno.test("base repair: the CI fix cap is the owner's pending number, parked with a blocker no retry rule takes", () => {
+  assert.equal(BASE_REPAIR_CI_FIX_CAP, 3);
+  assert.equal(
+    BASE_REPAIR_CI_FIX_CAP_DETAIL,
+    "base-repair CI fix cap reached: 3 charged CI fixes spent; owner action required",
+  );
+  // No launcher re-admission prefix matches it: the retry table, the
+  // CI-first and merge-gate CI parks, the retired exhausted park and the
+  // protected-path exit (`sentinel:retry`).
+  const prefixes = [
+    ...HOSTED_AUTONOMY_RETRYABLE.map((rule) => rule.prefix),
+    ...CI_PRE_REVIEW_PARK_PREFIXES,
+    CI_FIX_EXHAUSTED_PREFIX,
+    HOSTED_AUTONOMY_CI_FAILED_PREFIX,
+    HOSTED_AUTONOMY_CI_UNATTRIBUTED_PREFIX,
+    PROTECTED_PATH_BLOCKER,
+  ];
+  assert.ok(prefixes.length > 10);
+  for (const prefix of prefixes) {
+    assert.ok(prefix.length > 0, "an empty prefix would match every park");
+    assert.ok(!BASE_REPAIR_CI_FIX_CAP_DETAIL.startsWith(prefix), prefix);
+  }
 });
 
 const ATTRIBUTION = attributeFailedChecks(

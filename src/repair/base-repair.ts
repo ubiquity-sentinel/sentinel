@@ -16,7 +16,9 @@
  * candidate's own: its head still fails the very checks it was asked to fix,
  * so it is routed to an ordinary charged CI fix instead of waiting for a base
  * move that only it can cause. A record whose base is no longer the tip keeps
- * `base_red`, so the moved base refreshes it first, uncharged. Every other
+ * `base_red`, so the moved base refreshes it first, uncharged. Its charged
+ * CI fixes are capped (`BASE_REPAIR_CI_FIX_CAP`, 2026-11-16, the owner's
+ * number pending): the fix after the cap parks it, uncharged. Every other
  * gate (current-head CI, native review, P0, custody, accounting) is
  * unchanged, and a closed issue is still refused before any charge
  * (`readIssueForModel`).
@@ -37,6 +39,29 @@ const TIP = /^(.+)@([0-9a-f]{40})$/;
 
 /** The App identity that files base-repair issues. */
 export const BASE_REPAIR_AUTHOR = "ubiquity-sentinel[bot]";
+
+/**
+ * Charged CI fixes one base-repair task may take; its next fix parks it
+ * with `BASE_REPAIR_CI_FIX_CAP_DETAIL` instead (`baseRepairCiFixCapped`).
+ * OWNER DECISION PENDING (2026-11-16): the review of the 2026-11-15
+ * enablement asked the owner to approve a cap ("I suggest 3, then it
+ * parks"); 3 is that suggestion, not an approval, and the owner's number
+ * replaces it here. Only a base-repair task is capped: owner directive
+ * 2026-10-30 lifted the CI-fix cap of every other task (`ciFixesLeft`).
+ */
+export const BASE_REPAIR_CI_FIX_CAP = 3;
+
+/**
+ * The fixed blocker of a base-repair task whose CI fixes reached the cap. No
+ * launcher rule re-admits it: `sentinel:retry` does not apply (it re-admits
+ * only the fresh protected-path park, without a pull request or head), and
+ * the owner-release list re-arms only repeat-failure parks. The owner ends
+ * the task by closing its issue; resuming it needs a reviewed code change (a
+ * higher cap and a re-admission of this exact park), since
+ * `counters.retries` never goes down.
+ */
+export const BASE_REPAIR_CI_FIX_CAP_DETAIL =
+  `base-repair CI fix cap reached: ${BASE_REPAIR_CI_FIX_CAP} charged CI fixes spent; owner action required`;
 
 /**
  * The marker line of the base-repair issue filed for `branch` at commit
@@ -110,6 +135,24 @@ export async function isBaseRepairTask(
   }
   if (memo.size < MEMO_MAX) memo.set(key, verdict);
   return verdict;
+}
+
+/**
+ * Whether the CI fix about to be charged to `record` parks it instead: true
+ * only for a base-repair task (`isBaseRepairTask`) whose charged CI fixes
+ * already reach `BASE_REPAIR_CI_FIX_CAP`. The count is the existing
+ * `counters.retries`, which only a CI fix's own admission moves
+ * (`countRetry`) and nothing lowers, so no state is added. Below the cap
+ * nothing is read; at or above it the issue is read once per run
+ * (memoised). Null when that read is unavailable: the caller defers without
+ * a write. Any other record is never capped (owner directive 2026-10-30).
+ */
+export async function baseRepairCiFixCapped(
+  deps: Pick<RepairCycleDepsV1, "github">,
+  record: WorkRecordV1,
+): Promise<boolean | null> {
+  if (record.counters.retries < BASE_REPAIR_CI_FIX_CAP) return false;
+  return await isBaseRepairTask(deps, record);
 }
 
 /**

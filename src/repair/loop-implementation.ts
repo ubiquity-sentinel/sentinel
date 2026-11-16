@@ -52,6 +52,10 @@ import {
   observeHeadFailure,
 } from "./loop-ci-correction.ts";
 import { confirmPreReviewCiFix } from "./loop-ci-first.ts";
+import {
+  BASE_REPAIR_CI_FIX_CAP_DETAIL,
+  baseRepairCiFixCapped,
+} from "./base-repair.ts";
 import { confirmConflictResolution } from "./loop-conflict-resolution.ts";
 import {
   gateExistingHeadContinuation,
@@ -375,6 +379,23 @@ export async function prepareImplementationStart(
     );
   }
   const issue = observation.kind === "issue" ? observation.issue : null;
+
+  // A base-repair task's charged CI fixes are capped (owner number pending,
+  // `BASE_REPAIR_CI_FIX_CAP`): the fix past the cap parks it, uncharged.
+  // Every other task's CI fixes stay uncapped (owner directive 2026-10-30).
+  if (ciFinding !== null) {
+    const capped = await baseRepairCiFixCapped(deps, record);
+    if (capped === null) {
+      return { kind: "deferred", detail: "CI check observation unavailable" };
+    }
+    if (capped) {
+      return persistWork(
+        deps,
+        context,
+        markBlocked(record, "other", BASE_REPAIR_CI_FIX_CAP_DETAIL, now),
+      );
+    }
+  }
 
   // Recheck the latest shared gate and the run bounds after this awaited
   // prerequisite: a newly discovered rate limit must never consume an

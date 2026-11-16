@@ -4923,3 +4923,39 @@ none), a new request input and, if the prompt prose changes, a new template
 digest that re-arms all six fleet repeat-failure parks once; it is left for its
 own decision. Rollback: revert these commits; a released record is an ordinary
 work record and an unreleased park stays parked.
+
+## 2026-11-16: CI-fix cap for base-repair tasks, landed ahead of filing
+
+The second review of the base-repair enablement for ai.ubq.fi held that the cap
+and the filing must not land together: filing runs in the launcher, the cap in
+the installed runtime, and an install's rollback target is the runtime installed
+before it. Landed as one batch, a rollback leaves the launcher filing while a
+runtime without the cap charges CI fixes without limit (a reproduction reached
+12 in a row). The cap therefore lands first, alone, with filing still off.
+
+- Cap, PENDING THE OWNER'S CONFIRMATION: `BASE_REPAIR_CI_FIX_CAP` = 3 charged CI
+  fixes per base-repair task
+  ([src/repair/base-repair.ts](../src/repair/base-repair.ts)). 3 is the review's
+  suggestion ("I suggest 3, then it parks"), not an approval; the owner's number
+  replaces it. Only a base-repair task (`isBaseRepairTask`: the App's issue with
+  the marker on its first line) is capped, counted in the existing
+  `counters.retries`, which only a CI fix's admission moves. At that admission
+  (`prepareImplementationStart`, shared by the serial loop and the hosted matrix
+  planner) a task already at the cap parks, uncharged, with
+  `base-repair CI fix cap reached: 3 charged CI fixes spent; owner action required`;
+  no launcher rule re-admits it, and the owner ends it by closing its issue.
+  Every other task's CI fixes stay uncapped (2026-10-30), pinned by tests.
+- Inert while filing is off: `BASE_REPAIR_FILING_ENABLED` stays false for every
+  target, so no base-repair issue is filed and nothing can be capped. No record
+  in sentinel-state/repair at `c6fa9868` (2026-11-16) carries a base-repair
+  trace, and filing has been off since 027ecbbea0. Landing with the cap, and
+  equally inert: the hosted fix finding of a base-repair task says its base is
+  red (`HOSTED_BASE_REPAIR_FINDING`; generation 253 on 9c91a87f77 and its
+  rollback target 176b596f86 both recognise that opening), and the launcher's
+  base-repair check read is strict (a failed job it did not judge files
+  nothing).
+- Why first: once this runtime has been installed for a full generation it is
+  also the rollback target of the next install, so the later change that turns
+  filing on cannot be rolled back onto a runtime without the cap.
+- Rollback: revert these commits. Filing stays off either way; no state format
+  changed.

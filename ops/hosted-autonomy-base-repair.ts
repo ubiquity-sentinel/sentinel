@@ -48,10 +48,12 @@ import type {
 } from "./hosted-autonomy-types.ts";
 
 /**
- * Filing switch: on since every upheld review finding of 2026-10-25 is fixed
- * (only checks that hold records' heads, a tip-bound marker over a complete
- * App-created listing, no label dependency). Off, the pass reads and files
- * nothing.
+ * Filing switch: OFF for every target. Filing has been off since 027ecbbea0
+ * (2026-10-25, the lane's review); the fixes after it kept it off until a
+ * re-review. Off, the pass reads and files nothing. The runtime's CI-fix cap
+ * of a base-repair task (`BASE_REPAIR_CI_FIX_CAP` in
+ * `src/repair/base-repair.ts`) lands ahead of any filing (2026-11-16), so the
+ * runtime that works a filed task, and its rollback target, carry the cap.
  */
 export const BASE_REPAIR_FILING_ENABLED = false;
 
