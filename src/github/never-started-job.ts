@@ -17,9 +17,11 @@
  * Actions check runs are read, the latest run of each name first and at most
  * `MAX_NEVER_STARTED_JOB_READS` per check read; a job that cannot be read or
  * does not match keeps its run exactly as GitHub reported it. The runtime
- * check read (`readChecks`) and the launcher's base-repair read
- * (`failedChecks`) share these rules; the launcher's CI resume pass judges a
- * workflow run's jobs with `completedJobNeverStarted`.
+ * check read (`readChecks`) and the launcher's `failedChecks` share these
+ * rules; the launcher's base-repair filing read alone turns such an
+ * unresolved run into an unreadable read (`neverStartedRunVerdicts`), so it
+ * never names a check that may not have run. The launcher's CI resume pass
+ * judges a workflow run's jobs with `completedJobNeverStarted`.
  */
 
 /** GitHub's own Actions app on a check run. */
@@ -111,19 +113,23 @@ export function latestRunIndexes(runs: readonly unknown[]): number[] {
 }
 
 /**
- * The indexes into `runs` (raw check runs, every one bound to `head`) of the
- * failed Actions runs whose job never started. Only the latest run of each
- * name is judged, at most `MAX_NEVER_STARTED_JOB_READS` jobs are read, and a
- * verdict found in `cache` (keyed by job and head) costs no read; an
- * unreadable or mismatched job is left out and is not cached.
+ * The never-started verdicts on the failed Actions runs in `runs` (raw check
+ * runs, every one bound to `head`), as indexes into `runs`: `marked` holds
+ * the runs whose job never started, `unresolved` the runs no verdict was
+ * reached for (a job past the read bound, or one that could not be read or
+ * did not match). Only the latest run of each name is judged, at most
+ * `MAX_NEVER_STARTED_JOB_READS` jobs are read, and a verdict found in
+ * `cache` (keyed by job and head) costs no read; an unresolved run is not
+ * cached.
  */
-export async function neverStartedRunIndexes(
+export async function neverStartedRunVerdicts(
   runs: readonly unknown[],
   head: string,
   readJob: ActionsJobReadV1,
   cache?: Map<string, boolean>,
-): Promise<Set<number>> {
+): Promise<{ marked: Set<number>; unresolved: Set<number> }> {
   const marked = new Set<number>();
+  const unresolved = new Set<number>();
   let reads = 0;
   for (const index of latestRunIndexes(runs)) {
     const jobId = failedActionsJobId(runs[index]);
@@ -131,7 +137,10 @@ export async function neverStartedRunIndexes(
     const key = `${jobId}:${head}`;
     let verdict = cache?.get(key) ?? null;
     if (verdict === null) {
-      if (reads >= MAX_NEVER_STARTED_JOB_READS) continue;
+      if (reads >= MAX_NEVER_STARTED_JOB_READS) {
+        unresolved.add(index);
+        continue;
+      }
       reads++;
       let body: unknown = null;
       try {
@@ -140,12 +149,29 @@ export async function neverStartedRunIndexes(
         body = null;
       }
       verdict = completedJobNeverStarted(body, jobId, head);
-      if (verdict === null) continue;
+      if (verdict === null) {
+        unresolved.add(index);
+        continue;
+      }
       if (cache !== undefined && cache.size < VERDICT_CACHE_MAX) {
         cache.set(key, verdict);
       }
     }
     if (verdict) marked.add(index);
   }
-  return marked;
+  return { marked, unresolved };
+}
+
+/**
+ * The indexes into `runs` of the failed Actions runs whose job never
+ * started (`neverStartedRunVerdicts`); an unresolved run is left out, so it
+ * keeps its failure.
+ */
+export async function neverStartedRunIndexes(
+  runs: readonly unknown[],
+  head: string,
+  readJob: ActionsJobReadV1,
+  cache?: Map<string, boolean>,
+): Promise<Set<number>> {
+  return (await neverStartedRunVerdicts(runs, head, readJob, cache)).marked;
 }

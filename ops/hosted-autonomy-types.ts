@@ -226,12 +226,16 @@ export interface HostedAutonomyGitHubV1 {
    * a GitHub Actions run whose job never started (no step, no runner: a
    * billing or spending-limit stop; bounded job reads, an unreadable job
    * keeps its failure). Empty when none did, null when the complete listing
-   * cannot be read. Optional: a surface without it files no base-repair
+   * cannot be read. `strict` (the base-repair filing read) is null too when
+   * any failed Actions job went unjudged (past the job-read bound, or its
+   * read refused or mismatched), so a check that may never have started is
+   * never named red. Optional: a surface without it files no base-repair
    * issue.
    */
   failedChecks?(
     commit: string,
     conclusions: readonly string[],
+    options?: { strict?: boolean },
   ): Promise<string[] | null>;
   /**
    * CI resume read: true when the latest attempt of completed workflow run

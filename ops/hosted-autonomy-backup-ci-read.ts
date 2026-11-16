@@ -154,10 +154,11 @@ export function backupNeverStartedRemains(runs: readonly Run[]): boolean {
 export async function failedNamesWithBackup(
   head: string,
   runs: readonly Run[],
-  failedCheckNames: (head: string, runs: Run[]) => Promise<string[]>,
+  /** The native names; null (an unreadable native read) is the answer. */
+  failedCheckNames: (head: string, runs: Run[]) => Promise<string[] | null>,
   /** The failing conclusions the caller asks for (default: every red one). */
   conclusions?: readonly string[],
-): Promise<string[]> {
+): Promise<string[] | null> {
   const red: ReadonlySet<string> = conclusions === undefined
     ? RED
     : new Set(conclusions);
@@ -166,6 +167,7 @@ export async function failedNamesWithBackup(
     head,
     runs.filter((run) => run[SENTINEL_BACKUP_FIELD] === undefined),
   );
+  if (native === null) return null;
   const names = [...native];
   for (const run of backed) {
     const name = String(run["name"]);

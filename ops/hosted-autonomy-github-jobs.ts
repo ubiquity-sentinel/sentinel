@@ -3,12 +3,14 @@
  * never started (a billing or spending-limit stop) is no CI evidence
  * (`src/github/never-started-job.ts`).
  *
- * - `failedCheckNames`: the base-repair read. Of a complete, head-bound
- *   check-run listing, the latest run of each name that completed with one
- *   of the caller's `conclusions` (the runtime's own sets: a tip's
- *   `RED_BASE_CONCLUSIONS`, a held head's `CANDIDATE_CONCLUSIONS`), without
- *   the failed Actions runs whose job never started (bounded job reads; an
- *   unreadable job keeps its run as a failure).
+ * - `failedCheckNames`: the base-repair (and delivery-train) read. Of a
+ *   complete, head-bound check-run listing, the latest run of each name that
+ *   completed with one of the caller's `conclusions` (the runtime's own
+ *   sets: a tip's `RED_BASE_CONCLUSIONS`, a held head's
+ *   `CANDIDATE_CONCLUSIONS`), without the failed Actions runs whose job
+ *   never started (bounded job reads; an unreadable job keeps its run as a
+ *   failure, except in the `strict` filing read, where a failed Actions job
+ *   past the read bound or unreadable makes the whole read null).
  * - `runNeverStarted`: whether one completed workflow run's latest attempt
  *   failed only through jobs that never started (the CI resume pass); null
  *   when its job listing cannot be read completely and bound to the run.
@@ -16,7 +18,7 @@
 import {
   completedJobNeverStarted,
   latestRunIndexes,
-  neverStartedRunIndexes,
+  neverStartedRunVerdicts,
 } from "../src/github/never-started-job.ts";
 import type { createHostedAutonomyRequest } from "./hosted-autonomy-github-listing.ts";
 import {
@@ -48,15 +50,18 @@ export function createHostedActionsJobReads(
       head: string,
       runs: readonly Record<string, unknown>[],
       conclusions: readonly string[],
-    ): Promise<string[]> {
+      /** The filing read: an unresolved failed Actions job is unreadable. */
+      strict = false,
+    ): Promise<string[] | null> {
       const latest = latestRunIndexes(runs);
-      const notStarted = await neverStartedRunIndexes(
+      const verdicts = await neverStartedRunVerdicts(
         latest.map((index) => runs[index]),
         head,
         (jobId) => request("GET", `/repos/${scope}/actions/jobs/${jobId}`),
       );
+      if (strict && verdicts.unresolved.size > 0) return null;
       return latest.filter((index, position) =>
-        !notStarted.has(position) &&
+        !verdicts.marked.has(position) &&
         runs[index]["status"] === "completed" &&
         conclusions.includes(String(runs[index]["conclusion"]))
       ).map((index) => String(runs[index]["name"]));

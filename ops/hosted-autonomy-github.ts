@@ -404,17 +404,21 @@ export function createHostedAutonomyGitHub(
       const reported = runs.map((run) => ({ name: String(run["name"]) }));
       return missingExpectedChecks(reported, expected).length === 0;
     },
-    async failedChecks(head: string, conclusions: readonly string[]) {
+    async failedChecks(
+      head: string,
+      conclusions: readonly string[],
+      options?: { strict?: boolean },
+    ) {
       const complete = await readCompleteCheckRuns(head);
       if (complete === null) return null;
       const runs = gatingRuns(complete);
       // A job that never started (a billing stop) is no failing check; a
       // red backup result standing in for one is (spec §11.5), within the
-      // conclusions the caller asks for.
+      // conclusions the caller asks for. A strict read cannot judge one.
       return await failedNamesWithBackup(
         head,
         runs,
-        (h, r) => jobReads.failedCheckNames(h, r, conclusions),
+        (h, r) => jobReads.failedCheckNames(h, r, conclusions, options?.strict),
         conclusions,
       );
     },

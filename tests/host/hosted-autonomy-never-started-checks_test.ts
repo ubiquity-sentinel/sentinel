@@ -159,6 +159,50 @@ Deno.test("launcher failedChecks: a job that ran, an unreadable job and another 
   }
 });
 
+Deno.test("launcher failedChecks: the strict filing read is unreadable when a failed job goes unjudged", async () => {
+  const strict = () =>
+    surface().failedChecks!(TIP, RED_BASE_CONCLUSIONS, { strict: true });
+  // Refused, missing, foreign or unfinished job reads, and a ninth failed
+  // job past the read bound.
+  const nine = Array.from(
+    { length: 9 },
+    (_, index) => run(JOB + index, { name: `check-${index}` }),
+  );
+  const cases: [Record<string, unknown>[], Record<number, Answer>][] = [
+    [[run(JOB)], { [JOB]: 403 }],
+    [[run(JOB)], { [JOB]: 502 }],
+    [[run(JOB)], {}],
+    [[run(JOB)], { [JOB]: job(JOB, { head_sha: "f".repeat(40) }) }],
+    [[run(JOB)], { [JOB]: job(JOB, { status: "in_progress" }) }],
+    [
+      nine,
+      Object.fromEntries(nine.map((row) => [row.id, job(row.id as number)])),
+    ],
+  ];
+  for (const [runs, jobs] of cases) {
+    assert.equal(
+      await withFetch(runs, jobs, strict),
+      null,
+      JSON.stringify(jobs),
+    );
+    // The ordinary read (the delivery train's) keeps the failure as before.
+    assert.notEqual(await withFetch(runs, jobs, tipFailures), null);
+  }
+  // Every failed job judged: the strict read answers as the ordinary one.
+  assert.deepEqual(
+    await withFetch([run(JOB)], { [JOB]: job(JOB) }, strict),
+    [],
+  );
+  assert.deepEqual(
+    await withFetch(
+      [run(JOB)],
+      { [JOB]: job(JOB, { steps: [{ number: 1, name: "test" }] }) },
+      strict,
+    ),
+    ["deno"],
+  );
+});
+
 Deno.test("launcher failedChecks: the caller's conclusions count, the runtime's own sets", async () => {
   const runs = [
     run(JOB, { name: "approve", conclusion: "action_required", app: {} }),
@@ -259,6 +303,52 @@ Deno.test("base repair pass: a base whose only failure never started files nothi
     );
     assert.deepEqual(ran, ["base-repair:ubiquity/ai.ubq.fi:filed=#4242"]);
     assert.equal(filed.length, 1);
+    // A failed job the read could not judge is unreadable, never red: a
+    // refused job read (403 or 502) on the tip or on a held head files
+    // nothing (the review filed an issue naming jobs that never ran).
+    const ranJob = job(JOB, { steps: [{ number: 1, name: "test" }] });
+    for (const status of [403, 502]) {
+      const tipRefused = await withFetch(
+        { [TIP]: [run(JOB)], [HEAD]: headRuns },
+        { [JOB]: status, [HEAD_JOB]: headJob },
+        runPass,
+      );
+      assert.deepEqual(tipRefused, [
+        "base-repair:ubiquity/ai.ubq.fi:checks_unreadable",
+      ], `${status}`);
+      const headRefused = await withFetch(
+        { [TIP]: [run(JOB)], [HEAD]: headRuns },
+        { [JOB]: ranJob, [HEAD_JOB]: status },
+        runPass,
+      );
+      assert.deepEqual(headRefused, [
+        "base-repair:ubiquity/ai.ubq.fi:head_checks_unreadable",
+      ], `${status}`);
+    }
+    // Nine never-started jobs on the tip and on the held head: the read
+    // judges eight, so the ninth would have stayed red on both.
+    const nine = (head: string, first: number) =>
+      Array.from(
+        { length: 9 },
+        (_, index) =>
+          run(first + index, { name: `check-${index}`, head_sha: head }),
+      );
+    const unstarted = (head: string, first: number) =>
+      Object.fromEntries(
+        nine(head, first).map((row) => [
+          row.id,
+          job(row.id as number, { head_sha: head }),
+        ]),
+      );
+    const bounded = await withFetch(
+      { [TIP]: nine(TIP, JOB), [HEAD]: nine(HEAD, HEAD_JOB) },
+      { ...unstarted(TIP, JOB), ...unstarted(HEAD, HEAD_JOB) },
+      runPass,
+    );
+    assert.deepEqual(bounded, [
+      "base-repair:ubiquity/ai.ubq.fi:checks_unreadable",
+    ]);
+    assert.equal(filed.length, 1, "no issue names a job that never ran");
   } finally {
     await Deno.remove(rig.tmp, { recursive: true });
   }

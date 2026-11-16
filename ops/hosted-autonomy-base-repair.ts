@@ -9,10 +9,11 @@
  * It reads the tip's failed checks (`RED_BASE_CONCLUSIONS`, the runtime's
  * red-base set) and those of the first `BASE_REPAIR_HEAD_READS` held heads
  * (`CANDIDATE_CONCLUSIONS`, the only head failures a red base holds), both
- * with the latest run of each name and without runs whose job never started.
- * Only a check failing on both holds anything, so only those are listed, and
- * nothing is filed when none does: a red check no pull request runs (a
- * dispatch-only deploy job) files nothing.
+ * with the latest run of each name and without runs whose job never started;
+ * a failed job either read could not judge makes it unreadable
+ * (`FILING_READ`). Only a check failing on both holds anything, so only
+ * those are listed, and nothing is filed when none does: a red check no pull
+ * request runs (a dispatch-only deploy job) files nothing.
  *
  * The issue is filed without a label, with `baseRepairMarker(branch, tip)`
  * on its first line, after a complete, bounded listing of every issue the
@@ -59,6 +60,14 @@ export const BASE_REPAIR_PASS_BUDGET_MS = 60_000;
 
 /** Held heads one repository's pass reads the failed checks of. */
 export const BASE_REPAIR_HEAD_READS = 3;
+
+/**
+ * Both failed-check reads are strict (2026-11-16): a failed Actions job the
+ * read did not judge (past the job-read bound, or its read refused or
+ * mismatched) makes the commit unreadable, which files nothing, so a check
+ * whose job may never have started is never named red.
+ */
+const FILING_READ = Object.freeze({ strict: true });
 
 /** At most this many failing check names are listed in an issue. */
 const MAX_LISTED_CHECKS = 20;
@@ -218,7 +227,11 @@ export async function runHostedBaseRepairPass(
         ),
       ].slice(0, BASE_REPAIR_HEAD_READS);
       if (heads.length === 0) continue;
-      const tipFailed = await surface.failedChecks(tip, RED_BASE_CONCLUSIONS);
+      const tipFailed = await surface.failedChecks(
+        tip,
+        RED_BASE_CONCLUSIONS,
+        FILING_READ,
+      );
       if (tipFailed === null) {
         actions.push(`${tag}:checks_unreadable`);
         continue;
@@ -228,7 +241,11 @@ export async function runHostedBaseRepairPass(
       let headsRead = true;
       for (const head of heads) {
         if (!inBudget()) break;
-        const failed = await surface.failedChecks(head, CANDIDATE_CONCLUSIONS);
+        const failed = await surface.failedChecks(
+          head,
+          CANDIDATE_CONCLUSIONS,
+          FILING_READ,
+        );
         if (failed === null) {
           headsRead = false;
           break;
