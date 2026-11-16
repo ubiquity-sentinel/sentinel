@@ -28,12 +28,13 @@
  * (any tip or branch, whatever its records), nothing else is filed there:
  * one open base-repair issue per target at a time (2026-11-15). The hard
  * bound files nothing while the listing holds `BASE_REPAIR_ISSUE_LIMIT`
- * base-repair issues, open or closed, created within
- * `BASE_REPAIR_ISSUE_WINDOW_MS` (2026-11-16). Before any filing the listing
- * must be proven live for the target (`listingProven`: it answers the held
- * records' own App pull requests), and a daily brake independent of it
- * (`BASE_REPAIR_DAY_SKEW_MS`) files at most one issue per target per UTC
- * day, across runs and within one. The pass writes no state and
+ * issues the App opened there, open or closed, created within
+ * `BASE_REPAIR_ISSUE_WINDOW_MS`, whatever their title or body (2026-11-16).
+ * Before any filing the listing must be proven live for the target
+ * (`listingProven`: it answers the held records' own App pull requests),
+ * and a daily brake independent of it (`BASE_REPAIR_DAY_SKEW_MS`), which
+ * also counts issues by who opened them, files at most one issue per target
+ * per UTC day, across runs and within one. The pass writes no state and
  * never edits, closes or comments on an issue; the runtime admits the issue
  * like any other, and its fix merges through the ordinary review and CI
  * gates (its pull request closes the issue). The self scope has no
@@ -91,30 +92,37 @@ export function baseRepairFilingEnabled(
 /**
  * Hard filing bound per target (2026-11-16, after the review of the
  * 2026-11-15 enablement): nothing is filed while the complete listing of the
- * App's issues in the target holds `BASE_REPAIR_ISSUE_LIMIT` base-repair
- * issues (`isBaseRepairListed`: by marker or by exact title), open or
- * closed, created within the last `BASE_REPAIR_ISSUE_WINDOW_MS`. A person
- * closing the issue for any reason, or editing its first line or its title,
- * therefore never lets the next red tip file another within the window, and
- * a flaky check that re-reds the base after a merged fix waits it out: at
- * most one issue per target per 14 days. K = 2 overall was not chosen: it
- * still re-files once right after a person closes the first issue, and
- * after its second issue the target could never be repaired again without
- * a code change.
+ * App's issues in the target holds `BASE_REPAIR_ISSUE_LIMIT` issues the App
+ * opened there (never a pull request), open or closed, created within the
+ * last `BASE_REPAIR_ISSUE_WINDOW_MS`, WHATEVER their title or body. The
+ * second review rewrote both the marker line and the title of the filed
+ * issue, and a bound that recognised it by either (`isBaseRepairListed`)
+ * filed again at the next pass: 288 issues in a day. A person closing the
+ * issue, retitling it or rewriting its body therefore never lets the next
+ * red tip file another within the window, and a flaky check that re-reds
+ * the base after a merged fix waits it out: at most one issue per target per
+ * 14 days. The cost: any other issue the App opened in the target (a review
+ * follow-up, an outage notice) holds filing for the window too. K = 2
+ * overall was not chosen: it still re-files once right after a person closes
+ * the first issue, and after its second issue the target could never be
+ * repaired again without a code change.
  */
 export const BASE_REPAIR_ISSUE_LIMIT = 1;
 export const BASE_REPAIR_ISSUE_WINDOW_MS = 14 * 24 * 60 * 60_000;
 
 /**
  * Daily brake (2026-11-16): at most one filing per target per UTC day,
- * whatever the App listing says. Across runs it reads GitHub's own record
- * through the created-since listing, which has no `creator` filter and is
- * the one the follow-up pass already reads live: a base-repair issue
- * (`isBaseRepairListed`) the App created since the start of the current UTC
- * day, less `BASE_REPAIR_DAY_SKEW_MS` of clock skew, holds every new
- * filing, and a listing that cannot be read or lists nothing older than
- * that instant (so cannot show it reached back that far) files nothing.
- * Within a run, a target and UTC day get one create at most. No state
+ * whatever the App listing says and whatever any issue says. Across runs it
+ * reads GitHub's own record through the created-since listing, which has no
+ * `creator` filter and is the one the follow-up pass already reads live:
+ * since the start of the current UTC day, less `BASE_REPAIR_DAY_SKEW_MS` of
+ * clock skew, ANY issue the App opened in the target (any title or body, so
+ * rewriting both cannot lift it), and any author's issue that looks like a
+ * base-repair issue (`isBaseRepairListed`; a create GitHub answered under
+ * another author: 24 issues in two hours before), holds every new filing.
+ * A listing that cannot be read or lists nothing older than that instant
+ * (so cannot show it reached back that far) files nothing. Within a run, a
+ * repository and UTC day get one create attempt at most. No state
  * Sentinel already persists records a filing: this pass writes none, and
  * the persisted shapes it could extend (the maintenance index, the metrics
  * ledger) have exact-key readers an older runtime would reject.
@@ -126,7 +134,10 @@ const DAY_MS = 24 * 60 * 60_000;
 
 /**
  * Per run (one `githubFor`, as the hosted main builds it once per run): the
- * `repositoryKey@utcDay` of every create attempted, whatever GitHub answered.
+ * `owner/name@utcDay` of every create attempted, whatever GitHub answered
+ * (filed, refused, unproven, thrown or answered under another author). Keyed
+ * by repository only: records held under two installation ids of one
+ * repository filed two issues in one pass when the key held the id.
  */
 const attemptedThisRun = new WeakMap<object, Set<string>>();
 
@@ -269,8 +280,9 @@ function listingProven(
  * The daily brake's verdict from GitHub's own record (see
  * `BASE_REPAIR_DAY_SKEW_MS`), as the action suffix, or null when this UTC
  * day holds no filing: `day_unproven` for a listing that cannot be read or
- * does not reach back past the day's start, `filed_today=#n` for a
- * base-repair issue the App created since then.
+ * does not reach back past the day's start, `filed_today=#n` for an issue
+ * the App opened since then (whatever its title or body) or any author's
+ * base-repair issue since then.
  */
 async function dayHold(
   issues: HostedBaseRepairIssuesV1,
@@ -285,9 +297,9 @@ async function dayHold(
     return "day_unproven";
   }
   const today = listing.find((item) =>
-    item.createdAt >= since &&
-    item.author === HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR &&
-    isBaseRepairListed(item)
+    item.createdAt >= since && !item.pullRequest &&
+    (item.author === HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR ||
+      isBaseRepairListed(item))
   );
   return today === undefined ? null : `filed_today=#${today.number}`;
 }
@@ -298,9 +310,11 @@ async function dayHold(
  * for this very tip, open or closed (one issue per red tip); the lowest open
  * base-repair issue (one open at a time per target, 2026-11-15, even when
  * its repair is parked or done; the merge of its own fix closes it); the
- * newest base-repair issue of the hard bound's window
+ * newest issue the App opened within the hard bound's window
  * (`BASE_REPAIR_ISSUE_LIMIT` within `BASE_REPAIR_ISSUE_WINDOW_MS` of `now`,
- * open or closed; an issue dated after `now` counts).
+ * open or closed, whatever its title or body; an issue dated after `now`
+ * counts). The first two recognise base-repair issues by their content and
+ * only ever add holds; the hard bound needs no recognition.
  */
 function listingHold(
   issues: readonly HostedAppIssueV1[],
@@ -317,9 +331,9 @@ function listingHold(
     .sort((a, b) => a.number - b.number);
   const open = repairs.find((issue) => issue.state === "open");
   if (open !== undefined) return `open=#${open.number}`;
-  const recent = repairs.filter((issue) =>
-    issue.createdAt >= now - BASE_REPAIR_ISSUE_WINDOW_MS
-  );
+  const recent = issues.filter((issue) =>
+    !issue.pullRequest && issue.createdAt >= now - BASE_REPAIR_ISSUE_WINDOW_MS
+  ).sort((a, b) => a.number - b.number);
   return recent.length >= BASE_REPAIR_ISSUE_LIMIT
     ? `recent=#${recent[recent.length - 1].number}`
     : null;
@@ -355,9 +369,10 @@ export async function runHostedBaseRepairPass(
       actions.push(`${tag}:deadline`);
       break;
     }
-    // The in-run brake: one create per target and UTC day, whatever GitHub
-    // answered, before any read.
-    const dayKey = `${repositoryKey(repository)}@${day}`;
+    // The in-run brake: one create attempt per repository and UTC day,
+    // whatever GitHub answered and under whichever installation id, before
+    // any read.
+    const dayKey = `${repository.owner}/${repository.name}@${day}`;
     if (attempted.has(dayKey)) {
       actions.push(`${tag}:attempted_this_run`);
       continue;

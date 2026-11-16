@@ -426,7 +426,7 @@ Deno.test("base repair pass: a default branch that is not a plain ref name files
   }
 });
 
-Deno.test("base repair pass: the hard bound is one base-repair issue per 14 days, by marker or exact title", async () => {
+Deno.test("base repair pass: the hard bound is one App issue per 14 days, whatever it says; a base-repair issue is one by marker or exact title", async () => {
   assert.equal(BASE_REPAIR_ISSUE_LIMIT, 1);
   assert.equal(BASE_REPAIR_ISSUE_WINDOW_MS, 14 * DAY);
   // The filed title is the recognised shape, on any plain branch.
@@ -444,8 +444,9 @@ Deno.test("base repair pass: the hard bound is one base-repair issue per 14 days
       [appIssue(1, `see ${MARKER}`), false],
     ] as const
   ) assert.equal(isBaseRepairListed(issue), expected, JSON.stringify(issue));
-  // Within the window a closed one (by either recognition, or dated after
-  // the pass clock) holds the new tip; a day past the window it does not.
+  // Within the window a closed App issue holds the new tip, recognised or
+  // not (marker, title, neither, or dated after the pass clock); a day past
+  // the window it does not.
   const red = { [TIP]: ["validate"], [HEAD]: ["validate"] };
   const older = baseRepairMarker("development", OLD_TIP);
   const closed = { state: "closed" } as const;
@@ -455,6 +456,14 @@ Deno.test("base repair pass: the hard bound is one base-repair issue per 14 days
       appIssue(900, "x", {
         ...closed,
         title: "CI is failing on development",
+        createdAt: NOW - DAY,
+      }),
+      false,
+    ],
+    [
+      appIssue(900, "Rewritten by a person.", {
+        ...closed,
+        title: "Investigating the build",
         createdAt: NOW - DAY,
       }),
       false,

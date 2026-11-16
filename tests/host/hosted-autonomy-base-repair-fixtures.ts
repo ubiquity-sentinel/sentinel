@@ -202,7 +202,7 @@ const PULLS: Readonly<Record<string, readonly number[]>> = {
   [PERMIT2]: [pullOf(31)],
 };
 
-export type CreateMode = "ok" | "lost" | "refused" | "throws";
+export type CreateMode = "ok" | "lost" | "refused" | "throws" | "foreign";
 
 export interface FakeTarget {
   readonly surface: HostedAutonomyGitHubV1;
@@ -226,7 +226,9 @@ export interface FakeTarget {
 /**
  * One target's fake GitHub. A create of mode `ok` or `lost` adds the issue
  * on GitHub at its clock; `lost` answers without proof (null), `refused`
- * adds nothing and answers null, `throws` adds nothing and rejects.
+ * adds nothing and answers null, `throws` adds nothing and rejects, and
+ * `foreign` adds it under another author (a token that is not the App's)
+ * and answers null, as the real create does for an author it did not expect.
  */
 export function fakeTarget(
   name: string,
@@ -311,9 +313,10 @@ export function fakeTarget(
           appIssue(number, input.body.split("\n")[0], {
             title: input.title,
             createdAt: target.now,
+            ...(mode === "foreign" ? { author: "a-person" } : {}),
           }),
         );
-        return Promise.resolve(mode === "lost" ? null : number);
+        return Promise.resolve(mode === "ok" ? number : null);
       },
     },
   } as unknown as HostedAutonomyGitHubV1;

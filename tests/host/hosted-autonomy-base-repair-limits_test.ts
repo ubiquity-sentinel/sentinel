@@ -4,10 +4,12 @@
  * the review of the 2026-11-15 enablement reproduced them.
  *
  * Hard bound (`BASE_REPAIR_ISSUE_LIMIT` = 1 within
- * `BASE_REPAIR_ISSUE_WINDOW_MS` = 14 days): a base-repair issue is one by its
- * first-line marker OR its exact title, open or closed, so a person closing
- * it, a person editing its first line, and a flaky check re-redding the base
- * after each merged fix never file a second one within the window.
+ * `BASE_REPAIR_ISSUE_WINDOW_MS` = 14 days): any issue the App opened in the
+ * target, open or closed, whatever its title or body (content-independent
+ * since the second review; hosted-autonomy-base-repair-content_test.ts), so
+ * a person closing it, a person editing its first line or title, and a flaky
+ * check re-redding the base after each merged fix never file a second one
+ * within the window.
  *
  * Listing proof: the App listing (`creator=ubiquity-sentinel[bot]`) had
  * never run live, and an empty answer counted as complete, so a filter that
