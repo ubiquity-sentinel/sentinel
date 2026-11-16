@@ -65,6 +65,8 @@ import { createHostedAutonomyScopes } from "./hosted-autonomy-scopes.ts";
 import { readRepairSafely } from "./hosted-autonomy-state.ts";
 import { baseRepairRuntimeHold } from "./hosted-autonomy-base-repair-runtime.ts";
 import {
+  BASE_REPAIR_BOUND_POLICY,
+  type BaseRepairBoundPolicyV1,
   listingHold,
   recentHold,
 } from "./hosted-autonomy-base-repair-bounds.ts";
@@ -261,10 +263,15 @@ async function filingRead(
   return failed === null && overBound ? "over_bound" : failed;
 }
 
-/** Run the base-repair pass; its actions only, never a state change. */
+/**
+ * Run the base-repair pass; its actions only, never a state change. The
+ * maintenance pass passes no `policy`, so production always files under
+ * `BASE_REPAIR_BOUND_POLICY`; tests name a mode to run both.
+ */
 export async function runHostedBaseRepairPass(
   deps: HostedAutonomyDepsV1,
   passDeadline: number = Number.POSITIVE_INFINITY,
+  policy: BaseRepairBoundPolicyV1 = BASE_REPAIR_BOUND_POLICY,
 ): Promise<string[]> {
   const actions: string[] = [];
   if (BASE_REPAIR_FILING_TARGETS.length === 0) return actions;
@@ -384,7 +391,7 @@ export async function runHostedBaseRepairPass(
         actions.push(`${tag}:${unproven}`);
         continue;
       }
-      const hold = listingHold(filed, branch, tip, started);
+      const hold = listingHold(filed, branch, tip, started, policy);
       if (hold !== null) {
         actions.push(`${tag}:${hold}`);
         continue;

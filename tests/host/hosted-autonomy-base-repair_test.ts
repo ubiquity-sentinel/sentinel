@@ -29,6 +29,7 @@ import {
 import {
   BASE_REPAIR_ISSUE_LIMIT,
   BASE_REPAIR_ISSUE_WINDOW_MS,
+  type BaseRepairBoundPolicyV1,
   isBaseRepairListed,
 } from "../../ops/hosted-autonomy-base-repair-bounds.ts";
 import type {
@@ -115,6 +116,8 @@ interface PassOptions {
   /** The App's issues; null: the listing is unreadable. */
   issues?: readonly HostedAppIssueV1[] | null;
   work?: WorkRecordV1[];
+  /** The bound policy (absent: the production one). */
+  policy?: BaseRepairBoundPolicyV1;
 }
 
 async function pass(options: PassOptions) {
@@ -162,12 +165,16 @@ async function pass(options: PassOptions) {
   };
   const rig = await liveRig("base-repair", liveSnapshot(work, []), surface);
   try {
-    const actions = await runHostedBaseRepairPass({
-      ciMinutes: INACTIVE_CI_MINUTES,
-      state: rig.state,
-      githubFor: rig.githubFor,
-      clock: { now: () => NOW },
-    });
+    const actions = await runHostedBaseRepairPass(
+      {
+        ciMinutes: INACTIVE_CI_MINUTES,
+        state: rig.state,
+        githubFor: rig.githubFor,
+        clock: { now: () => NOW },
+      },
+      Number.POSITIVE_INFINITY,
+      options.policy,
+    );
     return { actions, filed, reads, listings, writes: rig.writes };
   } finally {
     await Deno.remove(rig.tmp, { recursive: true });
@@ -433,7 +440,7 @@ Deno.test("base repair pass: a default branch that is not a plain ref name files
   }
 });
 
-Deno.test("base repair pass: the hard bound is one App issue per 14 days, whatever it says; a base-repair issue is one by marker or exact title", async () => {
+Deno.test("base repair pass: the hard bound is one issue per 14 days, any App issue (strict) or a base-repair one by marker or exact title (relaxed)", async () => {
   assert.equal(BASE_REPAIR_ISSUE_LIMIT, 1);
   assert.equal(BASE_REPAIR_ISSUE_WINDOW_MS, 14 * DAY);
   // The filed title is the recognised shape, on any plain branch.
@@ -451,21 +458,26 @@ Deno.test("base repair pass: the hard bound is one App issue per 14 days, whatev
       [appIssue(1, `see ${MARKER}`), false],
     ] as const
   ) assert.equal(isBaseRepairListed(issue), expected, JSON.stringify(issue));
-  // Within the window a closed App issue holds the new tip, recognised or
-  // not (marker, title, neither, or dated after the pass clock); a day past
-  // the window it does not.
+  // Within the window a closed App issue holds the new tip: in the strict
+  // mode recognised or not (marker, title, neither, another App issue, or
+  // dated after the pass clock), in the relaxed mode only a base-repair one
+  // (by its marker, or by its exact title once the marker was edited away).
+  // A day past the window none does.
   const red = { [TIP]: ["validate"], [HEAD]: ["validate"] };
   const older = baseRepairMarker("development", OLD_TIP);
   const closed = { state: "closed" } as const;
-  const cases: [HostedAppIssueV1, boolean][] = [
-    [appIssue(900, older, { ...closed, createdAt: NOW - 13 * DAY }), false],
+  const cases: [HostedAppIssueV1, { strict: boolean; relaxed: boolean }][] = [
+    [
+      appIssue(900, older, { ...closed, createdAt: NOW - 13 * DAY }),
+      { strict: false, relaxed: false },
+    ],
     [
       appIssue(900, "x", {
         ...closed,
         title: "CI is failing on development",
         createdAt: NOW - DAY,
       }),
-      false,
+      { strict: false, relaxed: false },
     ],
     [
       appIssue(900, "Rewritten by a person.", {
@@ -473,19 +485,39 @@ Deno.test("base repair pass: the hard bound is one App issue per 14 days, whatev
         title: "Investigating the build",
         createdAt: NOW - DAY,
       }),
-      false,
+      { strict: false, relaxed: true },
     ],
-    [appIssue(900, older, { ...closed, createdAt: NOW + DAY }), false],
-    [appIssue(900, older, { ...closed, createdAt: NOW - 15 * DAY }), true],
+    [
+      appIssue(900, "<!-- sentinel:skip -->", {
+        ...closed,
+        title: "Sentinel needs an owner action",
+        createdAt: NOW - 3 * DAY,
+      }),
+      { strict: false, relaxed: true },
+    ],
+    [
+      appIssue(900, older, { ...closed, createdAt: NOW + DAY }),
+      { strict: false, relaxed: false },
+    ],
+    [
+      appIssue(900, older, { ...closed, createdAt: NOW - 15 * DAY }),
+      { strict: true, relaxed: true },
+    ],
   ];
-  for (const [issue, files] of cases) {
-    const { actions, filed } = await pass({ failed: red, issues: [issue] });
-    assert.deepEqual(
-      actions,
-      [files ? `${TAG}:filed=#4242` : `${TAG}:recent=#900`],
-      JSON.stringify(issue),
-    );
-    assert.equal(filed.length, files ? 1 : 0);
+  for (const policy of ["strict", "relaxed"] as const) {
+    for (const [issue, files] of cases) {
+      const { actions, filed } = await pass({
+        failed: red,
+        issues: [issue],
+        policy,
+      });
+      assert.deepEqual(
+        actions,
+        [files[policy] ? `${TAG}:filed=#4242` : `${TAG}:recent=#900`],
+        `${policy} ${JSON.stringify(issue)}`,
+      );
+      assert.equal(filed.length, files[policy] ? 1 : 0);
+    }
   }
 });
 

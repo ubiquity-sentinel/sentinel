@@ -5115,13 +5115,23 @@ filing starts only once this change itself is the installed runtime.
     marked for this tip, open or closed, holds it (`filed_before`); an open
     issue with a base-repair marker or the exact title holds every new one
     (`open`).
-  - Hard bound, content-independent: no filing while the App listing holds
-    `BASE_REPAIR_ISSUE_LIMIT` = 1 issue the App opened in the target within
-    `BASE_REPAIR_ISSUE_WINDOW_MS` = 14 days, open or closed, whatever its title
-    or body (`recent`). Before this change the bound recognised an issue only by
-    its marker or exact title, so rewriting both refiled at the next pass. The
-    cost: any other issue the App opened there (a review follow-up, an outage
-    notice) also holds filing for 14 days after it.
+  - Hard bound, under one named switch, `BASE_REPAIR_BOUND_POLICY`
+    ([ops/hosted-autonomy-base-repair-bounds.ts](../ops/hosted-autonomy-base-repair-bounds.ts)),
+    AN OPEN OWNER DECISION: no filing while the App listing holds
+    `BASE_REPAIR_ISSUE_LIMIT` = 1 issue the switch counts, created within
+    `BASE_REPAIR_ISSUE_WINDOW_MS` = 14 days, open or closed (`recent`).
+    - `"strict"`: every issue the App opened in the target, whatever its title
+      or body (the second review's bound: before it, rewriting both refiled at
+      the next pass). The third review found its cost: the App opens one review
+      follow-up per finding in the target, and on ai.ubq.fi's history the window
+      would have left filing possible for about 7 hours a month.
+    - `"relaxed"`, THE DEFAULT until the owner decides: only the App's
+      base-repair issues, by the marker on their first line, or by the exact
+      title once the marker was edited away. A person rewriting both lifts it
+      for that issue; the bounds that read no text still hold: one filing a UTC
+      day (the daily brake) and no third while two are open (the open ceiling).
+    - Every other hold is the same in both modes. The maintenance pass always
+      files under the switch; the pass takes a mode only so that tests run both.
   - Daily brake, content-independent and independent of the App listing: no
     filing on a UTC day (from midnight less ten minutes of skew) on which the
     created-since listing, read without the `creator` filter, shows an issue the
@@ -5164,14 +5174,16 @@ filing starts only once this change itself is the installed runtime.
     read did not judge makes the commit unreadable (`checks_unreadable`,
     `head_checks_unreadable`), and more failed Actions jobs than the eight it
     judges is its own condition (`checks_over_bound`, `head_checks_over_bound`).
-- Issues filed, at most (worst cases, nothing content-dependent): one per target
-  per 14 days in normal operation, so at most 27 a year on ai.ubq.fi, the only
-  target. If the creator listing silently returned only pull requests, or a
-  create were answered under an owner's, member's or collaborator's login, only
-  the daily brake and the open ceiling would hold: one a UTC day (365 a year)
-  while the earlier ones are closed, and no third while two filed within 14 days
-  are open. Deleting the App's issue removes GitHub's only record of it, so each
-  deletion allows one more filing.
+- Issues filed, at most: one per target per 14 days in normal operation, in
+  either mode, so at most 27 a year on ai.ubq.fi, the only target. Worst cases,
+  where only the bounds that read no text hold (the daily brake and the open
+  ceiling: one a UTC day, 365 a year, while the earlier ones are closed, and no
+  third while two filed within 14 days are open): the creator listing silently
+  returned only pull requests; a create was answered under an owner's, member's
+  or collaborator's login; or, in the relaxed mode only, a person rewrote both
+  the title and the first line of each issue (in the strict mode a rewritten
+  issue still holds its 14 days). Deleting the App's issue removes GitHub's only
+  record of it, so each deletion allows one more filing.
 - Charged attempts per filed issue, at most: `BASE_REPAIR_CI_FIX_CAP` = 3
   charged CI fixes (owner's number pending; see the cap entry), then the
   uncharged park; with the base and every new head red no review is requested.
@@ -5198,8 +5210,8 @@ filing starts only once this change itself is the installed runtime.
   (`base-repair:<owner>/<name>:<reason>`); no workflow, run summary or other
   reader parses or allow-lists them.
 - Not addressed (none P0 or P1): an issue whose tip went green before admission
-  still costs an implementation; the hard bound also counts the App's other
-  issues in the target.
+  still costs an implementation; in the strict mode the hard bound also counts
+  the App's other issues in the target.
 - Another target needs its own owner decision recorded here and its full name
   added to `BASE_REPAIR_FILING_TARGETS`.
 
