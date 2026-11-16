@@ -18,7 +18,8 @@
  * move that only it can cause. A record whose base is no longer the tip keeps
  * `base_red`, so the moved base refreshes it first, uncharged. Its charged
  * CI fixes are capped (`BASE_REPAIR_CI_FIX_CAP`, 2026-11-16, the owner's
- * number pending): the fix after the cap parks it, uncharged. Every other
+ * number pending), counted once per issue across every part a timeout
+ * splits it into: the fix after the cap parks it, uncharged. Every other
  * gate (current-head CI, native review, P0, custody, accounting) is
  * unchanged, and a closed issue is still refused before any charge
  * (`readIssueForModel`).
@@ -41,8 +42,9 @@ const TIP = /^(.+)@([0-9a-f]{40})$/;
 export const BASE_REPAIR_AUTHOR = "ubiquity-sentinel[bot]";
 
 /**
- * Charged CI fixes one base-repair task may take; its next fix parks it
- * with `BASE_REPAIR_CI_FIX_CAP_DETAIL` instead (`baseRepairCiFixCapped`).
+ * Charged CI fixes one base-repair issue's task may take, its parts
+ * included (`baseRepairCiFixesSpent`); its next fix parks it with
+ * `BASE_REPAIR_CI_FIX_CAP_DETAIL` instead (`baseRepairCiFixCapped`).
  * OWNER DECISION PENDING (2026-11-16): the review of the 2026-11-15
  * enablement asked the owner to approve a cap ("I suggest 3, then it
  * parks"); 3 is that suggestion, not an approval, and the owner's number
@@ -138,20 +140,52 @@ export async function isBaseRepairTask(
 }
 
 /**
+ * The charged CI fixes the task of `record`'s issue has spent: its own
+ * `counters.retries` plus those of every other record of the same issue in
+ * `work` (the run's records), the issue's whole task and each part a
+ * timeout split it into (`createDecompositionChildren`, which starts each
+ * part at zero). One issue therefore has one cap, however it is split
+ * (2026-11-16, third review: four parts each took their own three). Only a
+ * CI fix's own admission moves `counters.retries` (`countRetry`) and nothing
+ * lowers it; a part waits for the one before it to be done, and the family
+ * stays in the hot records while its issue is open, so the sum never
+ * undercounts a live task. No state is added.
+ */
+export function baseRepairCiFixesSpent(
+  record: WorkRecordV1,
+  work: readonly WorkRecordV1[],
+): number {
+  const number = record.related.issueNumber;
+  let spent = record.counters.retries;
+  if (record.source.kind !== "issue" || number === null) return spent;
+  for (const other of work) {
+    if (
+      other.id !== record.id && other.source.kind === "issue" &&
+      other.related.issueNumber === number &&
+      other.repository.owner === record.repository.owner &&
+      other.repository.name === record.repository.name
+    ) spent += other.counters.retries;
+  }
+  return spent;
+}
+
+/**
  * Whether the CI fix about to be charged to `record` parks it instead: true
- * only for a base-repair task (`isBaseRepairTask`) whose charged CI fixes
- * already reach `BASE_REPAIR_CI_FIX_CAP`. The count is the existing
- * `counters.retries`, which only a CI fix's own admission moves
- * (`countRetry`) and nothing lowers, so no state is added. Below the cap
- * nothing is read; at or above it the issue is read once per run
- * (memoised). Null when that read is unavailable: the caller defers without
- * a write. Any other record is never capped (owner directive 2026-10-30).
+ * only for a base-repair task (`isBaseRepairTask`) whose issue's charged CI
+ * fixes (`baseRepairCiFixesSpent` over `work`) already reach
+ * `BASE_REPAIR_CI_FIX_CAP`. Below the cap nothing is read; at or above it
+ * the issue is read once per run (memoised). Null when that read is
+ * unavailable: the caller defers without a write. Any other record is never
+ * capped (owner directive 2026-10-30).
  */
 export async function baseRepairCiFixCapped(
   deps: Pick<RepairCycleDepsV1, "github">,
   record: WorkRecordV1,
+  work: readonly WorkRecordV1[],
 ): Promise<boolean | null> {
-  if (record.counters.retries < BASE_REPAIR_CI_FIX_CAP) return false;
+  if (baseRepairCiFixesSpent(record, work) < BASE_REPAIR_CI_FIX_CAP) {
+    return false;
+  }
   return await isBaseRepairTask(deps, record);
 }
 

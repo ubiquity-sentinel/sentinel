@@ -238,31 +238,65 @@ Deno.test("base repair runtime: the cap facts hold on this checkout and fail for
       { ...sources, admission: (await reverted()).admission },
       false,
     ],
+    // The first cap: each part of a split task had its own.
+    [
+      "no count across parts",
+      {
+        ...sources,
+        cap: sources.cap.replace(
+          "export function baseRepairCiFixesSpent(",
+          "function ownCount(",
+        ),
+      },
+      false,
+    ],
+    [
+      "an admission over the record alone",
+      {
+        ...sources,
+        admission: sources.admission.replace(
+          /baseRepairCiFixCapped\(\s*deps,\s*record,\s*context\.snapshot\.work,?\s*\)/,
+          "baseRepairCiFixCapped(deps, record, [])",
+        ),
+      },
+      false,
+    ],
   ];
   for (const [label, variant, carries] of cases) {
     assert.equal(runtimeSourceCarriesCap(variant), carries, label);
   }
   // The real history, where this checkout holds it (a shallow CI clone may
   // not): the runtime installed before the cap (generation 253, 9c91a87f77)
-  // does not carry it.
+  // does not carry it, and neither does the first cap (33789b2a90), under
+  // which each part of a split task took its own three fixes.
   const git = (args: string[]) =>
     new Deno.Command("git", {
       args: ["-C", ROOT, ...args],
       stdout: "piped",
       stderr: "null",
     }).output();
-  const before = "9c91a87f774f66b9c54c4ce73c032dab9bb958d2";
-  if (!(await git(["cat-file", "-e", `${before}^{commit}`])).success) return;
-  const show = async (path: string) =>
-    new TextDecoder().decode((await git(["show", `${before}:${path}`])).stdout);
-  assert.equal(
-    runtimeSourceCarriesCap({
-      cap: await show(BASE_REPAIR_CAP_SOURCES.cap),
-      admission: await show(BASE_REPAIR_CAP_SOURCES.admission),
-    }),
-    false,
-    "the runtime before the cap",
-  );
+  for (
+    const [revision, label] of [
+      ["9c91a87f774f66b9c54c4ce73c032dab9bb958d2", "before the cap"],
+      ["33789b2a90c821058de155c4860f2cf9f6eb8e2b", "the first cap"],
+    ]
+  ) {
+    if (!(await git(["cat-file", "-e", `${revision}^{commit}`])).success) {
+      continue;
+    }
+    const show = async (path: string) =>
+      new TextDecoder().decode(
+        (await git(["show", `${revision}:${path}`])).stdout,
+      );
+    assert.equal(
+      runtimeSourceCarriesCap({
+        cap: await show(BASE_REPAIR_CAP_SOURCES.cap),
+        admission: await show(BASE_REPAIR_CAP_SOURCES.admission),
+      }),
+      false,
+      label,
+    );
+  }
 });
 
 /** One contents answer, as GitHub's `contents/{path}?ref={sha}` gives it. */

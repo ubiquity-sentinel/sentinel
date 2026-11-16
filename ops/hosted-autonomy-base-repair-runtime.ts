@@ -54,16 +54,24 @@ export type BaseRepairCapSourcesV1 = Record<
 const CAP_DECLARATION =
   /^export const BASE_REPAIR_CI_FIX_CAP = ([1-9][0-9]{0,2});$/gm;
 
-/** The admission's call of the capped check, before any charge. */
-const CAP_ADMISSION = /\bawait baseRepairCiFixCapped\(/;
+/** The count of an issue's fixes across its parts (2026-11-16). */
+const CAP_PER_ISSUE = /^export function baseRepairCiFixesSpent\(/m;
+
+/**
+ * The admission's call of the capped check, before any charge, over the
+ * run's records (so a split task's parts share one cap).
+ */
+const CAP_ADMISSION =
+  /\bawait baseRepairCiFixCapped\(\s*deps,\s*record,\s*context\.snapshot\.work,?\s*\)/;
 
 /**
  * Whether installed source text carries the cap: `cap` declares
  * `BASE_REPAIR_CI_FIX_CAP` exactly once, at a value from 1 to this
  * launcher's own (a larger one would break the bound the launcher states),
- * and `admission` calls the capped check. A revert of the cap, a runtime
- * from before it, or a runtime whose cap is larger than this launcher's,
- * fails.
+ * and counts an issue's fixes across its parts, and `admission` calls the
+ * capped check over the run's records. A revert of the cap, a runtime from
+ * before it, the first cap (2026-11-16, each part its own cap) and a runtime
+ * whose cap is larger than this launcher's all fail.
  */
 export function runtimeSourceCarriesCap(
   sources: BaseRepairCapSourcesV1,
@@ -72,7 +80,7 @@ export function runtimeSourceCarriesCap(
   if (declared.length !== 1) return false;
   const cap = Number(declared[0][1]);
   return cap >= 1 && cap <= BASE_REPAIR_CI_FIX_CAP &&
-    CAP_ADMISSION.test(sources.admission);
+    CAP_PER_ISSUE.test(sources.cap) && CAP_ADMISSION.test(sources.admission);
 }
 
 /**

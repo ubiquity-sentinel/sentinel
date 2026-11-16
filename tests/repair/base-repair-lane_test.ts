@@ -20,11 +20,13 @@ import {
   portOk,
 } from "../../src/contracts/ports.ts";
 import { reviewTaskStatementDigest } from "../../src/contracts/review-receipt.ts";
+import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import type { RepairCycleDepsV1 } from "../../src/repair/loop-types.ts";
 import {
   BASE_REPAIR_AUTHOR,
   BASE_REPAIR_CI_FIX_CAP,
   BASE_REPAIR_CI_FIX_CAP_DETAIL,
+  baseRepairCiFixesSpent,
   baseRepairMarker,
   isBaseRepairBody,
   isBaseRepairTask,
@@ -47,6 +49,7 @@ import {
 } from "../../src/repair/ci-rejection.ts";
 import { confirmCiCorrection } from "../../src/repair/loop-ci-correction.ts";
 import { confirmPreReviewCiFix } from "../../src/repair/loop-ci-first.ts";
+import { createDecompositionChildren } from "../../src/repair/transitions.ts";
 import {
   CI_FIX_EXHAUSTED_PREFIX,
   CI_PRE_REVIEW_PARK_PREFIXES,
@@ -315,6 +318,45 @@ Deno.test("base repair: the CI fix cap is the owner's pending number, parked wit
     assert.ok(prefix.length > 0, "an empty prefix would match every park");
     assert.ok(!BASE_REPAIR_CI_FIX_CAP_DETAIL.startsWith(prefix), prefix);
   }
+});
+
+Deno.test("base repair: an issue's charged CI fixes are counted across the parts a timeout split it into", () => {
+  const issue = { kind: "issue", id: "7", revision: SHA1 };
+  const related = { incidentId: null, issueNumber: 7 };
+  const spent = (id: string, retries: number, overrides = {}) =>
+    workRecord(id, {
+      source: issue,
+      related,
+      counters: { attempts: retries + 1, retries, reviewRounds: 0 },
+      ...overrides,
+    });
+  const parent = spent("issue-7", 1, {
+    counters: { attempts: 2, retries: 1, reviewRounds: 0, timeouts: 1 },
+  });
+  const parts = createDecompositionChildren(parent, 0).map((child, index) => ({
+    ...child,
+    counters: { ...child.counters, retries: index === 0 ? 1 : 0 },
+  }));
+  assert.equal(parts.length, 2);
+  assert.equal(parts[1].counters.retries, 0, "a part starts at zero");
+  const others = [
+    // Another issue, another repository's issue 7, and an incident.
+    spent("issue-8", 3, { related: { incidentId: null, issueNumber: 8 } }),
+    spent("issue-7-elsewhere", 3, {
+      repository: { owner: "ubiquity", name: "pay.ubq.fi", installationId: 7 },
+    }),
+    { ...spent("incident-7", 3), source: { ...issue, kind: "incident" } },
+  ] as WorkRecordV1[];
+  const work = [parent, ...parts, ...others];
+  // The whole issue's one fix, part 1's one and part 2's own.
+  assert.equal(baseRepairCiFixesSpent(parts[1], work), 2);
+  assert.equal(
+    baseRepairCiFixesSpent({ ...parts[1], counters: parts[0].counters }, work),
+    3,
+    "its own count, never its stale copy in the run's records",
+  );
+  assert.equal(baseRepairCiFixesSpent(parent, [parent]), 1, "alone");
+  assert.equal(baseRepairCiFixesSpent(others[2], work), 3, "no issue: own");
 });
 
 const ATTRIBUTION = attributeFailedChecks(

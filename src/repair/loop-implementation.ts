@@ -381,10 +381,15 @@ export async function prepareImplementationStart(
   const issue = observation.kind === "issue" ? observation.issue : null;
 
   // A base-repair task's charged CI fixes are capped (owner number pending,
-  // `BASE_REPAIR_CI_FIX_CAP`): the fix past the cap parks it, uncharged.
-  // Every other task's CI fixes stay uncapped (owner directive 2026-10-30).
+  // `BASE_REPAIR_CI_FIX_CAP`), counted over its issue's every record (each
+  // part of a split task): the fix past the cap parks it, uncharged. Every
+  // other task's CI fixes stay uncapped (owner directive 2026-10-30).
   if (ciFinding !== null) {
-    const capped = await baseRepairCiFixCapped(deps, record);
+    const capped = await baseRepairCiFixCapped(
+      deps,
+      record,
+      context.snapshot.work,
+    );
     if (capped === null) {
       return { kind: "deferred", detail: "CI check observation unavailable" };
     }

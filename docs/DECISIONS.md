@@ -5062,7 +5062,8 @@ base-repair tasks, landed ahead of filing" has been the installed runtime for at
 least one full generation (so it is also the rollback target of the install that
 brings this one) and the owner has confirmed the cap's value. The runtime gate
 below enforces the installed-runtime half in code, by reading the installed
-runtime's own source.
+runtime's own source, which must also carry this entry's per-issue count, so
+filing starts only once this change itself is the installed runtime.
 
 - Mechanism: `BASE_REPAIR_FILING_ENABLED` is replaced by
   `BASE_REPAIR_FILING_TARGETS`, an exact `owner/name` allowlist holding only
@@ -5090,8 +5091,10 @@ runtime's own source.
     cap: `src/repair/base-repair.ts` and `src/repair/loop-implementation.ts`,
     read from the Sentinel repository at exactly the release state's runtime
     revision (the contents API, each file checked against its blob id), must
-    declare `BASE_REPAIR_CI_FIX_CAP` once, from 1 to this launcher's value, and
-    call the capped check at the CI-fix admission (`runtimeSourceCarriesCap`);
+    declare `BASE_REPAIR_CI_FIX_CAP` once, from 1 to this launcher's value,
+    count an issue's fixes across its parts (`baseRepairCiFixesSpent`), and call
+    the capped check over the run's records at the CI-fix admission
+    (`runtimeSourceCarriesCap`; the first cap, 33789b2a90, fails this);
     otherwise `runtime_uncapped`, or `runtime_unreadable` when the pointer or a
     file cannot be read. The third review (2026-11-16) filed on a runtime that
     descended from the cap's commit with the cap reverted: the first version of
@@ -5138,13 +5141,25 @@ runtime's own source.
   create were answered under another author, only the daily brake would hold:
   one a UTC day (365 a year). Deleting the App's issue removes GitHub's only
   record of it, so each deletion allows one more filing.
-- Charged attempts per filed task, at most: one implementation start and
-  `BASE_REPAIR_CI_FIX_CAP` = 3 charged CI fixes (owner's number pending; see the
-  cap entry), then the uncharged park; with the base and every new head red no
-  review is requested. As for any task, a base moved by someone else's merge can
-  cost one conflict resolution per base tip, and once a head turns green review
-  rounds and P0 corrections stay uncapped (2026-10-30). The task is admitted as
-  an ordinary unlabelled issue and merges only through the ordinary gates (green
+- Charged attempts per filed issue, at most: `BASE_REPAIR_CI_FIX_CAP` = 3
+  charged CI fixes (owner's number pending; see the cap entry), then the
+  uncharged park; with the base and every new head red no review is requested.
+  The 3 are counted across the issue's task and every part a timeout splits it
+  into (`baseRepairCiFixesSpent` over the run's records, which the CI-fix
+  admission passes; the gate above requires both in the installed source). The
+  third review found that each part, created with zero counters
+  (`createDecompositionChildren`), took its own 3: up to 4 x 3 = 12 for one
+  issue. The sum needs no new field: only a CI fix's admission moves
+  `counters.retries`, a part starts only once the part before it is done, and an
+  open issue's records stay hot. Implementation starts are not capped here: the
+  whole issue's start, the retries the ordinary rules allow (the repeat-failure
+  park after three identical failures, the identical-attempt refusal) and, once
+  a timeout splits it (`MATRIX_DECOMPOSE_AFTER_TIMEOUTS` = 1), one start per
+  part (2 to `MATRIX_DECOMPOSE_MAX_PARTS` = 4, never split again) under the same
+  rules. As for any task, a base moved by someone else's merge can cost one
+  conflict resolution per base tip, and once a head turns green review rounds
+  and P0 corrections stay uncapped (2026-10-30). The task is admitted as an
+  ordinary unlabelled issue and merges only through the ordinary gates (green
   current-head CI, a completed current-head native review with no unresolved P0,
   task acceptance, custody, accounting); its merge closes the issue
   (`Resolves #N`) and the held records refresh onto the new tip.
@@ -5162,8 +5177,9 @@ This supersedes, for ai.ubq.fi only, the "filing stays off" status of the
 for every target again and no state format changed. A revert does not close an
 issue already filed on ai.ubq.fi and does not stop a task already admitted from
 it: the runtime still recognises and works it as a base-repair task, with its CI
-fixes still capped (the cap is the earlier entry's and stays). Close the issue
-by hand to stop its charges.
+fixes still capped (the cap is the earlier entry's and stays), though again per
+record, so each part of a task split by a timeout gets its own 3. Close the
+issue by hand to stop its charges.
 
 Correction to the cap's entry above ("CI-fix cap for base-repair tasks, landed
 ahead of filing"), whose text stays as written: its rollback sentence, "Filing
