@@ -5,9 +5,9 @@ import type { GitSha } from "../contracts/brands.ts";
  * to the commit CI tested: what CI runs and how, never the code it tests. The
  * `.github` tree (workflows, actions), the shard runner and its timing table,
  * the size gate the harness runs, `deno.json` and `deno.lock`; the workflow,
- * harness and emitter are pinned separately as `sources`. Launcher and
- * maintenance code elsewhere under `ops/` is ordinary tested code (owner
- * decision 2026-11-15).
+ * harness and emitter are pinned separately (`SELF_MERGE_TRUSTED_SOURCES`).
+ * Launcher and maintenance code elsewhere under `ops/` is ordinary tested code
+ * (owner decision 2026-11-15).
  */
 export const SELF_MERGE_TRUSTED_PIPELINE = [
   ["workflows", ".github"],
@@ -20,6 +20,16 @@ export const SELF_MERGE_TRUSTED_PIPELINE = [
 
 export type SelfMergePipelineKeyV1 =
   typeof SELF_MERGE_TRUSTED_PIPELINE[number][0];
+
+/**
+ * The sources a native CI proof names: the workflow, the harness and the proof
+ * emitter. The self merge requires each to equal the PR base's.
+ */
+export const SELF_MERGE_TRUSTED_SOURCES = [
+  ["workflow", ".github/workflows/ci.yml"],
+  ["harness", "test-local.ts"],
+  ["emitter", "ops/native-ci-proof.ts"],
+] as const;
 
 export interface SelfMergeCommitV1 {
   sha: GitSha;

@@ -9,10 +9,22 @@
  * and emitter sources.
  */
 import assert from "node:assert/strict";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { NATIVE_CI_SOURCES } from "../../src/contracts/native-ci.ts";
 import { parseReviewReceiptV1 } from "../../src/contracts/review-receipt.ts";
-import { SELF_MERGE_TRUSTED_PIPELINE } from "../../src/github/self-merge-git.ts";
+import {
+  SELF_MERGE_TRUSTED_PIPELINE,
+  SELF_MERGE_TRUSTED_SOURCES,
+} from "../../src/github/self-merge-git.ts";
 import { mergeDetailCode } from "../../src/repair/merge-event-codes.ts";
+import {
+  CI_WORKFLOW,
+  ciHarness,
+  type CiHarnessV1,
+  codeGraph,
+  lockPins,
+} from "./ci-harness-graph.ts";
 import { selfMergeFixture } from "./self-merge-fixture.ts";
 
 type Rig = Awaited<ReturnType<typeof selfMergeFixture>>;
@@ -225,39 +237,180 @@ Deno.test("self merge ops: red or missing CI, a stale receipt and a moved base r
   }
 });
 
+const ROOT = fileURLToPath(new URL("../../", import.meta.url));
+
 /**
- * The narrowed pin must follow the CI definition: every `ops/` file the CI
- * workflow or its harness runs (and each relative module those import) is a
- * pinned pipeline path or a pinned native CI source.
+ * What the self merge pins, as production reads it; a directory pin (the
+ * `.github` tree) covers every file under it.
  */
-Deno.test("self merge ops: every ops/ file the CI definition runs stays pinned", async () => {
-  const pinned = new Set<string>([
-    ...SELF_MERGE_TRUSTED_PIPELINE.map(([, path]) => path),
-    ...NATIVE_CI_SOURCES,
+const PINNED: readonly string[] = [
+  ...SELF_MERGE_TRUSTED_PIPELINE.map(([, path]) => path),
+  ...SELF_MERGE_TRUSTED_SOURCES.map(([, path]) => path),
+];
+
+function unpinned(harness: CiHarnessV1): string[] {
+  return [...harness.closure, ...harness.named].filter((file) =>
+    !PINNED.some((pin) => file === pin || file.startsWith(`${pin}/`))
+  ).sort();
+}
+
+/**
+ * The narrowed pin must cover the whole CI harness, so that no refactor can
+ * move harness logic into a file a pull request may change: every local file
+ * that a script ci.yml runs (or that one spawns) reaches by a code edge, JSON
+ * and dynamic imports included, and every file they name by path. Type-only
+ * edges run nothing and stay unpinned.
+ */
+Deno.test("self merge ops: every local file the CI harness runs or reads stays pinned", async () => {
+  const harness = await ciHarness(ROOT);
+  assert.deepEqual(harness.problems, []);
+  assert.deepEqual(harness.entries, [
+    "ops/ci-shards.ts",
+    "ops/code-size.ts",
+    "ops/native-ci-proof.ts",
+    "test-local.ts",
   ]);
-  const ran = new Set<string>();
-  const pending = [".github/workflows/ci.yml", "test-local.ts"];
-  for (let file = pending.shift(); file !== undefined; file = pending.shift()) {
-    const text = await Deno.readTextFile(file);
-    const dir = file.slice(0, file.lastIndexOf("/") + 1);
-    for (
-      const next of [
-        ...[...text.matchAll(/\bops\/[A-Za-z0-9_.-]+/g)].map((m) => m[0]),
-        ...[...text.matchAll(/from "\.\/([A-Za-z0-9_.-]+)"/g)].map((m) =>
-          dir + m[1]
-        ),
-      ]
-    ) {
-      if (ran.has(next)) continue;
-      ran.add(next);
-      if (next.endsWith(".ts")) pending.push(next);
-    }
-  }
-  assert.deepEqual([...ran].sort(), [
+  assert.deepEqual(harness.closure, [
     "ops/ci-shards.ts",
     "ops/ci-test-timings.json",
     "ops/code-size.ts",
     "ops/native-ci-proof.ts",
+    "test-local.ts",
   ]);
-  for (const file of ran) assert.ok(pinned.has(file), file);
+  assert.deepEqual(harness.typeOnly, ["src/contracts/native-ci.ts"]);
+  assert.deepEqual(harness.external, ["node:path"]);
+  const lock = JSON.parse(await Deno.readTextFile(join(ROOT, "deno.lock")));
+  for (const specifier of harness.external) {
+    assert.ok(lockPins(lock, specifier), specifier);
+  }
+  assert.ok(harness.named.includes(CI_WORKFLOW));
+  assert.deepEqual(unpinned(harness), []);
+  // The contract's source list is the one the self merge reads.
+  assert.deepEqual(
+    SELF_MERGE_TRUSTED_SOURCES.map(([, path]) => path),
+    [...NATIVE_CI_SOURCES],
+  );
+});
+
+type Edits = Record<string, (text: string) => string>;
+
+const HELPER: Edits = {
+  "ops/ci-helper.ts": () =>
+    "export const CI_HELPER = 1;\nexport type CiHelper = number;\n",
+};
+
+/** The harness graph of a disposable copy of `files` with `edits` applied. */
+async function editedHarness(files: readonly string[], edits: Edits) {
+  const copy = await Deno.makeTempDir({
+    dir: ROOT,
+    prefix: "sentinel-ci-harness-graph-",
+  });
+  try {
+    for (const file of files) {
+      await Deno.mkdir(dirname(join(copy, file)), { recursive: true });
+      await Deno.copyFile(join(ROOT, file), join(copy, file));
+    }
+    for (const [file, edit] of Object.entries(edits)) {
+      const path = join(copy, file);
+      await Deno.mkdir(dirname(path), { recursive: true });
+      const text = files.includes(file) ? await Deno.readTextFile(path) : "";
+      const edited = edit(text);
+      assert.notEqual(edited, text, `${file} edit applies`);
+      await Deno.writeTextFile(path, edited);
+    }
+    return await ciHarness(copy);
+  } finally {
+    await Deno.remove(copy, { recursive: true });
+  }
+}
+
+Deno.test("self merge ops: the harness graph guard fails on any unpinned code edge", async (t) => {
+  const real = await ciHarness(ROOT);
+  // The reviewer's example: the proof emitter takes NATIVE_CI_MARKER by value
+  // from the contract, which makes the contract's code closure emitter code.
+  const contract = await codeGraph(ROOT, "src/contracts/native-ci.ts");
+  assert.deepEqual(contract.problems, []);
+  assert.ok(contract.local.includes("src/contracts/validation.ts"));
+  const files = [
+    ...new Set([
+      "deno.json",
+      "deno.lock",
+      ...real.closure,
+      ...real.named,
+      ...contract.local,
+    ]),
+  ];
+  const cases: [string, Edits, string[]][] = [
+    ["a ../src value import", {
+      "ops/native-ci-proof.ts": (text) =>
+        text.replace(
+          'const NATIVE_CI_MARKER = "sentinel_native_ci_v1:";',
+          'import { NATIVE_CI_MARKER } from "../src/contracts/native-ci.ts";',
+        ),
+    }, contract.local],
+    ["a single-quoted relative import", {
+      ...HELPER,
+      "ops/ci-shards.ts": (text) =>
+        `import { CI_HELPER } from './ci-helper.ts';\n${text}`,
+    }, ["ops/ci-helper.ts"]],
+    ["a dynamic import of a file outside ops/", {
+      "src/ci-gate.ts": () => "export const gate = 1;\n",
+      "test-local.ts": (text) => `${text}await import("./src/ci-gate.ts");\n`,
+    }, ["src/ci-gate.ts"]],
+    ["a side-effect import", {
+      ...HELPER,
+      "ops/code-size.ts": (text) => `import './ci-helper.ts';\n${text}`,
+    }, ["ops/ci-helper.ts"]],
+    ["a file read by a single-quoted path", {
+      "ops/ci-limits.json": () => "{}\n",
+      "ops/ci-shards.ts": (text) =>
+        `${text}await Deno.readTextFile(new URL('./ci-limits.json', import.meta.url));\n`,
+    }, ["ops/ci-limits.json"]],
+    // The task's script is an entry: its own import is found too.
+    ["a ci.yml step running a deno.json task", {
+      ...HELPER,
+      "ops/ci-gate.ts": () => 'import "./ci-helper.ts";\n',
+      "deno.json": (text) => {
+        const config = JSON.parse(text);
+        config.tasks["ci:gate"] = "deno run --allow-read=. ops/ci-gate.ts";
+        return JSON.stringify(config);
+      },
+      [CI_WORKFLOW]: (text) =>
+        text.replace(
+          "test-local.ts --checks",
+          "test-local.ts --checks && deno task ci:gate",
+        ),
+    }, ["ops/ci-gate.ts", "ops/ci-helper.ts"]],
+  ];
+  for (const [name, edits, expected] of cases) {
+    await t.step(name, async () => {
+      const harness = await editedHarness(files, edits);
+      assert.deepEqual(harness.problems, []);
+      assert.deepEqual(unpinned(harness), expected);
+    });
+  }
+  await t.step("a type-only import stays outside the pin", async () => {
+    const harness = await editedHarness(files, {
+      ...HELPER,
+      "ops/native-ci-proof.ts": (text) =>
+        `import type { CiHelper } from "./ci-helper.ts";\n${text}`,
+    });
+    assert.deepEqual(harness.problems, []);
+    assert.deepEqual(harness.closure, real.closure);
+    assert.ok(harness.typeOnly.includes("ops/ci-helper.ts"));
+    assert.deepEqual(unpinned(harness), []);
+  });
+  await t.step(
+    "a dynamic import of a computed specifier is a problem",
+    async () => {
+      const harness = await editedHarness(files, {
+        ...HELPER,
+        "ops/ci-shards.ts": (text) =>
+          `${text}const helper = "ci-helper";\nawait import(\`./\${helper}.ts\`);\n`,
+      });
+      assert.deepEqual(harness.problems, [
+        "ops/ci-shards.ts: dynamic import of a computed specifier",
+      ]);
+    },
+  );
 });

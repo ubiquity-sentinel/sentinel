@@ -61,6 +61,7 @@ import { proveCarriedPatchWithGit } from "./git-carried-patch.ts";
 import {
   parseSelfMergeCommit,
   SELF_MERGE_TRUSTED_PIPELINE,
+  SELF_MERGE_TRUSTED_SOURCES,
   type SelfMergeClosureV1,
   type SelfMergeCommitV1,
 } from "./self-merge-git.ts";
@@ -561,12 +562,7 @@ export class DenoGitExecutor implements GitExecutorV1 {
       harness: null,
       emitter: null,
     };
-    for (
-      const [key, path] of [["workflow", ".github/workflows/ci.yml"], [
-        "harness",
-        "test-local.ts",
-      ], ["emitter", "ops/native-ci-proof.ts"]] as const
-    ) {
+    for (const [key, path] of SELF_MERGE_TRUSTED_SOURCES) {
       const blob = await this.selfMergePathObject(sha, path);
       if (!blob.ok) return blob;
       sources[key] = blob.value;
