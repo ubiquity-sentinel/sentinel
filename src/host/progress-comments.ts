@@ -94,6 +94,11 @@ const WAIT_WORDS: Record<string, string> = {
   cooldown: "waiting for a GitHub rate limit to reset",
 };
 
+/** The merged stage of pull request `pr`, shared by every merged record. */
+function mergedStage(pr: number): ProgressStageV1 {
+  return { key: `done:${pr}`, words: `Merged in #${pr}; this repair is done.` };
+}
+
 /**
  * The one stage-to-words table. Null for a record with nothing to report
  * yet (an issue queued but not started) or a non-issue record.
@@ -105,10 +110,7 @@ export function progressStage(record: WorkRecordV1): ProgressStageV1 | null {
   if (record.nextStep === "done") {
     return pr === null
       ? { key: "done", words: "Sentinel finished its work on this issue." }
-      : {
-        key: `done:${pr}`,
-        words: `Merged in #${pr}; this repair is done.`,
-      };
+      : mergedStage(pr);
   }
   if (record.nextStep === "blocked") {
     const message = record.blocker?.message ?? "no reason recorded";
@@ -125,6 +127,15 @@ export function progressStage(record: WorkRecordV1): ProgressStageV1 | null {
       words: `Parked: ${plain(message)}.${person}`,
     };
   }
+  // The self-merge executor's receipt records the pull request as merged; the
+  // record then only waits at delivery for its release, so it says what the
+  // done stage says (the same key: the later done step repeats nothing). The
+  // stage of a record merged before this rule is the same before and after a
+  // cycle, so it gets no new comment.
+  if (
+    record.nextStep === "delivery" && pr !== null &&
+    record.target.selfMerge?.prState === "merged"
+  ) return mergedStage(pr);
   if (record.nextStep === "delivery" && record.ownerLanding !== undefined) {
     // Sentinel never merges a protected-path change: one owner comment per
     // reviewed, CI-green head, and no "merging" claim before it.

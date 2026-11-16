@@ -4,11 +4,13 @@
  * persisted by the real repair loop (temporary Git state, fake GitHub): the
  * receipt lands on `target.selfMerge` in the same write as the release
  * request for its merge revision, created at the merge. Finalize counts that
- * merge in its own cycle only.
+ * merge in its own cycle only, and the progress commenter says it was merged
+ * exactly once.
  */
 import assert from "node:assert/strict";
 import { portOk } from "../../src/contracts/ports.ts";
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
+import { progressChanges } from "../../src/host/progress-comments.ts";
 import { collectFinalizeMetricsV1 } from "../../src/host/throughput-metrics-finalize.ts";
 import { reviewOperationKey, reviewReceiptId } from "../../src/repair/keys.ts";
 import { selfMergeReceipt } from "../host/self-merge-receipt-fixture.ts";
@@ -117,6 +119,23 @@ Deno.test("self merge delivery: the runtime's merge write is counted once by fin
     // record at delivery, does not.
     assert.equal(mergesIn(state, cycleStart, mergedAt + 60_000), 1);
     assert.equal(mergesIn(state, mergedAt + 120_000, mergedAt + 900_000), 0);
+  } finally {
+    await rig.ctx.cleanup();
+  }
+});
+
+Deno.test("self merge delivery: the runtime's merge write is reported merged once", async () => {
+  const { rig, record } = await selfMerged();
+  try {
+    const after = (await rig.snapshot()).work;
+    // The cycle that merged: one stage change, on the pull request.
+    const changes = progressChanges([record], after, LOCAL_SENTINEL_REPO);
+    assert.deepEqual(
+      changes.map((change) => [change.commentOn, change.stage]),
+      [[7, { key: "done:7", words: "Merged in #7; this repair is done." }]],
+    );
+    // The next cycle reads the same record still waiting at delivery.
+    assert.deepEqual(progressChanges(after, after, LOCAL_SENTINEL_REPO), []);
   } finally {
     await rig.ctx.cleanup();
   }
