@@ -220,6 +220,20 @@ export function isSafeBundlePath(path: string): boolean {
 }
 
 /**
+ * An `sk-` API key (OpenAI `sk-`/`sk-proj-`, Anthropic `sk-ant-`, OpenRouter
+ * `sk-or-`, gateway virtual keys): base64url key characters after a prefix
+ * that begins a token. The prefix may not continue an ASCII letter, as in the
+ * ordinary identifiers `task-acceptance-not-fulfilled` or `risk-…`, unless
+ * that letter ends an escape that can sit directly before a key in encoded
+ * text: a backslash escape (`\n`, `\x3d`, `\u003d`), a percent or
+ * quoted-printable byte (`%3D`, `=3D`) or a terminal colour or erase code
+ * (`[0m`, `[K`). Any other character before it (start of text, whitespace,
+ * punctuation, a digit, `_` or `-`) still begins a key.
+ */
+const SK_KEY =
+  /(?:(?<![A-Za-z])|(?<=\\[A-Za-z]|\\x[0-9A-Fa-f]{2}|\\u[0-9A-Fa-f]{4}|[%=][0-9A-Fa-f]{2}|\[[0-9;]*[mK]))sk-[A-Za-z0-9_-]{20,}/;
+
+/**
  * Deterministic secret-shape negative scan over the UTF-8 text of an entry
  * (entries must be text). This is a negative heuristic only; the positive
  * sanitization statement is the provenance attestation. Raw originals are
@@ -248,7 +262,7 @@ export function containsSecretShapedText(bytes: Uint8Array): boolean {
     /github_pat_[A-Za-z0-9_]{20,}/,
     /xox[baprs]-[A-Za-z0-9-]{10,}/,
     /AKIA[0-9A-Z]{16}/,
-    /sk-[A-Za-z0-9_-]{20,}/,
+    SK_KEY,
   ];
   return patterns.some((pattern) => pattern.test(text));
 }
