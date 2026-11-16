@@ -26,6 +26,15 @@
  *   record's stale base and admits and charges one implementation start
  *   normally; an identical failure re-parks it at once. Later attempts, if
  *   any, are ordinary grants under the ordinary bounds, not capped here.
+ *
+ * 2026-11-16 (owner answered "OK" to "#249 one more attempt (cap 6→7)";
+ * docs/DECISIONS.md, 2026-11-16):
+ *
+ * - `issue-ubiquity-sentinel-249`: not a release but a one-park allowance
+ *   (`OWNER_PRESERVATION_ALLOWANCES_2026_11_16`): the preservation
+ *   disposition's six-charge cap is seven for its exact refused park, so the
+ *   disposition re-enters it once through its own gates and the ordinary
+ *   retry grant, and the runtime charges one more start (the seventh).
  */
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
@@ -76,4 +85,56 @@ export function ownerReleased(
       entry.blocker.message === blocker.message &&
       entry.blocker.since === blocker.since
     );
+}
+
+/**
+ * One exact refused-preservation park whose record the owner allowed more
+ * charges: the preservation disposition's reservation cap for that record
+ * while, and only while, it holds exactly this park. It is never a retry
+ * rule: the disposition's own gates (consumed charge, unpublished shape, a
+ * day's pacing and an advanced base) still decide.
+ */
+export interface OwnerPreservationAllowanceV1 extends OwnerReleaseV1 {
+  /** The record's `PRESERVATION_REFUSED_MAX_RESERVATIONS` for this park. */
+  readonly cap: number;
+}
+
+/**
+ * The owner's 2026-11-16 allowance (owner answered "OK" to "#249 one more
+ * attempt (cap 6→7)"), verbatim from sentinel-state/repair at 048efadb4e7d
+ * (sequence 96671) and unchanged at 5581f19e3d: sentinel 249 holds six
+ * submitted charges (2026-11-01 to 11-07), its candidates refused by the
+ * trusted validator (`secret_shaped_text`: the `sk-` pattern matched inside
+ * a finding id in docs/DECISIONS.md, fixed in `src/replay/fixture.ts`), is
+ * parked on that refusal since 2026-11-12T23:08:40.682Z and is retained at
+ * the six-charge cap. Seven lets the disposition re-enter it once more; that
+ * re-entry rewrites the park, so the allowance never matches again and any
+ * later refusal of 249 meets the ordinary cap with seven charges held.
+ */
+export const OWNER_PRESERVATION_ALLOWANCES_2026_11_16:
+  readonly OwnerPreservationAllowanceV1[] = Object.freeze([
+    Object.freeze({
+      repository: SENTINEL,
+      id: "issue-ubiquity-sentinel-249",
+      blocker: Object.freeze({
+        kind: "other" as const,
+        message: "candidate preservation validation refused",
+        since: 1794524920682,
+      }),
+      cap: 7,
+    }),
+  ]);
+
+/**
+ * The refused-preservation reservation cap of one record: `cap`, or the
+ * owner's allowance while the record holds exactly that allowance's park.
+ */
+export function preservationRefusedCap(
+  record: WorkRecordV1,
+  cap: number,
+  allowances: readonly OwnerPreservationAllowanceV1[] =
+    OWNER_PRESERVATION_ALLOWANCES_2026_11_16,
+): number {
+  const allowance = allowances.find((entry) => ownerReleased(record, [entry]));
+  return allowance === undefined ? cap : Math.max(cap, allowance.cap);
 }

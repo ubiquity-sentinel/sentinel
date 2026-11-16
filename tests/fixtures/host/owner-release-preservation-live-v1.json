@@ -1,0 +1,287 @@
+{
+  "attemptMemory": [
+    {
+      "base": "0fe8f7ef68f1822b7fb895eca6d0d6c7689c3eb1",
+      "entries": [],
+      "id": "2435fe70b78a75af32945082a1879417d12d6c359c0d819c308a861192d298be",
+      "kind": "attempt_memory",
+      "lastSuccessAtMs": 1793515321984,
+      "lastSuccessRevision": "e77e197f09f577cf0342985130fa8cb81956b925",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity-sentinel"
+      },
+      "successes": 1,
+      "taskId": "issue-ubiquity-sentinel-249",
+      "version": "v1"
+    },
+    {
+      "base": "af7dcc7b9c779888017ccddeb630d567ef5e9159",
+      "entries": [],
+      "id": "62ec1affc51265ec159766b769f8f8137118bba4b8ae3467ce6e4197eef802b6",
+      "kind": "attempt_memory",
+      "lastSuccessAtMs": 1793621116685,
+      "lastSuccessRevision": "af7dcc7b9c779888017ccddeb630d567ef5e9159",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity-sentinel"
+      },
+      "successes": 1,
+      "taskId": "issue-ubiquity-sentinel-249",
+      "version": "v1"
+    },
+    {
+      "base": "864ec29a5ec3205f246b78449c22061c016b4be7",
+      "entries": [],
+      "id": "70052913b7ec8f17646520313de153ac4a6ed668b92083ff2c3a1cab5bb270db",
+      "kind": "attempt_memory",
+      "lastSuccessAtMs": 1793726573401,
+      "lastSuccessRevision": "864ec29a5ec3205f246b78449c22061c016b4be7",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity-sentinel"
+      },
+      "successes": 1,
+      "taskId": "issue-ubiquity-sentinel-249",
+      "version": "v1"
+    },
+    {
+      "base": "ac11a4bed934e5d1ee2bd9e4842a164646742c0e",
+      "entries": [],
+      "id": "72e1ed94f2a88da6f8cd34c2fc9fe3113876eb70be7c5af686b17ab2bd61b24e",
+      "kind": "attempt_memory",
+      "lastSuccessAtMs": 1793933353294,
+      "lastSuccessRevision": "ac11a4bed934e5d1ee2bd9e4842a164646742c0e",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity-sentinel"
+      },
+      "successes": 1,
+      "taskId": "issue-ubiquity-sentinel-249",
+      "version": "v1"
+    },
+    {
+      "base": "838d5c62e4e51935b9ed5453c651fedbaacd0538",
+      "entries": [],
+      "id": "e6a0264a0c6bcbdf523586e63de6054c6a87958f98550c2016d96b2b7a705608",
+      "kind": "attempt_memory",
+      "lastSuccessAtMs": 1794025542355,
+      "lastSuccessRevision": "ac1bf97ca44f3add2be9b12e40e18149eff409b8",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity-sentinel"
+      },
+      "successes": 1,
+      "taskId": "issue-ubiquity-sentinel-249",
+      "version": "v1"
+    },
+    {
+      "base": "89cfde86302d4489427864a5ef5e5e5c40cb8bec",
+      "entries": [],
+      "id": "f4771e48ab9196990fbcbc2a9a72041188d5279872adf21e3b96077c3ada1c1e",
+      "kind": "attempt_memory",
+      "lastSuccessAtMs": 1793842022255,
+      "lastSuccessRevision": "89cfde86302d4489427864a5ef5e5e5c40cb8bec",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity-sentinel"
+      },
+      "successes": 1,
+      "taskId": "issue-ubiquity-sentinel-249",
+      "version": "v1"
+    }
+  ],
+  "reservations": [
+    {
+      "attempt": 5,
+      "createdAt": 1793931864669,
+      "head": "ac11a4bed934e5d1ee2bd9e4842a164646742c0e",
+      "id": "16b3d8ca1c3a55efa1673900b47f6d1bea7b67f7382724bc7bad994f2c96af29",
+      "kind": "budget_reservation",
+      "outcome": "submitted",
+      "proofRef": null,
+      "purpose": "retry",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity-sentinel"
+      },
+      "settledAt": 1793933353294,
+      "taskId": "issue-ubiquity-sentinel-249",
+      "version": "v1"
+    },
+    {
+      "attempt": 2,
+      "createdAt": 1793619675854,
+      "head": "af7dcc7b9c779888017ccddeb630d567ef5e9159",
+      "id": "3b0d3ea6edb9cd711d21d30cb2a42f1fd01162b843405eb49213c71b83e39605",
+      "kind": "budget_reservation",
+      "outcome": "submitted",
+      "proofRef": null,
+      "purpose": "retry",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity-sentinel"
+      },
+      "settledAt": 1793621116685,
+      "taskId": "issue-ubiquity-sentinel-249",
+      "version": "v1"
+    },
+    {
+      "attempt": 1,
+      "createdAt": 1793513452323,
+      "head": "0fe8f7ef68f1822b7fb895eca6d0d6c7689c3eb1",
+      "id": "a446814ff103680f0a71bf0e531099fd1182ee88deed7177652812f0609396ec",
+      "kind": "budget_reservation",
+      "outcome": "submitted",
+      "proofRef": null,
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity-sentinel"
+      },
+      "settledAt": 1793515321984,
+      "taskId": "issue-ubiquity-sentinel-249",
+      "version": "v1"
+    },
+    {
+      "attempt": 6,
+      "createdAt": 1794024652991,
+      "head": "838d5c62e4e51935b9ed5453c651fedbaacd0538",
+      "id": "a89d475fcd78ab84764b744502e7bb908f19e3beb53ae43f2e18e512d2278d10",
+      "kind": "budget_reservation",
+      "outcome": "submitted",
+      "proofRef": null,
+      "purpose": "retry",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity-sentinel"
+      },
+      "settledAt": 1794025542356,
+      "taskId": "issue-ubiquity-sentinel-249",
+      "version": "v1"
+    },
+    {
+      "attempt": 3,
+      "createdAt": 1793723736761,
+      "head": "864ec29a5ec3205f246b78449c22061c016b4be7",
+      "id": "bcae3f22e807ecb9d69347b36ce6818a0958fa7ad1a79088f3ed7b4e251cdf4f",
+      "kind": "budget_reservation",
+      "outcome": "submitted",
+      "proofRef": null,
+      "purpose": "retry",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity-sentinel"
+      },
+      "settledAt": 1793726573401,
+      "taskId": "issue-ubiquity-sentinel-249",
+      "version": "v1"
+    },
+    {
+      "attempt": 4,
+      "createdAt": 1793839996989,
+      "head": "89cfde86302d4489427864a5ef5e5e5c40cb8bec",
+      "id": "f8cafbccf12a674c21da594c65c10b2949706f534a731797f332c1a28ddd8e78",
+      "kind": "budget_reservation",
+      "outcome": "submitted",
+      "proofRef": null,
+      "purpose": "retry",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity-sentinel"
+      },
+      "settledAt": 1793842022255,
+      "taskId": "issue-ubiquity-sentinel-249",
+      "version": "v1"
+    }
+  ],
+  "source": {
+    "commit": "048efadb4e7d1555195c5db402cc10bd0939fb57",
+    "ref": "sentinel-state/repair",
+    "sequence": 96671
+  },
+  "work": [
+    {
+      "blocker": {
+        "kind": "other",
+        "message": "candidate preservation validation refused",
+        "since": 1794524920682
+      },
+      "classification": {
+        "priority": null,
+        "severity": "P2"
+      },
+      "controller": {
+        "sha": "e77e197f09f577cf0342985130fa8cb81956b925"
+      },
+      "counters": {
+        "attempts": 6,
+        "retries": 0,
+        "reviewRounds": 0,
+        "stalled": 232
+      },
+      "createdAt": 1793512709510,
+      "dependencies": [],
+      "evidence": [],
+      "failingRevision": null,
+      "fingerprint": null,
+      "firstSeenAt": 1793512695000,
+      "id": "issue-ubiquity-sentinel-249",
+      "intent": null,
+      "kind": "work",
+      "nextStep": "blocked",
+      "related": {
+        "incidentId": null,
+        "issueNumber": 249
+      },
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity-sentinel"
+      },
+      "source": {
+        "id": "249",
+        "kind": "issue",
+        "revision": "e77e197f09f577cf0342985130fa8cb81956b925"
+      },
+      "sourceSnapshotDigest": null,
+      "target": {
+        "base": "838d5c62e4e51935b9ed5453c651fedbaacd0538",
+        "branch": "sentinel/repair/issue-ubiquity-sentinel-249",
+        "candidateState": {
+          "preserved": null,
+          "publishedHead": null
+        },
+        "checkpoint": null,
+        "head": "cef3f89fd29db97a592d269b90b0b9e6d376a97e",
+        "pr": null
+      },
+      "updatedAt": 1794524920682,
+      "urgency": {
+        "activeProduction": false,
+        "reproducible5xx": false,
+        "severeSecurityOrDataLoss": false
+      },
+      "version": "v1",
+      "wait": null
+    }
+  ]
+}

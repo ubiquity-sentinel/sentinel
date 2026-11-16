@@ -5234,3 +5234,85 @@ install, so the gate above files nothing new, but a base-repair task already
 filed is then worked with uncapped charged CI fixes. Its "Why first" also no
 longer carries the guarantee alone: the gate reads the installed source instead
 of relying on the install order.
+
+## 2026-11-16: sentinel 249 one more attempt, and the secret-shape false positive behind its refusals
+
+Owner decision (2026-11-16), answered "OK" to the question asked in these words:
+"#249 one more attempt (cap 6→7)". It is the only accounting change here: no cap
+is raised generally, no other record or park gains a charge, nothing is
+refunded. Rows from live sentinel-state/repair 048efadb4e7d (sequence 96671),
+re-read unchanged at 5581f19e3d (sequence 96688).
+
+What 249 holds: `issue-ubiquity-sentinel-249` ("Follow-up pass docs still
+describe combined issues and a create bound") holds six submitted charges
+(attempts 1 to 6, 2026-11-01 to 2026-11-07; counters 6/0/0), is parked
+"candidate preservation validation refused" since 2026-11-12T23:08:40.682Z with
+its sixth candidate cef3f89f on base 838d5c62, and the preservation disposition
+retains it at `PRESERVATION_REFUSED_MAX_RESERVATIONS` (6),
+`retained:reservation_cap`.
+
+Why the six were refused: the 2026-11-06 refusal was recorded as
+`secret_shaped_text`. The trusted publication validator that candidate
+preservation runs scans every newly exposed blob and commit message whole with
+`containsSecretShapedText` (`src/replay/fixture.ts`). Its pattern
+`sk-[A-Za-z0-9_-]{20,}` had no left boundary, so in the finding id
+task-acceptance-not-fulfilled (the "Generation 81 task acceptance corrections"
+entry above) the `sk-` that ends "task-", followed by the 24 characters
+"acceptance-not-fulfilled", read as a key. That id was the only match in this
+file at all six attempt bases and at the current base, so every candidate that
+changed this file, which issue 249 asks for, was refused.
+
+The detector fix (the commit before this entry's): an `sk-` key must begin a
+token. The prefix may not continue an ASCII letter, unless that letter ends an
+escape that can sit right before a key in encoded text (a backslash escape such
+as `\n` or `\x3d`, a unicode, percent or quoted-printable byte, a terminal colour
+or erase code). The key alphabet and length and the six other patterns are
+unchanged; there is no allowlist or path exemption. Over every tracked file
+three verdicts change, each from refused to accepted on the same kind of id:
+this file, `docs/build-status.md` and `src/repair/acceptance-correction.ts`. A
+synthetic real-format secret of every pattern family is still refused in 26
+positions (line start, mid-line, after punctuation, after a hyphen, after
+escapes, right after a false-prefix word).
+
+The allowance (this entry's commit): `OWNER_PRESERVATION_ALLOWANCES_2026_11_16`
+(`ops/hosted-autonomy-owner-releases.ts`) names 249's exact park (record id,
+repository, blocker kind, message and since) with cap 7, read through
+`preservationRefusedCap`. The disposition's own gates still decide (consumed
+charge, unpublished shape, a day's pacing, an advanced base): it re-enters 249
+once, the ordinary retry grant returns it to work uncharged, and the runtime
+refreshes the base and charges one start, the seventh. The re-entry rewrites the
+park, so the allowance never matches again; a later refusal meets the ordinary
+cap with seven charges held and is retained, so there is no eighth. Run through
+the real disposition pass over the whole live snapshot (473 records), the
+allowance changes exactly one verdict, 249's, from `retained:reservation_cap` to
+`unrecoverable:refused`, and `preservationRefusedCap` is 6 for every other
+record. The pass disposes at most 12 records per run in id order, so on a run
+with that many other disposals 249 can take a slot another record would have
+had; that record waits one run.
+
+Charge bound: one more implementation charge, the seventh, at this park. If
+that candidate passes preservation and publishes a pull request, the ordinary
+native review charges per round follow under the unchanged gates (no unresolved
+P0, current-head CI not red, native Codex review mode). The seventh is expected
+to be meaningful only with the detector fix installed. The preservation
+validator runs in the installed runtime; the disposition runs in the launcher's
+maintenance pass, which need not be the installed runtime. Under launcher
+self-install both are the same exact SHA, and this commit sits on the fix, so an
+installed runtime equal to this launcher carries it. Nothing else ties the two:
+while the runtime is older (self-install not yet done, or a failed bootstrap
+that restored the prior revision with model starts enabled), the seventh charge
+runs under the old pattern, a candidate that edits this file is refused again,
+and 249 stays retained with seven charges. Check that the installed runtime is
+this launcher's SHA before counting on the seventh.
+
+Open, unchanged here: `taskReservationCount` counts live reservations only. Once
+the live ledger exceeds 2,048 rows, compaction archives the oldest submitted
+rows, which would lower the count the cap reads; the ledger holds 1,679 rows.
+This file is 354 KB; the validator refuses a blob above 512 KB.
+
+Rollback: revert either commit; they touch disjoint files and revert
+independently in either order. Reverting the allowance before the disposition
+writes leaves 249 retained at six; after it wrote, 249 is in the ordinary
+retryable class or at work, which the previous code handles normally. Reverting
+the detector restores the previous pattern, and candidates that edit this file
+are refused again. No state format or persisted field changes.

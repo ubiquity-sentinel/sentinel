@@ -59,6 +59,7 @@ import {
   PRESERVATION_VALIDATION_REFUSED,
 } from "./hosted-autonomy-blocked-candidate.ts";
 import { taskReservationCount } from "./hosted-autonomy-retries.ts";
+import { preservationRefusedCap } from "./hosted-autonomy-owner-releases.ts";
 import { isPreservationRefusalMessage } from "../src/repair/pre-reservation-checks.ts";
 import {
   HOSTED_AUTONOMY_EVIDENCE_EXPIRY_MS,
@@ -86,7 +87,9 @@ export const PRESERVATION_REFUSED_PACING_MS = 24 * 60 * 60 * 1000;
 
 /**
  * A refused candidate re-enters only while its task holds fewer durable
- * charges than this (every purpose and outcome, the retry budget's unit).
+ * charges than this (every purpose and outcome, the retry budget's unit),
+ * except one exact park the owner allowed one more charge
+ * (`OWNER_PRESERVATION_ALLOWANCES_2026_11_16`, sentinel 249: seven).
  */
 export const PRESERVATION_REFUSED_MAX_RESERVATIONS = 6;
 
@@ -161,7 +164,7 @@ async function judge(
     }
     if (
       taskReservationCount(context.snapshot, record.id) >=
-        PRESERVATION_REFUSED_MAX_RESERVATIONS
+        preservationRefusedCap(record, PRESERVATION_REFUSED_MAX_RESERVATIONS)
     ) return { kind: "retain", reason: "reservation_cap" };
     const tip = await context.readTip(
       await context.scopeFor(record.repository),
