@@ -287,7 +287,13 @@ export class PassLiveInputs {
           const read = await this.deps.github.readPullRequest(number);
           if (!read.ok) return undefined;
           if (read.value === null) return null;
-          const checks = await this.deps.github.readChecks(read.value.head);
+          // Advisory fingerprint only; the step's CI gate reads its own full
+          // evidence. Do not fan out into Actions jobs or backup-CI artifacts.
+          const checks = await this.deps.github.readChecks(
+            read.value.head,
+            undefined,
+            { liveInputsOnly: true },
+          );
           if (!checks.ok) return undefined;
           return {
             state: read.value.state,

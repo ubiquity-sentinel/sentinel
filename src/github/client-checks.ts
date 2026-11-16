@@ -283,22 +283,26 @@ export abstract class GitHubClientChecks extends GitHubClientIssues {
       checks.push(parsed.value);
       items.push(item);
     }
-    // A failed Actions run whose job never started is marked (bounded job
-    // reads; an unreadable job keeps the run as reported).
-    const neverStarted = await neverStartedRunIndexes(
-      items,
-      sha,
-      (jobId) => this.readActionsJob(jobId),
-      this.jobVerdicts,
-    );
-    for (const index of neverStarted) {
-      checks[index] = { ...checks[index], neverStarted: true };
+    // Fingerprints need only native conclusions, like the GraphQL rollup.
+    // Authoritative CI reads still collect all their evidence below.
+    if (options?.liveInputsOnly !== true) {
+      // A failed Actions run whose job never started is marked (bounded job
+      // reads; an unreadable job keeps the run as reported).
+      const neverStarted = await neverStartedRunIndexes(
+        items,
+        sha,
+        (jobId) => this.readActionsJob(jobId),
+        this.jobVerdicts,
+      );
+      for (const index of neverStarted) {
+        checks[index] = { ...checks[index], neverStarted: true };
+      }
+      checks.splice(
+        0,
+        checks.length,
+        ...await this.enrichCheckEvents(sha, items, checks, options),
+      );
     }
-    checks.splice(
-      0,
-      checks.length,
-      ...await this.enrichCheckEvents(sha, items, checks, options),
-    );
     const statusesCollected = await this.collectPages(
       `/repos/${repoPath(this.repository)}/commits/${sha}/statuses`,
       { per_page: String(this.perPage) },
@@ -328,18 +332,20 @@ export abstract class GitHubClientChecks extends GitHubClientIssues {
     }
     // Verified backup CI stand-ins for never-started runs, and peers, before
     // the statuses are folded in (docs/backup-ci-spec.md §11.2).
-    checks.splice(
-      0,
-      checks.length,
-      ...await applyBackupCiToChecks(
-        this.backupCiReads(),
-        sha,
-        items,
-        checks,
-        statuses,
-        names !== undefined,
-      ),
-    );
+    if (options?.liveInputsOnly !== true) {
+      checks.splice(
+        0,
+        checks.length,
+        ...await applyBackupCiToChecks(
+          this.backupCiReads(),
+          sha,
+          items,
+          checks,
+          statuses,
+          names !== undefined,
+        ),
+      );
+    }
     // A name-filtered read (the base attribution of given head failures)
     // judges no other check run of the commit: its statuses are as recorded.
     checks.push(
