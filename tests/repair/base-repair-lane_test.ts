@@ -252,27 +252,33 @@ function directDeps(
   return { deps, record, calls };
 }
 
-Deno.test("base repair: a hosted fix keeps the opening its rollback target recognises", async () => {
+Deno.test("base repair: a hosted fix says the base is red, an opening its rollback target recognises", async () => {
   const at = () =>
     Promise.resolve(portOk({ ref: "refs/heads/development", sha: SHA1 }));
-  assert.equal(HOSTED_BASE_REPAIR_FINDING, false);
+  // Generation 253's recorded rollback target (176b596f86) recognises both
+  // openings, so hosted runs no longer tell the model the base was green.
+  assert.equal(HOSTED_BASE_REPAIR_FINDING, true);
   for (const hosted of [false, true]) {
     for (const confirm of [confirmPreReviewCiFix, confirmCiCorrection]) {
       const { deps, record } = directDeps(null, at);
       const run = hosted ? { ...deps, externalImplementations: true } : deps;
       const confirmed = await confirm(run, null as never, record);
       assert.equal(confirmed.kind, "confirmed", JSON.stringify(confirmed));
-      const message = confirmed.kind === "confirmed"
-        ? confirmed.finding.message
-        : "";
+      const finding = confirmed.kind === "confirmed"
+        ? confirmed.finding
+        : { severity: "", path: null, message: "" };
+      const label = `${confirm.name} hosted=${hosted}: ${finding.message}`;
       assert.ok(
-        message.startsWith(
-          hosted ? CI_CORRECTION_FINDING_PREFIX : CI_BASE_REPAIR_FINDING_PREFIX,
-        ),
-        `${confirm.name} hosted=${hosted}: ${message}`,
+        finding.message.startsWith(CI_BASE_REPAIR_FINDING_PREFIX),
+        label,
       );
+      assert.ok(!finding.message.includes("passed"), label);
+      assert.ok(isCiCorrectionFinding(finding), label);
     }
   }
+  // An ordinary task's finding keeps its own opening, hosted or not.
+  const ordinary = ciCorrectionFinding(SHA1, [check("deno", SHA3, "failure")]);
+  assert.ok(ordinary.message.startsWith(CI_CORRECTION_FINDING_PREFIX));
 });
 
 const ATTRIBUTION = attributeFailedChecks(

@@ -83,11 +83,16 @@ export function ciCorrectionRouteOpen(
  * refuses it generically, failing every later repair run (the R79 precedent,
  * tests/host/matrix-ci-first-gen79_test.ts). Runtimes before the 2026-10-25
  * base-repair rework recognise only `CI_CORRECTION_FINDING_PREFIX`, so hosted
- * runs keep that opening until the installed rollback target recognises both
- * (a runtime at or after this change); in process the own opening is always
- * used.
+ * runs kept that opening, which tells the model the checks passed on the
+ * base, until the installed rollback target recognised both. It does
+ * (2026-11-16, sentinel-state/release at ee529085): generation 253 runs
+ * 9c91a87f77 and its recorded rollback target is 176b596f86, whose
+ * `isCiCorrectionFinding` and matrix consumers accept both openings, as did
+ * 017c789c4e before them, and every later self-installed target descends
+ * from them. Hosted and in process now both use the own opening, which says
+ * the base is red.
  */
-export const HOSTED_BASE_REPAIR_FINDING = false;
+export const HOSTED_BASE_REPAIR_FINDING = true;
 
 /** The base-repair CI fix opening may be used by this run. */
 export function baseRepairFindingOpen(
