@@ -124,6 +124,7 @@ const EARLY_FAILURE_REASON_BY_LITERAL: readonly (
     "targets_invalid",
   ],
   ["committed target setting lists no repository", "targets_empty"],
+  ["every committed target read was unavailable", "targets_unavailable"],
   [
     "hosted repair host requires its configured credentials",
     "repair_credentials_unavailable",

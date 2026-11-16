@@ -4959,3 +4959,54 @@ runtime without the cap charges CI fixes without limit (a reproduction reached
   filing on cannot be rolled back onto a runtime without the cap.
 - Rollback: revert these commits. Filing stays off either way; no state format
   changed.
+
+## 2026-11-16: a pass whose every target read failed defers instead of failing
+
+Live record: supervisor run 43790005563 (02:05Z, generation 253 on 9c91a87f77)
+failed in its serial `repair` job with the early failure `targets_empty`
+("committed target setting lists no repository"); the runs before and after on
+the same SHA were green. `loadTargetConfigsV1` skips each committed target
+whose default-branch or tree-facts read cannot prove an answer, and the host
+threw `STATIC_TARGETS_EMPTY` whenever none remained, so a GitHub read burst
+(five of the run's repository cells reported `issue_source_http_error`) read as
+an empty setting and turned the run red. Reproduced through the real
+`runActionsRepairHost` with every target read unavailable
+(`tests/host/actions-targets-deferral_test.ts`).
+
+- A setting that lists no repository (absent, empty or invalid) still refuses
+  with `targets_empty`, unchanged.
+- When it lists repositories and every one was skipped, the pass prints one
+  text-free `sentinel_targets_deferral` line (`reasonCode` `targets_unavailable`
+  and the `listed`, `branchUnavailable` and `factsUnavailable` counts; no slug
+  or message), which the launcher strictly re-parses and re-emits.
+- An ordinary serial pass then settles healthy with the idle outcome "every
+  committed target read was unavailable; the pass deferred", after the actual
+  startup probe (an unready startup still fails it). Nothing after the target
+  load runs (queue custody, owner-successor review, target cycles, ingestion,
+  CI approval, model starts), so it writes no state. The launcher labels its
+  runtime summary `targets_unavailable`, never `healthy`.
+- The matrix planner publishes the queue-custody hold's empty zero-grant plan
+  with plan diagnostic cause `targets_unavailable`. A repository cell writes its
+  refusal and marker exactly as a cell whose own target is not configured;
+  finalize counts it refused and hands its records back to the serial pass.
+- A verification execution (bootstrap, prior, candidate, rollback) and an
+  admitted matrix cell still fail, now with the early-failure reason
+  `targets_unavailable`: unavailable evidence never passes an install or
+  rollback gate, and a granted cell that cannot run keeps its charge
+  unreconciled for the existing recovery instead of writing a charged
+  `not_started` park.
+
+Not from this path: that run's 21 `stalled`+1 writes (20 prospector records and
+ubiquity-dollar 927, each re-armed with a two-minute `unavailable` wait) came
+from the six repository cells' sealed deltas, applied by finalize at 02:19:58
+(`sentinel_repair_fanout`: 6 deltas, 48 transitions). The serial job threw
+before any cycle and wrote nothing, as a deferred pass writes nothing. Each
+cell's batched issue listing failed, so the unchanged-input gate could not skip
+the records; each stepped record met the unavailable read and counted one
+non-advancing execution. That accounting is unchanged here.
+
+Open for the owner: a bootstrap whose every target read is unavailable still
+fails and restores the journaled prior (that SHA cannot reinstall), although
+its health pass reads no target. Rollback: revert this commit; no state format
+changed, and an older runtime under this launcher keeps reporting
+`targets_empty`.

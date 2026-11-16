@@ -51,7 +51,9 @@ import {
   createGitHubTargetResolvers,
   loadTargetConfigsV1,
   STATIC_TARGETS_EMPTY,
+  unavailableTargetCountsV1,
 } from "./targets.ts";
+import { settleUnavailableTargetsV1 } from "./actions-targets-deferral.ts";
 import { DenoGitRunner } from "../state/mod.ts";
 import {
   createHostedRepairStateStore,
@@ -381,6 +383,33 @@ export async function runActionsRepairHost(
       installationId: targetInstallationId ?? DEFAULT_APP_INSTALLATION_ID,
     }),
   });
+  // Listed targets that were all unreadable defer (or fail as unavailable);
+  // only a setting that lists no repository is the empty-setting refusal.
+  const unavailable = unavailableTargetCountsV1(targets);
+  if (unavailable !== null) {
+    const host = {
+      execution,
+      run: {
+        runId: identity.runId,
+        runAttempt: identity.runAttempt,
+        launcherSha: identity.launcherSha,
+      },
+      artifactRoot: joinPath(sourceDir, "..", ".sentinel-matrix"),
+      controllerSha,
+    };
+    return await settleUnavailableTargetsV1({
+      counts: unavailable,
+      job: deps.job,
+      execution,
+      controllerSha,
+      baseSha,
+      login,
+      probeStartup: () => (deps.preflight ?? runActionsPreflight)(modelRoute),
+      settle: deps.settleTargetsDeferral === undefined
+        ? undefined
+        : () => deps.settleTargetsDeferral!(host),
+    });
+  }
   if (targets.configs.length === 0) throw new Error(STATIC_TARGETS_EMPTY);
   const selfRepository = templateConfig.repository;
   const needsAppScope = targets.configs.some((candidate) =>

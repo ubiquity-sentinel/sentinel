@@ -274,6 +274,7 @@ export const EARLY_FAILURE_FRAME_LABELS: ReadonlySet<string> = new Set([
   "actions-supervisor-source.ts",
   "actions-supervisor-state.ts",
   "actions-target-cycles.ts",
+  "actions-targets-deferral.ts",
   "actions-target-preparation.ts",
   "hosted-runtime-child.ts",
   "hosted-runtime-diagnostics.ts",

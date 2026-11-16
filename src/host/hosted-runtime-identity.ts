@@ -557,6 +557,7 @@ export type HostedRuntimeEarlyFailureReasonV1 =
   | "local_git_output_bound"
   | "targets_invalid"
   | "targets_empty"
+  | "targets_unavailable"
   | "repair_credentials_unavailable"
   | "repair_controller_unavailable"
   | "repair_executable_unavailable"

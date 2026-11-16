@@ -400,4 +400,19 @@ export interface ActionsRepairHostDepsV1 {
   preflight?: (route: ModelRouteV1) => Promise<void>;
   /** The production multi-target loop; overridable so a test can observe its exact input. */
   runTargetCycles?: typeof runActionsTargetCycles;
+  /**
+   * A repository cell's own settlement of a pass whose committed targets were
+   * all unreadable (`STATIC_TARGETS_DEFERRED`): its bounded refusal record and
+   * its one marker, as for a cell whose own target is not configured. Absent,
+   * the deferral writes no job artifact.
+   */
+  settleTargetsDeferral?: (host: TargetsDeferralHostV1) => Promise<void>;
+}
+
+/** The trusted run assembly a deferred pass hands its job's own settlement. */
+export interface TargetsDeferralHostV1 {
+  execution: HostedExecutionIntentV1;
+  run: MatrixRunIdentityV1;
+  artifactRoot: string;
+  controllerSha: GitSha;
 }

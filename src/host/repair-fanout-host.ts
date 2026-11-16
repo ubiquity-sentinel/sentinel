@@ -42,6 +42,7 @@ import {
   type ActionsTargetCyclesInputV1,
   type ActionsTargetCyclesResultV1,
   childRunDeadlineV1,
+  type TargetsDeferralHostV1,
 } from "./actions-target-cycles.ts";
 import { REPAIR_CELL_MARKER_KIND } from "./hosted-runtime-repair-cell.ts";
 import { joinPath } from "./local.ts";
@@ -202,6 +203,80 @@ async function writeCellResult(root: string, bytes: Uint8Array) {
   await Deno.writeFile(joinPath(root, "result.json"), bytes, { mode: 0o600 });
 }
 
+/** The trusted run assembly one repository cell's artifact is bound to. */
+type RepairCellHostV1 = Pick<
+  TargetsDeferralHostV1,
+  "execution" | "run" | "artifactRoot" | "controllerSha"
+>;
+
+/** The cell's one marker, which finalize authenticates against the run. */
+function printRepairCellMarker(
+  host: RepairCellHostV1,
+  cellId: string,
+  deltaDigest: string,
+  transitions: number,
+): void {
+  console.log(JSON.stringify({
+    kind: REPAIR_CELL_MARKER_KIND,
+    run: host.run,
+    runtimeSha: host.controllerSha,
+    generation: host.execution.generation,
+    cellId,
+    deltaDigest,
+    transitions,
+  }));
+}
+
+/** Write the cell's bounded refusal record and print its one marker. */
+async function refuseRepairCell(
+  host: RepairCellHostV1,
+  cellId: string,
+  reason: RepairCellRefusalReasonV1,
+): Promise<void> {
+  const refusal: RepairCellRefusalV1 = {
+    version: "v1",
+    kind: REPAIR_CELL_REFUSAL_KIND,
+    cellId,
+    reason,
+  };
+  await writeCellResult(
+    repairFanoutRootOf(host.artifactRoot),
+    new TextEncoder().encode(canonicalStringify(refusal) + "\n"),
+  );
+  printRepairCellMarker(host, cellId, await canonicalDigestV1(refusal), 0);
+}
+
+/**
+ * A repository cell of a pass whose committed targets were all unreadable
+ * (`STATIC_TARGETS_DEFERRED`) settles exactly as a cell whose own target is
+ * not configured: an unreadable plan is `plan_unavailable`, a cell the plan
+ * does not name `cell_unplanned`, and a planned cell `pass_failed`. Finalize
+ * counts the refusal and hands the cell's records back to the serial pass.
+ */
+export async function settleRepairCellTargetsDeferral(
+  host: TargetsDeferralHostV1,
+  carrier: MatrixNativeCarrierV1,
+): Promise<void> {
+  const { cellId, repairPlanDigest } = carrier;
+  if (repairPlanDigest === undefined || cellId === undefined) {
+    throw new Error("repair cell lacks native selection");
+  }
+  let reason: RepairCellRefusalReasonV1 = "plan_unavailable";
+  try {
+    const plan = await readRepairFanoutPlan(
+      host.artifactRoot,
+      repairPlanDigest,
+      host.run,
+    );
+    reason = plan.cells.some((entry) => entry.cellId === cellId)
+      ? "pass_failed"
+      : "cell_unplanned";
+  } catch {
+    // An unreadable or mismatched plan stays `plan_unavailable`.
+  }
+  await refuseRepairCell(host, cellId, reason);
+}
+
 /**
  * One repository cell: its pass, its sealed delta and its marker. A cell
  * that cannot produce a delta still writes its bounded refusal record (so
@@ -219,16 +294,7 @@ export async function runRepairCellTargetCycles(
     throw new Error("repair cell lacks native selection");
   }
   const root = repairFanoutRootOf(host.artifactRoot);
-  const marker = (deltaDigest: string, transitions: number) =>
-    console.log(JSON.stringify({
-      kind: REPAIR_CELL_MARKER_KIND,
-      run: host.run,
-      runtimeSha: input.controllerSha,
-      generation: host.execution.generation,
-      cellId,
-      deltaDigest,
-      transitions,
-    }));
+  const cellHost = { ...host, controllerSha: input.controllerSha };
   let reason: RepairCellRefusalReasonV1 = "plan_unavailable";
   let addressed: string[] = [];
   try {
@@ -261,7 +327,12 @@ export async function runRepairCellTargetCycles(
       throw new Error("base unavailable");
     }
     await writeCellResult(root, encodeRepairDeltaArtifactV1(result.envelope));
-    marker(result.envelope.digest, result.envelope.delta.transitions.length);
+    printRepairCellMarker(
+      cellHost,
+      cellId,
+      result.envelope.digest,
+      result.envelope.delta.transitions.length,
+    );
     return {
       outcome: { status: "idle", detail: "repair cell settled" },
       addressed,
@@ -269,17 +340,7 @@ export async function runRepairCellTargetCycles(
       failed: [],
     };
   } catch {
-    const refusal: RepairCellRefusalV1 = {
-      version: "v1",
-      kind: REPAIR_CELL_REFUSAL_KIND,
-      cellId,
-      reason,
-    };
-    await writeCellResult(
-      root,
-      new TextEncoder().encode(canonicalStringify(refusal) + "\n"),
-    );
-    marker(await canonicalDigestV1(refusal), 0);
+    await refuseRepairCell(cellHost, cellId, reason);
     return {
       outcome: { status: "idle", detail: "repair cell refused: " + reason },
       addressed,

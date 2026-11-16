@@ -137,8 +137,21 @@ export function planNotReadyKey(raw: string): string {
   return NOT_READY.has(raw) ? raw : "other";
 }
 
-/** Why the line was printed: a planner run, or the queue-custody empty plan. */
-export type MatrixPlanDiagnosticCauseV1 = "planner" | "queue_custody_idle";
+/**
+ * Why the line was printed: a planner run, or the empty plan of a queue
+ * custody hold or of a pass whose every committed target read was
+ * unavailable.
+ */
+export type MatrixPlanDiagnosticCauseV1 =
+  | "planner"
+  | "queue_custody_idle"
+  | "targets_unavailable";
+
+const CAUSES: readonly unknown[] = [
+  "planner",
+  "queue_custody_idle",
+  "targets_unavailable",
+] satisfies readonly MatrixPlanDiagnosticCauseV1[];
 
 export interface MatrixPlanRepositoryLineV1 {
   repository: string;
@@ -334,7 +347,7 @@ function parseLine(
       ].sort(),
     ) || refusal === null || deferredRecords === null ||
     value.waveId !== waveId ||
-    (value.cause !== "planner" && value.cause !== "queue_custody_idle") ||
+    !CAUSES.includes(value.cause) ||
     !isCount(value.prepared, MaxItems.snapshotRecords) ||
     !isCount(value.attempted, MaxItems.snapshotRecords) ||
     !isCount(value.deferred, MaxItems.snapshotRecords) ||
@@ -364,7 +377,7 @@ function parseLine(
     kind: MATRIX_PLAN_DIAGNOSTIC_KIND,
     advisory: true,
     waveId,
-    cause: value.cause,
+    cause: value.cause as MatrixPlanDiagnosticCauseV1,
     prepared: value.prepared,
     attempted: value.attempted,
     deferred: value.deferred,

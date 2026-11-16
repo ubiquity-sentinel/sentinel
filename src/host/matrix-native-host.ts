@@ -2,6 +2,7 @@
 import { HOSTED_RECORD_WAIT_CAUSES } from "../repair/loop-wait-cause.ts";
 import { parseMatrixPlanV1 } from "../contracts/matrix.ts";
 import { QUEUE_CUSTODY_IDLE_DETAIL } from "./actions-queue-custody.ts";
+import { STATIC_TARGETS_DEFERRED } from "./targets.ts";
 import type {
   MatrixCellGrantV1,
   MatrixCellResultV1,
@@ -265,13 +266,20 @@ export async function runActionsMatrixHost(
       };
     },
   });
-  if (
-    result === null && job === "matrix_plan" &&
-    hosted.outcome.status === "idle" &&
-    hosted.outcome.detail === QUEUE_CUSTODY_IDLE_DETAIL
-  ) {
+  // A custody hold, or every committed target read unavailable (the host
+  // deferred before any target work), leaves the planner with no cycle.
+  const emptyPlanCause = result !== null || job !== "matrix_plan" ||
+      hosted.outcome.status !== "idle"
+    ? null
+    : hosted.outcome.detail === QUEUE_CUSTODY_IDLE_DETAIL
+    ? "queue_custody_idle" as const
+    : hosted.outcome.detail === STATIC_TARGETS_DEFERRED
+    ? "targets_unavailable" as const
+    : null;
+  if (emptyPlanCause !== null) {
     // The actual host verified this execution and started no ordinary cycle.
-    // An empty manifest records zero grants; it claims no successful queue read.
+    // An empty manifest records zero grants; it claims no successful queue
+    // or target read.
     const execution = hosted.execution;
     const plan = parseMatrixPlanV1({
       version: "v1",
@@ -322,7 +330,7 @@ export async function runActionsMatrixHost(
       matrixPlanDiagnosticLineOf({
         waveId: plan.waveId,
         prepared: 0,
-        cause: "queue_custody_idle",
+        cause: emptyPlanCause,
       })
     );
   }

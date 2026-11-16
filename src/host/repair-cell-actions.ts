@@ -15,7 +15,10 @@ import {
   parseCarrier,
   readMatrixNativeCarrier,
 } from "./matrix-actions-shared.ts";
-import { runRepairCellTargetCycles } from "./repair-fanout-host.ts";
+import {
+  runRepairCellTargetCycles,
+  settleRepairCellTargetsDeferral,
+} from "./repair-fanout-host.ts";
 
 /**
  * The cell settled (its delta or refusal record and its one marker are
@@ -55,6 +58,12 @@ export async function runRepairCellHost(
         const result = await runRepairCellTargetCycles(input, carrier);
         settled = true;
         return result;
+      },
+      // Every committed target read unavailable: the cell writes its refusal
+      // and marker, as one whose own target is not configured does.
+      settleTargetsDeferral: async (context) => {
+        await settleRepairCellTargetsDeferral(context, carrier);
+        settled = true;
       },
     });
   } catch (error) {

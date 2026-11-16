@@ -84,6 +84,10 @@ import { needsHostedLegacyStateView } from "./hosted-runtime-rollback-state.ts";
 import { HOSTED_RUNTIME_ROLLBACK_ENTRYPOINT } from "./hosted-runtime-rollback.ts";
 import { scanPlanDiagnostic } from "./matrix-plan-diagnostic.ts";
 import { scanStepLines } from "../repair/step-line.ts";
+import {
+  carriesTargetsDeferral,
+  TARGETS_UNAVAILABLE_REASON,
+} from "../repair/targets-deferral-line.ts";
 import { readRepairLedgerV1 } from "../state/state-repair-ledger.ts";
 
 /**
@@ -575,7 +579,10 @@ export function fallbackHostedRuntimeSummary(
     outcome: result.status,
     reasonCode: result.childFailure?.status ??
       (result.status === "healthy"
-        ? "healthy"
+        // A deferred pass is healthy but did no target work: never "healthy".
+        ? carriesTargetsDeferral(result.stepLines)
+          ? TARGETS_UNAVAILABLE_REASON
+          : "healthy"
         : result.status === "failed"
         ? "child_failed"
         : "runtime_unavailable"),
@@ -808,6 +815,9 @@ function explainHostedSummary(
     summary.nextAction = "Inspect the issue and incident source diagnostics";
   } else if (summary.reasonCode === "state_error") {
     detail = "the repair state could not be trusted";
+  } else if (summary.reasonCode === TARGETS_UNAVAILABLE_REASON) {
+    detail =
+      "every committed target read was unavailable, so the pass deferred";
   }
   if (skipped > 0) {
     detail += `; skipped ${skipped} issue${

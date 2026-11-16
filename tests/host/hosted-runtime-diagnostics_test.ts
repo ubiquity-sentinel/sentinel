@@ -324,6 +324,12 @@ Deno.test("hosted runtime: ANSI-wrapped early diagnostics recover frames and kno
       },
       {
         stderr:
+          "error: Uncaught (in promise) Error: every committed target read was unavailable",
+        code: "targets_unavailable",
+        literal: "every committed target read was unavailable",
+      },
+      {
+        stderr:
           'error: Uncaught (in promise) "local repair host git command failed; output withheld"',
         code: "local_git_command_failed",
         literal: "local repair host git command failed; output withheld",

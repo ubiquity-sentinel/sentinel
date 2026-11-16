@@ -62,6 +62,19 @@ export const STATIC_TARGETS_EMPTY =
   "committed target setting lists no repository";
 
 /**
+ * The setting lists repositories, but every one was skipped because a read
+ * could not prove an answer (`loadTargetConfigsV1`): unavailability, never an
+ * empty setting. A pass that may not defer on it (a verification execution
+ * or an admitted matrix cell) fails with this literal (`targets_unavailable`).
+ */
+export const STATIC_TARGETS_UNAVAILABLE =
+  "every committed target read was unavailable";
+
+/** The idle outcome of an ordinary pass deferred on that unavailability. */
+export const STATIC_TARGETS_DEFERRED =
+  "every committed target read was unavailable; the pass deferred";
+
+/**
  * The setting does not include the repository this host addresses. The
  * composed GitHub port, candidate restorer and release path each own exactly
  * one repository, so running would act on a repository the setting does not
@@ -267,6 +280,31 @@ export interface LoadTargetConfigsResultV1 {
   readonly skipped: readonly string[];
   /** Slug of every target skipped because its tree facts were unavailable. */
   readonly factsUnavailable: readonly string[];
+}
+
+/** Counts of a load whose setting listed targets and configured none. */
+export interface UnavailableTargetCountsV1 {
+  readonly listed: number;
+  readonly branchUnavailable: number;
+  readonly factsUnavailable: number;
+}
+
+/**
+ * The counts when the committed setting listed at least one target and every
+ * one was skipped for a read that could not prove an answer; null when a
+ * target was configured or the setting listed none (an absent, empty or
+ * invalid setting is `STATIC_TARGETS_EMPTY`, never unavailability).
+ */
+export function unavailableTargetCountsV1(
+  result: LoadTargetConfigsResultV1,
+): UnavailableTargetCountsV1 | null {
+  if (result.targets.length === 0 || result.configs.length > 0) return null;
+  const factsUnavailable = result.factsUnavailable.length;
+  return {
+    listed: result.targets.length,
+    branchUnavailable: result.targets.length - factsUnavailable,
+    factsUnavailable,
+  };
 }
 
 /**
