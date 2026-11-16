@@ -54,6 +54,7 @@ import {
   unavailableTargetCountsV1,
 } from "./targets.ts";
 import { settleUnavailableTargetsV1 } from "./actions-targets-deferral.ts";
+import { createTargetReadObserverV1 } from "./target-read-observer.ts";
 import { DenoGitRunner } from "../state/mod.ts";
 import {
   createHostedRepairStateStore,
@@ -370,6 +371,7 @@ export async function runActionsRepairHost(
   const takeoverContext = bindings.targetContext;
   const gitExecutable = await resolveExecutable("git", trustedPath);
   const templateConfig = createLocalRepositoryConfig();
+  const readObserver = createTargetReadObserverV1({ now: () => clock.now() });
   const targets = await loadTargetConfigsV1({
     template: templateConfig,
     // The setting lives in this run's own checkout, exactly as before.
@@ -381,11 +383,12 @@ export async function runActionsRepairHost(
       token: writeToken,
       readGate: gate,
       installationId: targetInstallationId ?? DEFAULT_APP_INSTALLATION_ID,
+      readObserver,
     }),
   });
   // Listed targets that were all unreadable defer (or fail as unavailable);
   // only a setting that lists no repository is the empty-setting refusal.
-  const unavailable = unavailableTargetCountsV1(targets);
+  const unavailable = unavailableTargetCountsV1(targets, readObserver);
   if (unavailable !== null) {
     const host = {
       execution,

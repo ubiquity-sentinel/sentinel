@@ -1,12 +1,15 @@
 /**
  * The advisory line of a hosted pass whose committed targets were all
- * unreadable (`STATIC_TARGETS_DEFERRED`, src/host/targets.ts): the setting
- * listed `listed` repositories and every one was skipped because a read could
- * not prove an answer, its default branch (`branchUnavailable`) or its tree
- * facts (`factsUnavailable`). Unavailability, never an empty setting: a
- * setting that lists no repository still refuses (`targets_empty`).
+ * unreadable (src/host/actions-targets-deferral.ts): the setting listed
+ * `listed` repositories and every one was skipped because a read could not
+ * prove an answer, its default branch (`branchUnavailable`) or its tree facts
+ * (`factsUnavailable`); `transient` of them failed in a way that looks
+ * transient (src/host/target-read-observer.ts). Only a pass whose every
+ * failure looked transient may defer; the line is printed either way.
+ * Unavailability, never an empty setting: a setting that lists no repository
+ * still refuses (`targets_empty`).
  *
- * Text-free: one closed reason code and three counts, never a slug, message,
+ * Text-free: one closed reason code and four counts, never a slug, message,
  * status or response. It carries `reasonCode`, never `status` (the launcher's
  * child-status scan reads any line with its own `status` as a child record).
  * The launcher re-emits it into the job log (`scanStepLines`) only after this
@@ -27,6 +30,7 @@ export interface TargetsDeferralLineV1 {
   listed: number;
   branchUnavailable: number;
   factsUnavailable: number;
+  transient: number;
 }
 
 const KEYS = [
@@ -35,6 +39,7 @@ const KEYS = [
   "kind",
   "listed",
   "reasonCode",
+  "transient",
 ].join();
 
 const count = (value: unknown): value is number =>
@@ -43,18 +48,21 @@ const count = (value: unknown): value is number =>
 
 /**
  * The line for one load that listed targets and configured none, or null when
- * the counts are not that shape (no listed target, or skips that do not add
- * up to the listed targets).
+ * the counts are not that shape (no listed target, skips that do not add up
+ * to the listed targets, or more transient failures than targets).
  */
 export function targetsDeferralLineV1(counts: {
   listed: number;
   branchUnavailable: number;
   factsUnavailable: number;
+  transient: number;
 }): TargetsDeferralLineV1 | null {
-  const { listed, branchUnavailable, factsUnavailable } = counts;
+  const { listed, branchUnavailable, factsUnavailable, transient } = counts;
   if (
     !count(listed) || listed === 0 || !count(branchUnavailable) ||
-    !count(factsUnavailable) || branchUnavailable + factsUnavailable !== listed
+    !count(factsUnavailable) ||
+    branchUnavailable + factsUnavailable !== listed || !count(transient) ||
+    transient > listed
   ) return null;
   return {
     kind: TARGETS_DEFERRAL_KIND,
@@ -62,6 +70,7 @@ export function targetsDeferralLineV1(counts: {
     listed,
     branchUnavailable,
     factsUnavailable,
+    transient,
   };
 }
 
@@ -82,5 +91,6 @@ export function parseTargetsDeferralLine(
     listed: line.listed as number,
     branchUnavailable: line.branchUnavailable as number,
     factsUnavailable: line.factsUnavailable as number,
+    transient: line.transient as number,
   });
 }

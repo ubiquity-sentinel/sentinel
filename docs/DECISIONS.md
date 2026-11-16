@@ -4977,21 +4977,34 @@ an empty setting and turned the run red. Reproduced through the real
   with `targets_empty`, unchanged.
 - When it lists repositories and every one was skipped, the pass prints one
   text-free `sentinel_targets_deferral` line (`reasonCode` `targets_unavailable`
-  and the `listed`, `branchUnavailable` and `factsUnavailable` counts; no slug
-  or message), which the launcher strictly re-parses and re-emits.
-- An ordinary serial pass then settles healthy with the idle outcome "every
-  committed target read was unavailable; the pass deferred", after the actual
-  startup probe (an unready startup still fails it). Nothing after the target
-  load runs (CI-minute reconciliation, queue custody, owner-successor review,
-  target cycles, ingestion, CI approval, model starts), so it writes no state.
-  The launcher labels the job's runtime summary `targets_unavailable` from the
-  child's own deferral outcome (the line alone labels nothing), and finalize's
-  run summary is then `degraded` with a next action naming the deferral, never
-  `healthy` with "None".
-- The matrix planner publishes the queue-custody hold's empty zero-grant plan
-  with plan diagnostic cause `targets_unavailable`. A repository cell writes its
-  refusal and marker exactly as a cell whose own target is not configured;
-  finalize counts it refused and hands its records back to the serial pass.
+  and the `listed`, `branchUnavailable`, `factsUnavailable` and `transient`
+  counts; no slug, status or message), which the launcher strictly re-parses
+  and re-emits.
+- Only a failure that looks transient may defer. An observer on the target
+  resolvers' transports (`src/host/target-read-observer.ts`) keeps one boolean
+  per target: whether its last read was a thrown request (network failure,
+  deadline, refused redirect or durable-cooldown refusal), a 5xx, a 429 or a
+  403 with rate-limit evidence (`retry-after`, `x-ratelimit-remaining: 0` or
+  GitHub's secondary-limit message). Any other failure (401, 404, a 403
+  without that evidence, a 2xx answer the resolver could not use) fails every
+  job red with `targets_unavailable`, so a lost credential or installation
+  never reads green. Observation never changes a request, response or throw;
+  a partial failure behaves exactly as before.
+- An ordinary serial pass whose every failure looked transient then settles
+  healthy with the idle outcome "every committed target read was unavailable;
+  the pass deferred", after the actual startup probe (an unready startup still
+  fails it). Nothing after the target load runs (CI-minute reconciliation,
+  queue custody, owner-successor review, target cycles, ingestion, CI
+  approval, model starts), so it writes no state. The launcher labels the
+  job's runtime summary `targets_unavailable` from the child's own deferral
+  outcome (the line alone labels nothing), and finalize's run summary is then
+  `degraded` with a next action naming the deferral, never `healthy` with
+  "None".
+- On the same transient failures the matrix planner publishes the queue-custody
+  hold's empty zero-grant plan with plan diagnostic cause `targets_unavailable`.
+  A repository cell writes its refusal and marker exactly as a cell whose own
+  target is not configured; finalize counts it refused and hands its records
+  back to the serial pass.
 - A verification execution (bootstrap, prior, candidate, rollback) and an
   admitted matrix cell still fail, now with the early-failure reason
   `targets_unavailable`: unavailable evidence never passes an install or

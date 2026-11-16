@@ -30,6 +30,7 @@ import {
   createTargetTreeFactsResolver,
   TargetTreeFactsRefusedV1,
 } from "./target-tree-facts.ts";
+import type { TargetReadObserverV1 } from "./target-read-observer.ts";
 export type { TargetTreeFactsV1 } from "./target-policy-generic.ts";
 export {
   createTargetTreeFactsResolver,
@@ -64,8 +65,9 @@ export const STATIC_TARGETS_EMPTY =
 /**
  * The setting lists repositories, but every one was skipped because a read
  * could not prove an answer (`loadTargetConfigsV1`): unavailability, never an
- * empty setting. A pass that may not defer on it (a verification execution
- * or an admitted matrix cell) fails with this literal (`targets_unavailable`).
+ * empty setting. A pass that may not defer on it (a read that did not look
+ * transient, a verification execution or an admitted matrix cell) fails with
+ * this literal (`targets_unavailable`).
  */
 export const STATIC_TARGETS_UNAVAILABLE =
   "every committed target read was unavailable";
@@ -240,20 +242,27 @@ export function createGitHubTargetResolvers(options: {
     "resolveDefaultBranch"
   ];
   readonly resolveTreeFacts?: GitHubTargetResolversV1["resolveTreeFacts"];
+  /** Observes both trusted transports; it never changes a read. */
+  readonly readObserver?: TargetReadObserverV1;
 }): GitHubTargetResolversV1 {
+  const observe = options.readObserver?.observe ??
+    ((http: HttpTransportV1) => http);
   // Tree-fact reads are the new contents calls this loader adds: put them
   // behind the run's durable cooldown gate. Default-branch reads keep their
-  // existing transport.
-  const factsHttp = options.readGate === undefined
-    ? options.http
-    : createGatedTargetReadTransport({
-      http: options.http,
-      gate: options.readGate,
-      installationId: options.installationId ?? 0,
-    });
+  // existing transport. The observer sits outside the gate, so a refused
+  // read counts as the thrown request it is.
+  const factsHttp = observe(
+    options.readGate === undefined
+      ? options.http
+      : createGatedTargetReadTransport({
+        http: options.http,
+        gate: options.readGate,
+        installationId: options.installationId ?? 0,
+      }),
+  );
   return {
     resolveDefaultBranch: options.resolveDefaultBranch ??
-      createDefaultBranchResolver(options),
+      createDefaultBranchResolver({ ...options, http: observe(options.http) }),
     resolveTreeFacts: options.resolveTreeFacts ??
       createTargetTreeFactsResolver({ ...options, http: factsHttp }),
   };
@@ -297,16 +306,20 @@ export interface UnavailableTargetCountsV1 {
   readonly listed: number;
   readonly branchUnavailable: number;
   readonly factsUnavailable: number;
+  /** Listed targets whose last read looked transient (target-read-observer.ts). */
+  readonly transient: number;
 }
 
 /**
  * The counts when the committed setting listed at least one target and every
  * one was skipped for a read that could not prove an answer; null when a
  * target was configured or the setting listed none (an absent, empty or
- * invalid setting is `STATIC_TARGETS_EMPTY`, never unavailability).
+ * invalid setting is `STATIC_TARGETS_EMPTY`, never unavailability). Without
+ * the load's read observer no target counts as transient.
  */
 export function unavailableTargetCountsV1(
   result: LoadTargetConfigsResultV1,
+  observer?: Pick<TargetReadObserverV1, "transient">,
 ): UnavailableTargetCountsV1 | null {
   if (result.targets.length === 0 || result.configs.length > 0) return null;
   const factsUnavailable = result.factsUnavailable.length;
@@ -314,6 +327,9 @@ export function unavailableTargetCountsV1(
     listed: result.targets.length,
     branchUnavailable: result.targets.length - factsUnavailable,
     factsUnavailable,
+    transient: observer === undefined
+      ? 0
+      : result.targets.filter((target) => observer.transient(target)).length,
   };
 }
 

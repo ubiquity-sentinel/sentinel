@@ -6,10 +6,15 @@
  * The setting listed repositories and `loadTargetConfigsV1` skipped every one
  * because a read could not prove an answer. That is unavailability, never an
  * empty setting (which still refuses with `STATIC_TARGETS_EMPTY` before this
- * module is reached), so:
+ * module is reached). Every pass prints one text-free advisory line (reason
+ * code and counts), then:
  *
- * - an ordinary pass defers: one text-free advisory line (reason code and
- *   counts), the actual startup probe, and the one child result with the
+ * - a pass with any failure that did not look transient (a 401, a 404, a 403
+ *   without rate-limit evidence, an unusable answer; target-read-observer.ts)
+ *   fails with `STATIC_TARGETS_UNAVAILABLE`: a credential or access failure
+ *   stays red instead of deferring run after run;
+ * - an ordinary pass whose every failure looked transient defers: the actual
+ *   startup probe, and the one child result with the
  *   idle outcome `STATIC_TARGETS_DEFERRED`. Nothing after the target load runs
  *   (no queue custody, owner-successor phase, target cycle, ingestion, CI
  *   approval or model start), so the pass writes nothing an idle pass would
@@ -56,9 +61,10 @@ export async function settleUnavailableTargetsV1(input: {
   } catch {
     // Advisory only.
   }
-  if (input.execution.purpose !== "ordinary" || input.job === "matrix_cell") {
-    throw new Error(STATIC_TARGETS_UNAVAILABLE);
-  }
+  if (
+    input.counts.transient !== input.counts.listed ||
+    input.execution.purpose !== "ordinary" || input.job === "matrix_cell"
+  ) throw new Error(STATIC_TARGETS_UNAVAILABLE);
   await input.settle?.();
   let startupReady = false;
   try {

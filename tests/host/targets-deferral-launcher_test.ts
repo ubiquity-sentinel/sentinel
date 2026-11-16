@@ -24,6 +24,7 @@ const LINE = {
   listed: 30,
   branchUnavailable: 29,
   factsUnavailable: 1,
+  transient: 30,
 };
 
 type Launched = Awaited<ReturnType<typeof launch>> & {
@@ -104,6 +105,9 @@ Deno.test("launcher: a forged or malformed deferral line is never re-emitted and
         { ...LINE, branchUnavailable: 28 },
         { ...LINE, factsUnavailable: -1, branchUnavailable: 31 },
         { ...LINE, listed: 1.5 },
+        { ...LINE, transient: 31 },
+        { ...LINE, transient: -1 },
+        (({ transient: _, ...line }) => line)(LINE),
       ]
     ) {
       rig.process.child = exited(
