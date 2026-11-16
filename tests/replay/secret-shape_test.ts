@@ -62,6 +62,7 @@ const SECRETS: readonly [string, string][] = [
   ["gateway virtual key", sk(fake(BASE64URL, 22))],
   ["shortest refused key body", sk(fake(ALNUM, 20))],
   ["human-chosen lowercase key", sk("my-team-gateway-secret-key")],
+  ["Cerebras key", ["c", sk(fake(ALNUM, 48))].join("")],
 ];
 
 /** Every position a secret can take in text that is still refused. */

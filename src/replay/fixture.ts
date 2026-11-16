@@ -229,9 +229,10 @@ export function isSafeBundlePath(path: string): boolean {
  * quoted-printable byte (`%3D`, `=3D`) or a terminal colour or erase code
  * (`[0m`, `[K`). Any other character before it (start of text, whitespace,
  * punctuation, a digit, `_` or `-`) still begins a key.
+ * An optional leading `c` keeps Cerebras `csk-` keys refused.
  */
 const SK_KEY =
-  /(?:(?<![A-Za-z])|(?<=\\[A-Za-z]|\\x[0-9A-Fa-f]{2}|\\u[0-9A-Fa-f]{4}|[%=][0-9A-Fa-f]{2}|\[[0-9;]*[mK]))sk-[A-Za-z0-9_-]{20,}/;
+  /(?:(?<![A-Za-z])|(?<=\\[A-Za-z]|\\x[0-9A-Fa-f]{2}|\\u[0-9A-Fa-f]{4}|[%=][0-9A-Fa-f]{2}|\[[0-9;]*[mK]))c?sk-[A-Za-z0-9_-]{20,}/;
 
 /**
  * Deterministic secret-shape negative scan over the UTF-8 text of an entry
