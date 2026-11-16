@@ -129,6 +129,9 @@ async function pass(options: PassOptions) {
   const items = [...pulls, ...(options.issues ?? [])];
   const surface: HostedAutonomyGitHubV1 = {
     ...base,
+    // The rig routes every repository here, the Sentinel one too: the
+    // installed runtime descends from the CI-fix cap's commit.
+    isAncestor: () => Promise.resolve(true),
     failedChecks: (commit, conclusions) => {
       reads.push({ commit, conclusions });
       return Promise.resolve(

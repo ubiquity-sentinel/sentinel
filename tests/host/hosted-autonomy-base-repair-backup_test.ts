@@ -121,6 +121,9 @@ async function pass(label: string, read: BackupCiReadV1) {
     failedChecks: real.failedChecks,
     // GitHub lists the held record's own App pull request.
     baseRepairIssues: heldPullsIssues([record.target.pr!], NOW, filed),
+    // The rig routes the Sentinel repository here too: the installed
+    // runtime descends from the CI-fix cap's commit.
+    isAncestor: () => Promise.resolve(true),
   };
   const rig = await liveRig(
     `backup-base-${label}`,

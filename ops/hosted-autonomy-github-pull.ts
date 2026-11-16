@@ -1,3 +1,5 @@
+import { isGitSha } from "../src/contracts/brands.ts";
+import { compareConfirmsAncestor } from "../src/host/owner-install-api.ts";
 import type {
   HostedAutonomyHeadPullV1,
   HostedAutonomyPullV1,
@@ -129,4 +131,35 @@ export function revisionIntegratedIntoBase(
   }
   return (baseCommit as Record<string, unknown>)["sha"] === revision &&
     (mergeBase as Record<string, unknown>)["sha"] === revision;
+}
+
+/**
+ * The surface member `isAncestor` for one repository (see its contract in
+ * `HostedAutonomyGitHubV1`). The compare is read at page 2 of one commit
+ * per page: GitHub lists the changed files on the first page only, so a
+ * long range stays a small answer, and every counter the check reads is
+ * still there (live, 2026-11-16: a one-commit range answers page 2 with
+ * status `ahead` and no commits or files). The answer is read through the
+ * corrected check of 2026-11-14 (`compareConfirmsAncestor`), which never
+ * equates `total_commits` with `ahead_by`.
+ */
+export function createIsAncestor(
+  request: (
+    method: string,
+    path: string,
+    body?: Record<string, unknown>,
+    maxBytes?: number,
+  ) => Promise<unknown | null>,
+  scope: string,
+): (ancestor: string, descendant: string) => Promise<boolean | null> {
+  return async (ancestor, descendant) => {
+    if (!isGitSha(ancestor) || !isGitSha(descendant)) return null;
+    if (ancestor === descendant) return true;
+    const compare = await request(
+      "GET",
+      `/repos/${scope}/compare/${ancestor}...${descendant}?per_page=1&page=2`,
+    );
+    if (compare === null || typeof compare !== "object") return null;
+    return compareConfirmsAncestor(compare, ancestor);
+  };
 }

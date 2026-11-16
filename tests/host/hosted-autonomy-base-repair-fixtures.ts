@@ -6,16 +6,23 @@
  * per commit, the App's pull requests (the held records' own, which the
  * runtime opened) and issues, open or closed, each with its title, first
  * body line and creation instant. A test may move the tip, close or edit an
- * issue, or break a listing the way the review did.
+ * issue, or break a listing the way the review did. The release state names
+ * the installed runtime (`RUNTIME`, a descendant of the base-repair CI-fix
+ * cap's commit by default) and a fake Sentinel repository answers the
+ * runtime gate's ancestry compare.
  */
 import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
+import type { GitSha } from "../../src/contracts/brands.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import type {
   RepairStateWriter,
   StateReadView,
 } from "../../src/contracts/ports.ts";
+import type { ReleaseStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import { RED_BASE_RECHECK_MS } from "../../src/repair/ci-first-policy.ts";
 import { candidateBranch } from "../../src/repair/keys.ts";
+import { BASE_REPAIR_CAP_REVISION } from "../../ops/hosted-autonomy-base-repair-runtime.ts";
+import { isHostedSelf } from "../../ops/hosted-autonomy-policy.ts";
 import { runHostedAutonomy } from "../../ops/hosted-autonomy-runner.ts";
 import type {
   HostedAppIssueV1,
@@ -30,8 +37,11 @@ import {
   TransitionState,
   withDarkQueueAuthority,
 } from "./hosted-autonomy-preservation-fixtures.ts";
+import { releaseSnapshot } from "./hosted-autonomy-rig.ts";
 
 export const NOW = T0 + 6 * 60 * 60_000;
+/** The installed runtime: a descendant of the CI-fix cap's commit. */
+export const RUNTIME = "e9".repeat(20);
 export const HOUR = 60 * 60_000;
 export const DAY = 24 * HOUR;
 export const AI = "ai.ubq.fi";
@@ -352,21 +362,51 @@ export function redTargets(
   };
 }
 
+/** The installed runtime and the Sentinel repository's ancestry answers. */
+export interface MaintenanceOptions {
+  /** The release state (default: the runtime pointer at `RUNTIME`). */
+  release?: ReleaseStateSnapshotV1;
+  /**
+   * The Sentinel repository's compare `ancestor...descendant` (default:
+   * `RUNTIME` descends from the cap's commit, nothing else does).
+   */
+  isAncestor?: (
+    ancestor: string,
+    descendant: string,
+  ) => Promise<boolean | null>;
+}
+
 /**
  * The deps of one maintenance run at `now` over `records`, each target routed
- * to its own fake (one `githubFor` per run, as the hosted main builds it).
+ * to its own fake and the Sentinel repository to a fake that answers only
+ * the ancestry compare (one `githubFor` per run, as the hosted main builds
+ * it).
  */
 export async function maintenanceDeps(
   records: WorkRecordV1[],
   targets: Readonly<Record<string, FakeTarget>>,
   now = NOW,
+  options: MaintenanceOptions = {},
 ): Promise<{ deps: HostedAutonomyDepsV1; state: TransitionState }> {
   for (const target of Object.values(targets)) target.now = now;
-  const state = new TransitionState(snapshotOf(records, []));
+  const state = new TransitionState(
+    snapshotOf(records, []),
+    options.release ?? releaseSnapshot([], RUNTIME as GitSha),
+  );
+  const self = {
+    isAncestor: options.isAncestor ??
+      ((ancestor: string, descendant: string) =>
+        Promise.resolve(
+          ancestor === BASE_REPAIR_CAP_REVISION && descendant === RUNTIME,
+        )),
+  } as unknown as HostedAutonomyGitHubV1;
   const deps = await withDarkQueueAuthority({
     ciMinutes: INACTIVE_CI_MINUTES,
     state: state as unknown as StateReadView & RepairStateWriter,
-    githubFor: (repository) => targets[repository.name]?.surface ?? null,
+    githubFor: (repository) =>
+      isHostedSelf(repository)
+        ? self
+        : targets[repository.name]?.surface ?? null,
     clock: { now: () => now },
   });
   return { deps, state };
@@ -412,7 +452,13 @@ export async function maintain(
   records: WorkRecordV1[],
   targets: Readonly<Record<string, FakeTarget>>,
   now = NOW,
+  options: MaintenanceOptions = {},
 ) {
-  const { deps, state } = await maintenanceDeps(records, targets, now);
+  const { deps, state } = await maintenanceDeps(
+    records,
+    targets,
+    now,
+    options,
+  );
   return await runMaintenance(deps, state);
 }

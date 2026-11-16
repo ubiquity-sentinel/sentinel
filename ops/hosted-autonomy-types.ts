@@ -304,6 +304,18 @@ export interface HostedAutonomyGitHubV1 {
    */
   baseAdvanced?(base: string, tip: string): Promise<boolean>;
   /**
+   * True when `ancestor` is `descendant` or one of its ancestors in THIS
+   * repository, from GitHub's compare `ancestor...descendant` read through
+   * the corrected ancestry check (`compareConfirmsAncestor`: base and merge
+   * base both `ancestor`, `ahead` or `identical`, nothing behind,
+   * `total_commits` bounded, never equated with `ahead_by`); false when
+   * GitHub answers otherwise; null when either id is not a full commit SHA or
+   * the compare cannot be read. Optional: a surface without it proves
+   * nothing (the base-repair installed-runtime gate reads it on the Sentinel
+   * repository).
+   */
+  isAncestor?(ancestor: string, descendant: string): Promise<boolean | null>;
+  /**
    * SHA-256 (lowercase hex) of the exact bytes of GitHub's merge-base diff of
    * `head` against `base` in THIS repository (compare `base...head`, diff
    * media type), or null when it cannot be read whole within its bound. The

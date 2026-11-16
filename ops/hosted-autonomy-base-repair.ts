@@ -5,7 +5,11 @@
  * Filing is enabled per target, for the targets listed in
  * `BASE_REPAIR_FILING_TARGETS` only (owner decision 2026-11-15: ai.ubq.fi).
  * Every other target is skipped before any read, exactly as every target
- * was while filing was off (027ecbbea0 until that decision).
+ * was while filing was off (027ecbbea0 until that decision). Filing also
+ * needs the INSTALLED runtime to carry the CI-fix cap of the task it files
+ * (`hosted-autonomy-base-repair-runtime.ts`, 2026-11-16): the cap runs in
+ * that runtime, this pass in the launcher, and the two differ during an
+ * install and after a rollback.
  *
  * Once per maintenance pass, for each listed foreign target with records the
  * CI-first gate holds on a red base (at `work` in a running red-base hold,
@@ -66,6 +70,7 @@ import {
 } from "./hosted-autonomy-policy.ts";
 import { createHostedAutonomyScopes } from "./hosted-autonomy-scopes.ts";
 import { readRepairSafely } from "./hosted-autonomy-state.ts";
+import { baseRepairRuntimeHold } from "./hosted-autonomy-base-repair-runtime.ts";
 import type {
   HostedAppIssueV1,
   HostedAutonomyDepsV1,
@@ -409,6 +414,8 @@ export async function runHostedBaseRepairPass(
   const attempted = attemptedThisRun.get(deps.githubFor) ?? new Set<string>();
   attemptedThisRun.set(deps.githubFor, attempted);
   const day = Math.floor(started / DAY_MS);
+  // The installed-runtime gate's verdict, read at most once per pass.
+  let runtime: string | null | undefined;
   for (const { repository, held } of heldForeignRecords(work, started)) {
     const tag = `base-repair:${repository.owner}/${repository.name}`;
     if (!inBudget()) {
@@ -515,6 +522,13 @@ export async function runHostedBaseRepairPass(
       const today = await dayHold(issues, started);
       if (today !== null) {
         actions.push(`${tag}:${today}`);
+        continue;
+      }
+      // Last, once per pass: the installed runtime must carry the CI-fix cap
+      // that bounds the task this issue becomes (2026-11-16).
+      if (runtime === undefined) runtime = await baseRepairRuntimeHold(deps);
+      if (runtime !== null) {
+        actions.push(`${tag}:${runtime}`);
         continue;
       }
       if (!inBudget()) {
