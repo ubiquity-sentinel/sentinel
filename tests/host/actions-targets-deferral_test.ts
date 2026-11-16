@@ -7,9 +7,11 @@
  * GitHub answers, the matrix rig's real Git state remote, release custody
  * and native identity:
  *
- * - an ordinary serial pass settles healthy with the idle deferral outcome,
- *   one text-free deferral line the launcher re-emits, no target cycle, no
- *   model start and no state write or GitHub request beyond the target reads;
+ * - an ordinary serial pass whose previous execution's settled log carries no
+ *   deferral (targets-deferral-bound_test.ts) settles healthy with the idle
+ *   deferral outcome, one text-free deferral line the launcher re-emits, no
+ *   target cycle, no model start and no state write or GitHub request beyond
+ *   the target reads and that log;
  * - a failure that did not look transient (401, 404, a 403 without rate-limit
  *   evidence, an unusable answer) fails `targets_unavailable` instead, with
  *   the same line;
@@ -40,151 +42,60 @@ import {
   TARGETS_MAX,
 } from "../../src/host/targets.ts";
 import { parseRepairCellRefusalV1 } from "../../src/contracts/repair-delta.ts";
-import type {
-  HttpRequestV1,
-  HttpResponseV1,
-  HttpTransportV1,
-} from "../../src/github/http.ts";
-import { scanStepLines } from "../../src/repair/step-line.ts";
 import {
   MAX_TARGETS_DEFERRAL_LISTED,
   TARGETS_DEFERRAL_KIND,
 } from "../../src/repair/targets-deferral-line.ts";
 import { rig } from "./matrix-actions-fixtures.ts";
+import {
+  advanceWithLog,
+  type Answer,
+  deferralLines,
+  EXPECTED_LINE,
+  JOB_LOGS,
+  LISTED,
+  NO_MODEL,
+  NOT_TRANSIENT,
+  observed,
+  PRODUCTION,
+  QUIET_LOG,
+  quietly,
+  reply,
+  servingJobLogs,
+  TARGET_READS,
+  TRANSIENT,
+  UNAVAILABLE_503,
+  unreadable,
+} from "./targets-deferral-fixtures.ts";
 
 const D = "a".repeat(64);
 const CELL = "c".repeat(64);
 
-/** The production target resolvers, over the transport each test supplies. */
-const PRODUCTION = {
-  resolveDefaultBranch: undefined,
-  resolveTreeFacts: undefined,
-};
+/** The previous pass (run 71, job 101) read its targets: no line. */
+const QUIET = new Map([[101, QUIET_LOG]]);
 
-type Answer = (request: HttpRequestV1) => Promise<HttpResponseV1>;
-
-const reply =
-  (status: number, headers: Record<string, string> = {}, body = "{}") =>
-  (): Promise<HttpResponseV1> =>
-    Promise.resolve({ status, headers: new Headers(headers), bodyText: body });
-
-/** GitHub failures a later run can outlast. */
-const TRANSIENT: readonly (readonly [string, Answer])[] = [
-  ["a thrown request", () => Promise.reject(new TypeError("connection reset"))],
-  ["502", reply(502)],
-  ["503", reply(503)],
-  ["429", reply(429)],
-  ["403 with retry-after", reply(403, { "retry-after": "60" })],
-  ["403 with no quota left", reply(403, { "x-ratelimit-remaining": "0" })],
-  [
-    "403 secondary rate limit",
-    reply(403, {}, '{"message":"You have exceeded a secondary rate limit."}'),
-  ],
+/** The serial pass's read of its previous execution's settled log. */
+const PREVIOUS_LOG_READS = [
+  `GET ${JOB_LOGS}101/logs`,
+  "GET /actions-results/101",
 ];
-
-/** Credential or access failures no later run outlasts by itself. */
-const NOT_TRANSIENT: readonly (readonly [string, Answer])[] = [
-  ["401", reply(401, {}, '{"message":"Bad credentials"}')],
-  ["404", reply(404, {}, '{"message":"Not Found"}')],
-  [
-    "403 without rate-limit evidence",
-    reply(403, {}, '{"message":"Resource not accessible by integration"}'),
-  ],
-  ["403 with quota left", reply(403, { "x-ratelimit-remaining": "17" })],
-];
-
-/**
- * Every listed target unreadable: the named Sentinel target fails `branch`
- * at its default-branch read, and the generic prospector target, whose
- * default branch reads, fails `facts` at the head read of its tree facts.
- * Every other request reaches the rig's own transport.
- */
-function unreadable(
-  http: HttpTransportV1,
-  branch: Answer,
-  facts: Answer = branch,
-): HttpTransportV1 {
-  return (request) => {
-    const path = new URL(request.url).pathname;
-    if (request.method !== "GET") return http(request);
-    if (path === "/repos/ubiquity-sentinel/sentinel") return branch(request);
-    if (path === "/repos/ubiquity/prospector") {
-      return reply(200, {}, '{"default_branch":"main"}')();
-    }
-    if (path === "/repos/ubiquity/prospector/commits/main") {
-      return facts(request);
-    }
-    return http(request);
-  };
-}
-
-const TARGET_READS = [
-  "GET /repos/ubiquity-sentinel/sentinel",
-  "GET /repos/ubiquity/prospector",
-  "GET /repos/ubiquity/prospector/commits/main",
-];
-
-const UNAVAILABLE_503 = reply(503);
-
-const LISTED = JSON.stringify([
-  "ubiquity-sentinel/sentinel",
-  "ubiquity/prospector",
-]);
-
-const NO_MODEL = {
-  modelId: "synthetic-model",
-  runModel: () => {
-    throw new Error("a deferred pass never starts a model");
-  },
-};
-
-async function quietly<T>(
-  body: () => Promise<T>,
-): Promise<{ value: T; lines: string[] }> {
-  const lines: string[] = [];
-  const original = console.log;
-  console.log = (...args: unknown[]) => lines.push(args.map(String).join(" "));
-  try {
-    return { value: await body(), lines };
-  } finally {
-    console.log = original;
-  }
-}
-
-/** Records every request; the rig's own transport answers it. */
-function observed(http: HttpTransportV1) {
-  const requests: string[] = [];
-  const transport: HttpTransportV1 = (request) => {
-    requests.push(`${request.method} ${new URL(request.url).pathname}`);
-    return http(request);
-  };
-  return { requests, http: transport };
-}
-
-function deferralLines(lines: readonly string[]) {
-  return scanStepLines(lines.join("\n")).filter((line) =>
-    line.kind === TARGETS_DEFERRAL_KIND
-  );
-}
-
-const EXPECTED_LINE = {
-  kind: TARGETS_DEFERRAL_KIND,
-  reasonCode: "targets_unavailable",
-  listed: 2,
-  branchUnavailable: 1,
-  factsUnavailable: 1,
-  transient: 2,
-};
 
 Deno.test("targets deferral: an ordinary serial pass with every target read transiently unavailable defers healthy and writes nothing", async () => {
   const r = await rig();
   try {
     await ensureRepairStateSeed(r.store, r.clock);
+    await advanceWithLog(r, 72, QUIET_LOG, 101);
     const deps = await r.job("deferral-serial", "repair");
     await Deno.writeTextFile(`${deps.workDir}/sentinel.targets.json`, LISTED);
     const repairBefore = await r.store.readRepair();
     const releaseBefore = await r.release.readRelease();
-    const http = observed(unreadable(deps.http, UNAVAILABLE_503, reply(429)));
+    const http = observed(
+      unreadable(
+        servingJobLogs(deps.http, QUIET),
+        UNAVAILABLE_503,
+        reply(429),
+      ),
+    );
     let cycles = 0;
     let probes = 0;
     const { value: result, lines } = await quietly(() =>
@@ -232,11 +143,11 @@ Deno.test("targets deferral: an ordinary serial pass with every target read tran
     for (const text of ["prospector", "sentinel/", "status", "main"]) {
       assert.equal(raw.includes(text), false, `${text} in ${raw}`);
     }
-    // No state write and no GitHub request beyond the target reads: nothing
-    // after the target load ran.
+    // No state write and no GitHub request beyond the target reads and the
+    // previous execution's settled log: nothing after the target load ran.
     assert.deepEqual(await r.store.readRepair(), repairBefore);
     assert.deepEqual(await r.release.readRelease(), releaseBefore);
-    assert.deepEqual(http.requests, TARGET_READS);
+    assert.deepEqual(http.requests, [...TARGET_READS, ...PREVIOUS_LOG_READS]);
     assert(
       [...r.github.values()].every((port) => port.calls.length === 0),
       "no target port composed",
@@ -250,6 +161,7 @@ Deno.test("targets deferral: every failure that looks transient defers the seria
   const r = await rig();
   try {
     await ensureRepairStateSeed(r.store, r.clock);
+    await advanceWithLog(r, 72, QUIET_LOG, 101);
     for (const [label, answer] of TRANSIENT) {
       const deps = await r.job(`deferral-transient-${label}`, "repair");
       await Deno.writeTextFile(`${deps.workDir}/sentinel.targets.json`, LISTED);
@@ -258,7 +170,7 @@ Deno.test("targets deferral: every failure that looks transient defers the seria
           ...deps,
           ...PRODUCTION,
           state: r.store,
-          http: unreadable(deps.http, answer),
+          http: unreadable(servingJobLogs(deps.http, QUIET), answer),
           model: NO_MODEL,
         })
       );
@@ -431,15 +343,18 @@ Deno.test("targets deferral: the matrix planner publishes an empty zero-grant pl
     const deps = await r.job("deferral-plan", "matrix_plan");
     await Deno.writeTextFile(`${deps.workDir}/sentinel.targets.json`, LISTED);
     const before = await r.store.readRepair();
+    // Only the serial pass reads its previous execution's log.
+    const http = observed(unreadable(deps.http, UNAVAILABLE_503));
     const { value: result, lines } = await quietly(() =>
       runActionsMatrixHost({
         ...deps,
         ...PRODUCTION,
         state: r.store,
-        http: unreadable(deps.http, UNAVAILABLE_503),
+        http: http.http,
         model: NO_MODEL,
       })
     );
+    assert.deepEqual(http.requests, TARGET_READS);
     assert("plan" in result);
     assert.deepEqual(result.plan.cells, []);
     assert.equal(result.prepared, 0);
@@ -526,12 +441,13 @@ for (const startup of ["ready", "unavailable"] as const) {
       );
       await Deno.writeTextFile(`${deps.workDir}/sentinel.targets.json`, LISTED);
       const before = await r.store.readRepair();
+      const http = observed(unreadable(deps.http, UNAVAILABLE_503));
       const { value, lines } = await quietly(() =>
         runRepairCellHost({
           ...deps,
           ...PRODUCTION,
           state: r.store,
-          http: unreadable(deps.http, UNAVAILABLE_503),
+          http: http.http,
           model: NO_MODEL,
           preflight: () =>
             startup === "ready"
@@ -572,6 +488,7 @@ for (const startup of ["ready", "unavailable"] as const) {
       assert.equal(markers[0].cellId, CELL);
       assert.equal(markers[0].transitions, 0);
       assert.deepEqual(await r.store.readRepair(), before);
+      assert.deepEqual(http.requests, TARGET_READS);
     } finally {
       await r.cleanup();
     }

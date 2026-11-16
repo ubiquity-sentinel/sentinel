@@ -5000,6 +5000,19 @@ an empty setting and turned the run red. Reproduced through the real
   outcome (the line alone labels nothing), and finalize's run summary is then
   `degraded` with a next action naming the deferral, never `healthy` with
   "None".
+- At most one green deferral in a row, with no persisted field
+  (`src/host/targets-deferral-bound.ts`): before the serial pass defers it
+  reads the release record's `hostedRuntimes[0].lastExecutionProof`, the
+  previous execution's settlement. Only a run proof whose exact repair-job log
+  (job id, the job's native token, the existing bounded signed-log reader,
+  read-only: a rate limit it meets fails the read and is never recorded)
+  hashes to the settled `logDigest` and names no `sentinel_targets_deferral`
+  line lets it defer. No settlement, a `not_started` settlement, an unreadable
+  or different log, or any line naming the kind fails the pass red with
+  `targets_unavailable`. The launcher re-emits the line for a red pass too, so
+  after one green deferral every following unavailable pass stays red until a
+  pass reads its targets again. This assumes the launcher re-emits the line,
+  as the launcher and runtime of an ordinary update are the same SHA.
 - On the same transient failures the matrix planner publishes the queue-custody
   hold's empty zero-grant plan with plan diagnostic cause `targets_unavailable`.
   A repository cell writes its refusal and marker exactly as a cell whose own
@@ -5023,6 +5036,8 @@ non-advancing execution. That accounting is unchanged here.
 
 Open for the owner: a bootstrap whose every target read is unavailable still
 fails and restores the journaled prior (that SHA cannot reinstall), although
-its health pass reads no target. Rollback: revert this commit; no state format
-changed, and an older runtime under this launcher keeps reporting
-`targets_empty`.
+its health pass reads no target. The matrix planner is not bounded itself: on a
+second unavailable run in a row it still publishes its empty plan, and the
+serial pass of that run is the red job. Rollback: revert this change's commits;
+no state format changed, and an older runtime under this launcher keeps
+reporting `targets_empty`.

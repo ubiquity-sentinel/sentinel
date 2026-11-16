@@ -13,6 +13,9 @@
  *   without rate-limit evidence, an unusable answer; target-read-observer.ts)
  *   fails with `STATIC_TARGETS_UNAVAILABLE`: a credential or access failure
  *   stays red instead of deferring run after run;
+ * - the serial pass fails the same way unless its previous execution provably
+ *   did not defer (targets-deferral-bound.ts): at most one green deferral in
+ *   a row;
  * - an ordinary pass whose every failure looked transient defers: the actual
  *   startup probe, and the one child result with the
  *   idle outcome `STATIC_TARGETS_DEFERRED`. Nothing after the target load runs
@@ -29,7 +32,10 @@
  *   instead of writing a `not_started` park.
  */
 import type { GitSha } from "../contracts/brands.ts";
-import type { HostedExecutionIntentV1 } from "../contracts/hosted-supervisor.ts";
+import type {
+  HostedExecutionIntentV1,
+  HostedExecutionSettlementV1,
+} from "../contracts/hosted-supervisor.ts";
 import { targetsDeferralLineV1 } from "../repair/targets-deferral-line.ts";
 import {
   type ActionsRepairHostDepsV1,
@@ -41,6 +47,10 @@ import {
   STATIC_TARGETS_UNAVAILABLE,
   type UnavailableTargetCountsV1,
 } from "./targets.ts";
+import {
+  previousPassAllowsDeferralV1,
+  type PreviousPassLogReaderV1,
+} from "./targets-deferral-bound.ts";
 
 /** Settle one pass whose every committed target read was unavailable. */
 export async function settleUnavailableTargetsV1(input: {
@@ -54,6 +64,11 @@ export async function settleUnavailableTargetsV1(input: {
   probeStartup: () => Promise<void>;
   /** The job's own artifact for the deferral (a repository cell's refusal). */
   settle?: () => Promise<void>;
+  /** The previous execution's settlement and its log, for the serial pass. */
+  previousPass: {
+    proof: HostedExecutionSettlementV1 | null;
+    readLog: PreviousPassLogReaderV1;
+  };
 }): Promise<ActionsRepairHostResultV1> {
   try {
     const line = targetsDeferralLineV1(input.counts);
@@ -64,6 +79,11 @@ export async function settleUnavailableTargetsV1(input: {
   if (
     input.counts.transient !== input.counts.listed ||
     input.execution.purpose !== "ordinary" || input.job === "matrix_cell"
+  ) throw new Error(STATIC_TARGETS_UNAVAILABLE);
+  // The serial pass (no matrix job) defers at most once in a row.
+  if (
+    input.job === undefined &&
+    !await previousPassAllowsDeferralV1(input.previousPass)
   ) throw new Error(STATIC_TARGETS_UNAVAILABLE);
   await input.settle?.();
   let startupReady = false;

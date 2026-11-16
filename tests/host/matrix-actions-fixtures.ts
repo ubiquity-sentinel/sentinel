@@ -321,12 +321,22 @@ export async function rig(
   const jobs = new Map<string, string>();
   let currentRun = 71;
   const brokers: ReviewOwnerCustodyBroker[] = [];
-  async function advanceRun(runId: number) {
+  /**
+   * Settle the current execution and start run `runId`. `settle` may replace
+   * the default healthy settlement (another job, log or outcome); only a
+   * healthy one becomes the last healthy proof.
+   */
+  async function advanceRun(
+    runId: number,
+    settle: (settlement: Record<string, unknown>) => Record<string, unknown> = (
+      settlement,
+    ) => settlement,
+  ) {
     const read = await release.readRelease();
     assert.ok(read.ok && read.value.status === "found");
     const runtime = read.value.snapshot.hostedRuntimes[0]!;
     assert.ok(runtime.execution);
-    const settlement = {
+    const settlement = settle({
       ...proof,
       execution: runtime.execution,
       startedAt: runtime.execution.createdAt,
@@ -334,7 +344,7 @@ export async function rig(
       observedAt: clock.now(),
       terminalAt: clock.now(),
       logDigest: "b".repeat(64),
-    };
+    });
     const saved = await release.writeRelease(
       parseReleaseStateSnapshotV1({
         ...read.value.snapshot,
@@ -344,7 +354,9 @@ export async function rig(
         hostedRuntimes: [{
           ...runtime,
           execution: null,
-          lastHealthyProof: settlement,
+          lastHealthyProof: settlement.outcome === "healthy"
+            ? settlement
+            : runtime.lastHealthyProof,
           lastExecutionProof: settlement,
           updatedAt: clock.now(),
         }],

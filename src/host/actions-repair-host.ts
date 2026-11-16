@@ -31,8 +31,8 @@ import {
 import {
   parseHostedEnvironment,
   readHostedIdentityEnv,
-  readHostedRuntimeExecution,
 } from "./hosted-runtime.ts";
+import { readHostedRuntimeCustody } from "./hosted-runtime-identity.ts";
 import { GitHubApiClient } from "../github/client.ts";
 import { parseReleaseStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import { fetchHttpTransport } from "../github/http.ts";
@@ -55,6 +55,7 @@ import {
 } from "./targets.ts";
 import { settleUnavailableTargetsV1 } from "./actions-targets-deferral.ts";
 import { createTargetReadObserverV1 } from "./target-read-observer.ts";
+import { nativeJobLogReaderV1 } from "./targets-deferral-bound.ts";
 import { DenoGitRunner } from "../state/mod.ts";
 import {
   createHostedRepairStateStore,
@@ -248,7 +249,7 @@ export async function runActionsRepairHost(
   // The saved supervisor pointer must bind exactly this run, attempt, launcher
   // and controller revision BEFORE any repair seed, source, model, preflight or
   // review-client preparation. A stale or foreign pointer never runs.
-  const execution = await readHostedRuntimeExecution({
+  const { execution, release: custody } = await readHostedRuntimeCustody({
     state,
     identity,
     controllerSha,
@@ -411,6 +412,15 @@ export async function runActionsRepairHost(
       settle: deps.settleTargetsDeferral === undefined
         ? undefined
         : () => deps.settleTargetsDeferral!(host),
+      previousPass: {
+        proof: custody.hostedRuntimes[0]!.lastExecutionProof,
+        readLog: nativeJobLogReaderV1({
+          token: githubToken,
+          http,
+          clock,
+          gate,
+        }),
+      },
     });
   }
   if (targets.configs.length === 0) throw new Error(STATIC_TARGETS_EMPTY);
