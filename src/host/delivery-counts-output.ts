@@ -4,8 +4,10 @@
  * step writes one closed `deliveryCounts=<trains>,<ci runs>,<merges>` output
  * (or `none`), the workflow hands it to finalize as `SENTINEL_DELIVERY_COUNTS`
  * and finalize adds `trainsBuilt`, `targetCiRunsTriggered` and
- * `mergesCompleted` to the cycle's metrics record. Advisory: anything
- * malformed is unobserved (null), never zero and never a failure.
+ * `mergesCompleted` to the cycle's metrics record (finalize adds the serial
+ * repair job's self merges to `mergesCompleted` from the repair state).
+ * Advisory: anything malformed is unobserved (null), never zero and never a
+ * failure.
  */
 
 export const DELIVERY_COUNTS_ENV = "SENTINEL_DELIVERY_COUNTS";

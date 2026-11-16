@@ -56,7 +56,8 @@ export interface FinalizeMetricsFactsV1 {
   watchdogIssuesFiled?: number | null;
   /**
    * The maintenance delivery pass's train, CI-run and merge counts (#330),
-   * from its step output; null/absent when unobserved.
+   * from its step output; null/absent when unobserved. The serial repair
+   * job's self merges are added from `repair` (`selfMergesCompletedV1`).
    */
   deliveryCounts?: DeliveryCountsV1 | null;
   /**
@@ -66,7 +67,8 @@ export interface FinalizeMetricsFactsV1 {
   tierCounts?: TierCountsV1 | null;
   /**
    * The repair state the run summary's advisory read returned (#335), or
-   * null/absent when it was not read; feeds the wait-cause histogram.
+   * null/absent when it was not read; feeds the wait-cause histogram and
+   * the self merges counted in `mergesCompleted`.
    */
   repair?: RepairStateSnapshotV1 | null;
   /**
@@ -100,6 +102,44 @@ function collectWaitCauses(
         : waitCauseKeyV1(wait.cause),
     );
   }
+}
+
+/**
+ * Merges the trusted self-merge executor completed in one cycle window. Its
+ * merge lands in the serial repair job, which the maintenance delivery
+ * pass's `merge:` count never sees. One is counted per record that carries
+ * the executor's receipt (`target.selfMerge`, only ever at stage
+ * `issue_closed`: the merge commit is proven on `development`) when the
+ * release request booked for that exact merge (same repository, pull request
+ * and merge revision) was created inside `[fromMs, toMs]`. The runtime books
+ * that request in the same write as the receipt; it is written once and its
+ * `createdAt` never changes. Supervisor cycles never overlap, so a merge falls
+ * in one cycle window only and a record still waiting at delivery is not
+ * counted again. A maintenance merge never carries the executor's receipt
+ * (the receipt needs the executor's own merge commit), so it is not counted
+ * twice. Uses existing state fields only; nothing is persisted.
+ */
+export function selfMergesCompletedV1(
+  repair: RepairStateSnapshotV1,
+  fromMs: number,
+  toMs: number,
+): number {
+  let merges = 0;
+  for (const record of repair.work) {
+    const receipt = record.target.selfMerge;
+    if (receipt === undefined) continue;
+    const repository = record.repository;
+    const booked = repair.releaseRequests.some((request) =>
+      request.target.repository.owner === repository.owner &&
+      request.target.repository.name === repository.name &&
+      request.target.repository.installationId === repository.installationId &&
+      request.source.pullRequest === receipt.pr &&
+      request.revision === receipt.merge &&
+      request.createdAt >= fromMs && request.createdAt <= toMs
+    );
+    if (booked) merges++;
+  }
+  return merges;
 }
 
 /**
@@ -227,11 +267,29 @@ export function collectFinalizeMetricsV1(
         .length,
     );
   }
+  const starts = jobs.flatMap((job) =>
+    job.startedAtMs === null || job.startedAtMs === undefined
+      ? []
+      : [job.startedAtMs]
+  );
+  const startedAtMs = Math.min(facts.finalizeStartedAtMs, ...starts);
+  const finishedAtMs = Math.max(startedAtMs, facts.nowMs);
   const delivery = facts.deliveryCounts ?? null;
   if (delivery !== null) {
     collector.addCount("trainsBuilt", delivery.trainsBuilt);
     collector.addCount("targetCiRunsTriggered", delivery.targetCiRunsTriggered);
     collector.addCount("mergesCompleted", delivery.mergesCompleted);
+  }
+  // The serial repair job's self merges join the maintenance merges. They
+  // are observed only when both the repair state and the job list (whose
+  // earliest start opens this cycle's window) were read.
+  if (
+    facts.jobs !== null && facts.repair !== undefined && facts.repair !== null
+  ) {
+    collector.addCount(
+      "mergesCompleted",
+      selfMergesCompletedV1(facts.repair, startedAtMs, finishedAtMs),
+    );
   }
   if (facts.ownerNoticesSent !== undefined && facts.ownerNoticesSent > 0) {
     collector.addCount("ownerNoticesSent", facts.ownerNoticesSent);
@@ -261,17 +319,7 @@ export function collectFinalizeMetricsV1(
   }
   const modelStarts = facts.runSummary?.modelStarts ?? null;
   if (modelStarts !== null) collector.addCount("modelStarts", modelStarts);
-  const starts = jobs.flatMap((job) =>
-    job.startedAtMs === null || job.startedAtMs === undefined
-      ? []
-      : [job.startedAtMs]
-  );
-  const startedAtMs = Math.min(facts.finalizeStartedAtMs, ...starts);
-  return collector.snapshot({
-    cycle: facts.cycle,
-    startedAtMs,
-    finishedAtMs: Math.max(startedAtMs, facts.nowMs),
-  });
+  return collector.snapshot({ cycle: facts.cycle, startedAtMs, finishedAtMs });
 }
 
 export interface FinalizeMetricsDepsV1 {
