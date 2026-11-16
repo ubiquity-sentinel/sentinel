@@ -18,7 +18,7 @@ import {
   sanitizeSkippedIssue,
 } from "../github/client-response.ts";
 import { createDeadline } from "../github/http.ts";
-import { readTargetSlugsV1 } from "./targets.ts";
+import { isTargetsDeferredOutcome, readTargetSlugsV1 } from "./targets.ts";
 import type { HostedExecutionIntentV1 } from "../contracts/hosted-supervisor.ts";
 import { tryParse } from "../contracts/validation.ts";
 import type { ReplayCommandResultV1 } from "../replay/runtime.ts";
@@ -84,10 +84,7 @@ import { needsHostedLegacyStateView } from "./hosted-runtime-rollback-state.ts";
 import { HOSTED_RUNTIME_ROLLBACK_ENTRYPOINT } from "./hosted-runtime-rollback.ts";
 import { scanPlanDiagnostic } from "./matrix-plan-diagnostic.ts";
 import { scanStepLines } from "../repair/step-line.ts";
-import {
-  carriesTargetsDeferral,
-  TARGETS_UNAVAILABLE_REASON,
-} from "../repair/targets-deferral-line.ts";
+import { TARGETS_UNAVAILABLE_REASON } from "../repair/targets-deferral-line.ts";
 import { readRepairLedgerV1 } from "../state/state-repair-ledger.ts";
 
 /**
@@ -561,6 +558,8 @@ export function fallbackHostedRuntimeSummary(
   result: HostedRuntimeLauncherResultV1,
   identity?: HostedRuntimeIdentityV1,
   observedExecution?: HostedExecutionIntentV1,
+  /** The child's own status record carries the targets deferral outcome. */
+  childDeferred = false,
 ): HostedRuntimeSummaryV1 {
   const execution = observedExecution ?? result.terminal?.execution;
   const summary: HostedRuntimeSummaryV1 = {
@@ -579,10 +578,8 @@ export function fallbackHostedRuntimeSummary(
     outcome: result.status,
     reasonCode: result.childFailure?.status ??
       (result.status === "healthy"
-        // A deferred pass is healthy but did no target work: never "healthy".
-        ? carriesTargetsDeferral(result.stepLines)
-          ? TARGETS_UNAVAILABLE_REASON
-          : "healthy"
+        // A pass its child deferred did no target work: never "healthy".
+        ? childDeferred ? TARGETS_UNAVAILABLE_REASON : "healthy"
         : result.status === "failed"
         ? "child_failed"
         : "runtime_unavailable"),
@@ -602,6 +599,7 @@ async function summarizeHostedRuntime(
     result,
     observation.identity,
     observation.execution,
+    childDeferredPass(observation.run),
   );
   if (summary.purpose === "bootstrap") {
     const { startedAt, finishedAt } = observation;
@@ -699,6 +697,15 @@ async function summarizeHostedRuntime(
     // Counts and diagnostics are advisory; terminal evidence and exit status stay fixed.
   }
   return summary;
+}
+
+/** The settled child's one status record carries the deferral outcome. */
+function childDeferredPass(run?: ReplayCommandResultV1): boolean {
+  if (run === undefined || run.truncated || !run.settled) return false;
+  const scan = scanChildStatusRecords(new TextDecoder().decode(run.stdout));
+  return scan.kind === "one" && typeof scan.value === "object" &&
+    scan.value !== null &&
+    isTargetsDeferredOutcome((scan.value as Record<string, unknown>).outcome);
 }
 
 /** Rebuild source observations only; never accept a child-authored summary. */

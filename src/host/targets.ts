@@ -74,6 +74,16 @@ export const STATIC_TARGETS_UNAVAILABLE =
 export const STATIC_TARGETS_DEFERRED =
   "every committed target read was unavailable; the pass deferred";
 
+/** True only for a child's own idle `STATIC_TARGETS_DEFERRED` outcome. */
+export function isTargetsDeferredOutcome(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const outcome = value as Record<string, unknown>;
+  return Object.keys(outcome).sort().join() === "detail,status" &&
+    outcome.status === "idle" && outcome.detail === STATIC_TARGETS_DEFERRED;
+}
+
 /**
  * The setting does not include the repository this host addresses. The
  * composed GitHub port, candidate restorer and release path each own exactly

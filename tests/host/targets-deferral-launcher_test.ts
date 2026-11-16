@@ -64,6 +64,32 @@ Deno.test("launcher: a deferred pass is healthy, re-emits its line and labels it
   }
 });
 
+Deno.test("launcher: only the child's own deferral outcome labels the summary, never the line alone", async () => {
+  const rig = await makeRig();
+  try {
+    await seedRelease(rig);
+    // A valid line beside a child that reports another idle outcome.
+    rig.process.child = exited(
+      `${JSON.stringify(LINE)}\n${childLine(rig.execution)}\n`,
+    );
+    const result = await launched(rig);
+    assert.equal(result.status, "healthy");
+    assert.deepEqual(result.stepLines, [LINE], "the line is still re-emitted");
+    assert.equal(result.summary.reasonCode, "healthy");
+    // The deferral outcome labels the summary even without the line.
+    rig.process.child = exited(`${
+      childLine(rig.execution, {
+        outcome: { status: "idle", detail: STATIC_TARGETS_DEFERRED },
+      })
+    }\n`);
+    const deferred = await launched(rig);
+    assert.equal(deferred.status, "healthy");
+    assert.equal(deferred.summary.reasonCode, "targets_unavailable");
+  } finally {
+    await rig.cleanup();
+  }
+});
+
 Deno.test("launcher: a forged or malformed deferral line is never re-emitted and labels nothing", async () => {
   const rig = await makeRig();
   try {

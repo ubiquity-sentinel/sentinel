@@ -10,8 +10,8 @@
  * status or response. It carries `reasonCode`, never `status` (the launcher's
  * child-status scan reads any line with its own `status` as a child record).
  * The launcher re-emits it into the job log (`scanStepLines`) only after this
- * strict re-parse, and labels the deferred job's runtime summary with the
- * reason code. Advisory only: nothing reads it back as evidence.
+ * strict re-parse. The job's runtime summary is labelled from the child's own
+ * deferral outcome, never from this line. Advisory only.
  */
 export const TARGETS_DEFERRAL_KIND = "sentinel_targets_deferral";
 
@@ -83,11 +83,4 @@ export function parseTargetsDeferralLine(
     branchUnavailable: line.branchUnavailable as number,
     factsUnavailable: line.factsUnavailable as number,
   });
-}
-
-/** True when the re-emitted advisory lines of one child carry a deferral. */
-export function carriesTargetsDeferral(
-  lines: readonly { kind: string }[] | undefined,
-): boolean {
-  return (lines ?? []).some((line) => line.kind === TARGETS_DEFERRAL_KIND);
 }
