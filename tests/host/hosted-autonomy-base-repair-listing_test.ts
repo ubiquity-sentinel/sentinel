@@ -25,6 +25,7 @@ function item(
     user: { login: APP },
     repository_url: REPO_URL,
     created_at: "2026-10-25T10:00:00Z",
+    title: `Issue ${number}`,
     body: `first line of #${number}\nmore`,
     ...overrides,
   };
@@ -85,6 +86,8 @@ Deno.test("base repair listing: every App-created issue, open or closed, to a sh
     state: "closed",
     pullRequest: false,
     firstLine: "first line of #101",
+    title: "Issue 101",
+    createdAt: Date.parse("2026-10-25T10:00:00Z"),
   });
   assert.equal(listed[101].pullRequest, true);
   assert.deepEqual(
@@ -100,6 +103,7 @@ Deno.test("base repair listing: another creator, a repeat, a malformed item or n
     ["another creator", [[item(1, { user: { login: "someone" } })]]],
     ["a repeat across pages", [full(1), [item(100)]]],
     ["an unknown state", [[item(1, { state: "merged" })]]],
+    ["no title", [[item(1, { title: null })]]],
     ["another repository", [[item(1, { repository_url: `${REPO_URL}x` })]]],
     ["not a list", [{ message: "Not Found" }]],
     [

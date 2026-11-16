@@ -469,6 +469,10 @@ export interface HostedAppIssueV1 {
   pullRequest: boolean;
   /** The body's first line (LF or CRLF), empty for an empty body. */
   firstLine: string;
+  /** The title, exactly as GitHub reports it. */
+  title: string;
+  /** GitHub's `created_at`, epoch milliseconds. */
+  createdAt: number;
 }
 
 /** Launcher-only base-repair issues of ONE repository (the App token). */

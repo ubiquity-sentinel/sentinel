@@ -23,13 +23,17 @@
  * The issue is filed without a label, with `baseRepairMarker(branch, tip)`
  * on its first line, after a complete, bounded listing of every issue the
  * App created (open or closed) shows that no App issue already carries that
- * marker; one issue is ever filed per red tip. While any App issue with a
- * base-repair marker is open in the repository (any tip or branch, whatever
- * its records), nothing else is filed there: one open base-repair issue per
- * target at a time (2026-11-15). The pass writes no state and never edits,
- * closes or comments on an issue; the runtime admits the issue like any
- * other, and its fix merges through the ordinary review and CI gates (its
- * pull request closes the issue). The self scope has no base-repair lane.
+ * marker; one issue is ever filed per red tip. While any base-repair issue
+ * (`isBaseRepairListed`: marker or exact title) is open in the repository
+ * (any tip or branch, whatever its records), nothing else is filed there:
+ * one open base-repair issue per target at a time (2026-11-15). The hard
+ * bound files nothing while the listing holds `BASE_REPAIR_ISSUE_LIMIT`
+ * base-repair issues, open or closed, created within
+ * `BASE_REPAIR_ISSUE_WINDOW_MS` (2026-11-16). The pass writes no state and
+ * never edits, closes or comments on an issue; the runtime admits the issue
+ * like any other, and its fix merges through the ordinary review and CI
+ * gates (its pull request closes the issue). The self scope has no
+ * base-repair lane.
  *
  * Any unreadable tip, check listing or issue listing, and a default branch
  * that is not a plain ref name, files nothing.
@@ -77,10 +81,30 @@ export function baseRepairFilingEnabled(
 }
 
 /**
+ * Hard filing bound per target (2026-11-16, after the review of the
+ * 2026-11-15 enablement): nothing is filed while the complete listing of the
+ * App's issues in the target holds `BASE_REPAIR_ISSUE_LIMIT` base-repair
+ * issues (`isBaseRepairListed`: by marker or by exact title), open or
+ * closed, created within the last `BASE_REPAIR_ISSUE_WINDOW_MS`. A person
+ * closing the issue for any reason, or editing its first line or its title,
+ * therefore never lets the next red tip file another within the window, and
+ * a flaky check that re-reds the base after a merged fix waits it out: at
+ * most one issue per target per 14 days. K = 2 overall was not chosen: it
+ * still re-files once right after a person closes the first issue, and
+ * after its second issue the target could never be repaired again without
+ * a code change.
+ */
+export const BASE_REPAIR_ISSUE_LIMIT = 1;
+export const BASE_REPAIR_ISSUE_WINDOW_MS = 14 * 24 * 60 * 60_000;
+
+/**
  * The branch names an issue may name: a plain ref name, with no markup,
  * space, backtick or `@`. Any other default branch files nothing.
  */
 const FILING_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/;
+
+/** The exact title shape every base-repair issue is filed with. */
+const BASE_REPAIR_TITLE = /^CI is failing on [A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/;
 
 /** Wall-clock budget of the pass inside the maintenance pass. */
 export const BASE_REPAIR_PASS_BUDGET_MS = 60_000;
@@ -170,22 +194,49 @@ function heldForeignRecords(
 }
 
 /**
- * The lowest open App issue of the listing whose first line is a
- * base-repair marker (any branch or tip, the first tip-less form included),
- * or null. While one is open nothing else is filed in its repository, even
- * when its repair is parked or done: one open base-repair issue per target
- * at a time (2026-11-15). The merge of its own fix closes it.
+ * Whether one item of the App's listing is a base-repair issue: an issue,
+ * never a pull request, whose first line is a base-repair marker (any branch
+ * or tip, the first tip-less form included) OR whose title is exactly the
+ * filed shape `CI is failing on <branch>`. Either one is enough, so a person
+ * editing one of them leaves the issue recognised.
  */
-function openBaseRepairIssue(
+export function isBaseRepairListed(issue: HostedAppIssueV1): boolean {
+  return !issue.pullRequest &&
+    (parseBaseRepairMarker(issue.firstLine) !== null ||
+      BASE_REPAIR_TITLE.test(issue.title));
+}
+
+/**
+ * Why the complete App listing holds a new issue for `branch` at `tip`, as
+ * the action suffix, or null when it holds none. In order: an issue marked
+ * for this very tip, open or closed (one issue per red tip); the lowest open
+ * base-repair issue (one open at a time per target, 2026-11-15, even when
+ * its repair is parked or done; the merge of its own fix closes it); the
+ * newest base-repair issue of the hard bound's window
+ * (`BASE_REPAIR_ISSUE_LIMIT` within `BASE_REPAIR_ISSUE_WINDOW_MS` of `now`,
+ * open or closed; an issue dated after `now` counts).
+ */
+function listingHold(
   issues: readonly HostedAppIssueV1[],
-): number | null {
-  let lowest: number | null = null;
-  for (const issue of issues) {
-    if (issue.pullRequest || issue.state !== "open") continue;
-    if (parseBaseRepairMarker(issue.firstLine) === null) continue;
-    if (lowest === null || issue.number < lowest) lowest = issue.number;
-  }
-  return lowest;
+  branch: string,
+  tip: string,
+  now: number,
+): string | null {
+  const marker = baseRepairMarker(branch, tip);
+  const same = issues.find((issue) =>
+    !issue.pullRequest && issue.firstLine === marker
+  );
+  if (same !== undefined) return `filed_before=#${same.number}`;
+  const repairs = issues.filter(isBaseRepairListed)
+    .sort((a, b) => a.number - b.number);
+  const open = repairs.find((issue) => issue.state === "open");
+  if (open !== undefined) return `open=#${open.number}`;
+  const recent = repairs.filter((issue) =>
+    issue.createdAt >= now - BASE_REPAIR_ISSUE_WINDOW_MS
+  );
+  return recent.length >= BASE_REPAIR_ISSUE_LIMIT
+    ? `recent=#${recent[recent.length - 1].number}`
+    : null;
 }
 
 /** Run the base-repair pass; its actions only, never a state change. */
@@ -294,17 +345,9 @@ export async function runHostedBaseRepairPass(
         actions.push(`${tag}:issues_unreadable`);
         continue;
       }
-      const marker = baseRepairMarker(branch, tip);
-      const same = filed.find((issue) =>
-        !issue.pullRequest && issue.firstLine === marker
-      );
-      if (same !== undefined) {
-        actions.push(`${tag}:filed_before=#${same.number}`);
-        continue;
-      }
-      const open = openBaseRepairIssue(filed);
-      if (open !== null) {
-        actions.push(`${tag}:open=#${open}`);
+      const hold = listingHold(filed, branch, tip, started);
+      if (hold !== null) {
+        actions.push(`${tag}:${hold}`);
         continue;
       }
       if (!inBudget()) {

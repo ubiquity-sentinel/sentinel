@@ -22,8 +22,11 @@ import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import {
   BASE_REPAIR_FILING_TARGETS,
   BASE_REPAIR_HEAD_READS,
+  BASE_REPAIR_ISSUE_LIMIT,
+  BASE_REPAIR_ISSUE_WINDOW_MS,
   baseRepairFilingEnabled,
   baseRepairIssue,
+  isBaseRepairListed,
   runHostedBaseRepairPass,
 } from "../../ops/hosted-autonomy-base-repair.ts";
 import type {
@@ -40,6 +43,7 @@ import {
 } from "./hosted-autonomy-spent-fixtures.ts";
 
 const TAG = "base-repair:ubiquity/ai.ubq.fi";
+const DAY = 24 * 60 * 60_000;
 const HEAD = "1".repeat(40);
 const OLD_TIP = "2".repeat(40);
 const MARKER = baseRepairMarker("development", TIP);
@@ -82,12 +86,24 @@ function held(issue: number, head = HEAD, base = TIP): WorkRecordV1 {
   });
 }
 
+/**
+ * An App issue with a neutral title, filed before the hard bound's window
+ * (so only its marker and state decide here).
+ */
 function appIssue(
   number: number,
   firstLine: string,
   overrides: Partial<HostedAppIssueV1> = {},
 ): HostedAppIssueV1 {
-  return { number, state: "open", pullRequest: false, firstLine, ...overrides };
+  return {
+    number,
+    state: "open",
+    pullRequest: false,
+    firstLine,
+    title: `Issue ${number}`,
+    createdAt: NOW - 30 * DAY,
+    ...overrides,
+  };
 }
 
 interface PassOptions {
@@ -393,6 +409,53 @@ Deno.test("base repair pass: a default branch that is not a plain ref name files
     } finally {
       await Deno.remove(rig.tmp, { recursive: true });
     }
+  }
+});
+
+Deno.test("base repair pass: the hard bound is one base-repair issue per 14 days, by marker or exact title", async () => {
+  assert.equal(BASE_REPAIR_ISSUE_LIMIT, 1);
+  assert.equal(BASE_REPAIR_ISSUE_WINDOW_MS, 14 * DAY);
+  // The filed title is the recognised shape, on any plain branch.
+  const { title } = baseRepairIssue("release/v2.1", TIP, ["validate"]);
+  assert.equal(isBaseRepairListed(appIssue(1, "", { title })), true);
+  for (
+    const [issue, expected] of [
+      [appIssue(1, MARKER), true],
+      [appIssue(1, "<!-- sentinel:base-repair:main -->"), true],
+      [appIssue(1, "edited", { title: "CI is failing on development" }), true],
+      [appIssue(1, MARKER, { pullRequest: true }), false],
+      [appIssue(1, "", { title: "CI is failing on development" }), true],
+      [appIssue(1, "", { title: "CI is failing on development!" }), false],
+      [appIssue(1, "", { title: "Re: CI is failing on development" }), false],
+      [appIssue(1, `see ${MARKER}`), false],
+    ] as const
+  ) assert.equal(isBaseRepairListed(issue), expected, JSON.stringify(issue));
+  // Within the window a closed one (by either recognition, or dated after
+  // the pass clock) holds the new tip; a day past the window it does not.
+  const red = { [TIP]: ["validate"], [HEAD]: ["validate"] };
+  const older = baseRepairMarker("development", OLD_TIP);
+  const closed = { state: "closed" } as const;
+  const cases: [HostedAppIssueV1, boolean][] = [
+    [appIssue(900, older, { ...closed, createdAt: NOW - 13 * DAY }), false],
+    [
+      appIssue(900, "x", {
+        ...closed,
+        title: "CI is failing on development",
+        createdAt: NOW - DAY,
+      }),
+      false,
+    ],
+    [appIssue(900, older, { ...closed, createdAt: NOW + DAY }), false],
+    [appIssue(900, older, { ...closed, createdAt: NOW - 15 * DAY }), true],
+  ];
+  for (const [issue, files] of cases) {
+    const { actions, filed } = await pass({ failed: red, issues: [issue] });
+    assert.deepEqual(
+      actions,
+      [files ? `${TAG}:filed=#4242` : `${TAG}:recent=#900`],
+      JSON.stringify(issue),
+    );
+    assert.equal(filed.length, files ? 1 : 0);
   }
 });
 

@@ -201,10 +201,11 @@ export function createHostedBaseRepairIssues(
         for (const entry of raw) {
           const item = parseIssueItem(entry, repositoryUrl);
           const state = record(entry)?.["state"];
+          const title = record(entry)?.["title"];
           // A malformed item, another creator (the filter was not applied)
           // or a repeat (the pages shifted) is not one complete listing.
           if (
-            item === null ||
+            item === null || typeof title !== "string" ||
             item.author !== HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR ||
             seen.has(item.number) || (state !== "open" && state !== "closed")
           ) return null;
@@ -214,6 +215,8 @@ export function createHostedBaseRepairIssues(
             state,
             pullRequest: item.pullRequest,
             firstLine: item.firstLine,
+            title,
+            createdAt: item.createdAt,
           });
         }
         if (raw.length < LISTING_PAGE_SIZE) return items;
