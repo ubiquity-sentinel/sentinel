@@ -357,20 +357,55 @@ export function measuredMilliV1(verdict: ThroughputVerdictV1): number | null {
   return verdict.measured === null ? null : Math.round(verdict.measured * 1000);
 }
 
-function amount(value: number, unit: ThroughputVerdictV1["unit"]): string {
-  if (unit === "min") return `${value.toFixed(1)} min`;
-  if (unit === "ratio") return value.toFixed(2);
-  return `${value} ${unit}`;
+/**
+ * Most decimals a measured value and its limit are shown with. Enough for a
+ * median of whole or half milliseconds in minutes (a 0.5 ms miss reads at
+ * five) and for a ratio of weekly sums of up to a million merges.
+ */
+const MAX_DECIMALS = 6;
+
+/**
+ * Decimals for one verdict's measured value and limit (null: a whole count).
+ * The unit's usual precision (one for minutes, two for ratios), raised until
+ * a measured value unequal to the limit also reads unequal: #416 was titled
+ * "5.0 min vs <= 5.0 min" for a 5.033 min median against 5 min. Rounding is
+ * monotonic, so once they differ the larger value reads larger.
+ */
+function decimalsOf(verdict: ThroughputVerdictV1): number | null {
+  const usual = verdict.unit === "min"
+    ? 1
+    : verdict.unit === "ratio"
+    ? 2
+    : null;
+  const measured = verdict.measured;
+  if (usual === null || measured === null) return usual;
+  let decimals = usual;
+  while (
+    decimals < MAX_DECIMALS && measured !== verdict.limit &&
+    measured.toFixed(decimals) === verdict.limit.toFixed(decimals)
+  ) decimals++;
+  return decimals;
+}
+
+function amount(
+  value: number,
+  unit: ThroughputVerdictV1["unit"],
+  decimals: number | null,
+): string {
+  if (decimals === null) return `${value} ${unit}`;
+  return unit === "min"
+    ? `${value.toFixed(decimals)} min`
+    : value.toFixed(decimals);
 }
 
 export function formatMeasuredV1(verdict: ThroughputVerdictV1): string {
   return verdict.measured === null
     ? "n/a"
-    : amount(verdict.measured, verdict.unit);
+    : amount(verdict.measured, verdict.unit, decimalsOf(verdict));
 }
 
 export function formatLimitV1(verdict: ThroughputVerdictV1): string {
-  return `<= ${amount(verdict.limit, verdict.unit)}`;
+  return `<= ${amount(verdict.limit, verdict.unit, decimalsOf(verdict))}`;
 }
 
 export function formatWindowV1(verdict: ThroughputVerdictV1): string {
