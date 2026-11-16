@@ -40,6 +40,7 @@ import {
   NOW,
   TIP,
 } from "./hosted-autonomy-spent-fixtures.ts";
+import { heldPullsIssues } from "./hosted-autonomy-base-repair-fixtures.ts";
 
 const SCOPE = `/repos/${GATEWAY.owner}/${GATEWAY.name}`;
 const SLUG = `${GATEWAY.owner}/${GATEWAY.name}` as const;
@@ -104,7 +105,7 @@ async function pass(label: string, read: BackupCiReadV1) {
     wait: { reason: "backoff", since: NOW - 60_000, until: NOW + 1_740_000 },
     target: { ...target, base: TIP, head: HEAD },
   });
-  const filed: unknown[] = [];
+  const filed: { title: string; body: string }[] = [];
   const { surface: base } = liveSurface({ tip: TIP });
   const reader = new FakeBackupCiReader(() => read, [{
     repository: SLUG,
@@ -118,13 +119,8 @@ async function pass(label: string, read: BackupCiReadV1) {
   const combined: HostedAutonomyGitHubV1 = {
     ...base,
     failedChecks: real.failedChecks,
-    baseRepairIssues: {
-      listAppAuthored: () => Promise.resolve([]),
-      create: (input) => {
-        filed.push(input);
-        return Promise.resolve(4242);
-      },
-    },
+    // GitHub lists the held record's own App pull request.
+    baseRepairIssues: heldPullsIssues([record.target.pr!], NOW, filed),
   };
   const rig = await liveRig(
     `backup-base-${label}`,

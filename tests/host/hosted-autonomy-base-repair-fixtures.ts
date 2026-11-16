@@ -18,8 +18,11 @@ import { RED_BASE_RECHECK_MS } from "../../src/repair/ci-first-policy.ts";
 import { candidateBranch } from "../../src/repair/keys.ts";
 import { runHostedAutonomy } from "../../ops/hosted-autonomy-runner.ts";
 import type {
+  HostedAppIssueV1,
   HostedAutonomyDepsV1,
   HostedAutonomyGitHubV1,
+  HostedBaseRepairIssuesV1,
+  HostedIssueListingItemV1,
 } from "../../ops/hosted-autonomy-types.ts";
 import { SHA1, T0, workRecord } from "../state/helpers.ts";
 import {
@@ -136,6 +139,62 @@ export function appPull(number: number): FakeItem {
   });
 }
 
+/** One item as the App listing answers it (no author: all are the App's). */
+export function toAppIssue(item: FakeItem): HostedAppIssueV1 {
+  return {
+    number: item.number,
+    state: item.state,
+    pullRequest: item.pullRequest,
+    title: item.title,
+    firstLine: item.firstLine,
+    createdAt: item.createdAt,
+  };
+}
+
+/** One item as the created-since listing answers it (any author). */
+export function toListingItem(item: FakeItem): HostedIssueListingItemV1 {
+  return {
+    number: item.number,
+    author: item.author,
+    createdAt: item.createdAt,
+    pullRequest: item.pullRequest,
+    title: item.title,
+    firstLine: item.firstLine,
+  };
+}
+
+/**
+ * A base-repair issue port over the App items GitHub holds: the held
+ * records' own pull requests `pulls`, opened three days before `now`, and
+ * each issue it files (answered as `number`, kept in `filed`).
+ */
+export function heldPullsIssues(
+  pulls: readonly number[],
+  now: number,
+  filed: { title: string; body: string }[],
+  number = 4242,
+): HostedBaseRepairIssuesV1 {
+  const items: FakeItem[] = pulls.map((pull) => ({
+    ...appPull(pull),
+    createdAt: now - 3 * DAY,
+  }));
+  return {
+    listAppAuthored: () => Promise.resolve(items.map(toAppIssue)),
+    listCreatedSince: () =>
+      Promise.resolve([...items].reverse().map(toListingItem)),
+    create: (input) => {
+      filed.push(input);
+      items.push(
+        appIssue(number, input.body.split("\n")[0], {
+          title: input.title,
+          createdAt: now,
+        }),
+      );
+      return Promise.resolve(number);
+    },
+  };
+}
+
 /** The App pull requests of `LIVE` and of a second ai.ubq.fi record. */
 const PULLS: Readonly<Record<string, readonly number[]>> = {
   [AI]: [pullOf(1176), pullOf(1210)],
@@ -198,14 +257,6 @@ export function fakeTarget(
     now: NOW,
     surface: {} as HostedAutonomyGitHubV1,
   };
-  const listed = (item: FakeItem) => ({
-    number: item.number,
-    state: item.state,
-    pullRequest: item.pullRequest,
-    title: item.title,
-    firstLine: item.firstLine,
-    createdAt: item.createdAt,
-  });
   (target as { surface: HostedAutonomyGitHubV1 }).surface = {
     readDefaultBranch: () => Promise.resolve(options.branch ?? "development"),
     readBaseTip: () => Promise.resolve(target.tip),
@@ -233,7 +284,7 @@ export function fakeTarget(
         const answer = target.appListing === undefined
           ? app
           : target.appListing(app);
-        return Promise.resolve(answer === null ? null : answer.map(listed));
+        return Promise.resolve(answer === null ? null : answer.map(toAppIssue));
       },
       // Newest first, every author; one page holds them all.
       listCreatedSince: () => {
@@ -245,14 +296,7 @@ export function fakeTarget(
           ? all
           : target.dayListing(all);
         return Promise.resolve(
-          answer === null ? null : answer.map((item) => ({
-            number: item.number,
-            author: item.author,
-            createdAt: item.createdAt,
-            pullRequest: item.pullRequest,
-            title: item.title,
-            firstLine: item.firstLine,
-          })),
+          answer === null ? null : answer.map(toListingItem),
         );
       },
       create: (input: { title: string; body: string }) => {

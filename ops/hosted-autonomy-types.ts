@@ -459,6 +459,8 @@ export interface HostedIssueListingItemV1 {
   pullRequest: boolean;
   /** The body's first line (LF or CRLF), empty for an empty body. */
   firstLine: string;
+  /** The title, when GitHub reports one as a string. */
+  title?: string;
 }
 
 /** One issue or pull request the sentinel App created. */
@@ -483,6 +485,17 @@ export interface HostedBaseRepairIssuesV1 {
    * cannot be proven complete, App-created and bound to this repository.
    */
   listAppAuthored(): Promise<readonly HostedAppIssueV1[] | null>;
+  /**
+   * The base-repair daily brake's read, independent of the `creator`
+   * filter: every issue and pull request of this repository, any author,
+   * created at or after `sinceMs`, newest first (the follow-up pass's
+   * listing, `HostedFollowUpIssuesV1.listCreatedSince`). Null when it cannot
+   * be read and validated.
+   */
+  listCreatedSince(input: {
+    sinceMs: number;
+    maxPages: number;
+  }): Promise<readonly HostedIssueListingItemV1[] | null>;
   /**
    * Create one issue with exactly this title and body and no label: its
    * number only when GitHub's answer is this repository's App-created issue

@@ -29,14 +29,18 @@
  * one open base-repair issue per target at a time (2026-11-15). The hard
  * bound files nothing while the listing holds `BASE_REPAIR_ISSUE_LIMIT`
  * base-repair issues, open or closed, created within
- * `BASE_REPAIR_ISSUE_WINDOW_MS` (2026-11-16). The pass writes no state and
+ * `BASE_REPAIR_ISSUE_WINDOW_MS` (2026-11-16). Before any filing the listing
+ * must be proven live for the target (`listingProven`: it answers the held
+ * records' own App pull requests), and a daily brake independent of it
+ * (`BASE_REPAIR_DAY_SKEW_MS`) files at most one issue per target per UTC
+ * day, across runs and within one. The pass writes no state and
  * never edits, closes or comments on an issue; the runtime admits the issue
  * like any other, and its fix merges through the ordinary review and CI
  * gates (its pull request closes the issue). The self scope has no
  * base-repair lane.
  *
- * Any unreadable tip, check listing or issue listing, and a default branch
- * that is not a plain ref name, files nothing.
+ * Any unreadable tip, check listing or issue listing, an unproven listing,
+ * and a default branch that is not a plain ref name, files nothing.
  */
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
@@ -50,12 +54,16 @@ import {
   RED_BASE_CONCLUSIONS,
   trustedCheckName,
 } from "../src/repair/ci-rejection.ts";
-import { isHostedSelf } from "./hosted-autonomy-policy.ts";
+import {
+  HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR,
+  isHostedSelf,
+} from "./hosted-autonomy-policy.ts";
 import { createHostedAutonomyScopes } from "./hosted-autonomy-scopes.ts";
 import { readRepairSafely } from "./hosted-autonomy-state.ts";
 import type {
   HostedAppIssueV1,
   HostedAutonomyDepsV1,
+  HostedBaseRepairIssuesV1,
 } from "./hosted-autonomy-types.ts";
 
 /**
@@ -96,6 +104,31 @@ export function baseRepairFilingEnabled(
  */
 export const BASE_REPAIR_ISSUE_LIMIT = 1;
 export const BASE_REPAIR_ISSUE_WINDOW_MS = 14 * 24 * 60 * 60_000;
+
+/**
+ * Daily brake (2026-11-16): at most one filing per target per UTC day,
+ * whatever the App listing says. Across runs it reads GitHub's own record
+ * through the created-since listing, which has no `creator` filter and is
+ * the one the follow-up pass already reads live: a base-repair issue
+ * (`isBaseRepairListed`) the App created since the start of the current UTC
+ * day, less `BASE_REPAIR_DAY_SKEW_MS` of clock skew, holds every new
+ * filing, and a listing that cannot be read or lists nothing older than
+ * that instant (so cannot show it reached back that far) files nothing.
+ * Within a run, a target and UTC day get one create at most. No state
+ * Sentinel already persists records a filing: this pass writes none, and
+ * the persisted shapes it could extend (the maintenance index, the metrics
+ * ledger) have exact-key readers an older runtime would reject.
+ */
+export const BASE_REPAIR_DAY_SKEW_MS = 10 * 60_000;
+/** Pages of the created-since listing one daily brake may read. */
+export const BASE_REPAIR_DAY_LISTING_PAGES = 5;
+const DAY_MS = 24 * 60 * 60_000;
+
+/**
+ * Per run (one `githubFor`, as the hosted main builds it once per run): the
+ * `repositoryKey@utcDay` of every create attempted, whatever GitHub answered.
+ */
+const attemptedThisRun = new WeakMap<object, Set<string>>();
 
 /**
  * The branch names an issue may name: a plain ref name, with no markup,
@@ -200,10 +233,63 @@ function heldForeignRecords(
  * filed shape `CI is failing on <branch>`. Either one is enough, so a person
  * editing one of them leaves the issue recognised.
  */
-export function isBaseRepairListed(issue: HostedAppIssueV1): boolean {
+export function isBaseRepairListed(
+  issue: Pick<HostedAppIssueV1, "pullRequest" | "firstLine"> & {
+    title?: string;
+  },
+): boolean {
   return !issue.pullRequest &&
     (parseBaseRepairMarker(issue.firstLine) !== null ||
-      BASE_REPAIR_TITLE.test(issue.title));
+      (issue.title !== undefined && BASE_REPAIR_TITLE.test(issue.title)));
+}
+
+/**
+ * Whether the App listing is proven live for this target: it lists, as the
+ * App's own pull requests, every pull request of the records held on the
+ * tip (the runtime opened each one with the App token, so a working
+ * `creator` filter answers them), and there is at least one. An empty or
+ * short answer, a filter that matched nothing, proves nothing.
+ */
+function listingProven(
+  issues: readonly HostedAppIssueV1[],
+  held: readonly WorkRecordV1[],
+): boolean {
+  const pulls = new Set(
+    held.flatMap((record) =>
+      record.target.pr === null ? [] : [record.target.pr]
+    ),
+  );
+  const listed = new Set(
+    issues.filter((issue) => issue.pullRequest).map((issue) => issue.number),
+  );
+  return pulls.size > 0 && [...pulls].every((pull) => listed.has(pull));
+}
+
+/**
+ * The daily brake's verdict from GitHub's own record (see
+ * `BASE_REPAIR_DAY_SKEW_MS`), as the action suffix, or null when this UTC
+ * day holds no filing: `day_unproven` for a listing that cannot be read or
+ * does not reach back past the day's start, `filed_today=#n` for a
+ * base-repair issue the App created since then.
+ */
+async function dayHold(
+  issues: HostedBaseRepairIssuesV1,
+  now: number,
+): Promise<string | null> {
+  const since = Math.floor(now / DAY_MS) * DAY_MS - BASE_REPAIR_DAY_SKEW_MS;
+  const listing = await issues.listCreatedSince({
+    sinceMs: since,
+    maxPages: BASE_REPAIR_DAY_LISTING_PAGES,
+  });
+  if (listing === null || !listing.some((item) => item.createdAt < since)) {
+    return "day_unproven";
+  }
+  const today = listing.find((item) =>
+    item.createdAt >= since &&
+    item.author === HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR &&
+    isBaseRepairListed(item)
+  );
+  return today === undefined ? null : `filed_today=#${today.number}`;
 }
 
 /**
@@ -260,11 +346,21 @@ export async function runHostedBaseRepairPass(
   }
   const work = read.value.snapshot.work;
   const { scopeFor } = createHostedAutonomyScopes(deps);
+  const attempted = attemptedThisRun.get(deps.githubFor) ?? new Set<string>();
+  attemptedThisRun.set(deps.githubFor, attempted);
+  const day = Math.floor(started / DAY_MS);
   for (const { repository, held } of heldForeignRecords(work, started)) {
     const tag = `base-repair:${repository.owner}/${repository.name}`;
     if (!inBudget()) {
       actions.push(`${tag}:deadline`);
       break;
+    }
+    // The in-run brake: one create per target and UTC day, whatever GitHub
+    // answered, before any read.
+    const dayKey = `${repositoryKey(repository)}@${day}`;
+    if (attempted.has(dayKey)) {
+      actions.push(`${tag}:attempted_this_run`);
+      continue;
     }
     try {
       // A surface that cannot read failed checks or file issues costs nothing.
@@ -294,12 +390,9 @@ export async function runHostedBaseRepairPass(
         continue;
       }
       // A record on an older base refreshes onto the tip before it is held.
-      const heads = [
-        ...new Set(
-          held.filter((record) => record.target.base === tip)
-            .map((record) => record.target.head!),
-        ),
-      ].slice(0, BASE_REPAIR_HEAD_READS);
+      const onTip = held.filter((record) => record.target.base === tip);
+      const heads = [...new Set(onTip.map((record) => record.target.head!))]
+        .slice(0, BASE_REPAIR_HEAD_READS);
       if (heads.length === 0) continue;
       const tipFailed = await surface.failedChecks(
         tip,
@@ -345,15 +438,28 @@ export async function runHostedBaseRepairPass(
         actions.push(`${tag}:issues_unreadable`);
         continue;
       }
+      // An empty or short answer proves nothing: the listing must answer
+      // the held records' own App pull requests first.
+      if (!listingProven(filed, onTip)) {
+        actions.push(`${tag}:listing_unproven`);
+        continue;
+      }
       const hold = listingHold(filed, branch, tip, started);
       if (hold !== null) {
         actions.push(`${tag}:${hold}`);
+        continue;
+      }
+      // The cross-run daily brake, from GitHub's record without the filter.
+      const today = await dayHold(issues, started);
+      if (today !== null) {
+        actions.push(`${tag}:${today}`);
         continue;
       }
       if (!inBudget()) {
         actions.push(`${tag}:deadline`);
         break;
       }
+      attempted.add(dayKey);
       const number = await issues.create(baseRepairIssue(branch, tip, listed));
       actions.push(
         number === null ? `${tag}:file_failed` : `${tag}:filed=#${number}`,

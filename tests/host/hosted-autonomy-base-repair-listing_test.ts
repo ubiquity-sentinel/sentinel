@@ -123,6 +123,30 @@ Deno.test("base repair listing: another creator, a repeat, a malformed item or n
   }
 });
 
+Deno.test("base repair listing: the daily brake reads every author's items, newest first, with no creator filter", async () => {
+  const requested: { url: string; method: string; body: unknown }[] = [];
+  const listed = await withPages(
+    [[
+      item(9, { created_at: "2026-10-25T12:00:00Z" }),
+      item(8, { user: { login: "someone" }, pull_request: {} }),
+    ]],
+    () =>
+      issues().listCreatedSince({
+        sinceMs: Date.parse("2026-10-25T00:00:00Z"),
+        maxPages: 5,
+      }),
+    requested,
+  );
+  assert.deepEqual(listed?.map((entry) => [entry.number, entry.author]), [
+    [9, APP],
+    [8, "someone"],
+  ]);
+  assert.equal(listed?.[0].title, "Issue 9");
+  assert.deepEqual(requested.map((request) => request.url), [
+    `${REPO_URL}/issues?state=all&sort=created&direction=desc&per_page=100&page=1`,
+  ]);
+});
+
 Deno.test("base repair listing: the create sends no label", async () => {
   const requested: { url: string; method: string; body: unknown }[] = [];
   const number = await withPages(

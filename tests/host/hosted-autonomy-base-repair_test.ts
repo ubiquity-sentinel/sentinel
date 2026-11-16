@@ -109,6 +109,7 @@ function appIssue(
 interface PassOptions {
   /** Failed check names by commit (absent: none failed). */
   failed: Record<string, string[] | null>;
+  /** The App's issues; null: the listing is unreadable. */
   issues?: readonly HostedAppIssueV1[] | null;
   work?: WorkRecordV1[];
 }
@@ -118,6 +119,14 @@ async function pass(options: PassOptions) {
   const filed: { title: string; body: string }[] = [];
   const reads: { commit: string; conclusions: readonly string[] }[] = [];
   let listings = 0;
+  const work = options.work ?? [held(618)];
+  // GitHub lists the App's pull requests too: the records' own.
+  const pulls = [...new Set(work.map((row) => row.target.pr))].flatMap((pr) =>
+    pr === null
+      ? []
+      : [appIssue(pr, "", { pullRequest: true, createdAt: NOW - 3 * DAY })]
+  );
+  const items = [...pulls, ...(options.issues ?? [])];
   const surface: HostedAutonomyGitHubV1 = {
     ...base,
     failedChecks: (commit, conclusions) => {
@@ -129,17 +138,21 @@ async function pass(options: PassOptions) {
     baseRepairIssues: {
       listAppAuthored: () => {
         listings++;
-        return Promise.resolve(
-          options.issues === undefined ? [] : options.issues,
-        );
+        return Promise.resolve(options.issues === null ? null : items);
       },
+      listCreatedSince: () =>
+        Promise.resolve(
+          [...items].sort((a, b) => b.createdAt - a.createdAt).map((item) => ({
+            ...item,
+            author: "ubiquity-sentinel[bot]",
+          })),
+        ),
       create: (input) => {
         filed.push(input);
         return Promise.resolve(4242);
       },
     },
   };
-  const work = options.work ?? [held(618)];
   const rig = await liveRig("base-repair", liveSnapshot(work, []), surface);
   try {
     const actions = await runHostedBaseRepairPass({
@@ -389,6 +402,7 @@ Deno.test("base repair pass: a default branch that is not a plain ref name files
         },
         baseRepairIssues: {
           listAppAuthored: () => Promise.resolve([]),
+          listCreatedSince: () => Promise.resolve([]),
           create: (input) => {
             filed.push(input);
             return Promise.resolve(4242);

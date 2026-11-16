@@ -31,6 +31,7 @@ import {
   NOW,
   TIP,
 } from "./hosted-autonomy-spent-fixtures.ts";
+import { heldPullsIssues } from "./hosted-autonomy-base-repair-fixtures.ts";
 
 const SCOPE = `/repos/${GATEWAY.owner}/${GATEWAY.name}`;
 const ACTIONS = { id: 15368, slug: "github-actions" };
@@ -249,19 +250,14 @@ Deno.test("base repair pass: a base whose only failure never started files nothi
     wait: { reason: "backoff", since: NOW - 60_000, until: NOW + 1_740_000 },
     target: { base: TIP, branch, checkpoint: null, head: HEAD, pr },
   });
-  const filed: unknown[] = [];
+  const filed: { title: string; body: string }[] = [];
   const { surface: base } = liveSurface({ tip: TIP });
   const real = surface();
   const combined: HostedAutonomyGitHubV1 = {
     ...base,
     failedChecks: real.failedChecks,
-    baseRepairIssues: {
-      listAppAuthored: () => Promise.resolve([]),
-      create: (input) => {
-        filed.push(input);
-        return Promise.resolve(4242);
-      },
-    },
+    // GitHub lists the held record's own App pull request.
+    baseRepairIssues: heldPullsIssues([pr!], NOW, filed),
   };
   const rig = await liveRig(
     "never-started-base",
@@ -273,11 +269,13 @@ Deno.test("base repair pass: a base whose only failure never started files nothi
     head_sha: HEAD,
     steps: [{ number: 1, name: "test" }],
   });
+  // Each pass is its own maintenance run (a fresh resolver, as the hosted
+  // main builds one per run), so the in-run brake never answers for it.
   const runPass = () =>
     runHostedBaseRepairPass({
       ciMinutes: INACTIVE_CI_MINUTES,
       state: rig.state,
-      githubFor: rig.githubFor,
+      githubFor: (repository) => rig.githubFor(repository),
       clock: { now: () => NOW },
     });
   try {

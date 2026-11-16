@@ -68,6 +68,7 @@ export function parseIssueItem(
   ) return null;
   const createdAt = Date.parse(created);
   if (!Number.isSafeInteger(createdAt)) return null;
+  const title = item["title"];
   return {
     number,
     author: login,
@@ -75,6 +76,7 @@ export function parseIssueItem(
     pullRequest: item["pull_request"] !== undefined &&
       item["pull_request"] !== null,
     firstLine,
+    ...(typeof title === "string" ? { title } : {}),
   };
 }
 
@@ -176,7 +178,9 @@ export const BASE_REPAIR_LISTING_MAX_PAGES = MAX_LISTING_PAGES;
  * The base-repair issue capability (`ops/hosted-autonomy-base-repair.ts`):
  * the complete listing of every issue and pull request the sentinel App
  * created here, open or closed, oldest first (a new item lands on the last
- * page, so earlier pages do not shift under it), and a label-free create.
+ * page, so earlier pages do not shift under it), the follow-up pass's
+ * created-since listing without the `creator` filter (the daily brake), and
+ * a label-free create.
  */
 export function createHostedBaseRepairIssues(
   request: ReturnType<typeof createHostedAutonomyRequest>,
@@ -224,6 +228,7 @@ export function createHostedBaseRepairIssues(
       // A full last page at the bound proves nothing about the rest.
       return null;
     },
+    listCreatedSince: (input) => followUps.listCreatedSince(input),
     create: (input) => followUps.create(input),
   };
 }

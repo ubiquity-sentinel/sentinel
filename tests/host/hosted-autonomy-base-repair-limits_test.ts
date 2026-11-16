@@ -8,21 +8,38 @@
  * first-line marker OR its exact title, open or closed, so a person closing
  * it, a person editing its first line, and a flaky check re-redding the base
  * after each merged fix never file a second one within the window.
+ *
+ * Listing proof: the App listing (`creator=ubiquity-sentinel[bot]`) had
+ * never run live, and an empty answer counted as complete, so a filter that
+ * matched nothing filed on every pass. It must now answer the held records'
+ * own App pull requests, or nothing is filed (`listing_unproven`, printed
+ * in the run's result line). Daily brake: GitHub's created-since listing,
+ * without the filter, holds a second filing on the same UTC day, and one
+ * run attempts at most one create per target and day.
  */
 import assert from "node:assert/strict";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import {
   AI,
+  APP,
+  appIssue,
   DAY,
+  type FakeItem,
   H1,
+  H2,
   held,
   HOUR,
   maintain,
+  maintenanceDeps,
   MARKER,
+  marker,
   NOW,
+  OLD_TIP,
   P1,
   PERMIT2,
+  pullOf,
   redTargets,
+  runMaintenance,
   TAG,
   U1,
   UUSD,
@@ -115,4 +132,126 @@ Deno.test("base repair limit: the bound holds across many red tips while each me
     ...Array.from({ length: 8 }, () => `${TAG}:recent=#9000`),
   ]);
   assert.equal(ai.created.length, 1, "nine red tips in 12 days: one issue");
+});
+
+Deno.test("base repair proof: an empty App listing files nothing, pass after pass, with a fixed reason", async () => {
+  const targets = redTargets();
+  const ai = targets[AI];
+  // The `creator` filter matched nothing: GitHub answers an empty listing.
+  ai.appListing = () => [];
+  for (const minutes of [0, 5, 10]) {
+    const now = NOW + minutes * 60_000;
+    const pass = await maintain(onTip(ai.tip, now), targets, now);
+    assert.deepEqual(pass.baseRepair, [`${TAG}:listing_unproven`]);
+  }
+  assert.equal(ai.created.length, 0, "three passes, no issue");
+});
+
+Deno.test("base repair proof: a listing without every held record's own pull request files nothing", async () => {
+  const cases: [string, (app: FakeItem[]) => FakeItem[]][] = [
+    ["only issues", (app) => app.filter((item) => !item.pullRequest)],
+    [
+      "not the first held",
+      (app) => app.filter((item) => item.number !== pullOf(1176)),
+    ],
+    [
+      "not the second held",
+      (app) => app.filter((item) => item.number !== pullOf(1210)),
+    ],
+  ];
+  for (const [label, listing] of cases) {
+    const targets = redTargets({
+      issues: [
+        appIssue(77, marker(OLD_TIP), {
+          state: "closed",
+          createdAt: NOW - 30 * DAY,
+        }),
+      ],
+    });
+    targets[AI].appListing = listing;
+    const records = [...onTip(targets[AI].tip, NOW), held(AI, 1210, H2)];
+    const pass = await maintain(records, targets);
+    assert.deepEqual(pass.baseRepair, [`${TAG}:listing_unproven`], label);
+    assert.equal(targets[AI].created.length, 0, label);
+  }
+});
+
+Deno.test("base repair proof: a listing proven live files exactly one issue, and many passes still one", async () => {
+  const targets = redTargets();
+  const ai = targets[AI];
+  const actions: string[] = [];
+  for (let index = 0; index < 12; index++) {
+    const now = NOW + index * 5 * 60_000;
+    actions.push(
+      ...(await maintain(onTip(ai.tip, now), targets, now))
+        .baseRepair,
+    );
+  }
+  assert.deepEqual(actions, [
+    `${TAG}:filed=#9000`,
+    ...Array.from({ length: 11 }, () => `${TAG}:filed_before=#9000`),
+  ]);
+  assert.equal(ai.created.length, 1);
+});
+
+Deno.test("base repair brake: a listing blind to the App's issues still files once per UTC day", async () => {
+  const targets = redTargets();
+  const ai = targets[AI];
+  // The filter answers the App's pull requests but none of its issues: the
+  // proof holds and the hard bound sees nothing; GitHub's own record holds.
+  ai.appListing = (app) => app.filter((item) => item.pullRequest);
+  const actions: string[] = [];
+  for (let index = 0; index < 6; index++) {
+    const now = NOW + index * HOUR;
+    actions.push(
+      ...(await maintain(onTip(ai.tip, now), targets, now))
+        .baseRepair,
+    );
+  }
+  assert.deepEqual(actions, [
+    `${TAG}:filed=#9000`,
+    ...Array.from({ length: 5 }, () => `${TAG}:filed_today=#9000`),
+  ]);
+  // The residual of this fault: on the next UTC day only the brake is left.
+  const tomorrow = (Math.floor(NOW / DAY) + 1) * DAY + HOUR;
+  const next = await maintain(onTip(ai.tip, tomorrow), targets, tomorrow);
+  assert.deepEqual(next.baseRepair, [`${TAG}:filed=#9001`]);
+  assert.equal(ai.created.length, 2, "one a day, not one a pass");
+});
+
+Deno.test("base repair brake: one run files for a target at most once, whatever the listings say", async () => {
+  const targets = redTargets();
+  const ai = targets[AI];
+  // Both listings blind to the App's issues: only the run's own memory holds.
+  ai.appListing = (app) => app.filter((item) => item.pullRequest);
+  ai.dayListing = (all) =>
+    all.filter((item) => item.author !== APP || item.pullRequest);
+  const { deps, state } = await maintenanceDeps(onTip(ai.tip, NOW), targets);
+  const first = await runMaintenance(deps, state);
+  const second = await runMaintenance(deps, state);
+  assert.deepEqual(first.baseRepair, [`${TAG}:filed=#9000`]);
+  assert.deepEqual(second.baseRepair, [`${TAG}:attempted_this_run`]);
+  assert.equal(ai.created.length, 1);
+});
+
+Deno.test("base repair brake: an unreadable day listing, or one that does not reach back past the day, files nothing", async () => {
+  const cases: [string, (all: FakeItem[]) => FakeItem[] | null][] = [
+    ["unreadable", () => null],
+    ["empty", () => []],
+    [
+      "today only",
+      (all) => all.filter((item) => item.createdAt >= NOW - 2 * HOUR),
+    ],
+  ];
+  for (const [label, dayListing] of cases) {
+    const targets = redTargets();
+    // Someone else's issue of today, so "today only" is not empty.
+    targets[AI].items.push(
+      appIssue(77, "a question", { author: "someone", createdAt: NOW - HOUR }),
+    );
+    targets[AI].dayListing = dayListing;
+    const pass = await maintain(onTip(targets[AI].tip, NOW), targets);
+    assert.deepEqual(pass.baseRepair, [`${TAG}:day_unproven`], label);
+    assert.equal(targets[AI].created.length, 0, label);
+  }
 });
