@@ -2,7 +2,12 @@
  * Base-repair pass (2026-10-24 throughput redesign, stage 1; reworked
  * 2026-10-25 after its review; see `src/repair/base-repair.ts`).
  *
- * Once per maintenance pass, for each foreign target with records the
+ * Filing is enabled per target, for the targets listed in
+ * `BASE_REPAIR_FILING_TARGETS` only (owner decision 2026-11-15: ai.ubq.fi).
+ * Every other target is skipped before any read, exactly as every target
+ * was while filing was off (027ecbbea0 until that decision).
+ *
+ * Once per maintenance pass, for each listed foreign target with records the
  * CI-first gate holds on a red base (at `work` in a running red-base hold,
  * `isRedBaseHold`), the launcher reads the base branch's tip. Only held
  * records whose base IS that tip count (any other refreshes onto it first).
@@ -18,14 +23,16 @@
  * The issue is filed without a label, with `baseRepairMarker(branch, tip)`
  * on its first line, after a complete, bounded listing of every issue the
  * App created (open or closed) shows that no App issue already carries that
- * marker; one issue is ever filed per red tip. While an App issue marked for
- * an older tip of the branch is open, a new one is filed only once each of
- * its records is parked or done. The pass writes no state and never edits,
+ * marker; one issue is ever filed per red tip. While any App issue with a
+ * base-repair marker is open in the repository (any tip or branch, whatever
+ * its records), nothing else is filed there: one open base-repair issue per
+ * target at a time (2026-11-15). The pass writes no state and never edits,
  * closes or comments on an issue; the runtime admits the issue like any
  * other, and its fix merges through the ordinary review and CI gates (its
  * pull request closes the issue). The self scope has no base-repair lane.
  *
- * Any unreadable tip, check listing or issue listing files nothing.
+ * Any unreadable tip, check listing or issue listing, and a default branch
+ * that is not a plain ref name, files nothing.
  */
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
@@ -48,14 +55,32 @@ import type {
 } from "./hosted-autonomy-types.ts";
 
 /**
- * Filing switch: OFF for every target. Filing has been off since 027ecbbea0
- * (2026-10-25, the lane's review); the fixes after it kept it off until a
- * re-review. Off, the pass reads and files nothing. The runtime's CI-fix cap
- * of a base-repair task (`BASE_REPAIR_CI_FIX_CAP` in
- * `src/repair/base-repair.ts`) lands ahead of any filing (2026-11-16), so the
- * runtime that works a filed task, and its rollback target, carry the cap.
+ * Filing allowlist, by exact `owner/name`: the pass reads and files for
+ * these targets only. Owner decision 2026-11-15 enabled `ubiquity/ai.ubq.fi`
+ * and no other target; filing had been off for every target since
+ * 027ecbbea0 (the former `BASE_REPAIR_FILING_ENABLED = false`), and the
+ * runtime's CI-fix cap of a base-repair task (`BASE_REPAIR_CI_FIX_CAP`)
+ * landed ahead of it (2026-11-16). Adding a target needs its own owner
+ * decision (docs/DECISIONS.md).
  */
-export const BASE_REPAIR_FILING_ENABLED = false;
+export const BASE_REPAIR_FILING_TARGETS: readonly string[] = Object.freeze([
+  "ubiquity/ai.ubq.fi",
+]);
+
+/** Whether base-repair filing is enabled for `repository`. */
+export function baseRepairFilingEnabled(
+  repository: Pick<RepositoryIdentityV1, "owner" | "name">,
+): boolean {
+  return BASE_REPAIR_FILING_TARGETS.includes(
+    `${repository.owner}/${repository.name}`,
+  );
+}
+
+/**
+ * The branch names an issue may name: a plain ref name, with no markup,
+ * space, backtick or `@`. Any other default branch files nothing.
+ */
+const FILING_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/;
 
 /** Wall-clock budget of the pass inside the maintenance pass. */
 export const BASE_REPAIR_PASS_BUDGET_MS = 60_000;
@@ -108,9 +133,10 @@ const repositoryKey = (repository: RepositoryIdentityV1) =>
   `${repository.installationId}/${repository.owner}/${repository.name}`;
 
 /**
- * Foreign records the CI-first gate holds on a red base at `now` (at `work`
- * with a published head, in a running red-base hold), by repository, each
- * group in record-id order and the groups by repository name.
+ * Foreign records of a target with filing enabled that the CI-first gate
+ * holds on a red base at `now` (at `work` with a published head, in a
+ * running red-base hold), by repository, each group in record-id order and
+ * the groups by repository name.
  */
 function heldForeignRecords(
   work: readonly WorkRecordV1[],
@@ -123,7 +149,8 @@ function heldForeignRecords(
   for (const record of work) {
     if (
       record.nextStep !== "work" || record.target.head === null ||
-      !isRedBaseHold(record.wait, now) || isHostedSelf(record.repository)
+      !isRedBaseHold(record.wait, now) || isHostedSelf(record.repository) ||
+      !baseRepairFilingEnabled(record.repository)
     ) continue;
     const key = repositoryKey(record.repository);
     const group = groups.get(key) ??
@@ -143,44 +170,31 @@ function heldForeignRecords(
 }
 
 /**
- * The open App issue marked for an older tip of `branch` that still owns a
- * live repair (a record of its issue neither parked nor done, or none yet),
- * or null when there is none.
+ * The lowest open App issue of the listing whose first line is a
+ * base-repair marker (any branch or tip, the first tip-less form included),
+ * or null. While one is open nothing else is filed in its repository, even
+ * when its repair is parked or done: one open base-repair issue per target
+ * at a time (2026-11-15). The merge of its own fix closes it.
  */
-function liveOlderIssue(
+function openBaseRepairIssue(
   issues: readonly HostedAppIssueV1[],
-  work: readonly WorkRecordV1[],
-  repository: RepositoryIdentityV1,
-  branch: string,
 ): number | null {
-  const key = repositoryKey(repository);
+  let lowest: number | null = null;
   for (const issue of issues) {
     if (issue.pullRequest || issue.state !== "open") continue;
-    if (parseBaseRepairMarker(issue.firstLine)?.branch !== branch) continue;
-    const records = work.filter((record) =>
-      repositoryKey(record.repository) === key &&
-      record.source.kind === "issue" &&
-      record.related.issueNumber === issue.number
-    );
-    if (
-      records.length === 0 ||
-      records.some((record) =>
-        record.nextStep !== "blocked" && record.nextStep !== "done"
-      )
-    ) return issue.number;
+    if (parseBaseRepairMarker(issue.firstLine) === null) continue;
+    if (lowest === null || issue.number < lowest) lowest = issue.number;
   }
-  return null;
+  return lowest;
 }
 
 /** Run the base-repair pass; its actions only, never a state change. */
 export async function runHostedBaseRepairPass(
   deps: HostedAutonomyDepsV1,
   passDeadline: number = Number.POSITIVE_INFINITY,
-  /** Tests exercise the pass with filing off. */
-  options: { filing?: boolean } = {},
 ): Promise<string[]> {
   const actions: string[] = [];
-  if (!(options.filing ?? BASE_REPAIR_FILING_ENABLED)) return actions;
+  if (BASE_REPAIR_FILING_TARGETS.length === 0) return actions;
   const started = deps.clock.now();
   if (!Number.isSafeInteger(started)) return actions;
   const deadline = Math.min(started + BASE_REPAIR_PASS_BUDGET_MS, passDeadline);
@@ -216,6 +230,13 @@ export async function runHostedBaseRepairPass(
         surface === null || branch === null ||
         surface.failedChecks === undefined || issues === undefined
       ) continue;
+      // The branch is written into the issue: only a plain ref name is.
+      if (!FILING_BRANCH.test(branch)) {
+        actions.push(`${tag}:branch_unsupported`);
+        continue;
+      }
+      // Only held records on exactly this tip count below, so a tip that is
+      // not a commit SHA files nothing.
       const tip = await surface.readBaseTip(branch);
       if (tip === null) {
         actions.push(`${tag}:tip_unreadable`);
@@ -281,9 +302,9 @@ export async function runHostedBaseRepairPass(
         actions.push(`${tag}:filed_before=#${same.number}`);
         continue;
       }
-      const older = liveOlderIssue(filed, work, repository, branch);
-      if (older !== null) {
-        actions.push(`${tag}:open=#${older}`);
+      const open = openBaseRepairIssue(filed);
+      if (open !== null) {
+        actions.push(`${tag}:open=#${open}`);
         continue;
       }
       if (!inBudget()) {

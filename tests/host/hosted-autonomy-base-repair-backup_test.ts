@@ -133,16 +133,12 @@ async function pass(label: string, read: BackupCiReadV1) {
   );
   try {
     const actions = await withFetch(() =>
-      runHostedBaseRepairPass(
-        {
-          ciMinutes: INACTIVE_CI_MINUTES,
-          state: rig.state,
-          githubFor: rig.githubFor,
-          clock: { now: () => NOW },
-        },
-        undefined,
-        { filing: true },
-      )
+      runHostedBaseRepairPass({
+        ciMinutes: INACTIVE_CI_MINUTES,
+        state: rig.state,
+        githubFor: rig.githubFor,
+        clock: { now: () => NOW },
+      })
     );
     return { actions, filed };
   } finally {

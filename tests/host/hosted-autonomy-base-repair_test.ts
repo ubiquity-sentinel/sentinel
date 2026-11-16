@@ -1,13 +1,14 @@
 /**
  * The launcher's base-repair pass (2026-10-24 throughput redesign, stage 1;
- * reworked 2026-10-25 after its review). A foreign target whose base tip
+ * reworked 2026-10-25 after its review; enabled for ai.ubq.fi only by the
+ * owner decision of 2026-11-15). A listed foreign target whose base tip
  * fails a check that its held records' heads fail too gets exactly one
  * unlabelled base-repair issue per tip, marked with the branch and tip on
  * its first line and naming only those checks. A red check no held head
  * fails (Passport's dispatch-only deploy jobs), a record on an older base,
- * an App issue already marked for this tip (open or closed), a live older
- * marked issue, and any unreadable read file nothing. The pass writes no
- * state.
+ * an App issue already marked for this tip (open or closed), any open
+ * base-repair issue, a target outside the allowlist, and any unreadable read
+ * file nothing. The pass writes no state.
  */
 import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
@@ -19,8 +20,9 @@ import {
 } from "../../src/repair/ci-rejection.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import {
-  BASE_REPAIR_FILING_ENABLED,
+  BASE_REPAIR_FILING_TARGETS,
   BASE_REPAIR_HEAD_READS,
+  baseRepairFilingEnabled,
   baseRepairIssue,
   runHostedBaseRepairPass,
 } from "../../ops/hosted-autonomy-base-repair.ts";
@@ -45,14 +47,19 @@ const MARKER = baseRepairMarker("development", TIP);
 /** The CI-first gate's red-base hold, as a live poll re-arms it. */
 const HELD = { reason: "backoff", since: NOW - 60_000, until: NOW + 1_740_000 };
 
-/** A record of ai.ubq.fi issue `issue` (the live #618 row, re-identified). */
+/**
+ * A record of issue `issue` of `name` (ai.ubq.fi unless named; the live #618
+ * row, re-identified).
+ */
 function record(
   issue: number,
   overrides: Record<string, unknown> = {},
+  name = "ai.ubq.fi",
 ): WorkRecordV1 {
   const template = liveRecord(618);
   return liveRecord(618, {
-    id: `issue-ubiquity-ai.ubq.fi-${issue}`,
+    id: `issue-ubiquity-${name}-${issue}`,
+    repository: { ...template.repository, name },
     source: { ...template.source, id: String(issue) },
     related: { ...template.related, issueNumber: issue },
     ...overrides,
@@ -88,7 +95,6 @@ interface PassOptions {
   failed: Record<string, string[] | null>;
   issues?: readonly HostedAppIssueV1[] | null;
   work?: WorkRecordV1[];
-  filing?: boolean;
 }
 
 async function pass(options: PassOptions) {
@@ -120,25 +126,35 @@ async function pass(options: PassOptions) {
   const work = options.work ?? [held(618)];
   const rig = await liveRig("base-repair", liveSnapshot(work, []), surface);
   try {
-    const actions = await runHostedBaseRepairPass(
-      {
-        ciMinutes: INACTIVE_CI_MINUTES,
-        state: rig.state,
-        githubFor: rig.githubFor,
-        clock: { now: () => NOW },
-      },
-      undefined,
-      // The lane ships with filing off; the pass is exercised with it on.
-      { filing: options.filing ?? true },
-    );
+    const actions = await runHostedBaseRepairPass({
+      ciMinutes: INACTIVE_CI_MINUTES,
+      state: rig.state,
+      githubFor: rig.githubFor,
+      clock: { now: () => NOW },
+    });
     return { actions, filed, reads, listings, writes: rig.writes };
   } finally {
     await Deno.remove(rig.tmp, { recursive: true });
   }
 }
 
-Deno.test("base repair pass: filing ships off until its re-review passes", () => {
-  assert.equal(BASE_REPAIR_FILING_ENABLED, false);
+Deno.test("base repair pass: filing is enabled for ubiquity/ai.ubq.fi only (owner decision 2026-11-15)", () => {
+  assert.deepEqual([...BASE_REPAIR_FILING_TARGETS], ["ubiquity/ai.ubq.fi"]);
+  assert.ok(Object.isFrozen(BASE_REPAIR_FILING_TARGETS));
+  const repository = liveRecord(618).repository;
+  assert.equal(baseRepairFilingEnabled(repository), true);
+  for (
+    const name of [
+      "uusd.ubq.fi",
+      "permit2-rpc-manager",
+      "AI.UBQ.FI",
+      "sentinel",
+    ]
+  ) assert.equal(baseRepairFilingEnabled({ ...repository, name }), false, name);
+  assert.equal(
+    baseRepairFilingEnabled({ ...repository, owner: "ubiquity-sentinel" }),
+    false,
+  );
 });
 
 Deno.test("base repair pass: a red tip files one unlabelled, tip-marked issue naming only the checks a held head fails", async () => {
@@ -273,7 +289,7 @@ Deno.test("base repair pass: an App issue already marked for this tip, open or c
   }
 });
 
-Deno.test("base repair pass: an open issue marked for an older tip holds a new one only while its record is live", async () => {
+Deno.test("base repair pass: any open base-repair issue holds a new one, whatever its records; a closed one does not", async () => {
   const red = { [TIP]: ["validate"], [HEAD]: ["validate"] };
   const older = appIssue(900, baseRepairMarker("development", OLD_TIP));
   const legacy = appIssue(900, "<!-- sentinel:base-repair:development -->");
@@ -294,15 +310,20 @@ Deno.test("base repair pass: an open issue marked for an older tip holds a new o
     [[legacy], [live], `${TAG}:open=#900`],
     // Not admitted yet: it is still the one open repair.
     [[older], [], `${TAG}:open=#900`],
-    // Parked (the live #618 row is parked) or done: a new tip, a new issue.
-    [[older], [record(900)], `${TAG}:filed=#4242`],
-    [[older], [done], `${TAG}:filed=#4242`],
-    [[{ ...older, state: "closed" }], [live], `${TAG}:filed=#4242`],
+    // One open base-repair issue per target at a time (2026-11-15): parked
+    // (the live #618 row is parked) or done, another branch's, or two open.
+    [[older], [record(900)], `${TAG}:open=#900`],
+    [[older], [done], `${TAG}:open=#900`],
     [
       [appIssue(900, baseRepairMarker("main", OLD_TIP))],
       [live],
-      `${TAG}:filed=#4242`,
+      `${TAG}:open=#900`,
     ],
+    [[appIssue(901, older.firstLine), older], [], `${TAG}:open=#900`],
+    // Closed, a pull request, or a marker elsewhere: not an open repair.
+    [[{ ...older, state: "closed" }], [live], `${TAG}:filed=#4242`],
+    [[{ ...older, pullRequest: true }], [live], `${TAG}:filed=#4242`],
+    [[appIssue(900, `see ${older.firstLine}`)], [], `${TAG}:filed=#4242`],
   ];
   for (const [issues, others, expected] of cases) {
     const { actions, filed } = await pass({
@@ -315,14 +336,64 @@ Deno.test("base repair pass: an open issue marked for an older tip holds a new o
   }
 });
 
-Deno.test("base repair pass: filing off reads nothing", async () => {
-  const { actions, reads, listings } = await pass({
-    failed: { [TIP]: ["validate"], [HEAD]: ["validate"] },
-    filing: false,
-  });
-  assert.deepEqual(actions, []);
-  assert.equal(reads.length, 0);
-  assert.equal(listings, 0);
+Deno.test("base repair pass: a held target outside the allowlist reads nothing", async () => {
+  for (const name of ["uusd.ubq.fi", "permit2-rpc-manager"]) {
+    const { actions, reads, listings, filed } = await pass({
+      failed: { [TIP]: ["validate"], [HEAD]: ["validate"] },
+      work: [
+        record(40, {
+          nextStep: "work",
+          blocker: null,
+          wait: HELD,
+          target: target(HEAD, TIP),
+        }, name),
+      ],
+    });
+    assert.deepEqual(actions, [], name);
+    assert.equal(reads.length, 0, name);
+    assert.equal(listings, 0, name);
+    assert.equal(filed.length, 0, name);
+  }
+});
+
+Deno.test("base repair pass: a default branch that is not a plain ref name files nothing", async () => {
+  for (const branch of ["dev`x", "main <!--", "@{-1}", "-x", "a\nb"]) {
+    const { surface: base } = liveSurface({ tip: TIP });
+    let reads = 0;
+    const filed: unknown[] = [];
+    const rig = await liveRig(
+      "base-repair-branch",
+      liveSnapshot([held(618)], []),
+      {
+        ...base,
+        readDefaultBranch: () => Promise.resolve(branch),
+        failedChecks: () => {
+          reads++;
+          return Promise.resolve(["validate"]);
+        },
+        baseRepairIssues: {
+          listAppAuthored: () => Promise.resolve([]),
+          create: (input) => {
+            filed.push(input);
+            return Promise.resolve(4242);
+          },
+        },
+      },
+    );
+    try {
+      const actions = await runHostedBaseRepairPass({
+        ciMinutes: INACTIVE_CI_MINUTES,
+        state: rig.state,
+        githubFor: rig.githubFor,
+        clock: { now: () => NOW },
+      });
+      assert.deepEqual(actions, [`${TAG}:branch_unsupported`], branch);
+      assert.equal(reads, 0, branch);
+      assert.deepEqual(filed, [], branch);
+    } finally {
+      await Deno.remove(rig.tmp, { recursive: true });
+    }
+  }
 });
 
 Deno.test("base repair pass: check names take the runtime's trusted shape and are bounded in the issue", () => {
