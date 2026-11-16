@@ -117,8 +117,10 @@ export function latestRunIndexes(runs: readonly unknown[]): number[] {
  * runs, every one bound to `head`), as indexes into `runs`: `marked` holds
  * the runs whose job never started, `unresolved` the runs no verdict was
  * reached for (a job past the read bound, or one that could not be read or
- * did not match). Only the latest run of each name is judged, at most
- * `MAX_NEVER_STARTED_JOB_READS` jobs are read, and a verdict found in
+ * did not match), and `overBound` says whether any of them was past the
+ * bound (more failed Actions jobs than one read judges: a condition of the
+ * commit, not a read fault). Only the latest run of each name is judged, at
+ * most `MAX_NEVER_STARTED_JOB_READS` jobs are read, and a verdict found in
  * `cache` (keyed by job and head) costs no read; an unresolved run is not
  * cached.
  */
@@ -127,9 +129,12 @@ export async function neverStartedRunVerdicts(
   head: string,
   readJob: ActionsJobReadV1,
   cache?: Map<string, boolean>,
-): Promise<{ marked: Set<number>; unresolved: Set<number> }> {
+): Promise<
+  { marked: Set<number>; unresolved: Set<number>; overBound: boolean }
+> {
   const marked = new Set<number>();
   const unresolved = new Set<number>();
+  let overBound = false;
   let reads = 0;
   for (const index of latestRunIndexes(runs)) {
     const jobId = failedActionsJobId(runs[index]);
@@ -139,6 +144,7 @@ export async function neverStartedRunVerdicts(
     if (verdict === null) {
       if (reads >= MAX_NEVER_STARTED_JOB_READS) {
         unresolved.add(index);
+        overBound = true;
         continue;
       }
       reads++;
@@ -159,7 +165,7 @@ export async function neverStartedRunVerdicts(
     }
     if (verdict) marked.add(index);
   }
-  return { marked, unresolved };
+  return { marked, unresolved, overBound };
 }
 
 /**

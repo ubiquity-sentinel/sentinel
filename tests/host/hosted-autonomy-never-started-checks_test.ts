@@ -204,6 +204,41 @@ Deno.test("launcher failedChecks: the strict filing read is unreadable when a fa
   );
 });
 
+Deno.test("launcher failedChecks: a strict read says when a failed job lay past the job-read bound", async () => {
+  let told = 0;
+  const strict = () =>
+    surface().failedChecks!(TIP, RED_BASE_CONCLUSIONS, {
+      strict: true,
+      onOverBound: () => told++,
+    });
+  // More failed Actions jobs than the read judges: a condition of the commit.
+  const nine = Array.from(
+    { length: 9 },
+    (_, index) => run(JOB + index, { name: `check-${index}` }),
+  );
+  const jobs = Object.fromEntries(
+    nine.map((row) => [row.id, job(row.id as number)]),
+  );
+  assert.equal(await withFetch(nine, jobs, strict), null);
+  assert.equal(told, 1);
+  // A refused job read is a read fault: unreadable, and not over the bound.
+  assert.equal(await withFetch([run(JOB)], { [JOB]: 403 }, strict), null);
+  assert.equal(told, 1);
+  // The ordinary read never calls it.
+  assert.notEqual(
+    await withFetch(
+      nine,
+      jobs,
+      () =>
+        surface().failedChecks!(TIP, RED_BASE_CONCLUSIONS, {
+          onOverBound: () => told++,
+        }),
+    ),
+    null,
+  );
+  assert.equal(told, 1);
+});
+
 Deno.test("launcher failedChecks: the caller's conclusions count, the runtime's own sets", async () => {
   const runs = [
     run(JOB, { name: "approve", conclusion: "action_required", app: {} }),
@@ -320,7 +355,9 @@ Deno.test("base repair pass: a base whose only failure never started files nothi
       ], `${status}`);
     }
     // Nine never-started jobs on the tip and on the held head: the read
-    // judges eight, so the ninth would have stayed red on both.
+    // judges eight, so the ninth would have stayed red on both. More failed
+    // jobs than the read judges is that commit's own condition, not a read
+    // fault, so it has its own code.
     const nine = (head: string, first: number) =>
       Array.from(
         { length: 9 },
@@ -340,7 +377,7 @@ Deno.test("base repair pass: a base whose only failure never started files nothi
       runPass,
     );
     assert.deepEqual(bounded, [
-      "base-repair:ubiquity/ai.ubq.fi:checks_unreadable",
+      "base-repair:ubiquity/ai.ubq.fi:checks_over_bound",
     ]);
     assert.equal(filed.length, 1, "no issue names a job that never ran");
   } finally {

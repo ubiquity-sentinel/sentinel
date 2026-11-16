@@ -126,9 +126,24 @@ Deno.test("base repair jobs: nine never-started jobs on the tip and a held head 
     { [TIP]: tip.runs, [H1]: head.runs },
     { ...tip.jobs, ...head.jobs },
   );
-  assert.deepEqual(baseRepair, [`${TAG}:checks_unreadable`]);
+  // More failed jobs than the read judges: the commit's own condition, with
+  // its own code (it was `checks_unreadable`, a read fault's).
+  assert.deepEqual(baseRepair, [`${TAG}:checks_over_bound`]);
   assert.equal(created.length, 0, "no issue names a job that never ran");
   assert.equal(jobReads.length, MAX_NEVER_STARTED_JOB_READS, "bounded");
+});
+
+Deno.test("base repair jobs: more failed jobs on a held head than the read judges is head_checks_over_bound", async () => {
+  // The tip is red on one job that ran; the held head on nine that never
+  // started.
+  const tip = failing(TIP, 1000, 1, true);
+  const head = failing(H1, 2000, MAX_NEVER_STARTED_JOB_READS + 1, false);
+  const { baseRepair, created } = await pass(
+    { [TIP]: tip.runs, [H1]: head.runs },
+    { ...tip.jobs, ...head.jobs },
+  );
+  assert.deepEqual(baseRepair, [`${TAG}:head_checks_over_bound`]);
+  assert.equal(created.length, 0);
 });
 
 Deno.test("base repair jobs: a refused job read files nothing, on the tip or on a held head", async () => {

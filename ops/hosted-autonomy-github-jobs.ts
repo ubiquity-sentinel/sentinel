@@ -10,7 +10,8 @@
  *   `CANDIDATE_CONCLUSIONS`), without the failed Actions runs whose job
  *   never started (bounded job reads; an unreadable job keeps its run as a
  *   failure, except in the `strict` filing read, where a failed Actions job
- *   past the read bound or unreadable makes the whole read null).
+ *   past the read bound or unreadable makes the whole read null, and one
+ *   past the bound is also told to `onOverBound`).
  * - `runNeverStarted`: whether one completed workflow run's latest attempt
  *   failed only through jobs that never started (the CI resume pass); null
  *   when its job listing cannot be read completely and bound to the run.
@@ -52,6 +53,8 @@ export function createHostedActionsJobReads(
       conclusions: readonly string[],
       /** The filing read: an unresolved failed Actions job is unreadable. */
       strict = false,
+      /** A strict read past the job-read bound says so before its null. */
+      onOverBound?: () => void,
     ): Promise<string[] | null> {
       const latest = latestRunIndexes(runs);
       const verdicts = await neverStartedRunVerdicts(
@@ -59,7 +62,10 @@ export function createHostedActionsJobReads(
         head,
         (jobId) => request("GET", `/repos/${scope}/actions/jobs/${jobId}`),
       );
-      if (strict && verdicts.unresolved.size > 0) return null;
+      if (strict && verdicts.unresolved.size > 0) {
+        if (verdicts.overBound) onOverBound?.();
+        return null;
+      }
       return latest.filter((index, position) =>
         !verdicts.marked.has(position) &&
         runs[index]["status"] === "completed" &&

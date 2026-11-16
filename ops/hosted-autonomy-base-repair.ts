@@ -31,7 +31,7 @@
  * issues the App opened there, open or closed, created within
  * `BASE_REPAIR_ISSUE_WINDOW_MS`, whatever their title or body (2026-11-16).
  * Before any filing the listing must be proven live for the target
- * (`listingProven`: it answers the held records' own App pull requests),
+ * (`listingProof`: it answers the held records' own App pull requests),
  * and a daily brake independent of it (`BASE_REPAIR_DAY_SKEW_MS`), which
  * also counts issues by who opened them, files at most one issue per target
  * per UTC day, across runs and within one. The pass writes no state and
@@ -41,7 +41,12 @@
  * base-repair lane.
  *
  * Any unreadable tip, check listing or issue listing, an unproven listing,
- * and a default branch that is not a plain ref name, files nothing.
+ * and a default branch that is not a plain ref name, files nothing. The
+ * reason is the action's fixed suffix (`base-repair:<owner>/<name>:<code>`,
+ * printed only in the run's result line); a permanent condition has its own
+ * code apart from the transient read faults (2026-11-16):
+ * `held_pull_foreign`, `issues_over_bound`, `checks_over_bound` and
+ * `head_checks_over_bound`.
  */
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
@@ -64,6 +69,7 @@ import { readRepairSafely } from "./hosted-autonomy-state.ts";
 import type {
   HostedAppIssueV1,
   HostedAutonomyDepsV1,
+  HostedAutonomyGitHubV1,
   HostedBaseRepairIssuesV1,
 } from "./hosted-autonomy-types.ts";
 
@@ -255,16 +261,22 @@ export function isBaseRepairListed(
 }
 
 /**
- * Whether the App listing is proven live for this target: it lists, as the
- * App's own pull requests, every pull request of the records held on the
- * tip (the runtime opened each one with the App token, so a working
- * `creator` filter answers them), and there is at least one. An empty or
- * short answer, a filter that matched nothing, proves nothing.
+ * Why the App listing is not proven live for this target, as the action
+ * suffix, or null when it is: it must list, as the App's own pull requests,
+ * every pull request of the records held on the tip (the runtime opened each
+ * one with the App token, so a working `creator` filter answers them), and
+ * there is at least one. An empty or short answer, a filter that matched
+ * nothing, proves nothing (`listing_unproven`). A missing pull request that
+ * GitHub names another author for can never be answered while its record is
+ * held, so that permanent condition has its own code (`held_pull_foreign`,
+ * 2026-11-16); at most `BASE_REPAIR_HEAD_READS` missing pull requests are
+ * read, only when the proof fails, and an unreadable one proves nothing.
  */
-function listingProven(
+async function listingProof(
+  surface: HostedAutonomyGitHubV1,
   issues: readonly HostedAppIssueV1[],
   held: readonly WorkRecordV1[],
-): boolean {
+): Promise<string | null> {
   const pulls = new Set(
     held.flatMap((record) =>
       record.target.pr === null ? [] : [record.target.pr]
@@ -273,7 +285,41 @@ function listingProven(
   const listed = new Set(
     issues.filter((issue) => issue.pullRequest).map((issue) => issue.number),
   );
-  return pulls.size > 0 && [...pulls].every((pull) => listed.has(pull));
+  const missing = [...pulls].filter((pull) => !listed.has(pull));
+  if (pulls.size > 0 && missing.length === 0) return null;
+  for (const number of missing.slice(0, BASE_REPAIR_HEAD_READS)) {
+    let author: string | null = null;
+    try {
+      author = (await surface.readPull(number, null))?.author ?? null;
+    } catch {
+      author = null;
+    }
+    if (author !== null && author !== HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR) {
+      return "held_pull_foreign";
+    }
+  }
+  return "listing_unproven";
+}
+
+/**
+ * One strict filing read of `commit` (`FILING_READ`): its failing check
+ * names, null when it cannot be read or judged, or `"over_bound"` when it
+ * has more failed Actions jobs than the read judges (a condition of the
+ * commit, not a read fault, with its own code since 2026-11-16).
+ */
+async function filingRead(
+  surface: HostedAutonomyGitHubV1,
+  commit: string,
+  conclusions: readonly string[],
+): Promise<string[] | "over_bound" | null> {
+  let overBound = false;
+  const failed = await surface.failedChecks!(commit, conclusions, {
+    ...FILING_READ,
+    onOverBound: () => {
+      overBound = true;
+    },
+  });
+  return failed === null && overBound ? "over_bound" : failed;
 }
 
 /**
@@ -409,27 +455,23 @@ export async function runHostedBaseRepairPass(
       const heads = [...new Set(onTip.map((record) => record.target.head!))]
         .slice(0, BASE_REPAIR_HEAD_READS);
       if (heads.length === 0) continue;
-      const tipFailed = await surface.failedChecks(
-        tip,
-        RED_BASE_CONCLUSIONS,
-        FILING_READ,
-      );
-      if (tipFailed === null) {
-        actions.push(`${tag}:checks_unreadable`);
+      const tipFailed = await filingRead(surface, tip, RED_BASE_CONCLUSIONS);
+      if (tipFailed === null || tipFailed === "over_bound") {
+        actions.push(
+          `${tag}:${
+            tipFailed === null ? "checks_unreadable" : "checks_over_bound"
+          }`,
+        );
         continue;
       }
       if (tipFailed.length === 0) continue;
       const holding = new Set<string>();
-      let headsRead = true;
+      let headsRefused: "unreadable" | "over_bound" | null = null;
       for (const head of heads) {
         if (!inBudget()) break;
-        const failed = await surface.failedChecks(
-          head,
-          CANDIDATE_CONCLUSIONS,
-          FILING_READ,
-        );
-        if (failed === null) {
-          headsRead = false;
+        const failed = await filingRead(surface, head, CANDIDATE_CONCLUSIONS);
+        if (failed === null || failed === "over_bound") {
+          headsRefused = failed === null ? "unreadable" : "over_bound";
           break;
         }
         for (const name of failed) holding.add(name);
@@ -438,8 +480,8 @@ export async function runHostedBaseRepairPass(
         actions.push(`${tag}:deadline`);
         break;
       }
-      if (!headsRead) {
-        actions.push(`${tag}:head_checks_unreadable`);
+      if (headsRefused !== null) {
+        actions.push(`${tag}:head_checks_${headsRefused}`);
         continue;
       }
       // Only a check red on the tip AND on a held head holds a repair.
@@ -449,14 +491,19 @@ export async function runHostedBaseRepairPass(
         continue;
       }
       const filed = await issues.listAppAuthored();
-      if (filed === null) {
-        actions.push(`${tag}:issues_unreadable`);
+      if (filed === null || filed === "over_bound") {
+        actions.push(
+          `${tag}:${
+            filed === null ? "issues_unreadable" : "issues_over_bound"
+          }`,
+        );
         continue;
       }
       // An empty or short answer proves nothing: the listing must answer
       // the held records' own App pull requests first.
-      if (!listingProven(filed, onTip)) {
-        actions.push(`${tag}:listing_unproven`);
+      const unproven = await listingProof(surface, filed, onTip);
+      if (unproven !== null) {
+        actions.push(`${tag}:${unproven}`);
         continue;
       }
       const hold = listingHold(filed, branch, tip, started);

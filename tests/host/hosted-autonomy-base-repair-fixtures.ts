@@ -217,8 +217,11 @@ export interface FakeTarget {
   tip: string;
   failed: Record<string, readonly string[] | null>;
   now: number;
-  /** What the App listing answers instead of every App item (a fault). */
-  appListing?: (app: FakeItem[]) => FakeItem[] | null;
+  /**
+   * What the App listing answers instead of every App item (a fault), or
+   * `"over_bound"` (more App items than the listing reads).
+   */
+  appListing?: (app: FakeItem[]) => FakeItem[] | "over_bound" | null;
   /** What the created-since listing answers instead (a fault). */
   dayListing?: (all: FakeItem[]) => FakeItem[] | null;
 }
@@ -286,7 +289,11 @@ export function fakeTarget(
         const answer = target.appListing === undefined
           ? app
           : target.appListing(app);
-        return Promise.resolve(answer === null ? null : answer.map(toAppIssue));
+        return Promise.resolve(
+          answer === null || answer === "over_bound"
+            ? answer
+            : answer.map(toAppIssue),
+        );
       },
       // Newest first, every author; one page holds them all.
       listCreatedSince: () => {

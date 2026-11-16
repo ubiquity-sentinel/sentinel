@@ -229,13 +229,15 @@ export interface HostedAutonomyGitHubV1 {
    * cannot be read. `strict` (the base-repair filing read) is null too when
    * any failed Actions job went unjudged (past the job-read bound, or its
    * read refused or mismatched), so a check that may never have started is
-   * never named red. Optional: a surface without it files no base-repair
-   * issue.
+   * never named red; when one lay past the bound (more failed Actions jobs
+   * than the read judges, a condition of the commit rather than a read
+   * fault), `onOverBound` is called first. Optional: a surface without it
+   * files no base-repair issue.
    */
   failedChecks?(
     commit: string,
     conclusions: readonly string[],
-    options?: { strict?: boolean },
+    options?: { strict?: boolean; onOverBound?: () => void },
   ): Promise<string[] | null>;
   /**
    * CI resume read: true when the latest attempt of completed workflow run
@@ -482,9 +484,11 @@ export interface HostedBaseRepairIssuesV1 {
   /**
    * Every issue and pull request of this repository the sentinel App
    * created, open or closed, from one complete bounded listing; null when it
-   * cannot be proven complete, App-created and bound to this repository.
+   * cannot be proven complete, App-created and bound to this repository, and
+   * `"over_bound"` when the App holds more items than the bound reads (a
+   * full last page at the bound: a condition of the target, not a fault).
    */
-  listAppAuthored(): Promise<readonly HostedAppIssueV1[] | null>;
+  listAppAuthored(): Promise<readonly HostedAppIssueV1[] | "over_bound" | null>;
   /**
    * The base-repair daily brake's read, independent of the `creator`
    * filter: every issue and pull request of this repository, any author,

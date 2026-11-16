@@ -178,9 +178,9 @@ export const BASE_REPAIR_LISTING_MAX_PAGES = MAX_LISTING_PAGES;
  * The base-repair issue capability (`ops/hosted-autonomy-base-repair.ts`):
  * the complete listing of every issue and pull request the sentinel App
  * created here, open or closed, oldest first (a new item lands on the last
- * page, so earlier pages do not shift under it), the follow-up pass's
- * created-since listing without the `creator` filter (the daily brake), and
- * a label-free create.
+ * page, so earlier pages do not shift under it; `"over_bound"` past its
+ * bound), the follow-up pass's created-since listing without the `creator`
+ * filter (the daily brake), and a label-free create.
  */
 export function createHostedBaseRepairIssues(
   request: ReturnType<typeof createHostedAutonomyRequest>,
@@ -225,8 +225,10 @@ export function createHostedBaseRepairIssues(
         }
         if (raw.length < LISTING_PAGE_SIZE) return items;
       }
-      // A full last page at the bound proves nothing about the rest.
-      return null;
+      // A full last page at the bound proves nothing about the rest: the
+      // App holds more items here than the listing reads, a condition no
+      // retry clears, answered apart from a read fault.
+      return "over_bound";
     },
     listCreatedSince: (input) => followUps.listCreatedSince(input),
     create: (input) => followUps.create(input),

@@ -407,7 +407,7 @@ export function createHostedAutonomyGitHub(
     async failedChecks(
       head: string,
       conclusions: readonly string[],
-      options?: { strict?: boolean },
+      options?: { strict?: boolean; onOverBound?: () => void },
     ) {
       const complete = await readCompleteCheckRuns(head);
       if (complete === null) return null;
@@ -418,7 +418,14 @@ export function createHostedAutonomyGitHub(
       return await failedNamesWithBackup(
         head,
         runs,
-        (h, r) => jobReads.failedCheckNames(h, r, conclusions, options?.strict),
+        (h, r) =>
+          jobReads.failedCheckNames(
+            h,
+            r,
+            conclusions,
+            options?.strict,
+            options?.onOverBound,
+          ),
         conclusions,
       );
     },

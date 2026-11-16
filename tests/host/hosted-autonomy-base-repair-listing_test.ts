@@ -79,7 +79,7 @@ Deno.test("base repair listing: every App-created issue, open or closed, to a sh
     () => issues().listAppAuthored(),
     requested,
   );
-  assert.ok(listed !== null);
+  assert.ok(Array.isArray(listed));
   assert.equal(listed.length, 102);
   assert.deepEqual(listed[100], {
     number: 101,
@@ -106,13 +106,6 @@ Deno.test("base repair listing: another creator, a repeat, a malformed item or n
     ["no title", [[item(1, { title: null })]]],
     ["another repository", [[item(1, { repository_url: `${REPO_URL}x` })]]],
     ["not a list", [{ message: "Not Found" }]],
-    [
-      "a full page at the bound",
-      Array.from(
-        { length: BASE_REPAIR_LISTING_MAX_PAGES },
-        (_, page) => full(page * 100 + 1),
-      ),
-    ],
   ];
   for (const [label, pages] of cases) {
     assert.equal(
@@ -121,6 +114,25 @@ Deno.test("base repair listing: another creator, a repeat, a malformed item or n
       label,
     );
   }
+});
+
+Deno.test("base repair listing: a full last page at the bound is over the bound, not unreadable", async () => {
+  // More App items than the listing reads: a condition of the target that
+  // no retry clears, answered apart from a read fault.
+  const pages = Array.from(
+    { length: BASE_REPAIR_LISTING_MAX_PAGES },
+    (_, page) => full(page * 100 + 1),
+  );
+  assert.equal(
+    await withPages(pages, () => issues().listAppAuthored()),
+    "over_bound",
+  );
+  // One item short of the bound is a complete listing.
+  const last = (BASE_REPAIR_LISTING_MAX_PAGES - 1) * 100 + 1;
+  const fits = [...pages.slice(0, -1), full(last).slice(0, 99)];
+  const listed = await withPages(fits, () => issues().listAppAuthored());
+  assert.ok(Array.isArray(listed));
+  assert.equal(listed.length, BASE_REPAIR_LISTING_MAX_PAGES * 100 - 1);
 });
 
 Deno.test("base repair listing: the daily brake reads every author's items, newest first, with no creator filter", async () => {
