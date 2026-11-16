@@ -5140,6 +5140,26 @@ filing starts only once this change itself is the installed runtime.
     installation ids its records are held (`attempted_this_run`); a create
     answered under an outsider's login, possible only with an outsider's
     credential in Sentinel's secrets, is held by that run's attempt alone.
+  - Open ceiling, content-independent
+    ([ops/hosted-autonomy-base-repair-bounds.ts](../ops/hosted-autonomy-base-repair-bounds.ts),
+    third review): no filing while `BASE_REPAIR_OPEN_LIMIT` = 2 issues this pass
+    may have filed are open: every open issue the App opened in the target, at
+    any age (the complete App listing), and every open issue that holds the
+    daily brake (the App's, or a trusted creator's marked one) among those the
+    created-since listing shows within `BASE_REPAIR_OPEN_WINDOW_MS` = 14 days
+    (`open_ceiling`). Only the App's review follow-ups, recognised by their own
+    marker naming this target (one issue per finding, so many), are left out; a
+    person never types one by accident. The review found two ways to more than
+    one open base-repair issue: rewriting both the title and the first line of
+    the open one, so that no hold recognises it once the hard bound's window has
+    passed, and a create answered under another author, which the App listing
+    never shows (one more open issue a day). A rewritten issue now counts while
+    it is open, at any age; such a create counts for the window. The cost: the
+    capability issue the App keeps open on a target counts too, so with it open
+    a single rewritten issue holds filing. The one created-since read now
+    reaches back over the window (up to 10 pages of 100): one that does not, or
+    holds a marked issue in it whose creator GitHub does not place, files
+    nothing (`ceiling_unproven`).
   - Checks: the tip and held-head reads are strict, so a failed Actions job the
     read did not judge makes the commit unreadable (`checks_unreadable`,
     `head_checks_unreadable`), and more failed Actions jobs than the eight it
@@ -5148,9 +5168,10 @@ filing starts only once this change itself is the installed runtime.
   per 14 days in normal operation, so at most 27 a year on ai.ubq.fi, the only
   target. If the creator listing silently returned only pull requests, or a
   create were answered under an owner's, member's or collaborator's login, only
-  the daily brake would hold: one a UTC day (365 a year). Deleting the App's
-  issue removes GitHub's only record of it, so each deletion allows one more
-  filing.
+  the daily brake and the open ceiling would hold: one a UTC day (365 a year)
+  while the earlier ones are closed, and no third while two filed within 14 days
+  are open. Deleting the App's issue removes GitHub's only record of it, so each
+  deletion allows one more filing.
 - Charged attempts per filed issue, at most: `BASE_REPAIR_CI_FIX_CAP` = 3
   charged CI fixes (owner's number pending; see the cap entry), then the
   uncharged park; with the base and every new head red no review is requested.

@@ -141,12 +141,19 @@ export function appIssue(
   };
 }
 
-/** The App's pull request `number`, opened three days before `NOW`. */
+/**
+ * When the App opened the held records' pull requests: before the open
+ * ceiling's 14-day window, so a created-since listing of every item reaches
+ * back past it (the pull requests are the oldest items a target holds).
+ */
+export const PULLS_OPENED = 30 * DAY;
+
+/** The App's pull request `number`, opened `PULLS_OPENED` before `NOW`. */
 export function appPull(number: number): FakeItem {
   return appIssue(number, "", {
     pullRequest: true,
     title: `Fix #${number - 5000}`,
-    createdAt: NOW - 3 * DAY,
+    createdAt: NOW - PULLS_OPENED,
   });
 }
 
@@ -174,13 +181,14 @@ export function toListingItem(item: FakeItem): HostedIssueListingItemV1 {
     pullRequest: item.pullRequest,
     title: item.title,
     firstLine: item.firstLine,
+    state: item.state,
   };
 }
 
 /**
  * A base-repair issue port over the App items GitHub holds: the held
- * records' own pull requests `pulls`, opened three days before `now`, and
- * each issue it files (answered as `number`, kept in `filed`).
+ * records' own pull requests `pulls`, opened `PULLS_OPENED` before `now`,
+ * and each issue it files (answered as `number`, kept in `filed`).
  */
 export function heldPullsIssues(
   pulls: readonly number[],
@@ -190,7 +198,7 @@ export function heldPullsIssues(
 ): HostedBaseRepairIssuesV1 {
   const items: FakeItem[] = pulls.map((pull) => ({
     ...appPull(pull),
-    createdAt: now - 3 * DAY,
+    createdAt: now - PULLS_OPENED,
   }));
   return {
     listAppAuthored: () => Promise.resolve(items.map(toAppIssue)),

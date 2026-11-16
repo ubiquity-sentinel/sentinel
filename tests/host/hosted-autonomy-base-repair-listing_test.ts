@@ -147,8 +147,13 @@ Deno.test("base repair listing: the daily brake reads every author's items, newe
         user: { login: "someone" },
         pull_request: {},
         author_association: "MEMBER",
+        state: "closed",
       }),
-      item(7, { user: { login: "other" }, author_association: "" }),
+      item(7, {
+        user: { login: "other" },
+        author_association: "",
+        state: "merged",
+      }),
     ]],
     () =>
       issues().listCreatedSince({
@@ -162,8 +167,13 @@ Deno.test("base repair listing: the daily brake reads every author's items, newe
       entry.number,
       entry.author,
       entry.authorAssociation,
+      entry.state,
     ]),
-    [[9, APP, "NONE"], [8, "someone", "MEMBER"], [7, "other", undefined]],
+    [
+      [9, APP, "NONE", "open"],
+      [8, "someone", "MEMBER", "closed"],
+      [7, "other", undefined, undefined],
+    ],
   );
   assert.equal(listed?.[0].title, "Issue 9");
   assert.deepEqual(requested.map((request) => request.url), [

@@ -22,13 +22,15 @@ import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import {
   BASE_REPAIR_FILING_TARGETS,
   BASE_REPAIR_HEAD_READS,
-  BASE_REPAIR_ISSUE_LIMIT,
-  BASE_REPAIR_ISSUE_WINDOW_MS,
   baseRepairFilingEnabled,
   baseRepairIssue,
-  isBaseRepairListed,
   runHostedBaseRepairPass,
 } from "../../ops/hosted-autonomy-base-repair.ts";
+import {
+  BASE_REPAIR_ISSUE_LIMIT,
+  BASE_REPAIR_ISSUE_WINDOW_MS,
+  isBaseRepairListed,
+} from "../../ops/hosted-autonomy-base-repair-bounds.ts";
 import type {
   HostedAppIssueV1,
   HostedAutonomyGitHubV1,
@@ -121,11 +123,12 @@ async function pass(options: PassOptions) {
   const reads: { commit: string; conclusions: readonly string[] }[] = [];
   let listings = 0;
   const work = options.work ?? [held(618)];
-  // GitHub lists the App's pull requests too: the records' own.
+  // GitHub lists the App's pull requests too: the records' own, opened
+  // before the open ceiling's window.
   const pulls = [...new Set(work.map((row) => row.target.pr))].flatMap((pr) =>
     pr === null
       ? []
-      : [appIssue(pr, "", { pullRequest: true, createdAt: NOW - 3 * DAY })]
+      : [appIssue(pr, "", { pullRequest: true, createdAt: NOW - 30 * DAY })]
   );
   const items = [...pulls, ...(options.issues ?? [])];
   const surface: HostedAutonomyGitHubV1 = {

@@ -481,6 +481,8 @@ export interface HostedIssueListingItemV1 {
    * GitHub reports one as a non-empty string.
    */
   authorAssociation?: string;
+  /** Open or closed, when GitHub reports either. */
+  state?: "open" | "closed";
 }
 
 /** One issue or pull request the sentinel App created. */

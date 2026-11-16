@@ -70,6 +70,7 @@ export function parseIssueItem(
   if (!Number.isSafeInteger(createdAt)) return null;
   const title = item["title"];
   const association = item["author_association"];
+  const state = item["state"];
   return {
     number,
     author: login,
@@ -81,6 +82,7 @@ export function parseIssueItem(
     ...(typeof association === "string" && association.length > 0
       ? { authorAssociation: association }
       : {}),
+    ...(state === "open" || state === "closed" ? { state } : {}),
   };
 }
 
