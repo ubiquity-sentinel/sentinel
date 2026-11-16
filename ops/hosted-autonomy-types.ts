@@ -475,6 +475,12 @@ export interface HostedIssueListingItemV1 {
   firstLine: string;
   /** The title, when GitHub reports one as a string. */
   title?: string;
+  /**
+   * The creator's relation to the repository (`author_association`:
+   * `OWNER`, `MEMBER`, `COLLABORATOR`, `CONTRIBUTOR`, `NONE`, ...), when
+   * GitHub reports one as a non-empty string.
+   */
+  authorAssociation?: string;
 }
 
 /** One issue or pull request the sentinel App created. */

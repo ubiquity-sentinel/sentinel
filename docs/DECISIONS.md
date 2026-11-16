@@ -5125,12 +5125,21 @@ filing starts only once this change itself is the installed runtime.
   - Daily brake, content-independent and independent of the App listing: no
     filing on a UTC day (from midnight less ten minutes of skew) on which the
     created-since listing, read without the `creator` filter, shows an issue the
-    App opened in the target (any title or body) or any author's issue with a
-    base-repair marker or exact title (`filed_today`); a listing that cannot be
-    read or does not reach back past that instant files nothing
-    (`day_unproven`). Within one run each repository gets one create attempt a
-    UTC day, whatever GitHub answered and under however many installation ids
-    its records are held (`attempted_this_run`).
+    App opened in the target (any title or body), or an issue with a base-repair
+    marker on its first line that an owner, member or collaborator of the target
+    opened (GitHub's `author_association`, `BASE_REPAIR_TRUSTED_ASSOCIATIONS`):
+    a create answered under another author, since Sentinel's only credentials
+    for a target are the App's and, as a stopgap, the owner's (`filed_today`).
+    Nobody else's issue holds anything: the third review found that any GitHub
+    user could suppress filing for a day with an issue carrying the base-repair
+    title or marker, and a member's report in its own words holds nothing
+    either. A listing that cannot be read, does not reach back past that
+    instant, or holds a marked issue whose creator GitHub does not place, files
+    nothing (`day_unproven`). Within one run each repository gets one create
+    attempt a UTC day, whatever GitHub answered and under however many
+    installation ids its records are held (`attempted_this_run`); a create
+    answered under an outsider's login, possible only with an outsider's
+    credential in Sentinel's secrets, is held by that run's attempt alone.
   - Checks: the tip and held-head reads are strict, so a failed Actions job the
     read did not judge makes the commit unreadable (`checks_unreadable`,
     `head_checks_unreadable`), and more failed Actions jobs than the eight it
@@ -5138,9 +5147,10 @@ filing starts only once this change itself is the installed runtime.
 - Issues filed, at most (worst cases, nothing content-dependent): one per target
   per 14 days in normal operation, so at most 27 a year on ai.ubq.fi, the only
   target. If the creator listing silently returned only pull requests, or a
-  create were answered under another author, only the daily brake would hold:
-  one a UTC day (365 a year). Deleting the App's issue removes GitHub's only
-  record of it, so each deletion allows one more filing.
+  create were answered under an owner's, member's or collaborator's login, only
+  the daily brake would hold: one a UTC day (365 a year). Deleting the App's
+  issue removes GitHub's only record of it, so each deletion allows one more
+  filing.
 - Charged attempts per filed issue, at most: `BASE_REPAIR_CI_FIX_CAP` = 3
   charged CI fixes (owner's number pending; see the cap entry), then the
   uncharged park; with the base and every new head red no review is requested.

@@ -76,6 +76,7 @@ import type {
   HostedAutonomyDepsV1,
   HostedAutonomyGitHubV1,
   HostedBaseRepairIssuesV1,
+  HostedIssueListingItemV1,
 } from "./hosted-autonomy-types.ts";
 
 /**
@@ -128,17 +129,32 @@ export const BASE_REPAIR_ISSUE_WINDOW_MS = 14 * 24 * 60 * 60_000;
  * `creator` filter and is the one the follow-up pass already reads live:
  * since the start of the current UTC day, less `BASE_REPAIR_DAY_SKEW_MS` of
  * clock skew, ANY issue the App opened in the target (any title or body, so
- * rewriting both cannot lift it), and any author's issue that looks like a
- * base-repair issue (`isBaseRepairListed`; a create GitHub answered under
- * another author: 24 issues in two hours before), holds every new filing.
- * A listing that cannot be read or lists nothing older than that instant
- * (so cannot show it reached back that far) files nothing. Within a run, a
- * repository and UTC day get one create attempt at most. No state
- * Sentinel already persists records a filing: this pass writes none, and
- * the persisted shapes it could extend (the maintenance index, the metrics
- * ledger) have exact-key readers an older runtime would reject.
+ * rewriting both cannot lift it) holds every new filing, and so does an
+ * issue with a base-repair marker on its first line opened by one of
+ * `BASE_REPAIR_TRUSTED_ASSOCIATIONS` (a create GitHub answered under
+ * another author: 24 issues in two hours before the brake). Nobody else's
+ * issue holds anything, whatever it says (third review: any GitHub user
+ * could suppress filing for a day with the base-repair title). A listing
+ * that cannot be read, lists nothing older than that instant (so cannot
+ * show it reached back that far) or does not say who opened a marked issue
+ * files nothing. Within a run, a repository and UTC day get one create
+ * attempt at most. No state Sentinel already persists records a filing:
+ * this pass writes none, and the persisted shapes it could extend (the
+ * maintenance index, the metrics ledger) have exact-key readers an older
+ * runtime would reject.
  */
 export const BASE_REPAIR_DAY_SKEW_MS = 10 * 60_000;
+
+/**
+ * The creators, besides the App, whose base-repair-marked issue holds a
+ * filing (`author_association`): an owner, member or collaborator of the
+ * target. Sentinel's only credentials for a target are the App's and, as a
+ * stopgap, the owner's own, so a create GitHub answered under another
+ * author comes back as one of these; an outsider (`NONE`, `CONTRIBUTOR`,
+ * `FIRST_TIMER`, ...) never holds filing.
+ */
+export const BASE_REPAIR_TRUSTED_ASSOCIATIONS: readonly string[] = Object
+  .freeze(["OWNER", "MEMBER", "COLLABORATOR"]);
 /** Pages of the created-since listing one daily brake may read. */
 export const BASE_REPAIR_DAY_LISTING_PAGES = 5;
 const DAY_MS = 24 * 60 * 60_000;
@@ -328,12 +344,27 @@ async function filingRead(
 }
 
 /**
+ * Whether one created-since item holds filing whoever's listing it is: an
+ * issue the App opened (any title or body), or one with a base-repair
+ * marker on its first line opened by a trusted creator
+ * (`BASE_REPAIR_TRUSTED_ASSOCIATIONS`). Null when a marked issue does not
+ * say who opened it, which proves nothing.
+ */
+function holdsFiling(item: HostedIssueListingItemV1): boolean | null {
+  if (item.pullRequest) return false;
+  if (item.author === HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR) return true;
+  if (parseBaseRepairMarker(item.firstLine) === null) return false;
+  if (item.authorAssociation === undefined) return null;
+  return BASE_REPAIR_TRUSTED_ASSOCIATIONS.includes(item.authorAssociation);
+}
+
+/**
  * The daily brake's verdict from GitHub's own record (see
  * `BASE_REPAIR_DAY_SKEW_MS`), as the action suffix, or null when this UTC
- * day holds no filing: `day_unproven` for a listing that cannot be read or
- * does not reach back past the day's start, `filed_today=#n` for an issue
- * the App opened since then (whatever its title or body) or any author's
- * base-repair issue since then.
+ * day holds no filing: `day_unproven` for a listing that cannot be read,
+ * does not reach back past the day's start or holds a marked issue of
+ * unknown standing, `filed_today=#n` for an issue since then that holds
+ * filing (`holdsFiling`).
  */
 async function dayHold(
   issues: HostedBaseRepairIssuesV1,
@@ -347,11 +378,10 @@ async function dayHold(
   if (listing === null || !listing.some((item) => item.createdAt < since)) {
     return "day_unproven";
   }
-  const today = listing.find((item) =>
-    item.createdAt >= since && !item.pullRequest &&
-    (item.author === HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR ||
-      isBaseRepairListed(item))
-  );
+  const verdicts = listing.filter((item) => item.createdAt >= since)
+    .map((item) => ({ item, holds: holdsFiling(item) }));
+  if (verdicts.some(({ holds }) => holds === null)) return "day_unproven";
+  const today = verdicts.find(({ holds }) => holds)?.item;
   return today === undefined ? null : `filed_today=#${today.number}`;
 }
 

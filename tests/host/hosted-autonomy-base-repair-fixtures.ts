@@ -114,6 +114,8 @@ export const LIVE =
 export interface FakeItem {
   number: number;
   author: string;
+  /** GitHub's `author_association` (absent: `NONE`; null: not reported). */
+  association?: string | null;
   state: "open" | "closed";
   pullRequest: boolean;
   title: string;
@@ -165,6 +167,9 @@ export function toListingItem(item: FakeItem): HostedIssueListingItemV1 {
   return {
     number: item.number,
     author: item.author,
+    ...(item.association === null
+      ? {}
+      : { authorAssociation: item.association ?? "NONE" }),
     createdAt: item.createdAt,
     pullRequest: item.pullRequest,
     title: item.title,
@@ -239,8 +244,9 @@ export interface FakeTarget {
  * One target's fake GitHub. A create of mode `ok` or `lost` adds the issue
  * on GitHub at its clock; `lost` answers without proof (null), `refused`
  * adds nothing and answers null, `throws` adds nothing and rejects, and
- * `foreign` adds it under another author (a token that is not the App's)
- * and answers null, as the real create does for an author it did not expect.
+ * `foreign` adds it under another author (a token that is not the App's:
+ * the owner's own, a member of the target) and answers null, as the real
+ * create does for an author it did not expect.
  */
 export function fakeTarget(
   name: string,
@@ -329,7 +335,9 @@ export function fakeTarget(
           appIssue(number, input.body.split("\n")[0], {
             title: input.title,
             createdAt: target.now,
-            ...(mode === "foreign" ? { author: "a-person" } : {}),
+            ...(mode === "foreign"
+              ? { author: "a-person", association: "MEMBER" }
+              : {}),
           }),
         );
         return Promise.resolve(mode === "ok" ? number : null);

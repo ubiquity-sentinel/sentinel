@@ -139,8 +139,16 @@ Deno.test("base repair listing: the daily brake reads every author's items, newe
   const requested: { url: string; method: string; body: unknown }[] = [];
   const listed = await withPages(
     [[
-      item(9, { created_at: "2026-10-25T12:00:00Z" }),
-      item(8, { user: { login: "someone" }, pull_request: {} }),
+      item(9, {
+        created_at: "2026-10-25T12:00:00Z",
+        author_association: "NONE",
+      }),
+      item(8, {
+        user: { login: "someone" },
+        pull_request: {},
+        author_association: "MEMBER",
+      }),
+      item(7, { user: { login: "other" }, author_association: "" }),
     ]],
     () =>
       issues().listCreatedSince({
@@ -149,10 +157,14 @@ Deno.test("base repair listing: the daily brake reads every author's items, newe
       }),
     requested,
   );
-  assert.deepEqual(listed?.map((entry) => [entry.number, entry.author]), [
-    [9, APP],
-    [8, "someone"],
-  ]);
+  assert.deepEqual(
+    listed?.map((entry) => [
+      entry.number,
+      entry.author,
+      entry.authorAssociation,
+    ]),
+    [[9, APP, "NONE"], [8, "someone", "MEMBER"], [7, "other", undefined]],
+  );
   assert.equal(listed?.[0].title, "Issue 9");
   assert.deepEqual(requested.map((request) => request.url), [
     `${REPO_URL}/issues?state=all&sort=created&direction=desc&per_page=100&page=1`,

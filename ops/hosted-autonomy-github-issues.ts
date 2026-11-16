@@ -69,6 +69,7 @@ export function parseIssueItem(
   const createdAt = Date.parse(created);
   if (!Number.isSafeInteger(createdAt)) return null;
   const title = item["title"];
+  const association = item["author_association"];
   return {
     number,
     author: login,
@@ -77,6 +78,9 @@ export function parseIssueItem(
       item["pull_request"] !== null,
     firstLine,
     ...(typeof title === "string" ? { title } : {}),
+    ...(typeof association === "string" && association.length > 0
+      ? { authorAssociation: association }
+      : {}),
   };
 }
 

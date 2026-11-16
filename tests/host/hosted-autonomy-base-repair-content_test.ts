@@ -32,6 +32,7 @@ import {
   HOUR,
   maintain,
   maintenanceDeps,
+  MARKER,
   NOW,
   P1,
   PERMIT2,
@@ -147,6 +148,40 @@ Deno.test("base repair content: any issue the App opened in the target holds fil
   });
   const filed = await maintain(onTip(other[AI].tip, NOW), other);
   assert.deepEqual(filed.baseRepair, [`${TAG}:filed=#9000`]);
+});
+
+Deno.test("base repair content: an outsider's issue holds nothing, whatever it says; a trusted creator's marked one holds the day", async () => {
+  // Today, before the pass: an issue that looks like the one it files.
+  const opened = (association: string | null, marked = true) =>
+    appIssue(8200, marked ? MARKER : "The development build is red.", {
+      author: "someone",
+      association,
+      createdAt: NOW - HOUR,
+    });
+  const cases: [string, FakeItem, string][] = [
+    // Any GitHub user (third review: this suppressed filing for a day).
+    ["an outsider", opened("NONE"), `${TAG}:filed=#9000`],
+    ["a past contributor", opened("CONTRIBUTOR"), `${TAG}:filed=#9000`],
+    ["a first-timer", opened("FIRST_TIME_CONTRIBUTOR"), `${TAG}:filed=#9000`],
+    // A member's own report, in its own words, holds nothing either.
+    ["a member's own words", opened("MEMBER", false), `${TAG}:filed=#9000`],
+    // A create GitHub answered under the owner's or a member's login.
+    ["a member", opened("MEMBER"), `${TAG}:filed_today=#8200`],
+    ["a collaborator", opened("COLLABORATOR"), `${TAG}:filed_today=#8200`],
+    ["the owner", opened("OWNER"), `${TAG}:filed_today=#8200`],
+    // A marked issue whose creator GitHub does not place proves nothing.
+    ["no association", opened(null), `${TAG}:day_unproven`],
+  ];
+  for (const [label, item, expected] of cases) {
+    const targets = redTargets({ issues: [item] });
+    const pass = await maintain(onTip(targets[AI].tip, NOW), targets);
+    assert.deepEqual(pass.baseRepair, [expected], label);
+    assert.equal(
+      targets[AI].created.length,
+      expected.endsWith("#9000") ? 1 : 0,
+      label,
+    );
+  }
 });
 
 Deno.test("base repair content: records held under two installation ids file one issue in a run", async () => {
