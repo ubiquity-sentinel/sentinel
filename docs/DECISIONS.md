@@ -5041,3 +5041,117 @@ second unavailable run in a row it still publishes its empty plan, and the
 serial pass of that run is the red job. Rollback: revert this change's commits;
 no state format changed, and an older runtime under this launcher keeps
 reporting `targets_empty`.
+## 2026-11-16: base-repair filing for ai.ubq.fi (owner decision 2026-11-15)
+
+Owner decision (2026-11-15, relayed by the round's coordinator), answering "Turn
+on base-repair for ai.ubq.fi? … Turning this on lets Sentinel file an issue
+there and spend charged attempts fixing it": "yes". It names
+`ubiquity/ai.ubq.fi` only. It does not cover `ubiquity/uusd.ubq.fi`,
+`ubiquity/permit2-rpc-manager` or any other target.
+
+Live record (`sentinel-state/repair` at `55455987`, 2026-11-15): five ai.ubq.fi
+records (PRs #1345, #1346, #1347, #1349 and #1350) wait at `work` in the
+CI-first gate's red-base hold on `development` at `002fe15f`, held since
+2026-11-13; uusd.ubq.fi (five records on `eb0386e0`) and permit2-rpc-manager
+(three on `9f570db0`) are in the same state. Nothing assigned a fix: filing had
+been off for every target since 027ecbbea0 (2026-10-25), and the `base_repair`
+phase read and filed nothing on every pass.
+
+It lands only after the change of the 2026-11-16 entry "CI-fix cap for
+base-repair tasks, landed ahead of filing" has been the installed runtime for at
+least one full generation (so it is also the rollback target of the install that
+brings this one) and the owner has confirmed the cap's value. The runtime gate
+below enforces the installed-runtime half in code.
+
+- Mechanism: `BASE_REPAIR_FILING_ENABLED` is replaced by
+  `BASE_REPAIR_FILING_TARGETS`, an exact `owner/name` allowlist holding only
+  `ubiquity/ai.ubq.fi`
+  ([ops/hosted-autonomy-base-repair.ts](../ops/hosted-autonomy-base-repair.ts)).
+  A held record of any other target is skipped before any GitHub read, so those
+  targets behave as before: nothing read, nothing filed. The test-only `filing`
+  override is removed, so no caller can file for an unlisted target.
+- What is filed (unchanged): one unlabelled issue titled
+  `CI is failing on <branch>`. Its body is fixed text with
+  `<!-- sentinel:base-repair:<branch>@<tip> -->` on the first line, the branch,
+  the tip SHA and at most 20 failing check names, each in the runtime's trusted
+  check-name shape (`trustedCheckName`) or else the fixed stand-in
+  `check with an unsupported name`. Only checks red on both the tip and one of
+  the first three held heads are listed, and none files nothing. A default
+  branch that is not a plain ref name (`^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$`)
+  files nothing. No issue, pull request, comment, log or check-output text is
+  read into it. No state is written and no issue is edited, closed or commented.
+- Bounds, each failing toward not filing (an unreadable or short read files
+  nothing):
+  - Runtime gate
+    ([ops/hosted-autonomy-base-repair-runtime.ts](../ops/hosted-autonomy-base-repair-runtime.ts)):
+    the launcher files only while the release state's installed runtime is the
+    cap's commit (`BASE_REPAIR_CAP_REVISION`) or a descendant of it, proven by
+    GitHub's compare on the Sentinel repository through the corrected ancestry
+    check (`compareConfirmsAncestor`, one small page), and no installation is in
+    flight (`runtime_installing`); otherwise `runtime_uncapped` or
+    `runtime_unreadable`. Every runtime the pointer can then reach by
+    self-install descends from it, so a filed task is capped wherever it runs.
+    If the cap's stage landed under another commit id,
+    `BASE_REPAIR_CAP_REVISION` must name it before this lands.
+  - Listing proof: the App listing (`creator=ubiquity-sentinel[bot]`) must
+    answer, as the App's own pull requests, every pull request of the records
+    held on the tip (`listing_unproven`; `held_pull_foreign` when GitHub names
+    another author for a missing one, so the proof cannot pass while that record
+    is held; `issues_over_bound` when the App has more items than the bounded
+    listing reads).
+  - Per tip and per open issue (content-based, extra holds only): an issue
+    marked for this tip, open or closed, holds it (`filed_before`); an open
+    issue with a base-repair marker or the exact title holds every new one
+    (`open`).
+  - Hard bound, content-independent: no filing while the App listing holds
+    `BASE_REPAIR_ISSUE_LIMIT` = 1 issue the App opened in the target within
+    `BASE_REPAIR_ISSUE_WINDOW_MS` = 14 days, open or closed, whatever its title
+    or body (`recent`). Before this change the bound recognised an issue only by
+    its marker or exact title, so rewriting both refiled at the next pass. The
+    cost: any other issue the App opened there (a review follow-up, an outage
+    notice) also holds filing for 14 days after it.
+  - Daily brake, content-independent and independent of the App listing: no
+    filing on a UTC day (from midnight less ten minutes of skew) on which the
+    created-since listing, read without the `creator` filter, shows an issue the
+    App opened in the target (any title or body) or any author's issue with a
+    base-repair marker or exact title (`filed_today`); a listing that cannot be
+    read or does not reach back past that instant files nothing
+    (`day_unproven`). Within one run each repository gets one create attempt a
+    UTC day, whatever GitHub answered and under however many installation ids
+    its records are held (`attempted_this_run`).
+  - Checks: the tip and held-head reads are strict, so a failed Actions job the
+    read did not judge makes the commit unreadable (`checks_unreadable`,
+    `head_checks_unreadable`), and more failed Actions jobs than the eight it
+    judges is its own condition (`checks_over_bound`, `head_checks_over_bound`).
+- Issues filed, at most (worst cases, nothing content-dependent): one per target
+  per 14 days in normal operation, so at most 27 a year on ai.ubq.fi, the only
+  target. If the creator listing silently returned only pull requests, or a
+  create were answered under another author, only the daily brake would hold:
+  one a UTC day (365 a year). Deleting the App's issue removes GitHub's only
+  record of it, so each deletion allows one more filing.
+- Charged attempts per filed task, at most: one implementation start and
+  `BASE_REPAIR_CI_FIX_CAP` = 3 charged CI fixes (owner's number pending; see the
+  cap entry), then the uncharged park; with the base and every new head red no
+  review is requested. As for any task, a base moved by someone else's merge can
+  cost one conflict resolution per base tip, and once a head turns green review
+  rounds and P0 corrections stay uncapped (2026-10-30). The task is admitted as
+  an ordinary unlabelled issue and merges only through the ordinary gates (green
+  current-head CI, a completed current-head native review with no unresolved P0,
+  task acceptance, custody, accounting); its merge closes the issue
+  (`Resolves #N`) and the held records refresh onto the new tip.
+- Reason codes appear only in the run's result line
+  (`base-repair:<owner>/<name>:<reason>`); no workflow, run summary or other
+  reader parses or allow-lists them.
+- Not addressed (none P0 or P1): an issue whose tip went green before admission
+  still costs an implementation; the hard bound also counts the App's other
+  issues in the target.
+- Another target needs its own owner decision recorded here and its full name
+  added to `BASE_REPAIR_FILING_TARGETS`.
+
+This supersedes, for ai.ubq.fi only, the "filing stays off" status of the
+2026-10-24 base-repair entry. Rollback: revert these commits; filing is then off
+for every target again and no state format changed. A revert does not close an
+issue already filed on ai.ubq.fi and does not stop a task already admitted from
+it: the runtime still recognises and works it as a base-repair task, with its CI
+fixes still capped (the cap is the earlier entry's and stays). Close the issue
+by hand to stop its charges.
