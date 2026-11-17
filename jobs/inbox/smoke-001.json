@@ -5,7 +5,8 @@
       "repository": "ubiquity-sentinel/sentinel",
       "base": "claude/great-ride-tu5r70",
       "prompt": "Smoke test of the agent-job lane.\n\nCreate the file jobs/smoke/smoke-001.txt containing three lines: the output of `uname -sr`, the output of `codex --version`, and the HTTP status code returned by `curl -s -o /dev/null -w '%{http_code}' https://registry.npmjs.org/`. Change nothing else.",
-      "minutes": 20
+      "minutes": 20,
+      "pr": false
     }
   ]
 }

@@ -19,6 +19,8 @@ Only request files that the pushed head commit adds or changes are run, so put
 all files of one batch in one commit. To run a job again, change its file (or
 add a new one) and push again.
 
+Use **Re-run failed jobs** to retry failed cells; the successful plan is reused. If a publish job fails after its cell succeeded, use **Re-run all jobs** to regenerate bundles for the current attempt. This starts the agents again.
+
 ## Request format
 
 ```json

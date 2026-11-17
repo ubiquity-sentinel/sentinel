@@ -4,6 +4,7 @@
  * repositories with a fake agent process. No model, network or credential.
  */
 import assert from "node:assert/strict";
+import { relative } from "node:path";
 import {
   type AgentJobsCellPorts,
   runAgentJobsCell,
@@ -72,7 +73,9 @@ Deno.test("agent jobs plan refuses invalid requests", () => {
 
 Deno.test("agent jobs cell bundles agent work and publish pushes it", async () => {
   const root = await Deno.makeTempDir({ prefix: "agent-jobs-" });
+  const originalCwd = Deno.cwd();
   try {
+    Deno.chdir(root);
     // A bare "GitHub" repository with one base commit on `main`.
     const remote = `${root}/remote.git`;
     const seed = `${root}/seed`;
@@ -214,7 +217,8 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
     const pulls: Array<Record<string, string>> = [];
     const publications = await publishAgentJobsCell({
       cell,
-      artifactDir: outDir,
+      // The workflow passes a relative directory; Git runs in another clone.
+      artifactDir: relative(Deno.cwd(), outDir),
       workRoot: `${root}/publish`,
       runTag: "77-1",
       writeToken: null,
@@ -285,6 +289,7 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
     assert.match(refused[0].detail, /publish failed: bundle tip/);
     assert.equal(refused[0].branch, null);
   } finally {
+    Deno.chdir(originalCwd);
     await Deno.remove(root, { recursive: true });
   }
 });

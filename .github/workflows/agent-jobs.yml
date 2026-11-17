@@ -52,6 +52,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
+      artifact-id: ${{ steps.plan-artifact.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -79,6 +80,7 @@ jobs:
             --allow-env=AGENT_JOBS_JSON,AGENT_JOBS_PER_CELL,AGENT_JOBS_MAX_CELLS,GITHUB_OUTPUT \
             ops/agent-jobs-plan.ts "${files[@]}"
       - uses: actions/upload-artifact@v4
+        id: plan-artifact
         with:
           name: agent-jobs-plan-${{ github.run_id }}-${{ github.run_attempt }}
           path: .agent-jobs/plan.json
@@ -133,8 +135,10 @@ jobs:
           permission-contents: read
       - uses: actions/download-artifact@v4
         with:
-          name: agent-jobs-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          # A failed-only rerun reuses the successful plan's original artifact.
+          artifact-ids: ${{ needs.plan.outputs.artifact-id }}
           path: .agent-jobs
+          merge-multiple: true
       - name: Run the cell's agents
         env:
           AGENT_JOBS_PLAN: .agent-jobs/plan.json

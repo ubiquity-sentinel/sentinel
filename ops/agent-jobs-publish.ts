@@ -8,6 +8,7 @@
  * `agent-jobs/<job>-<run>` branch. A draft pull request is opened only when
  * the job asked for one. It writes no Sentinel state and merges nothing.
  */
+import { resolve } from "node:path";
 import {
   cloneBranch,
   git,
@@ -76,7 +77,7 @@ async function publishOne(
   if (!/^[a-z0-9-]+\.bundle$/.test(result.bundle)) {
     throw new Error("bundle name is not a plain file name");
   }
-  const bundle = `${input.artifactDir}/${result.bundle}`;
+  const bundle = resolve(input.artifactDir, result.bundle);
   const directory = `${input.workRoot}/${result.id}`;
   const url = input.ports.remoteUrl(result.repository);
   await cloneBranch({
