@@ -36,6 +36,12 @@ export interface GitHubIssueV1 {
   body: string;
   state: "open" | "closed";
   author: string | null;
+  /**
+   * The author's relation to the repository as GitHub reports it at read
+   * time (`author_association`: `OWNER`, `MEMBER`, `COLLABORATOR`, ...).
+   * Absent when the response carries no known value, which proves nothing.
+   */
+  authorAssociation?: string;
   labels: string[];
   createdAt: number;
   updatedAt: number;

@@ -349,7 +349,10 @@ export class FakeGithub implements GitHubPort {
       title: issue.title ?? `issue ${issueNumber}`,
       body: issue.body ?? "",
       state: "open",
-      author: null,
+      author: issue.author ?? null,
+      ...(issue.authorAssociation === undefined
+        ? {}
+        : { authorAssociation: issue.authorAssociation }),
       labels: issue.labels ?? [],
       createdAt: issue.createdAt ?? T0,
       updatedAt: T0,
