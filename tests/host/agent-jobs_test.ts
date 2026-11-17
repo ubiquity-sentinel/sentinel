@@ -139,6 +139,11 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
         '      echo "ERROR: exceeded retry limit, last status: 429 Too Many Requests" >&2',
         "      exit 1; fi;;",
         "  starve) echo 'exceeded retry limit, last status: 429' >&2; exit 1;;",
+        "  drop)",
+        '    if test -f "$TMPDIR/dropped-once"; then echo resumed > work.txt',
+        '    else touch "$TMPDIR/dropped-once"; echo partial > partial.txt',
+        '      echo "ERROR: stream disconnected before completion: stream closed before response.completed" >&2',
+        "      exit 1; fi;;",
         "esac",
       ].join("\n"),
     );
@@ -166,6 +171,7 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
           { ...base, id: "commits", prompt: "own", pr: false },
           { ...base, id: "limited", prompt: "limit", pr: false },
           { ...base, id: "starved", prompt: "starve", pr: false, minutes: 3 },
+          { ...base, id: "dropped", prompt: "drop", pr: false },
           {
             ...base,
             id: "nosetup",
@@ -213,6 +219,7 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
         ["commits", "changed"],
         ["limited", "changed"],
         ["starved", "agent_failed"],
+        ["dropped", "changed"],
         ["nosetup", "setup_failed"],
       ],
     );
@@ -227,7 +234,9 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
       9,
       12,
       15,
+      15,
       18,
+      21,
       60,
       60,
     ]);
@@ -243,6 +252,10 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
       /rate limited \(429\) through 2 attempts/,
     );
     assert.ok(lines.includes("limited: model 429, restarting in 60s"));
+    // A dropped model stream restarts the agent in the same checkout.
+    assert.ok(
+      lines.includes("dropped: model stream dropped, restart 1 in 15s"),
+    );
     // The client home (model token) is removed once the agent exits.
     await assert.rejects(Deno.stat(`${root}/work/writes/client`));
     assert.deepEqual(
@@ -277,6 +290,7 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
         ["commits", "agent-jobs/commits-77-1"],
         ["limited", "agent-jobs/limited-77-1"],
         ["starved", null],
+        ["dropped", "agent-jobs/dropped-77-1"],
         ["nosetup", null],
       ],
     );
@@ -285,6 +299,15 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
     assert.equal(await pushed("agent-jobs/writes-77-1", "work.txt"), "hello");
     // Work the agent committed itself is published as it stands.
     assert.equal(await pushed("agent-jobs/commits-77-1", "own.txt"), "mine");
+    // The restarted agent continued in the checkout its first attempt left.
+    assert.equal(
+      await pushed("agent-jobs/dropped-77-1", "work.txt"),
+      "resumed",
+    );
+    assert.equal(
+      await pushed("agent-jobs/dropped-77-1", "partial.txt"),
+      "partial",
+    );
     assert.equal(
       await pushed("agent-jobs/hangs-77-1", "partial.txt"),
       "partial",

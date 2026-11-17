@@ -44,9 +44,27 @@ export const RATE_LIMIT_BACKOFF_MAX_SECONDS = 300;
 const RESTART_NOTE =
   "\n\n(Note: an earlier attempt at this task was cut off by a model rate limit. The working tree may already hold partial work; inspect it and continue.)";
 
-async function rateLimited(errFile: string): Promise<boolean> {
+/**
+ * Codex exits with this line when the model stream drops mid-response and its
+ * own reconnects are used up (seen after 30-40 minutes on long max-effort
+ * turns through the public gateway). The work so far is on disk, so the cell
+ * restarts the agent in the same checkout instead of ending the job.
+ */
+const DISCONNECTED_MARKER = "stream disconnected before completion";
+export const DISCONNECT_BACKOFF_SECONDS = 15;
+/** Restarts after dropped streams per job; the job deadline still applies. */
+export const DISCONNECT_RESTART_LIMIT = 40;
+const DISCONNECT_NOTE =
+  "\n\n(Note: an earlier attempt at this task was cut off by a dropped model connection. The working tree may already hold partial work, including commits; inspect it and continue from there. Commit small steps often.)";
+
+type Interruption = "rate_limit" | "disconnect" | null;
+
+async function interruption(errFile: string): Promise<Interruption> {
   const text = await Deno.readTextFile(errFile).catch(() => "");
-  return text.slice(-4000).includes(RATE_LIMITED_MARKER);
+  const tail = text.slice(-4000);
+  if (tail.includes(RATE_LIMITED_MARKER)) return "rate_limit";
+  if (tail.includes(DISCONNECTED_MARKER)) return "disconnect";
+  return null;
 }
 
 /**
@@ -256,6 +274,9 @@ async function runJob(
     let spentSeconds = 0;
     let attempt = 0;
     let limited = false;
+    let rateLimitAttempts = 0;
+    let disconnects = 0;
+    let restartNote = "";
     let agent: { code: number; timedOut: boolean };
     for (;;) {
       const logFile = `${root}/agent-${attempt}.log`;
@@ -264,21 +285,39 @@ async function runJob(
         seconds: Math.max(1, deadlineSeconds - spentSeconds),
         cwd: checkout,
         env: { ...env, CODEX_HOME: start.clientHome },
-        stdin: attempt === 0 ? job.prompt : job.prompt + RESTART_NOTE,
+        stdin: job.prompt + restartNote,
         logFile,
       });
       spentSeconds += (Date.now() - attemptStarted) / 1000;
-      limited = !agent.timedOut && agent.code !== 0 &&
-        await rateLimited(`${logFile}.err`);
-      if (!limited) break;
+      const cause: Interruption = !agent.timedOut && agent.code !== 0
+        ? await interruption(`${logFile}.err`)
+        : null;
+      limited = cause === "rate_limit";
+      if (cause === null) break;
+      if (cause === "disconnect") {
+        if (disconnects >= DISCONNECT_RESTART_LIMIT) break;
+        const wait = DISCONNECT_BACKOFF_SECONDS;
+        if (spentSeconds + wait >= deadlineSeconds) break;
+        disconnects += 1;
+        ports.log(
+          `${job.id}: model stream dropped, restart ${disconnects} in ${wait}s`,
+        );
+        await ports.sleep(wait);
+        spentSeconds += wait;
+        restartNote = DISCONNECT_NOTE;
+        attempt += 1;
+        continue;
+      }
       const wait = Math.min(
         RATE_LIMIT_BACKOFF_MAX_SECONDS,
-        RATE_LIMIT_BACKOFF_SECONDS * 2 ** attempt,
+        RATE_LIMIT_BACKOFF_SECONDS * 2 ** rateLimitAttempts,
       );
       if (spentSeconds + wait >= deadlineSeconds) break;
       ports.log(`${job.id}: model 429, restarting in ${wait}s`);
       await ports.sleep(wait);
       spentSeconds += wait;
+      restartNote = RESTART_NOTE;
+      rateLimitAttempts += 1;
       attempt += 1;
     }
     // The model token must not outlive the agent on this runner.
@@ -322,7 +361,7 @@ async function runJob(
       return settle(
         "agent_failed",
         limited
-          ? `model rate limited (429) through ${attempt + 1} attempts`
+          ? `model rate limited (429) through ${rateLimitAttempts + 1} attempts`
           : await (async () => {
             const reason = await agentFailureReason(
               `${root}/agent-${attempt}.log.err`,
