@@ -404,9 +404,14 @@ Deno.test("parseBackupCiSuspension and parseBackupCiCalibration are closed", () 
   );
 });
 
-Deno.test("the targets file requires every repository id", () => {
+Deno.test("the targets file requires every repository id or an explicit null", () => {
   assert.deepEqual(parseBackupCiTargets([{ repository: REPO, id: REPO_ID }]), [
     { repository: REPO, id: REPO_ID },
+  ]);
+  // Automatic enrolment (2026-11-17): null is resolved by the pass and
+  // pinned by the store's calibration file; the key itself stays required.
+  assert.deepEqual(parseBackupCiTargets([{ repository: REPO, id: null }]), [
+    { repository: REPO, id: null },
   ]);
   rejects(parseBackupCiTargets, [{ repository: REPO }]);
   rejects(parseBackupCiTargets, [{ repository: REPO, id: 0 }]);
@@ -418,7 +423,7 @@ Deno.test("the targets file requires every repository id", () => {
   rejects(
     parseBackupCiTargets,
     Array.from(
-      { length: 17 },
+      { length: 65 },
       (_, i) => ({ repository: `o/r${i}`, id: i + 1 }),
     ),
   );

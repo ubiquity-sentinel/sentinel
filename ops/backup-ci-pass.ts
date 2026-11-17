@@ -32,6 +32,7 @@ import {
   mergeBackupCiFile,
 } from "../src/github/backup-ci-store.ts";
 import type { BackupCiActionSourceV1 } from "./backup-ci-actions.ts";
+import { resolveBackupCiTargets } from "./backup-ci-enrol.ts";
 import {
   type BackupCiIngestDepsV1,
   type BackupCiIngestItemV1,
@@ -172,6 +173,8 @@ export class BackupCiPassChanges {
 
 function repoOf(target: BackupCiTargetV1): Repo {
   const [owner, name] = target.repository.split("/");
+  // `runBackupCiPass` resolves every enrolled row first (backup-ci-enrol.ts).
+  if (target.id === null) throw new Error("backup CI target id unresolved");
   return { owner, name, id: target.id };
 }
 
@@ -396,8 +399,12 @@ async function currentPlannedUnit(
 
 /** The whole pass; trees[k] is slot k's tar (`<workDir>/trees/<k>.tar`). */
 export async function runBackupCiPass(
-  deps: BackupCiPassDepsV1,
+  input: BackupCiPassDepsV1,
 ): Promise<BackupCiPassFileV1> {
+  const deps: BackupCiPassDepsV1 = {
+    ...input,
+    targets: await resolveBackupCiTargets(input),
+  };
   const changes = new BackupCiPassChanges();
   await ingest(deps, changes);
   const units: BackupCiPassUnitV1[] = [];

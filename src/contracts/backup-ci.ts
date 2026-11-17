@@ -155,11 +155,19 @@ export type BackupCiNoEvidenceReasonV1 =
   | (typeof BACKUP_CI_NO_LEG_REASONS)[number]
   | (typeof BACKUP_CI_LEG_RAN_REASONS)[number];
 
-/** One `sentinel.backup-ci-targets.json` row. */
+/**
+ * One `sentinel.backup-ci-targets.json` row. `id: null` is an automatically
+ * enrolled target (2026-11-17): the trusted pass resolves the id from the
+ * target's own repository read, and the store's calibration file pins it (a
+ * runner cannot stand in before that file exists, and every later commit
+ * file and the pass itself must bind the same id).
+ */
 export interface BackupCiTargetV1 {
   repository: `${string}/${string}`;
-  id: number;
+  id: number | null;
 }
+/** At most this many backup target rows (the committed target set is 30). */
+export const BACKUP_CI_MAX_TARGETS = 64;
 export interface BackupCiEntryKeyV1 {
   context: BackupCiContextV1;
   workflowPath: string;

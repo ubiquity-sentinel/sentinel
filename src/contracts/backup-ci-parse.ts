@@ -11,6 +11,7 @@ import type { GitSha } from "./brands.ts";
 import { canonicalStringify } from "./canonical.ts";
 import {
   BACKUP_CI_MAX_EXCERPT_BYTES,
+  BACKUP_CI_MAX_TARGETS,
   BACKUP_CI_UNSUPPORTED,
   type BackupCiCalibrationV1,
   type BackupCiCommitFileV1,
@@ -364,13 +365,17 @@ export function parseBackupCiCalibration(
   };
 }
 
-/** `sentinel.backup-ci-targets.json`: every row names its repository id. */
+/**
+ * `sentinel.backup-ci-targets.json`: every row names its repository id, or
+ * `null` for an automatically enrolled target whose id the trusted pass
+ * resolves and the store's calibration file pins (the key stays required).
+ */
 export function parseBackupCiTargets(input: unknown): BackupCiTargetV1[] {
-  const targets = expectArray(input, "$", 16, (v, at) => {
+  const targets = expectArray(input, "$", BACKUP_CI_MAX_TARGETS, (v, at) => {
     const o = obj(v, at, "repository id");
     return {
       repository: text(o.repository, `${at}.repository`, REPO_RE, 140),
-      id: id(o.id, `${at}.id`),
+      id: expectNullable(o.id, `${at}.id`, id),
     } as BackupCiTargetV1;
   });
   const names = targets.map((t) => t.repository);

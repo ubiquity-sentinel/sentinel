@@ -178,7 +178,7 @@ Deno.test("the four supervisor steps bind and allow SENTINEL_BACKUP_CI", async (
   }
 });
 
-Deno.test("the backup targets are committed targets with ids, never the self target", async () => {
+Deno.test("the backup targets enrol every ubiquity committed target, never the self target", async () => {
   const targets = parseBackupCiTargets(
     JSON.parse(await Deno.readTextFile("sentinel.backup-ci-targets.json")),
   );
@@ -195,8 +195,22 @@ Deno.test("the backup targets are committed targets with ids, never the self tar
       "the read token is minted for ubiquity only",
     );
   }
+  // Automatic enrolment (2026-11-17): the workflow mints the target read
+  // token for exactly these rows, so every ubiquity target is listed and an
+  // unknown id is `null` (resolved by the pass, pinned by calibration).
+  assert.deepEqual(
+    targets.map((target) => target.repository).sort(),
+    committed.filter((slug) => slug.startsWith("ubiquity/")).sort(),
+  );
+  assert.equal(
+    targets.find((t) => t.repository === "ubiquity/passport.ubq.fi")?.id,
+    1254699258,
+  );
   assert.throws(() =>
     parseBackupCiTargets([{ repository: "ubiquity/passport.ubq.fi" }])
+  );
+  assert.throws(() =>
+    parseBackupCiTargets([{ repository: "ubiquity/prospector", id: "1" }])
   );
 });
 

@@ -150,14 +150,18 @@ export function selectBackupStandIns(
   const { file, target } = input;
   if (input.mode === "off" || file === null) return selection;
   const [owner, name] = target.repository.split("/");
+  // An automatically enrolled row (no committed id) binds the id its store
+  // calibration file pinned; with neither, nothing binds.
+  const pinned = target.id ?? input.calibration?.repository.id ?? null;
   if (
+    pinned === null ||
     file.repository.owner !== owner || file.repository.name !== name ||
-    file.repository.id !== target.id || file.commit !== input.commit
+    file.repository.id !== pinned || file.commit !== input.commit
   ) {
     selection.refusals.push("binding:file");
     return selection;
   }
-  const calibration = input.calibration?.repository.id === target.id
+  const calibration = input.calibration?.repository.id === pinned
     ? input.calibration
     : null;
   const usable = (entry: BackupCiEntryV1) =>

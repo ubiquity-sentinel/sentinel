@@ -143,10 +143,14 @@ class BackupCiStoreReader implements BackupCiReaderV1 {
       const parsedCalibration = calibration === null
         ? null
         : parseBackupCiCalibration(calibration);
+      // An enrolled row without a committed id binds the id the store's
+      // calibration file pinned. Without that file nothing binds (and no
+      // runner is calibrated), so the commit file reads as absent.
+      const pinned = target.id ?? parsedCalibration?.repository.id ?? null;
       const binds = (r: { owner: string; name: string; id: number }) =>
-        r.owner === owner && r.name === name && r.id === target.id;
+        r.owner === owner && r.name === name && r.id === pinned;
       if (
-        parsedFile !== null &&
+        parsedFile !== null && pinned !== null &&
         (!binds(parsedFile.repository) || parsedFile.commit !== sha)
       ) return invalid("backup CI commit file does not bind its path");
       if (
@@ -158,7 +162,7 @@ class BackupCiStoreReader implements BackupCiReaderV1 {
       }
       return {
         kind: "ok",
-        file: parsedFile,
+        file: pinned === null ? null : parsedFile,
         suspensions: suspensions.filter((s) => s !== null),
         calibration: parsedCalibration,
         tip,
