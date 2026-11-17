@@ -93,7 +93,8 @@ jobs:
   cell:
     name: cell (${{ matrix.cellId }})
     needs: plan
-    runs-on: ubuntu-latest
+    # The job's `runner` field picks the hosted runner kind (jobs/README.md).
+    runs-on: ${{ matrix.runner || 'ubuntu-latest' }}
     timeout-minutes: 360
     environment:
       name: ${{ vars.SENTINEL_AGENT_JOBS_ENVIRONMENT || 'sentinel-supervisor' }}
@@ -105,6 +106,13 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
+      # The cell host bounds each agent with coreutils `timeout`, which macOS
+      # does not ship.
+      - name: Install coreutils (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install coreutils
+          echo "$(brew --prefix coreutils)/libexec/gnubin" >> "$GITHUB_PATH"
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: v2.x

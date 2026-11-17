@@ -53,6 +53,35 @@ Deno.test("agent jobs plan keeps one repository owner per cell", () => {
   );
 });
 
+Deno.test("agent jobs plan gives each runner kind its own cells", () => {
+  const plan = planAgentJobs({
+    jobs: [
+      job("x1"),
+      job("m1", "ubiquity/a", { runner: "macos-arm64" }),
+      job("a1", "ubiquity/b", { runner: "linux-arm64" }),
+      job("m2", "ubiquity/b", { runner: "macos-arm64" }),
+    ],
+  }, { maxCells: 3 });
+  assert.deepEqual(
+    plan.cells.map((cell) => [
+      cell.owner,
+      cell.runner,
+      cell.jobs.map((item) => item.id).join(","),
+    ]),
+    [
+      ["ubiquity", "ubuntu-latest", "x1"],
+      ["ubiquity", "macos-latest", "m1,m2"],
+      ["ubiquity", "ubuntu-24.04-arm", "a1"],
+    ],
+  );
+  assert.equal(plan.cells[0].jobs[0].runner, "linux-x64");
+  assert.throws(
+    () =>
+      planAgentJobs({ jobs: [job("w1", "ubiquity/a", { runner: "windows" })] }),
+    /runner must be one of linux-x64, linux-arm64, macos-arm64/,
+  );
+});
+
 Deno.test("agent jobs plan refuses invalid requests", () => {
   const refuse = (request: unknown, pattern: RegExp, overrides = {}) =>
     assert.throws(() => planAgentJobs(request, overrides), pattern);
@@ -118,6 +147,7 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
       setup: ["touch setup-ran", "echo setup-ran >> .git/info/exclude"],
       minutes: 5,
       model: null,
+      runner: "linux-x64" as const,
     };
     const plan: AgentJobsPlanV1 = {
       schema: "sentinel.agent-jobs.plan/v1",
@@ -125,6 +155,7 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
         cellId: "c01",
         owner: "ubiquity",
         repositories: "a",
+        runner: "ubuntu-latest",
         timeoutMinutes: 35,
         jobs: [
           { ...base, id: "writes", prompt: "write hello", pr: true },

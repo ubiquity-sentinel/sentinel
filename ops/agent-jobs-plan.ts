@@ -31,6 +31,17 @@ const REPOSITORY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9._-]+$/;
 const REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,199}$/;
 const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
+/**
+ * Hosted runner kinds a job may ask for, and the `runs-on` label of each.
+ * The default stays the x64 Linux runner every job used before this field.
+ */
+export const AGENT_JOB_RUNNERS = {
+  "linux-x64": "ubuntu-latest",
+  "linux-arm64": "ubuntu-24.04-arm",
+  "macos-arm64": "macos-latest",
+} as const;
+export type AgentJobRunner = keyof typeof AGENT_JOB_RUNNERS;
+
 /** One validated coding job; one job is one agent. */
 export interface AgentJobV1 {
   id: string;
@@ -45,6 +56,8 @@ export interface AgentJobV1 {
   model: string | null;
   /** Open a draft pull request for the pushed branch. */
   pr: boolean;
+  /** Hosted runner kind the agent runs on. */
+  runner: AgentJobRunner;
 }
 
 export interface AgentJobsCellV1 {
@@ -52,6 +65,8 @@ export interface AgentJobsCellV1 {
   owner: string;
   /** Comma-separated repository names for the App token mint. */
   repositories: string;
+  /** `runs-on` label; every job of a cell asked for this runner kind. */
+  runner: string;
   timeoutMinutes: number;
   jobs: AgentJobV1[];
 }
@@ -96,11 +111,12 @@ function parseJob(value: unknown): AgentJobV1 {
     "minutes",
     "model",
     "pr",
+    "runner",
   ];
   for (const key of Object.keys(value)) {
     if (!known.includes(key)) fail(`unknown job field ${key}`);
   }
-  const { id, repository, base, prompt, setup, model, pr } = value;
+  const { id, repository, base, prompt, setup, model, pr, runner } = value;
   if (typeof id !== "string" || !ID_PATTERN.test(id)) {
     fail("job id must match [a-z0-9][a-z0-9-]{0,39}");
   }
@@ -126,6 +142,16 @@ function parseJob(value: unknown): AgentJobV1 {
   if (pr !== undefined && typeof pr !== "boolean") {
     fail(`job ${id}: pr must be a boolean`);
   }
+  if (
+    runner !== undefined && runner !== null &&
+    (typeof runner !== "string" || !Object.hasOwn(AGENT_JOB_RUNNERS, runner))
+  ) {
+    fail(
+      `job ${id}: runner must be one of ${
+        Object.keys(AGENT_JOB_RUNNERS).join(", ")
+      }`,
+    );
+  }
   return {
     id,
     repository,
@@ -141,6 +167,7 @@ function parseJob(value: unknown): AgentJobV1 {
     ),
     model: model ?? null,
     pr: pr ?? false,
+    runner: (runner ?? "linux-x64") as AgentJobRunner,
   };
 }
 
@@ -171,9 +198,10 @@ export function planAgentJobs(
   const ids = new Set(jobs.map((job) => job.id));
   if (ids.size !== jobs.length) fail("job ids must be unique");
 
+  // A cell is one runner with one App token: one owner and one runner kind.
   const byOwner = new Map<string, AgentJobV1[]>();
   for (const job of jobs) {
-    const owner = job.repository.split("/")[0];
+    const owner = `${job.repository.split("/")[0]}\n${job.runner}`;
     byOwner.set(owner, [...(byOwner.get(owner) ?? []), job]);
   }
   // Minimum cells per owner, then spend the spare budget where it is densest.
@@ -202,8 +230,9 @@ export function planAgentJobs(
   }
 
   const cells: AgentJobsCellV1[] = [];
-  for (const [owner, group] of byOwner) {
-    const count = counts.get(owner)!;
+  for (const [key, group] of byOwner) {
+    const count = counts.get(key)!;
+    const owner = key.split("\n")[0];
     const buckets: AgentJobV1[][] = Array.from({ length: count }, () => []);
     group.forEach((job, index) => buckets[index % count].push(job));
     for (const bucket of buckets) {
@@ -213,6 +242,7 @@ export function planAgentJobs(
         cellId: `c${String(cells.length + 1).padStart(2, "0")}`,
         owner,
         repositories: names.join(","),
+        runner: AGENT_JOB_RUNNERS[group[0].runner],
         timeoutMinutes: AGENT_JOBS_CELL_TIMEOUT_MINUTES,
         jobs: bucket,
       });
@@ -258,6 +288,7 @@ if (import.meta.main) {
       cellId: cell.cellId,
       owner: cell.owner,
       repositories: cell.repositories,
+      runner: cell.runner,
       timeoutMinutes: cell.timeoutMinutes,
     })),
   };
