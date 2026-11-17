@@ -317,6 +317,69 @@ Deno.test("an ordinary implementation cell never calls the reader", async () => 
   }
 });
 
+/** A planned fresh cell whose request carries `finding` and no checkout head. */
+async function freshCellWith(
+  rig: RigV1,
+  redBase: boolean,
+): Promise<MatrixCellPlanV1> {
+  const cell = await plannedCell(rig, false);
+  const request: ModelRunRequestV1 = {
+    ...cell.request,
+    reviewFindings: [
+      ciCorrectionFinding(rig.base, [{
+        name: "validate",
+        status: "completed",
+        conclusion: "failure",
+        head: rig.base,
+        startedAt: T0,
+        completedAt: T0,
+      } as GitHubCheckV1], redBase),
+    ],
+  };
+  return { ...cell, request, requestDigest: await matrixDigestV1(request) };
+}
+
+Deno.test("a base-repair start cell reads the existing evidence for its red base itself", async () => {
+  const rig = await makeRig([645], 1);
+  try {
+    const cell = await freshCellWith(rig, true);
+    assert.equal(cell.request.checkoutBase, undefined);
+    const reader = new FakeReader((input) =>
+      Promise.resolve(evidence1009(input))
+    );
+    const { result, calls, stdout, stderr } = await runCell(rig, cell, reader);
+    assert.equal(result.status, "completed", result.detail ?? "");
+    assert.equal(calls[0].request, cell.request, "the planned request as-is");
+    assert.match(
+      calls[0].options?.untrustedCiEvidence ?? "",
+      /<<<SENTINEL-UNTRUSTED-CI-OUTPUT [0-9a-f]{32}>>>/,
+    );
+    assert.equal(reader.inputs.length, 1);
+    assert.equal(reader.inputs[0].head, rig.base, "the red base's own runs");
+    assert.equal(reader.inputs[0].base, rig.base);
+    assert.ok(reader.inputs[0].prefer?.("validate"));
+    assert.deepEqual([stdout, stderr], [[], []]);
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+Deno.test("an ordinary CI finding without a checkout head still reads nothing", async () => {
+  const rig = await makeRig([645], 1);
+  try {
+    const cell = await freshCellWith(rig, false);
+    const reader = new FakeReader((input) =>
+      Promise.resolve(evidence1009(input))
+    );
+    const { result, calls } = await runCell(rig, cell, reader);
+    assert.equal(result.status, "completed");
+    assert.equal(reader.inputs.length, 0);
+    assert.equal(calls[0].arity, 1, "today's single-argument call");
+  } finally {
+    await rig.cleanup();
+  }
+});
+
 Deno.test("a hung reader is abandoned at the collection bound", async () => {
   const reader = new FakeReader(() => new Promise<CiEvidenceV1>(() => {}));
   const request = {

@@ -56,6 +56,7 @@ import {
   BASE_REPAIR_CI_FIX_CAP_DETAIL,
   baseRepairCiFixCapped,
 } from "./base-repair.ts";
+import { baseRepairStartFinding } from "./base-repair-start.ts";
 import { confirmConflictResolution } from "./loop-conflict-resolution.ts";
 import {
   gateExistingHeadContinuation,
@@ -511,6 +512,18 @@ export async function prepareImplementationStart(
       counted(draft);
     });
   }
+  // A base-repair task's fresh start carries its red base's failing checks
+  // as its CI finding, for which a matrix cell reads the existing fenced CI
+  // evidence; an unread issue or base defers it, uncharged. Any other start
+  // reads nothing more (`baseRepairStartFinding`).
+  const baseRepair = conflict === null && findings === null &&
+      !rejectedHead && !continuation && record.target.head === null &&
+      baseRepairFindingOpen(deps)
+    ? await baseRepairStartFinding(deps, record, issue)
+    : { kind: "none" as const };
+  if (baseRepair.kind === "unavailable") {
+    return { kind: "deferred", detail: baseRepair.detail };
+  }
   const refusalFact = identicalAttemptRefusalFactV1(
     context.snapshot,
     record,
@@ -545,7 +558,11 @@ export async function prepareImplementationStart(
       : {}),
     issue,
     evidence: record.evidence,
-    ...(findings === null ? {} : { reviewFindings: findings }),
+    ...(findings !== null
+      ? { reviewFindings: findings }
+      : baseRepair.kind === "finding"
+      ? { reviewFindings: [baseRepair.finding] }
+      : {}),
     ...(part === null
       ? {}
       : { scopeNote: decompositionScopeNote(part.index, part.total) }),

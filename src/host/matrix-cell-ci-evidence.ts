@@ -10,7 +10,9 @@
  * are unchanged.
  *
  * Collection runs only for a CI correction request (the planner's CI finding
- * first, a `checkoutBase`, no `mergeBase`) and only within the time the start
+ * first, a `checkoutBase`, no `mergeBase`) or a base-repair task's fresh
+ * start (the base-repair finding first, for its red base; 2026-11-17), and
+ * only within the time the start
  * can spare: the window ends a full guard before the latest instant the
  * session still fits, so collecting can never turn into a `not_started`
  * refusal. Any failure (permission, rate limit, timeout, expired log, size)
@@ -31,6 +33,7 @@ import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import { OPERATION_MARGIN_MS } from "../repair/loop-bounds.ts";
 import {
+  CI_BASE_REPAIR_FINDING_PREFIX,
   isCiCorrectionFinding,
   trustedCheckName,
 } from "../repair/ci-rejection.ts";
@@ -84,14 +87,20 @@ export function cellCiEvidenceReader(input: {
 /** Grace past the reader's own deadline before the cell stops waiting. */
 const COLLECTION_GRACE_MS = 1_000;
 
-/** The red candidate head of a CI correction request, else null. */
+/**
+ * The red head of a CI correction request, else null: its candidate head
+ * (`checkoutBase`), or the red base itself for a base-repair task's fresh
+ * start, whose finding has the base-repair opening and no checkout head
+ * (`baseRepairStartFinding`, 2026-11-17). A conflict resolution never.
+ */
 export function ciCorrectionHead(request: ModelRunRequestV1): GitSha | null {
   const first = request.reviewFindings?.[0];
   if (first === undefined || !isCiCorrectionFinding(first)) return null;
-  if (request.checkoutBase === undefined || request.mergeBase !== undefined) {
-    return null;
-  }
-  return request.checkoutBase;
+  if (request.mergeBase !== undefined) return null;
+  if (request.checkoutBase !== undefined) return request.checkoutBase;
+  return first.message.startsWith(CI_BASE_REPAIR_FINDING_PREFIX)
+    ? request.base
+    : null;
 }
 
 /**
