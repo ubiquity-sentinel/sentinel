@@ -313,7 +313,13 @@ Deno.test("generic policy: exact env templates remain repairable", () => {
   for (const path of ["./.env.example", "nested\\.env.sample"]) {
     assert.equal(targetTouchesProtectedV1(policy, path), false, path);
   }
-  assert.deepEqual(ownerLandingTouch(policy, templates), { kind: "none" });
+  assert.deepEqual(
+    ownerLandingTouch(policy, templates, {
+      owner: "ubiquity",
+      name: "template-fixture",
+    }),
+    { kind: "none" },
+  );
 });
 
 Deno.test("generic policy: env templates respect explicit protected paths", () => {

@@ -210,7 +210,11 @@ export function createCandidatePreserver(
         base: candidate.base,
         head: candidate.head,
         publishedHead,
-        protectedPaths: publicationProtectedPaths(input.protectedPaths, record),
+        protectedPaths: publicationProtectedPaths(
+          input.protectedPaths,
+          repository,
+          record,
+        ),
       });
       if (!validated.ok) return validated;
       const finalGuard = await queueCheck();
@@ -249,7 +253,11 @@ export function createCandidatePreserver(
       ref,
       candidate,
       publishedHead,
-      protectedPaths: publicationProtectedPaths(input.protectedPaths, record),
+      protectedPaths: publicationProtectedPaths(
+        input.protectedPaths,
+        repository,
+        record,
+      ),
       sourcePath: input.sourcePath,
       restoreSource: before.value !== null,
       trustedPath: input.trustedPath,
