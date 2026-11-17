@@ -75,6 +75,11 @@ import {
 } from "./ci-first-policy.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
 import { absentExpectedChecks, decideCiGate } from "./loop-checks.ts";
+import {
+  hasTargetCiSuccess,
+  WORKFLOW_CI_SUCCESS_DETAIL,
+  workflowSuccessRequired,
+} from "./ci-success-rule.ts";
 import { selectMergeGateChecksV1 } from "./merge-gate-checks.ts";
 import {
   observeHeadFailure,
@@ -279,6 +284,22 @@ export async function gateReviewOnCi(
   const checks = observed.value.checks;
   const gating = selectMergeGateChecksV1(record.repository, checks).checks;
   const decision = decideCiGate(gating);
+  // 2026-11-17: no review round is spent on a head that changes a
+  // CI-executable path while its own (modified) CI ran no job to success; it
+  // waits like running CI and parks with its own reason after the bound.
+  if (
+    decision === "proceed" && !hasTargetCiSuccess(gating) &&
+    await workflowSuccessRequired(deps, record)
+  ) {
+    return awaitChecks(
+      deps,
+      context,
+      record,
+      [],
+      now,
+      () => WORKFLOW_CI_SUCCESS_DETAIL,
+    );
+  }
   if (decision === "proceed") {
     // Every existing run is green; the jobs GitHub has not created yet are
     // awaited like running ones (bounded, uncharged, the same park prefix),

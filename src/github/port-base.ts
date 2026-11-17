@@ -233,6 +233,13 @@ export abstract class GitHubPortBase {
     return this.client.readCommitParents(sha);
   }
 
+  readChangedPaths(
+    base: GitSha,
+    head: GitSha,
+  ): Promise<PortResultV1<string[] | null>> {
+    return this.client.readChangedPaths(base, head);
+  }
+
   readCommitTree(sha: GitSha): Promise<PortResultV1<GitSha | null>> {
     return this.client.readCommitTree(sha);
   }

@@ -47,6 +47,9 @@ export {
 /** Parents one commit may list (a merge has two; octopus merges more). */
 const COMMIT_PARENTS_MAX = 64;
 
+/** Files one comparison lists at most; a full list may be truncated. */
+const COMPARE_FILES_MAX = 300;
+
 export abstract class GitHubClientReads extends GitHubClientChecks {
   /** Host-authored base-review jobs; unrelated supervisor jobs are not task CI. */
   async readBaseReviewChecks(
@@ -219,6 +222,51 @@ export abstract class GitHubClientReads extends GitHubClientChecks {
       return portError("invalid", "GitHub API response is malformed");
     }
     return portOk(parsed.value);
+  }
+
+  /**
+   * The paths one exact `base...head` comparison changes (a rename's previous
+   * path included); null when either commit is unknown or GitHub may not have
+   * listed every file (a comparison lists at most `COMPARE_FILES_MAX`). One
+   * request: `per_page=1` bounds the commit list, never the file list.
+   */
+  async readChangedPaths(
+    base: GitSha,
+    head: GitSha,
+  ): Promise<PortResultV1<string[] | null>> {
+    if (!isGitSha(base) || !isGitSha(head)) {
+      return portError("invalid", "commit SHA is invalid");
+    }
+    const response = await this.request(
+      "GET",
+      `/repos/${
+        repoPath(this.repository)
+      }/compare/${base}...${head}?per_page=1`,
+    );
+    if (!response.ok) return response;
+    if (response.value.status === 404) return portOk(null);
+    return parseWire(response.value, (value) => {
+      const files = expectRecord(value, "$").files;
+      if (files === undefined) return [];
+      const paths = expectArray(
+        files,
+        "$.files",
+        COMPARE_FILES_MAX,
+        (item, path) => {
+          const file = expectRecord(item, path);
+          const named = [file.filename, file.previous_filename].filter((
+            name,
+          ) => name !== undefined && name !== null);
+          for (const name of named) {
+            if (typeof name !== "string" || name.length === 0) {
+              fail(`${path}.filename`, "wrong_type", "expected a file path");
+            }
+          }
+          return named as string[];
+        },
+      );
+      return paths.length >= COMPARE_FILES_MAX ? null : paths.flat();
+    });
   }
 
   /** The exact parents of one commit, in order; null when it does not exist. */

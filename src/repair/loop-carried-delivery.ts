@@ -91,7 +91,11 @@ import {
 } from "./ci-rejection.ts";
 import { ensureBaseRefreshIntent } from "./loop-base-refresh.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
-import { absentExpectedChecks, decideCiGate } from "./loop-checks.ts";
+import {
+  absentExpectedChecks,
+  decideCiGate,
+  decideHeadCiGate,
+} from "./loop-checks.ts";
 import { selectMergeGateChecksV1 } from "./merge-gate-checks.ts";
 import {
   observeHeadFailure,
@@ -230,7 +234,7 @@ export async function spentOnMovedBase(
     record.repository,
     observed.value.checks,
   ).checks;
-  const decision = decideCiGate(gating);
+  const decision = await decideHeadCiGate(deps, record, gating);
   if (decision === "wait") {
     return boundedWait(
       deps,
@@ -570,7 +574,7 @@ export async function executeCarriedDelivery(
     record.repository,
     checks.value.checks,
   ).checks;
-  const decision = decideCiGate(gating);
+  const decision = await decideHeadCiGate(deps, record, gating);
   if (decision !== "proceed" && decision !== "wait") {
     const observed = await observeHeadFailure(deps, record);
     if (observed === null) {

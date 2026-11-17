@@ -211,6 +211,8 @@ export interface FakeGithubOptionsV1 {
   pushOutcome?: "applied" | "ambiguous";
   /** One-shot definitive refusal detail of the next push (nothing written). */
   pushRefusal?: string;
+  /** Paths every exact comparison reports (default none; null: not whole). */
+  changedPaths?: string[] | null | "unavailable";
   pushFailNext?: boolean;
   createOutcome?: "applied" | "ambiguous";
   createFailNext?: boolean;
@@ -238,6 +240,8 @@ export class FakeGithub implements GitHubPort {
   /** Explicit trusted publisher identity; the loop must use this value. */
   readonly reviewerIdentity: string = "chatgpt-codex-connector[bot]";
   readonly calls: string[] = [];
+  /** Exact `base...head` comparisons read (2026-11-17 success rule). */
+  readonly changedPathReads: string[] = [];
   readonly drains: ReviewDrainRequestV1[] = [];
   drainResult: PortResultV1<ReviewDrainReportV1> = portOk({
     ok: true,
@@ -466,6 +470,23 @@ export class FakeGithub implements GitHubPort {
       requireBranchUpToDate: false,
       enforceAdmins: false,
     }));
+  }
+
+  /**
+   * The exact comparison's changed paths (2026-11-17 success rule): the
+   * configured list, none by default, so an existing case decides as before.
+   */
+  readChangedPaths(
+    base: GitSha,
+    head: GitSha,
+  ): Promise<PortResultV1<string[] | null>> {
+    // Kept apart from `calls`, whose exact sequences existing cases assert.
+    this.changedPathReads.push(`${base}...${head}`);
+    const paths = this.options.changedPaths;
+    if (paths === "unavailable") {
+      return Promise.resolve(portError("unavailable", "comparison down"));
+    }
+    return Promise.resolve(portOk(paths === undefined ? [] : paths));
   }
 
   readRef(
