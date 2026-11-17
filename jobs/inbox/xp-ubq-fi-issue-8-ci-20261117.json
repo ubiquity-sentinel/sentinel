@@ -1,0 +1,12 @@
+{
+  "jobs": [
+    {
+      "id": "xp-ubq-fi-issue-8-ci-20261117",
+      "repository": "ubiquity/xp.ubq.fi",
+      "model": "gpt-6.2-sol",
+      "minutes": 15,
+      "pr": true,
+      "prompt": "Add a pull_request CI workflow that runs bun run check\n\nContext: https://github.com/ubiquity/xp.ubq.fi/issues/8 reports that this repository has no CI workflow under `.github/workflows/` that runs on `pull_request`. This task adds only that workflow file. The `check` script it calls is being added to package.json by a separate pull request; do not add it here.\n\nCreate `.github/workflows/ci.yml` with exactly this behavior:\n- name: `CI`\n- triggers: `pull_request` (all branches) and `push` to `development`\n- top-level `permissions:` with only `contents: read`\n- a `concurrency` group keyed on the workflow and ref, with `cancel-in-progress: true`\n- one job named `check` on `ubuntu-latest` with `timeout-minutes: 15` and these steps in order: `actions/checkout@v4`; `oven-sh/setup-bun@v2`; `bun install --frozen-lockfile`; `bun run check`\n- no secrets, no deploy steps, no other jobs\n\nConstraints:\n- Change no other file. Do not touch `.github/workflows/cloudflare-deploy.yml`, package.json, source or tests.\n- Do not try to make `bun run check` pass; on this base branch the script does not exist yet, and that is expected.\n\nDone when `.github/workflows/ci.yml` exists, parses as valid YAML (check it with `bun -e` and `Bun.YAML.parse`, or any YAML parser), and `git status --short` shows it as the only change. In your final message, state that the workflow will fail until the pull request adding the `check` script is merged."
+    }
+  ]
+}
