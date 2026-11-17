@@ -119,7 +119,12 @@ Deno.test("fan-out summary line: strict, bounded and count-only", () => {
     status: "applied",
     head: SHA1,
     applied: [{ repository: ALPHA, transitions: 3 }],
-    rejected: [{ repository: BETA, reason: "base_moved" }],
+    rejected: [
+      { repository: BETA, reason: "base_moved" },
+      { repository: BETA, reason: "unauthenticated" },
+      { repository: BETA, reason: "unauthenticated" },
+    ],
+    unauthenticatedChecks: ["job_log", "seal"],
     repositoryWallMs: [900, 400],
     applyMs: 120,
     handedBack: 2,
@@ -139,7 +144,7 @@ Deno.test("fan-out summary line: strict, bounded and count-only", () => {
     deltasRejected: {
       missing: 0,
       refused: 0,
-      unauthenticated: 0,
+      unauthenticated: 2,
       invalid: 0,
       duplicate: 0,
       base_moved: 1,
@@ -154,10 +159,53 @@ Deno.test("fan-out summary line: strict, bounded and count-only", () => {
       "review:review_pending": { steps: 2, kept: 2, deferred: 0, elapsedMs: 9 },
       "work:unavailable": { steps: 1, kept: 0, deferred: 1, elapsedMs: 4 },
     },
+    unauthenticatedBy: {
+      ambiguous: 0,
+      provenance: 0,
+      archive: 0,
+      shape: 0,
+      job: 0,
+      job_log: 1,
+      marker: 0,
+      digest: 0,
+      seal: 1,
+    },
   });
   assert.equal(line.includes("alpha"), false, "no repository name");
   const value = JSON.parse(line);
   assert.ok(parseFanoutSummaryLine({ ...value, recordsSerialOwned: null }));
+  // The breakdown is printed last: every earlier key keeps its bytes, and a
+  // line printed before the breakdown existed still parses.
+  assert.ok(line.endsWith(
+    ',"unauthenticatedBy":{"ambiguous":0,"provenance":0,"archive":0,' +
+      '"shape":0,"job":0,"job_log":1,"marker":0,"digest":0,"seal":1}}',
+  ));
+  const { unauthenticatedBy, ...previous } = value;
+  assert.equal(
+    line,
+    JSON.stringify(previous).slice(0, -1) + ',"unauthenticatedBy":' +
+      JSON.stringify(unauthenticatedBy) + "}",
+  );
+  assert.deepEqual(
+    parseFanoutSummaryLine(previous),
+    (({ unauthenticatedBy: _by, ...rest }) => rest)(parsed!),
+  );
+  for (
+    const by of [
+      { ...unauthenticatedBy, seal: 2 },
+      { ...unauthenticatedBy, other: 0 },
+      { ...unauthenticatedBy, seal: "1" },
+      (({ seal: _seal, ...rest }) => rest)(unauthenticatedBy),
+      null,
+      [],
+    ]
+  ) {
+    assert.equal(
+      parseFanoutSummaryLine({ ...value, unauthenticatedBy: by }),
+      null,
+      JSON.stringify(by),
+    );
+  }
   for (
     const stepKinds of [
       { "work:bogus": { steps: 1, kept: 1, deferred: 0, elapsedMs: 0 } },

@@ -40,6 +40,7 @@ import type {
 } from "./loop-types.ts";
 import { repairTransitionRefusalV1 } from "./repair-delta-rules.ts";
 import { logFanoutSummary } from "./fanout-summary-line.ts";
+import type { RepairDeltaUnauthenticatedV1 } from "./repair-delta-checks.ts";
 import {
   type FanoutStepKindsV1,
   fanoutStepKindsV1,
@@ -50,6 +51,8 @@ import {
   type RepairFanoutCellV1,
   type RepairFanoutPlanV1,
 } from "./repair-fanout-plan.ts";
+
+export type { RepairDeltaUnauthenticatedV1 };
 
 export type RepairDeltaRejectionV1 =
   | "missing"
@@ -70,6 +73,8 @@ export interface RepairDeltaArtifactV1 {
   envelope: unknown;
   /** The cell's authenticated artifact is its bounded refusal record. */
   refused?: true;
+  /** The finalize check that refused it (advisory; with `"unauthenticated"`). */
+  unauthenticated?: RepairDeltaUnauthenticatedV1;
 }
 
 export interface RepairDeltaApplyInputV1 {
@@ -89,6 +94,11 @@ export interface RepairDeltaApplyResultV1 {
     repository: RepositoryIdentityV1;
     reason: RepairDeltaRejectionV1;
   }[];
+  /**
+   * The failed check of each `unauthenticated` rejection, in rejection order
+   * (advisory, for the fan-out line's per-check breakdown only).
+   */
+  unauthenticatedChecks: RepairDeltaUnauthenticatedV1[];
   /** Wall time of each opened delta's repository pass (milliseconds). */
   repositoryWallMs: number[];
   /** Wall time of this application (milliseconds). */
@@ -203,6 +213,7 @@ export async function applyRepairDeltas(
 ): Promise<RepairDeltaApplyResultV1> {
   const started = deps.clock.now();
   const rejected: RepairDeltaApplyResultV1["rejected"] = [];
+  const unauthenticatedChecks: RepairDeltaUnauthenticatedV1[] = [];
   const opened: OpenedDeltaV1[] = [];
   const seen = new Set<string>();
   const binding = await repairFanoutBindingV1(input.plan);
@@ -226,6 +237,9 @@ export async function applyRepairDeltas(
     });
     if (!result.ok) {
       rejected.push({ repository: cell.repository, reason: result.reason });
+      if (result.reason === "unauthenticated") {
+        unauthenticatedChecks.push(artifact.unauthenticated ?? "seal");
+      }
       continue;
     }
     if (seen.has(key(result.delta.repository))) {
@@ -258,6 +272,7 @@ export async function applyRepairDeltas(
         transitions: delta.transitions.length,
       })),
       rejected: [...rejected, ...late],
+      unauthenticatedChecks,
       repositoryWallMs,
       applyMs: Math.max(0, deps.clock.now() - started),
       handedBack,

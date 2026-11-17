@@ -42,6 +42,7 @@ import {
   applyRepairDeltas,
   type RepairDeltaApplyResultV1,
   type RepairDeltaArtifactV1,
+  type RepairDeltaUnauthenticatedV1,
 } from "../repair/repair-delta-apply.ts";
 import {
   parseRepairFanoutPlanV1,
@@ -122,13 +123,18 @@ function provenanceOf(
   };
 }
 
-/** The one marker in the producer job's own log, inside its step window. */
+/**
+ * The one marker in the producer job's own log, inside its step window.
+ * `at.check` names the check in progress when it refuses (advisory only).
+ */
 async function cellMarker(
   reader: Reader,
   job: Json,
   input: RepairFanoutAuthInputV1,
   cellId: string,
+  at: { check: RepairDeltaUnauthenticatedV1 },
 ): Promise<Json> {
+  at.check = "job";
   if (
     job.run_id !== input.run.runId ||
     job.run_attempt !== input.run.runAttempt ||
@@ -150,7 +156,9 @@ async function cellMarker(
     start + TOLERANCE < instant(job.started_at) ||
     end > instant(job.completed_at) + TOLERANCE
   ) refuse();
+  at.check = "job_log";
   const log = await reader.download(`/jobs/${positive(job.id)}/logs`, false);
+  at.check = "marker";
   const found: Json[] = [];
   for (const line of log.bodyText.split("\n")) {
     const match = line.match(/^(\d{4}-\d{2}-\d{2}T\S+Z)\s+(\{.*\})\s*$/);
@@ -243,19 +251,30 @@ export async function authenticateRepairFanout(
       cells.push({ cellId: cell.cellId, envelope: null });
       continue;
     }
+    // The check in progress names a refusal on the advisory fan-out line.
+    const at: { check: RepairDeltaUnauthenticatedV1 } = { check: "ambiguous" };
     try {
       if (rows.length !== 1 || producers.length !== 1) refuse();
+      at.check = "provenance";
       provenance(rows[0]);
-      const envelope = decodeRepairDeltaArtifactV1(
-        only(await archive(rows[0]), "result.json"),
-      );
+      at.check = "archive";
+      const files = await archive(rows[0]);
+      at.check = "shape";
+      const envelope = decodeRepairDeltaArtifactV1(only(files, "result.json"));
       // A bounded refusal (written by the cell, or by its workflow when the
       // child never ran) carries no state: it is counted, never applied.
       if (parseRepairCellRefusalV1(envelope)?.cellId === cell.cellId) {
         cells.push({ cellId: cell.cellId, envelope: null, refused: true });
         continue;
       }
-      const marker = await cellMarker(reader, producers[0], input, cell.cellId);
+      const marker = await cellMarker(
+        reader,
+        producers[0],
+        input,
+        cell.cellId,
+        at,
+      );
+      at.check = "digest";
       if (
         typeof envelope !== "object" || envelope === null ||
         (envelope as Json).digest !== marker.deltaDigest
@@ -263,7 +282,11 @@ export async function authenticateRepairFanout(
       cells.push({ cellId: cell.cellId, envelope });
     } catch {
       // Not a sealed envelope: `applyRepairDeltas` counts it unauthenticated.
-      cells.push({ cellId: cell.cellId, envelope: "unauthenticated" });
+      cells.push({
+        cellId: cell.cellId,
+        envelope: "unauthenticated",
+        unauthenticated: at.check,
+      });
     }
   }
   return { plan, artifacts: cells };

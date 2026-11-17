@@ -15,6 +15,10 @@
  */
 import type { RepairDeltaApplyResultV1 } from "./repair-delta-apply.ts";
 import {
+  REPAIR_DELTA_UNAUTHENTICATED_CHECKS,
+  type RepairDeltaUnauthenticatedV1,
+} from "./repair-delta-checks.ts";
+import {
   type FanoutStepKindsV1,
   parseFanoutStepKindsV1,
 } from "./fanout-step-kinds.ts";
@@ -47,9 +51,16 @@ export interface FanoutSummaryLineV1 {
   /** Null when the application never read the repair state. */
   recordsSerialOwned: number | null;
   stepKinds: FanoutStepKindsV1;
+  /**
+   * `deltasRejected.unauthenticated` split by the closed check each delta
+   * failed (`REPAIR_DELTA_UNAUTHENTICATED_CHECKS`); the counts add up to that
+   * total. Printed last, so every earlier key keeps its exact bytes; a line
+   * printed before the breakdown existed parses without it.
+   */
+  unauthenticatedBy?: Record<RepairDeltaUnauthenticatedV1, number>;
 }
 
-const KEYS = [
+const BASE_KEYS = [
   "applyMs",
   "deltasApplied",
   "deltasRejected",
@@ -60,7 +71,10 @@ const KEYS = [
   "repositoryWallMs",
   "stepKinds",
   "transitionsApplied",
-].join();
+];
+const KEYS = BASE_KEYS.join();
+const BREAKDOWN_KEYS = [...BASE_KEYS, "unauthenticatedBy"].sort().join();
+const CHECKS = [...REPAIR_DELTA_UNAUTHENTICATED_CHECKS].sort().join();
 const REASONS = [
   "base_moved",
   "duplicate",
@@ -87,11 +101,26 @@ export function parseFanoutSummaryLine(
   const reasons = line.deltasRejected as Record<string, unknown> | null;
   const walls = line.repositoryWallMs;
   const stepKinds = parseFanoutStepKindsV1(line.stepKinds);
+  const keys = Object.keys(line).sort().join();
+  const split = keys === BREAKDOWN_KEYS;
+  const checks = line.unauthenticatedBy as Record<string, unknown> | null;
   if (
     stepKinds === null || !bounded(line.recordsDelegated, MAX_COUNT) ||
     (line.recordsSerialOwned !== null &&
       !bounded(line.recordsSerialOwned, MAX_COUNT)) ||
-    Object.keys(line).sort().join() !== KEYS ||
+    (keys !== KEYS && !split) ||
+    (split &&
+      (typeof checks !== "object" || checks === null ||
+        Array.isArray(checks) ||
+        Object.keys(checks).sort().join() !== CHECKS ||
+        !REPAIR_DELTA_UNAUTHENTICATED_CHECKS.every((check) =>
+          bounded(checks[check], MAX_COUNT)
+        ) ||
+        typeof reasons !== "object" || reasons === null ||
+        REPAIR_DELTA_UNAUTHENTICATED_CHECKS.reduce(
+            (total, check) => total + (checks[check] as number),
+            0,
+          ) !== reasons.unauthenticated)) ||
     line.kind !== FANOUT_SUMMARY_LINE_KIND ||
     typeof reasons !== "object" || reasons === null ||
     Array.isArray(reasons) ||
@@ -118,6 +147,16 @@ export function parseFanoutSummaryLine(
     recordsDelegated: line.recordsDelegated as number,
     recordsSerialOwned: line.recordsSerialOwned as number | null,
     stepKinds,
+    ...(split
+      ? {
+        unauthenticatedBy: Object.fromEntries(
+          REPAIR_DELTA_UNAUTHENTICATED_CHECKS.map((check) => [
+            check,
+            checks![check] as number,
+          ]),
+        ) as Record<RepairDeltaUnauthenticatedV1, number>,
+      }
+      : {}),
   };
 }
 
@@ -135,6 +174,10 @@ export function fanoutSummaryLine(
     transition_refused: 0,
   };
   for (const entry of result.rejected) rejected[entry.reason]++;
+  const unauthenticatedBy = Object.fromEntries(
+    REPAIR_DELTA_UNAUTHENTICATED_CHECKS.map((check) => [check, 0]),
+  ) as Record<RepairDeltaUnauthenticatedV1, number>;
+  for (const check of result.unauthenticatedChecks) unauthenticatedBy[check]++;
   const line = parseFanoutSummaryLine({
     kind: FANOUT_SUMMARY_LINE_KIND,
     deltasApplied: result.applied.length,
@@ -149,6 +192,7 @@ export function fanoutSummaryLine(
     recordsDelegated: result.recordsDelegated,
     recordsSerialOwned: result.recordsSerialOwned,
     stepKinds: result.stepKinds,
+    unauthenticatedBy,
   });
   return line === null ? null : JSON.stringify(line);
 }

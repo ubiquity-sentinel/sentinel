@@ -132,7 +132,37 @@ Deno.test("finalize applies two authenticated repair deltas in one write and rej
       line.kind === "sentinel_repair_fanout" && line.deltasApplied === 2
     ),
   );
+  // The edited body passed finalize's checks; opening it refused its seal.
+  assert.deepEqual(unauthenticatedBy(applied.lines), { ...NO_CHECKS, seal: 1 });
 });
+
+const NO_CHECKS = {
+  ambiguous: 0,
+  provenance: 0,
+  archive: 0,
+  shape: 0,
+  job: 0,
+  job_log: 0,
+  marker: 0,
+  digest: 0,
+  seal: 0,
+};
+
+/** The one fan-out line's closed per-check breakdown (and its exact total). */
+function unauthenticatedBy(lines: Record<string, unknown>[]): unknown {
+  const fanout = lines.filter((line) => line.kind === "sentinel_repair_fanout");
+  assert.equal(fanout.length, 1);
+  const line = fanout[0];
+  const by = line.unauthenticatedBy as Record<string, number>;
+  assert.equal(
+    Object.values(by).reduce((total, count) => total + count, 0),
+    (line.deltasRejected as Record<string, number>).unauthenticated,
+  );
+  // Printed last: every earlier key keeps its place and bytes.
+  assert.equal(Object.keys(line).at(-1), "unauthenticatedBy");
+  assert.equal(Object.keys(line).at(-2), "stepKinds");
+  return by;
+}
 
 Deno.test("finalize authenticates nothing for a foreign plan digest or a foreign producer", async () => {
   const [ALPHA] = REPOS;
@@ -164,6 +194,56 @@ Deno.test("finalize authenticates nothing for a foreign plan digest or a foreign
     "unauthenticated",
   ]);
   assert.equal(producer.value?.handedBack, 1, "only the stamp hand-back");
+  // Its marker names another revision: refused at the marker check.
+  assert.deepEqual(unauthenticatedBy(producer.lines), {
+    ...NO_CHECKS,
+    marker: 1,
+  });
+});
+
+Deno.test("finalize names the closed check a cell failed: an artifact of another run's provenance", async () => {
+  const [ALPHA, BETA] = REPOS;
+  const rig = makeRig([reviewing(ALPHA, 0), reviewing(BETA, 100)]);
+  const { fanout, envelopes } = await fanOut(rig);
+  const run = await actionsRun(rig, fanout, envelopes);
+  // beta's uploaded artifact claims another run's provenance.
+  const betaCell =
+    fanout.cells.find((cell) => cell.repository.name === "beta")!.cellId;
+  const artifact = run.artifacts.find((row) =>
+    String(row.name).endsWith(betaCell)
+  )!;
+  artifact.workflow_run = {
+    ...(artifact.workflow_run as Record<string, unknown>),
+    id: RUN.runId + 1,
+  };
+  const provenance = await captured(async () =>
+    runRepairFanoutFinalize({
+      token: TOKEN,
+      http: run.http,
+      clock: rig.clock,
+      state: rig.state,
+      run: RUN,
+      runtime: RUNTIME,
+      planDigest: await repairFanoutPlanDigestV1(fanout),
+      deadline: rig.clock.now() + 60 * MINUTE,
+    })
+  );
+  // Behaviour is unchanged: the delta stays rejected, alpha's applies.
+  assert.deepEqual(
+    provenance.value?.rejected.map((entry) => [
+      entry.repository.name,
+      entry.reason,
+    ]),
+    [["beta", "unauthenticated"]],
+  );
+  assert.deepEqual(
+    provenance.value?.applied.map((entry) => entry.repository.name),
+    ["alpha"],
+  );
+  assert.deepEqual(unauthenticatedBy(provenance.lines), {
+    ...NO_CHECKS,
+    provenance: 1,
+  });
 });
 
 Deno.test("finalize counts a refused and a missing repository cell, hands their records back and never fails", async () => {
