@@ -412,10 +412,20 @@ export function reportBackupCiSelection(
   }
   if (selection.refusals.length > 0) {
     const refusals = [...selection.refusals].sort().slice(0, 16);
+    // The closed cause of each `unresolved` refusal and the runner state:
+    // closed codes and trusted names only, added beside `refusals`.
+    const unresolved = [...selection.unresolved].sort().slice(0, 16);
     log.once(
       "sentinel_backup_ci_refused",
       `${target.repository}@${sha}:${refusals.join(",")}`,
-      { repo: target.repository, commit12, refusals },
+      {
+        repo: target.repository,
+        commit12,
+        refusals,
+        ...(unresolved.length > 0
+          ? { unresolved, runner: selection.runner }
+          : {}),
+      },
     );
   }
 }

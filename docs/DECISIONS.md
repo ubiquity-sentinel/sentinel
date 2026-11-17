@@ -5491,3 +5491,36 @@ field changes, and an older runtime reads every record shape written here.
 
 Rollback: revert the two commits in reverse order. No state format or
 persisted field changes.
+
+## 2026-11-17: backup CI's unresolved refusal names its closed cause
+
+- Finding (store branch `sentinel-backup-ci` at `7cd1692a7d` and saved
+  supervisor logs, read-only): every cycle logged only
+  `sentinel_backup_ci_refused … ["unresolved:deno"]` for Passport head
+  `fe7f6b75` (PR 215, record `issue-ubiquity-passport.ubq.fi-56`). The store
+  shows two independent causes. (1) Since 2026-11-01 23:56 UTC the only
+  Passport runner `916ad9eaff49fe9d` is suspended for a false green (backup
+  `success`, native started run `failure`, commit `1cfa6ad6`); its
+  calibration row carries `falseGreens: 1`, so no Passport receipt is usable.
+  (2) Since 2026-11-05 Passport's own `.github/workflows/ci.yml` (blob
+  `d5395190`, then `f2c61d69` at base `7cff94be`) gives `actions/checkout`
+  a `with:` input outside the v1 shape, so the planner records a final
+  `no_evidence` `unsupported:checkout_inputs` and runs no leg. Which input is
+  not recorded anywhere this session can read. Both are the designed
+  fidelity safeguards (a false green suspends; the leg short-circuits
+  checkout on a depth-1 synthetic merge, so history, ref, path, submodule,
+  LFS or token inputs cannot be reproduced) and stay unchanged.
+- Prospector is not a backup CI target: `sentinel.backup-ci-targets.json`
+  and `ops/backup-ci-calibration.json` list only Passport, the store holds no
+  Prospector file, and the read path returns its runs unchanged without a log
+  line. Its `validation(not_started)` parks therefore have no backup path at
+  all; adding it needs its repository id, natively-run calibration commits
+  (at least five agreements, one red) and a supported workflow shape.
+- Change (observability only): the refused line keeps `refusals` exactly and
+  adds `unresolved` (`<closed code>:<trusted name>`, codes `missing`,
+  `in_flight`, `no_evidence.<store reason>`, `suspended`, `uncalibrated`,
+  `workflow_blob`, `context`, `confirming`) and `runner`
+  (`calibrated`/`suspended`/`uncalibrated`) when a name is unresolved. No
+  stand-in, refusal, gate, charge or persisted field changes.
+
+Rollback: revert the commit. No state format or persisted field changes.

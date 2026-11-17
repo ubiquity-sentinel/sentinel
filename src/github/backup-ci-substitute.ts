@@ -24,6 +24,8 @@
  *    then any success.
  * 6. All or nothing: one unresolved latest observation means no stand-in for
  *    G (its never-started observations stay never started and keep waiting).
+ *    Its closed cause (`unresolvedBackupCode`) and the target's runner state
+ *    (`backupRunnerState`) are reported for the log only; they decide nothing.
  * 7. A stand-in keeps the original's name, head and timestamps.
  */
 import type { GitSha } from "../contracts/brands.ts";
@@ -33,6 +35,7 @@ import {
   type BackupCiConclusionV1,
   type BackupCiEntryV1,
   type BackupCiModeV1,
+  type BackupCiNoEvidenceEntryV1,
   backupCiReceiptId,
   type BackupCiResultEntryV1,
   type BackupCiSuspensionV1,
@@ -98,7 +101,18 @@ export interface BackupCiSelectionV1 {
   shadow: BackupCiStandInV1[];
   /** `<reason>:<trusted name>` for logs. */
   refusals: string[];
+  /** `<unresolvedBackupCode>:<trusted name>` of each `unresolved` refusal. */
+  unresolved: string[];
+  /** The target's runner state (`backupRunnerState`), for logs. */
+  runner: BackupCiRunnerStateV1;
 }
+
+/**
+ * Whether any calibration row of the target is calibrated and unsuspended
+ * (`calibrated`), else whether a suspension covers one (`suspended`), else
+ * `uncalibrated` (no row, or none passes the calibration gate).
+ */
+export type BackupCiRunnerStateV1 = "calibrated" | "suspended" | "uncalibrated";
 
 const isRed = (c: BackupCiConclusionV1) => c !== "success";
 
@@ -140,7 +154,81 @@ export function resolveBackupEntries(
 }
 
 function emptySelection(): BackupCiSelectionV1 {
-  return { standIns: new Map(), peers: new Map(), shadow: [], refusals: [] };
+  return {
+    standIns: new Map(),
+    peers: new Map(),
+    shadow: [],
+    refusals: [],
+    unresolved: [],
+    runner: "uncalibrated",
+  };
+}
+
+/** The target's runner state (see `BackupCiRunnerStateV1`). */
+export function backupRunnerState(
+  calibration: BackupCiCalibrationV1 | null,
+  suspensions: readonly BackupCiSuspensionV1[],
+  repository: string,
+): BackupCiRunnerStateV1 {
+  const rows = calibration?.runners ?? [];
+  const suspended = (runnerId: string) =>
+    isBackupCiSuspended(suspensions, repository, runnerId);
+  if (
+    rows.some((row) =>
+      isBackupCiCalibrated(calibration, row.runnerId) &&
+      !suspended(row.runnerId)
+    )
+  ) return "calibrated";
+  return rows.some((row) => suspended(row.runnerId))
+    ? "suspended"
+    : "uncalibrated";
+}
+
+/**
+ * The closed cause of a latest observation of (P, N) no entry decides
+ * (step 5), from the commit file's own entries; text-free, since a
+ * no-evidence reason is the store's closed enum (`:` written as `.`):
+ * - `suspended` / `uncalibrated`: evidence results exist, none from a usable
+ *   runner (a suspension covers one, or none passes calibration);
+ * - `workflow_blob`: usable results, none on the covered workflow blob;
+ * - `context`: none for the observation's event (`contexts`);
+ * - `confirming`: attempt 1 is red and attempt 2 has not decided;
+ * - `no_evidence.<reason>`: no result, the latest no-evidence entry's reason;
+ * - `in_flight`: only a dispatched entry; `missing`: no entry for (P, N).
+ */
+export function unresolvedBackupCode(
+  entries: readonly BackupCiEntryV1[],
+  path: string,
+  checkName: string,
+  blob: string,
+  contexts: readonly string[],
+  usable: (entry: BackupCiEntryV1) => boolean,
+  suspended: (entry: BackupCiEntryV1) => boolean,
+): string {
+  const own = entries.filter((e) =>
+    e.key.workflowPath === path && e.key.checkName === checkName
+  );
+  const results = own.filter((e): e is BackupCiResultEntryV1 =>
+    e.state === "result" && e.mode === "evidence"
+  );
+  if (results.length > 0) {
+    const ready = results.filter(usable);
+    if (ready.length === 0) {
+      return results.some(suspended) ? "suspended" : "uncalibrated";
+    }
+    const onBlob = ready.filter((e) => e.binding.workflowBlob === blob);
+    if (onBlob.length === 0) return "workflow_blob";
+    return onBlob.some((e) => contexts.includes(e.key.context))
+      ? "confirming"
+      : "context";
+  }
+  const refused = own.filter((e): e is BackupCiNoEvidenceEntryV1 =>
+    e.state === "no_evidence"
+  ).sort((a, b) => b.lastAt - a.lastAt);
+  if (refused.length > 0) {
+    return `no_evidence.${refused[0].reason.replaceAll(":", ".")}`;
+  }
+  return own.length > 0 ? "in_flight" : "missing";
 }
 
 export function selectBackupStandIns(
@@ -160,9 +248,15 @@ export function selectBackupStandIns(
   const calibration = input.calibration?.repository.id === target.id
     ? input.calibration
     : null;
+  const suspended = (entry: BackupCiEntryV1) =>
+    isBackupCiSuspended(input.suspensions, target.repository, entry.runnerId);
   const usable = (entry: BackupCiEntryV1) =>
-    isBackupCiCalibrated(calibration, entry.runnerId) &&
-    !isBackupCiSuspended(input.suspensions, target.repository, entry.runnerId);
+    isBackupCiCalibrated(calibration, entry.runnerId) && !suspended(entry);
+  selection.runner = backupRunnerState(
+    calibration,
+    input.suspensions,
+    target.repository,
+  );
   const suites = new Map(input.suites.map((s) => [s.suiteId, s]));
   const allIds = new Set(input.all.map((o) => o.checkRunId));
   const byPath = new Map<string, Set<string>>();
@@ -240,15 +334,28 @@ export function selectBackupStandIns(
       continue;
     }
     const standIns: BackupCiStandInV1[] = [];
+    let code = "missing";
     for (const o of latest) {
       const event = eventOf(o);
       const blob = coverage.get(event) as string;
-      const decided = decide(file.entries.filter((e) =>
-        fromPath(e, [blob]) &&
-        (e.key.context === event ||
-          (event === "push" && e.key.context === "pull_request"))
-      ));
-      if (decided === null) break;
+      const contexts = event === "push" ? ["push", "pull_request"] : [event];
+      const decided = decide(
+        file.entries.filter((e) =>
+          fromPath(e, [blob]) && contexts.includes(e.key.context)
+        ),
+      );
+      if (decided === null) {
+        code = unresolvedBackupCode(
+          file.entries,
+          path,
+          checkName,
+          blob,
+          contexts,
+          usable,
+          suspended,
+        );
+        break;
+      }
       standIns.push({
         checkRunId: o.checkRunId,
         name: checkName,
@@ -268,6 +375,7 @@ export function selectBackupStandIns(
     }
     if (standIns.length !== latest.length) {
       refuse("unresolved");
+      selection.unresolved.push(`${code}:${trustedCheckName(checkName)}`);
       continue;
     }
     for (const standIn of standIns) {
