@@ -33,8 +33,6 @@ import {
 } from "../src/repair/carried-review.ts";
 import { releaseRequestId } from "../src/repair/keys.ts";
 import { releaseRequestMatchesDelivery } from "../src/repair/loop-records.ts";
-import { createLocalRepositoryConfig } from "../src/host/local-config.ts";
-import { selectTrustedTargetPolicyV1 } from "../src/host/target-policy.ts";
 import { reviewAuthorizesMerge } from "../src/repair/review-gate.ts";
 import { advanceToDelivery } from "../src/repair/transitions.ts";
 import {
@@ -58,7 +56,6 @@ import {
   sameRepository,
 } from "./hosted-autonomy-policy.ts";
 import {
-  type HostedTreeChangeV1,
   sameTreeChanges,
   treeChangesAcrossDrift,
   treeChangesDigest,
@@ -73,10 +70,14 @@ import type {
   HostedAutonomyPassContextV1,
   HostedAutonomyScopeV1,
 } from "./hosted-autonomy-scopes.ts";
+import { OWNER_MERGE_REQUIRED } from "../src/repair/owner-landing.ts";
 import {
-  OWNER_MERGE_REQUIRED,
-  sentinelNeverMerges,
-} from "../src/repair/owner-landing.ts";
+  ciSuccessRefusal,
+  protectedPathRefusal,
+  touchesTargetProtected,
+} from "./hosted-autonomy-pull-file-gates.ts";
+
+export { protectedPathRefusal } from "./hosted-autonomy-pull-file-gates.ts";
 
 /**
  * Decision D3 (2026-10-16, launcher only), DISABLED: the coordinator chose
@@ -435,58 +436,6 @@ export async function adoptableSpentMerge(
  * pass through `tipGreen`). `spent` is true when the merge is made under the
  * spent rule, so the Gateway record is written with `advanceToDelivery`.
  */
-/**
- * Issue #158 item 2: a launcher merge never lands a change Sentinel never
- * merges on its own (`sentinelNeverMerges`, 2026-11-17: a credential path on
- * any target, or a protected path of Sentinel's own repository). A change set
- * that cannot be resolved for the target fails closed.
- */
-function touchesTargetProtected(
-  repository: RepositoryIdentityV1,
-  changes: readonly Pick<HostedTreeChangeV1, "path">[],
-): boolean {
-  try {
-    const policy = selectTrustedTargetPolicyV1(
-      createLocalRepositoryConfig(),
-      repository,
-    );
-    return sentinelNeverMerges(
-      policy,
-      repository,
-      changes.map((change) => change.path),
-    );
-  } catch {
-    return true;
-  }
-}
-
-/**
- * The pull request's changed paths (a rename's previous path included)
- * checked against the target's protected paths. The production surface
- * always lists files; a fixture surface without that read skips the check.
- * A failed or incomplete listing refuses.
- */
-export async function protectedPathRefusal(
-  surface: HostedAutonomyGitHubV1,
-  repository: RepositoryIdentityV1,
-  pull: number,
-): Promise<"protected_path" | "protected_path_unverified" | null> {
-  if (surface.listPullFiles === undefined) return null;
-  let paths: readonly string[] | null = null;
-  try {
-    paths = await surface.listPullFiles(pull);
-  } catch {
-    paths = null;
-  }
-  if (paths === null) return "protected_path_unverified";
-  return touchesTargetProtected(
-      repository,
-      paths.map((path) => ({ path })),
-    )
-    ? "protected_path"
-    : null;
-}
-
 export async function preMergeGate(input: {
   context: HostedAutonomyPassContextV1;
   scope: HostedAutonomyScopeV1;
@@ -546,11 +495,13 @@ export async function preMergeGate(input: {
     }
     if (!green) return { refusal: "base_ci_pending", spent: false };
   }
-  // Last, so only a head about to merge pays for the file listing.
+  // Last, so only a head about to merge pays for the file listing; a head
+  // that changes a CI-executable path also needs a job its own CI passed.
   const protectedRefusal = await protectedPathRefusal(
     surface,
     record.repository,
     pull.number,
+    { head },
   );
   if (protectedRefusal !== null) {
     return { refusal: protectedRefusal, spent: false };
@@ -837,7 +788,8 @@ export async function carriedPatchRefusal(
       | "carried_proof_unavailable"
       | "carried_patch_changed"
       | "carried_not_on_tip"
-      | "protected_path";
+      | "protected_path"
+      | "ci_success_required";
   }
   | {
     refusal: null;
@@ -888,6 +840,12 @@ export async function carriedPatchRefusal(
   if (touchesTargetProtected(receipt.repository, reviewed.changes)) {
     return { refusal: "protected_path" };
   }
+  const ciRefusal = await ciSuccessRefusal(
+    surface,
+    head,
+    reviewed.changes.map((change) => change.path),
+  );
+  if (ciRefusal !== null) return { refusal: ciRefusal };
   return {
     refusal: null,
     reviewedMergeBase: reviewed.mergeBase,

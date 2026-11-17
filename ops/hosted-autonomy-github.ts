@@ -365,6 +365,26 @@ export function createHostedAutonomyGitHub(
         run["conclusion"] === "success"
       );
     },
+    async hasTargetCiSuccess(head: string) {
+      // The head's own runs only: no backup stand-in is substituted.
+      const complete = await readCompleteCheckRuns(head, false);
+      if (complete === null) return null;
+      return gatingRuns(complete).some((run) => {
+        if (
+          run["head_sha"] !== head || run["status"] !== "completed" ||
+          run["conclusion"] !== "success" ||
+          run[SENTINEL_BACKUP_FIELD] !== undefined
+        ) return false;
+        const app = run["app"];
+        const slug = app === undefined || app === null
+          ? undefined
+          : typeof app === "object" && !Array.isArray(app) &&
+              typeof (app as Record<string, unknown>)["slug"] === "string"
+          ? String((app as Record<string, unknown>)["slug"])
+          : "unknown";
+        return isCiEvidenceSource(slug, String(run["name"]));
+      });
+    },
     async hasAllChecksGreen(head: string, base?: string) {
       const complete = await readCompleteCheckRuns(head);
       // An unreadable, incomplete, drifted or malformed listing is no
