@@ -1,6 +1,7 @@
 /** Drives one real native review whose exact final text a test chooses. */
 import assert from "node:assert/strict";
 import type { StructuredReviewOutcomeV1 } from "../../src/github/codex-reviewer.ts";
+import type { ReviewTaskStatementV1 } from "../../src/contracts/review-receipt.ts";
 import {
   agentMessage,
   makeReviewer,
@@ -13,11 +14,13 @@ import {
 /**
  * One complete native review whose exitedReviewMode text is exactly `build`'s
  * result (the scripted session's own envelope is replaced), driven through the
- * real reviewer; returns its outcome and every line it printed.
+ * real reviewer; returns its outcome and every line it printed. `task` is the
+ * source-issue statement the review is asked with (none by default).
  */
 export async function nativeReview(
   build: (binding: unknown) => string,
   ownerRunId = "run-1",
+  task: ReviewTaskStatementV1 | null = null,
 ): Promise<{ outcome: StructuredReviewOutcomeV1; printed: string[] }> {
   const session = new ScriptedCodexSession();
   session.plan = (scripted) => {
@@ -42,7 +45,7 @@ export async function nativeReview(
     printed.push(args.map(String).join(" "));
   try {
     const prepared = await makeReviewer(session).prepare(
-      prepareRequest(await snapshotFixture(), { ownerRunId }),
+      prepareRequest(await snapshotFixture(), { ownerRunId, task }),
     );
     if (!prepared.ok) assert.fail(prepared.error.detail);
     const started = await prepared.value.start();

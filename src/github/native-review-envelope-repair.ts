@@ -22,6 +22,18 @@
  * element into two or merge two into one, and nothing cross-checks the
  * elements), so a text that needs that rewrite is not recovered.
  *
+ * The one closing brace of the outermost object the reviewer left off
+ * (2026-11-17, PR 418) is the last rewrite, tried on the text as written and
+ * on nothing else: `text + "}"` must parse strictly, so every other container
+ * was closed by the reviewer's own text, no string or value is cut and the
+ * whole text was consumed; and the closed object must carry every contract
+ * key, the envelope exactly `binding` and `result` and the result `verdict`,
+ * `summary`, `findings` and `taskAcceptance`. Any text that continued it into
+ * a valid envelope could only have added that brace (another key would be a
+ * duplicate or unknown), so nothing it held is lost. A text cut inside a
+ * finding, between findings, inside a string or before a contract key keeps
+ * the `json_syntax` rejection.
+ *
  * Every candidate goes through the same strict parser (duplicate keys and
  * trailing content still refuse), and the caller keeps every later check: the
  * exact envelope keys, the exact snapshot binding, the strict result shape and
@@ -29,6 +41,7 @@
  * sanitized `json_syntax` rejection.
  */
 import { expectStrictJson, parseJsonStrict } from "./journal-json.ts";
+import { REVIEW_RESULT_OUTPUT_SCHEMA } from "./review-result-contracts.ts";
 
 const SIMPLE_ESCAPES = new Set(['"', "\\", "/", "b", "f", "n", "r", "t"]);
 
@@ -191,6 +204,45 @@ export function envelopeRecoveryCandidates(text: string): string[] {
   ];
 }
 
+/** The envelope keys the caller checks exactly (`native-review-result.ts`). */
+const ENVELOPE_KEYS: readonly string[] = ["binding", "result"];
+
+/** Every key the result contract the reviewer is given requires. */
+const RESULT_KEYS: readonly string[] = REVIEW_RESULT_OUTPUT_SCHEMA.required;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The outermost object closed with one brace, or the closed reason it is not
+ * a candidate: `refused` (the closed text does not parse strictly),
+ * `envelope_keys` (its keys are not exactly the envelope's) or `result_keys`
+ * (its result is not an object carrying every contract key).
+ */
+export type OutermostCloseV1 =
+  | { closer: "refused" | "envelope_keys" | "result_keys" }
+  | { closer: "parsed"; value: unknown };
+
+export function closedOutermostObject(text: string): OutermostCloseV1 {
+  let value: unknown;
+  try {
+    value = parseJsonStrict(text + "}");
+  } catch {
+    return { closer: "refused" };
+  }
+  const keys = isRecord(value) ? Object.keys(value) : [];
+  if (
+    !isRecord(value) || keys.length !== ENVELOPE_KEYS.length ||
+    !ENVELOPE_KEYS.every((key) => keys.includes(key))
+  ) return { closer: "envelope_keys" };
+  const result = value.result;
+  if (
+    !isRecord(result) || !RESULT_KEYS.every((key) => Object.hasOwn(result, key))
+  ) return { closer: "result_keys" };
+  return { closer: "parsed", value };
+}
+
 /** A parsed envelope, and whether it needed a rewrite to parse. */
 export interface EnvelopeJsonV1 {
   value: unknown;
@@ -198,8 +250,8 @@ export interface EnvelopeJsonV1 {
 }
 
 /**
- * Strictly parse the envelope JSON, recovering only the escaping slips above.
- * A text no candidate recovers throws the fixed strict-JSON issue at `path`.
+ * Strictly parse the envelope JSON, recovering only the slips above. A text
+ * no candidate recovers throws the fixed strict-JSON issue at `path`.
  */
 export function expectEnvelopeJson(text: string, path: string): EnvelopeJsonV1 {
   try {
@@ -209,6 +261,12 @@ export function expectEnvelopeJson(text: string, path: string): EnvelopeJsonV1 {
     try {
       return { value: parseJsonStrict(candidate), recovered: true };
     } catch { /* next rewrite */ }
+  }
+  // Only a text the string rewrites leave unchanged can close: the strict
+  // parser consumed all of it, so it holds no slip they rewrite.
+  const closed = closedOutermostObject(text);
+  if (closed.closer === "parsed") {
+    return { value: closed.value, recovered: true };
   }
   return { value: expectStrictJson(text, path), recovered: false };
 }

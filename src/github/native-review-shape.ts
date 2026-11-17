@@ -16,6 +16,7 @@ import {
 } from "./journal-json.ts";
 import { utf8Length } from "./journal-text.ts";
 import {
+  closedOutermostObject,
   envelopeRecoveryCandidates,
   repairedEnvelopeJson,
 } from "./native-review-envelope-repair.ts";
@@ -230,6 +231,7 @@ type BodyFacts =
     | "repairSyntax"
     | "repairOffset"
     | "layer"
+    | "closer"
   >
   & { value: unknown };
 
@@ -240,6 +242,7 @@ const NO_BODY: BodyFacts = {
   repairSyntax: "none",
   repairOffset: "none",
   layer: "none",
+  closer: "none",
   value: undefined,
 };
 
@@ -282,6 +285,12 @@ function bodyFacts(body: string | null): BodyFacts {
     }
     if (candidate !== structural) facts.layer = "parsed";
     if (facts.value === undefined) facts.value = value;
+  }
+  // The parser's last candidate: the outermost object closed by one brace.
+  const closed = closedOutermostObject(body);
+  facts.closer = closed.closer;
+  if (closed.closer === "parsed" && facts.value === undefined) {
+    facts.value = closed.value;
   }
   return facts;
 }

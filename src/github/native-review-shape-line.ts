@@ -18,6 +18,11 @@
  * marker) fit both a body cut after a complete value and one missing only
  * its closing braces; these two facts tell them apart.
  *
+ * `closer` (2026-11-17) says what closing the body's outermost object with
+ * one brace gave: whether the closed text parsed and carried every contract
+ * key, so a body the parser recovers that way is told apart from one that
+ * lost a key, a value or a container.
+ *
  * The line has no `status` property (the launcher's child-status scan never
  * reads it) and no `kind` (no job-log evidence scanner reads it). It is
  * advisory only: nothing reads it back as evidence. The launcher re-emits it
@@ -145,6 +150,19 @@ export const SHAPE_REPAIRS = [
 /** The escaped-layer rewrites of that body. */
 export const SHAPE_LAYERS = ["none", "absent", "refused", "parsed"] as const;
 
+/**
+ * That body with its outermost object closed by one brace: `refused` when the
+ * closed text does not parse strictly, `envelope_keys` or `result_keys` when
+ * it lacks a contract key there, `parsed` when it is the parser's candidate.
+ */
+export const SHAPE_CLOSERS = [
+  "none",
+  "refused",
+  "envelope_keys",
+  "result_keys",
+  "parsed",
+] as const;
+
 /** The final message's first characters. */
 export const SHAPE_STARTS = [
   "empty",
@@ -214,6 +232,7 @@ export interface ReviewResultShapeFactsV1 {
   repairSyntax: typeof SHAPE_SYNTAX[number];
   repairOffset: typeof SHAPE_OFFSETS[number];
   layer: typeof SHAPE_LAYERS[number];
+  closer: typeof SHAPE_CLOSERS[number];
 }
 
 export interface ReviewResultShapeV1 extends ReviewResultShapeFactsV1 {
@@ -238,6 +257,7 @@ const CODES: Readonly<Record<string, readonly string[]>> = {
   repairSyntax: SHAPE_SYNTAX,
   repairOffset: SHAPE_OFFSETS,
   layer: SHAPE_LAYERS,
+  closer: SHAPE_CLOSERS,
 };
 const COUNTS = [
   "findingsParsed",
@@ -277,6 +297,7 @@ const KEYS: readonly string[] = [
   "repairSyntax",
   "repairOffset",
   "layer",
+  "closer",
 ];
 
 /** The review terminal line's bounded identifier shape. */

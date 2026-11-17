@@ -20,6 +20,7 @@ import {
   parseReviewResultShape,
   type ReviewResultShapeFactsV1,
   SHAPE_BRACES,
+  SHAPE_CLOSERS,
   SHAPE_ENDS,
   SHAPE_FIELDS,
   SHAPE_ISSUES,
@@ -52,6 +53,7 @@ const CODES: Record<string, readonly string[]> = {
   repairSyntax: SHAPE_SYNTAX,
   repairOffset: SHAPE_OFFSETS,
   layer: SHAPE_LAYERS,
+  closer: SHAPE_CLOSERS,
 };
 
 /** The facts of one text the real parser refuses; each value is closed. */
@@ -274,6 +276,7 @@ Deno.test("shape line: the strict parser accepts only the exact closed record", 
     { ...line, openMarkers: "1" },
     { ...line, openContainers: -1 },
     { ...line, bodyEnd: "object close" },
+    { ...line, closer: "closed" },
     { ...line, ownerRunId: "" },
     { ...line, requestId: "-leading" },
     { ...line, invocationId: "x".repeat(257) },

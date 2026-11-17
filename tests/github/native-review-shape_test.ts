@@ -49,6 +49,7 @@ const NOTHING = {
   repairSyntax: "none",
   repairOffset: "none",
   layer: "none",
+  closer: "none",
 };
 
 /** The one shape line: closed values only, no `status`, no review text. */
@@ -110,6 +111,7 @@ Deno.test("result shape: an unrecoverable envelope syntax slip names the parser 
     repairSyntax: "expected_comma_or_brace",
     repairOffset: "lt256",
     layer: "absent",
+    closer: "refused",
   });
 });
 
@@ -118,7 +120,9 @@ Deno.test("result shape: a body cut after a value and one missing its last brace
   // 2047-byte body, both markers and nothing after the close marker. The same
   // result complete (2063 bytes) is accepted; cut at 2047 bytes after its
   // summary, or missing only its last brace, it is refused and the end of the
-  // scan tells the two apart.
+  // scan tells the two apart. 2026-11-17: missing only its last brace with
+  // every contract key present, it is closed and accepted; without its task
+  // acceptance it is still refused, and `closer` says which.
   let summary = "";
   const prefix = (binding: unknown) =>
     `{"binding":${JSON.stringify(binding)},"result":` +
@@ -140,6 +144,18 @@ Deno.test("result shape: a body cut after a value and one missing its last brace
     assert.deepEqual(outcome.result, { ...CLEAN_RESULT, summary });
     assert.equal(printed.some((line) => line.includes(EVENT)), false);
   });
+  await t.step("last brace missing, every contract key present", async () => {
+    const { outcome, printed } = await nativeReview((binding) =>
+      OPEN + `${cut(binding)},"findings":[],"taskAcceptance":null}` + CLOSE
+    );
+    assert.equal(outcome.status, "clean", outcome.detail ?? "");
+    assert.deepEqual(outcome.result, {
+      ...CLEAN_RESULT,
+      summary,
+      taskAcceptance: null,
+    });
+    assert.equal(printed.some((line) => line.includes(EVENT)), false);
+  });
   const cases = [{
     name: "cut at 2047 bytes",
     build: cut,
@@ -148,6 +164,7 @@ Deno.test("result shape: a body cut after a value and one missing its last brace
       bodyBytes: 2047,
       openContainers: 2,
       bodyEnd: "string",
+      closer: "refused",
     },
   }, {
     name: "last brace missing",
@@ -157,6 +174,7 @@ Deno.test("result shape: a body cut after a value and one missing its last brace
       bodyBytes: 2062,
       openContainers: 1,
       bodyEnd: "object_close",
+      closer: "result_keys",
     },
   }];
   for (const item of cases) {
@@ -286,6 +304,7 @@ Deno.test("result shape: a recovered result contradicting its native findings ke
     syntaxOffset: "lt1024",
     repair: "parsed",
     layer: "absent",
+    closer: "refused",
   });
 });
 
