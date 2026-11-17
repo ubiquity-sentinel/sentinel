@@ -299,8 +299,14 @@ jobs:
           --allow-read --allow-write --allow-run
           --allow-env=PATH,NODE_V8_COVERAGE
           ops/hosted-autonomy-self-dependencies.ts
-      - name: Install pinned Codex app-server
-        run: npm install --global @openai/codex@0.154.0
+      # Follows the latest Codex release (owner decision 2026-11-17); the
+      # SENTINEL_CODEX_VERSION repository variable holds an exact version back.
+      - name: Install Codex app-server
+        env:
+          CODEX_VERSION: ${{ vars.SENTINEL_CODEX_VERSION || 'latest' }}
+        run: |
+          npm install --global "@openai/codex@${CODEX_VERSION}"
+          codex --version
       # GitHub-hosted Linux runners need unprivileged user namespaces for
       # bubblewrap; same handling as openai/codex-action action.yml 289-315:
       # https://github.com/openai/codex-action/blob/main/action.yml
@@ -488,8 +494,14 @@ jobs:
           --allow-read --allow-write --allow-run
           --allow-env=PATH,NODE_V8_COVERAGE
           ops/hosted-autonomy-self-dependencies.ts
-      - name: Install pinned Codex app-server
-        run: npm install --global @openai/codex@0.154.0
+      # Follows the latest Codex release (owner decision 2026-11-17); the
+      # SENTINEL_CODEX_VERSION repository variable holds an exact version back.
+      - name: Install Codex app-server
+        env:
+          CODEX_VERSION: ${{ vars.SENTINEL_CODEX_VERSION || 'latest' }}
+        run: |
+          npm install --global "@openai/codex@${CODEX_VERSION}"
+          codex --version
       # GitHub-hosted Linux runners need unprivileged user namespaces for
       # bubblewrap; same handling as openai/codex-action action.yml 289-315:
       # https://github.com/openai/codex-action/blob/main/action.yml
@@ -678,8 +690,14 @@ jobs:
           ops/hosted-autonomy-self-dependencies.ts
       # The runtime host resolves the pinned Codex executable and proves model
       # startup like every hosted child; a repository cell never starts one.
-      - name: Install pinned Codex app-server
-        run: npm install --global @openai/codex@0.154.0
+      # Follows the latest Codex release (owner decision 2026-11-17); the
+      # SENTINEL_CODEX_VERSION repository variable holds an exact version back.
+      - name: Install Codex app-server
+        env:
+          CODEX_VERSION: ${{ vars.SENTINEL_CODEX_VERSION || 'latest' }}
+        run: |
+          npm install --global "@openai/codex@${CODEX_VERSION}"
+          codex --version
       # The startup probe's sandbox checks need unprivileged user namespaces,
       # exactly as in matrix_cell, so a cell's model-start gate (and with it
       # its step stamps) matches the serial pass. Ephemeral runner only.
@@ -864,8 +882,14 @@ jobs:
           --allow-read --allow-write --allow-run
           --allow-env=PATH,NODE_V8_COVERAGE
           ops/hosted-autonomy-self-dependencies.ts
-      - name: Install pinned Codex app-server
-        run: npm install --global @openai/codex@0.154.0
+      # Follows the latest Codex release (owner decision 2026-11-17); the
+      # SENTINEL_CODEX_VERSION repository variable holds an exact version back.
+      - name: Install Codex app-server
+        env:
+          CODEX_VERSION: ${{ vars.SENTINEL_CODEX_VERSION || 'latest' }}
+        run: |
+          npm install --global "@openai/codex@${CODEX_VERSION}"
+          codex --version
       # GitHub-hosted Linux runners need unprivileged user namespaces for
       # bubblewrap; same handling as openai/codex-action action.yml 289-315:
       # https://github.com/openai/codex-action/blob/main/action.yml

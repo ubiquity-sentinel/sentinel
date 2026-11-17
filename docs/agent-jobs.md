@@ -62,7 +62,7 @@ model measured about 145 MB and 1% of a core each. What fills a 4 vCPU, 16 GB,
 so the safe number per cell depends on the target, not on Codex.
 
 The lane installs the latest Codex release and prints its version in the cell
-log, rather than the supervisor's 0.154.0 pin. Set the repository variable
+log, as the supervisor now does (it held 0.154.0 before). Set the repository variable
 `SENTINEL_AGENT_JOBS_CODEX_VERSION` to an exact version if a release breaks the
 sandbox configuration. Measured against a local
 endpoint, 0.154 exits on its first HTTP 429, while 0.169 retries by the
