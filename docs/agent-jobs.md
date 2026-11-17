@@ -45,7 +45,7 @@ compute. One job is one Codex agent on one repository from
   `jobs/inbox/<name>.json` and push. The workflow plans the request files that
   the pushed head commit added or changed. `jobs/example.json` is a template.
 - **`workflow_dispatch`:** pass the request as the `jobs` input, with optional
-  `agents_per_cell` (1–8, default 2) and `max_cells` (1–20, default 20). GitHub
+  `agents_per_cell` (1–16, default 4) and `max_cells` (1–20, default 20). GitHub
   only offers manual dispatch for workflow files that exist on the default
   branch.
 
@@ -53,14 +53,21 @@ compute. One job is one Codex agent on one repository from
 
 Jobs are spread one per runner until `max_cells` is used, then stacked up to
 `agents_per_cell` on each runner. Twenty cells at four agents is 80 agents.
-Agent starts are staggered six seconds per cell and two minutes per slot,
-because the gateway answers simultaneous session starts with HTTP 429.
+Agent starts are six seconds apart across the whole request, because the
+gateway answers simultaneous session starts with HTTP 429.
 
-Codex 0.154 does not retry an HTTP 429 from the gateway: it makes one request
-and exits (measured against a local endpoint; a 503 is retried). The cell
-therefore restarts a rate-limited agent itself, after 60 s, then 120 s, 240 s
-and 300 s thereafter, until the job deadline. A restarted agent keeps the
-working tree of the earlier attempt but not its conversation.
+A waiting agent is cheap: eight `codex exec` 0.169 processes blocked on the
+model measured about 145 MB and 1% of a core each. What fills a 4 vCPU, 16 GB,
+14 GB-disk runner is the work the agents run (installs, builds, test suites),
+so the safe number per cell depends on the target, not on Codex.
+
+The lane installs Codex 0.169.0 (`SENTINEL_AGENT_JOBS_CODEX_VERSION`
+overrides it), not the supervisor's 0.154.0 pin. Measured against a local
+endpoint, 0.154 exits on its first HTTP 429, while 0.169 retries by the
+response's `Retry-After`; the lane raises that budget to 12 retries. If Codex
+still gives up, the cell restarts the agent after 60 s, then 120 s, 240 s and
+300 s thereafter, until the job deadline. A restarted agent keeps the working
+tree of the earlier attempt but not its conversation.
 
 The cells count against the same account-wide concurrent-job limit as the
 supervisor's own matrix and CI. A full request delays those jobs while it runs;

@@ -26,6 +26,10 @@ Deno.test("agent jobs plan spreads jobs across cells before stacking them", () =
   const jobs = ["j1", "j2", "j3", "j4", "j5"].map((id) => job(id));
   const wide = planAgentJobs({ jobs }, TARGETS);
   assert.equal(wide.cells.length, 5);
+  assert.equal(
+    planAgentJobs({ jobs }, TARGETS, { maxCells: 1 }).cells.length,
+    2,
+  );
   assert.ok(wide.cells.every((cell) => cell.jobs.length === 1));
 
   const stacked = planAgentJobs({ jobs }, TARGETS, {
@@ -176,13 +180,13 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
     );
     assert.deepEqual(delays.sort((a, b) => a - b), [
       0,
+      6,
+      12,
+      18,
+      24,
+      30,
       60,
       60,
-      120,
-      240,
-      360,
-      480,
-      600,
     ]);
     assert.equal(byId.writes.base, "main");
     assert.equal(byId.writes.baseSha, baseSha);

@@ -16,21 +16,27 @@
  * final message and a status row leave the runner.
  */
 import { codexChildEnv, ensureTaskClient } from "../src/host/local-client.ts";
+import { DEFAULT_PROVIDER_NAME } from "../src/host/local-policy.ts";
 import { cloneBranch, git, githubRemoteUrl, gitOk } from "./agent-jobs-git.ts";
 import type { RemoteUrl } from "./agent-jobs-git.ts";
 import type { AgentJobsPlanV1, AgentJobV1 } from "./agent-jobs-plan.ts";
 
 export const AGENT_JOB_BRANCH = "agent-job";
-/** Starts are spread so 20 cells x N agents never hit the gateway at once. */
-export const CELL_STAGGER_SECONDS = 6;
-export const SLOT_STAGGER_SECONDS = 120;
+/**
+ * Every agent of a request starts six seconds after the previous one (first
+ * slot of every cell, then the second slot of every cell...), so the gateway
+ * never sees a burst of session starts.
+ */
+export const START_STAGGER_SECONDS = 6;
+/** In-session retries of a 429/5xx; verified to be honored by Codex 0.169. */
+const MODEL_MAX_RETRIES = 12;
 const SETUP_TIMEOUT_SECONDS = 900;
 const KILL_GRACE_SECONDS = 30;
 /**
- * Codex 0.154 does not retry an HTTP 429 from a custom provider: it makes one
- * request and exits with this line (measured against a local endpoint; a 503
- * is retried). The gateway answers bursts and exhausted account pools with
- * 429, so the cell backs off and restarts the agent inside the job deadline.
+ * Codex exits with this line once it gives up on HTTP 429 (measured against a
+ * local endpoint: 0.154 after one request, 0.169 after its retry budget). The
+ * gateway answers bursts and exhausted account pools with 429, so the cell
+ * backs off and restarts the agent inside the job deadline.
  */
 const RATE_LIMITED_MARKER = "exceeded retry limit, last status: 429";
 export const RATE_LIMIT_BACKOFF_SECONDS = 60;
@@ -318,7 +324,7 @@ export async function runAgentJobsCell(
       runJob(
         input,
         job,
-        index * CELL_STAGGER_SECONDS + slot * SLOT_STAGGER_SECONDS,
+        (slot * input.plan.cells.length + index) * START_STAGGER_SECONDS,
       )
     ),
   );
@@ -374,6 +380,12 @@ if (import.meta.main) {
         start.model,
         "-c",
         'model_reasoning_effort="max"',
+        // A newer Codex waits out a 429 by its Retry-After inside the session,
+        // keeping the conversation; the cell's restart is the backstop.
+        "-c",
+        `model_providers.${DEFAULT_PROVIDER_NAME}.request_max_retries=${MODEL_MAX_RETRIES}`,
+        "-c",
+        `model_providers.${DEFAULT_PROVIDER_NAME}.stream_max_retries=${MODEL_MAX_RETRIES}`,
         "-o",
         start.lastMessageFile,
         "-",
