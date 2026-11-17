@@ -13,10 +13,8 @@ import {
   type BaseTaskReviewPortV1,
   parseBaseReviewEvidenceRef,
 } from "../github/base-review-evidence.ts";
-import {
-  BASE_REPAIR_NO_CHANGE_DETAIL,
-  isBaseRepairTask,
-} from "./base-repair.ts";
+import { isBaseRepairTask } from "./base-repair.ts";
+import { baseRepairNoChangeNext } from "./base-repair-no-change.ts";
 import {
   BASE_REVIEW_HOLD_MS,
   BASE_REVIEW_NOT_ESTABLISHED,
@@ -211,9 +209,10 @@ export async function resumeBaseSatisfaction(
   }).catch(() => portError("unavailable", "base review task unavailable"));
   if (!inspected.ok) {
     // A base-repair task's no-change hold can never end in a review: its
-    // base is red by construction. It parks now, uncharged, instead of at the
-    // hold's bound; an unreadable issue (null) and every other task defer
-    // exactly as before.
+    // base is red by construction. It takes the ordinary no-change retry
+    // under the existing bounds, or parks, uncharged either way
+    // (`baseRepairNoChangeNext`); an unreadable issue (null) and every other
+    // task defer exactly as before.
     if (
       inspected.error.detail === BASE_REVIEW_CI_NOT_GREEN &&
       record.intent?.kind === "implementation" &&
@@ -222,10 +221,11 @@ export async function resumeBaseSatisfaction(
       return persistWork(
         deps,
         context,
-        markBlocked(
+        baseRepairNoChangeNext(
+          context.snapshot,
           record,
-          "other",
-          BASE_REPAIR_NO_CHANGE_DETAIL,
+          base,
+          deps.controllerSha,
           deps.clock.now(),
         ),
       );

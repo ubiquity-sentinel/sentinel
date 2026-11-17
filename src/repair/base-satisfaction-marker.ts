@@ -114,6 +114,13 @@ export function noChangeOutcomes(
   snapshot: RepairStateSnapshotV1,
   record: WorkRecordV1,
 ): number {
+  return Math.max(recordedNoChange(snapshot, record), 1);
+}
+
+function recordedNoChange(
+  snapshot: RepairStateSnapshotV1,
+  record: WorkRecordV1,
+): number {
   let total = 0;
   for (const memory of snapshot.attemptMemory) {
     if (
@@ -125,6 +132,32 @@ export function noChangeOutcomes(
     for (const entry of memory.entries) {
       if (entry.detail === ATTEMPT_DETAIL_NO_CHANGE) total += entry.count;
     }
+  }
+  return total;
+}
+
+/**
+ * The same durable no-change outcomes summed over every record of
+ * `record`'s issue in `snapshot.work`: its task and each part a timeout
+ * split it into (`createDecompositionChildren`), as the CI-fix cap counts
+ * an issue's fixes (`baseRepairCiFixesSpent`). At least one. No state is
+ * added: attempt memory is not pruned and its counts never decrease.
+ */
+export function issueNoChangeOutcomes(
+  snapshot: RepairStateSnapshotV1,
+  record: WorkRecordV1,
+): number {
+  const number = record.related.issueNumber;
+  if (record.source.kind !== "issue" || number === null) {
+    return noChangeOutcomes(snapshot, record);
+  }
+  let total = 0;
+  for (const work of snapshot.work) {
+    if (
+      work.source.kind === "issue" && work.related.issueNumber === number &&
+      work.repository.owner === record.repository.owner &&
+      work.repository.name === record.repository.name
+    ) total += recordedNoChange(snapshot, work);
   }
   return Math.max(total, 1);
 }

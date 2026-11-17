@@ -5365,3 +5365,73 @@ ports and an injected clock (`tests/repair/base-repair-no-change_test.ts`):
 
 Rollback: revert the commit. No state format or persisted field changes; a
 record already parked keeps a blocker no rule re-admits under either runtime.
+
+## 2026-11-17: base-repair starts carry their red base's CI evidence; no-change retries under the existing bounds
+
+Decision relayed by the round's coordinator under the owner's standing
+instruction to fix blockers: the park-at-once of the entry above is right as
+the end state, but alone it would park ai.ubq.fi 1370 and leave the target
+wedged. This entry supersedes that entry's "parks at once" and its "Not
+chosen" paragraph; its blocker text is unchanged and is now the end state.
+
+- Evidence on a base-repair start
+  ([src/repair/base-repair-start.ts](../src/repair/base-repair-start.ts)): a
+  fresh start of a base-repair task (`isBaseRepairTask`; nothing is read for
+  a body without the marker) carries the checks its base fails (merge-gate
+  checks, `failure`/`timed_out`, trusted names only) as the base-repair CI
+  finding (`ciCorrectionFinding` with `redBase`). A matrix cell keys its
+  existing CI failure evidence read on that opening (`ciCorrectionHead`), for
+  the red base itself: the same reader, fence, size bounds and sanitising as
+  a CI fix; nothing new is persisted or put in the request. The finding is
+  not a CI fix: the start counts `counters.attempts`, never
+  `counters.retries`, and is not capped. An unread issue or base check read
+  defers the start, uncharged. Ordinary requests and prompts are
+  byte-identical (digests pinned from the previous runtime).
+- Not done: the log text is read in the cell after the admission, exactly as
+  for a CI fix, and an unreadable log degrades there to the fixed one-line
+  reason, as it does for a CI fix. Deferring at that point is not uncharged
+  (the ingester settles a cell's `not_started` ambiguous), and an
+  availability read before admission would be a new planner-side log read.
+- The prompt's "there is no network" is truthful (the hosted permission
+  profile sets `network.enabled = false`, `src/host/local-client.ts`);
+  unchanged, as is the sandbox policy.
+- No-change route
+  ([src/repair/base-repair-no-change.ts](../src/repair/base-repair-no-change.ts)):
+  when the base review of a base-repair task's no-change hold meets its base
+  not green (`BASE_REVIEW_CI_NOT_GREEN`), the record returns to
+  implementation, uncharged, while the issue's no-change outcomes are below
+  `MAX_NO_CHANGE_BASE_REVIEWS` = 3 (`issueNoChangeOutcomes`: attempt memory
+  summed over the issue's records, its split parts included) and the next
+  start would not be refused as identical (`identicalAttemptRefusalV1` at the
+  current base and runtime). That start is admitted and charged by the
+  ordinary gates and carries the evidence above. Otherwise it parks with
+  `BASE_REPAIR_NO_CHANGE_DETAIL`, uncharged. No field is added.
+- Charges per base-repair issue, at most: 3 charged starts that end without a
+  change, for the whole issue and its parts together (on one runtime, 1: the
+  retry would be identical, so it parks instead); other start outcomes under
+  the ordinary rules (the whole issue's start, launcher retries of transient
+  failures under their existing bounds, one start per split part, 2 to 4);
+  3 charged CI fixes (`BASE_REPAIR_CI_FIX_CAP`); and, once a head is green,
+  the ordinary review rounds. Through the real loop with a red base and a
+  model that never changes anything, a new runtime on every pass gives 3
+  charged starts, the park and nothing more
+  (`tests/repair/base-repair-no-change_test.ts`). No refunds.
+- 1370 (one charge, held until 2026-11-18T00:39:20Z): the new runtime's
+  next base-satisfaction step returns it to implementation; its second start
+  (`retry`, attempt 2) carries its red base's evidence. On a no-change
+  outcome it parks on the next step on the same runtime: 2 charges; 3 at
+  most, if a different runtime is installed between that start and its next
+  step. If this runtime is installed only after the hold's bound, the
+  previous runtime parks it first under the generic hold-bound blocker,
+  which no rule re-admits.
+- The launcher's runtime gate (`runtimeSourceCarriesCap`) is unchanged and
+  passes on this tree. It need not require this behaviour: a runtime without
+  it charges no more (the 24-hour hold, then the generic park).
+- Skipped: a text-free deferral reason line. `sentinel_repair_pass` is
+  re-parsed with an exact key set, so extending it is a cross-version
+  contract change.
+
+Rollback: revert the commits in reverse order. Reverting the route alone
+restores the park-at-once; reverting the evidence alone leaves the retries
+bounded but without the finding or evidence. No state format or persisted
+field changes, and an older runtime reads every record shape written here.

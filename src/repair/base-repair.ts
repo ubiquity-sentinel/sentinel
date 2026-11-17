@@ -69,10 +69,12 @@ export const BASE_REPAIR_CI_FIX_CAP_DETAIL =
  * The fixed blocker of a base-repair task whose implementation made no change
  * (2026-11-17, ai.ubq.fi 1370). Its no-change hold ends only through a base
  * review, which starts only on green CI at the exact base, and a base-repair
- * task's base is red by construction: the base-satisfaction step parks it,
- * uncharged, the first time the review meets that base not green, instead of
- * holding it for the 24-hour bound. Like the CI-fix cap's park, no launcher
- * rule re-admits it; the owner ends it by closing its issue.
+ * task's base is red by construction: when the review meets that base not
+ * green, the hold takes the ordinary no-change retry while the existing
+ * bounds allow one, and otherwise parks with this blocker, uncharged
+ * (`baseRepairNoChangeNext`), instead of holding for the 24-hour bound. Like
+ * the CI-fix cap's park, no launcher rule re-admits it; the owner ends it by
+ * closing its issue.
  */
 export const BASE_REPAIR_NO_CHANGE_DETAIL =
   "base-repair implementation made no change while its base CI is not green; owner action required";

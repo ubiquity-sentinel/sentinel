@@ -380,12 +380,13 @@ export function makeMemoryRig(github: FakeGithub) {
     head: SHA3,
     changedPaths: ["src/app.ts"],
   });
-  const run = (stepLimit = 16) =>
+  /** `controllerSha`: the installed runtime revision this cycle runs. */
+  const run = (stepLimit = 16, controllerSha: GitSha = SHA1) =>
     runRepairCycle({
       clock,
       state,
       configs,
-      controllerSha: SHA1,
+      controllerSha,
       github,
       githubCooldown,
       incidents,
