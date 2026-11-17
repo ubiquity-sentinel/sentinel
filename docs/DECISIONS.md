@@ -6239,3 +6239,94 @@ separately: an older launcher compares a workflow pull request with its base
 commit again (the push-only-job wait and the trivial-job pass return there),
 an older runtime does the same and reads the comparison again for every
 proceeding gate.
+
+## 2026-11-17: one-time release of the eleven protected-path parks; the App's own CI notices stay owner work for now
+
+Owner directives (2026-11-17, verbatim, in order): "dude give sentinel full
+access please this is unnecessarily nerfed"; then, after being told that the
+11 protected-path parks each need a new charged run and that Sentinel skips
+its own "no PR CI" notices: "dude so confusing just make sentinel close out
+all my issues". Earlier: "all" (2026-11-15, releasing parked sentinel
+issues), "Ok for all" and "Huh just fix it" (2026-11-16). Read as authority
+to re-admit parked work through the normal gates at the normal charges where
+a new attempt can now succeed; not to weaken the P0 review gate, current-head
+CI not red, native review mode, the credential-path refusal, the
+trusted-author gate for `.github/` changes or custody, and not to refund
+anything.
+
+Released by code (`OWNER_PROTECTED_RELEASES_2026_11_17` in
+[ops/hosted-autonomy-owner-releases.ts](../ops/hosted-autonomy-owner-releases.ts),
+mechanism
+[ops/hosted-autonomy-protected-release.ts](../ops/hosted-autonomy-protected-release.ts)),
+each exact park (record id, repository, blocker kind, "candidate touches a
+protected path", `since`) from sentinel-state/repair b53e355a4571 (sequence
+97103); every one holds `candidateState.preserved: null`:
+
+- No pull request and no published head (the protected head is dropped as
+  the `sentinel:retry` exit drops it; base, branch, evidence and counters
+  kept): sentinel 177 (6 charges), 240 (5), 270 (2), 277 (2), 383 (2), 406
+  (2); ai.ubq.fi 1370 (2; the App's base-repair task, so the trust gate passes
+  and `BASE_REPAIR_CI_FIX_CAP` and its no-change park still bound it);
+  deno-deploy-workflow 25 (2). 270, 277, 383, 406 and deno-deploy-workflow 25
+  keep their base-review receipt and round, as the runtime itself returns a
+  "work needed" base review to `work`.
+- An open pull request whose published head the parked correction would
+  have replaced: arbitrage-bot 7 (PR 20, 8 charges), demo.ubq.fi 23 (PR 51,
+  7), notifications.ubq.fi 13 (PR 33, 6). Dropping the record's pull request
+  (the label exit's shape) would orphan an open PR, and returning it to `work`
+  with the unpublished head kept leaves it deferred forever ("candidate
+  preservation descriptor unavailable"). Only the unpublished correction head
+  is dropped: the record returns to its own recorded published head, the
+  existing-published-head continuation the runtime re-proves against the live
+  PR before anything is charged. Released only while that PR is open,
+  unmerged, App-authored, on the base branch and at exactly that head;
+  otherwise it stays parked (`owner_release_pull_unverified`).
+
+The release is the retry pass's ordinary uncharged work plan (grant 0) in its
+one CAS write. No reservation, attempt-memory row or `target.base` changes, so
+`producerRequests`, the duplicate-replay guard and the current-matrix walk see
+nothing new. A released record has no blocker and any later park carries a
+later `since`, so each entry fires at most once with no new field. Run over all
+474 live work rows, the planner names exactly these eleven.
+
+Ordering: a release re-run under a runtime without this policy parks again on
+the old rule. The release takes effect only while the release state names the
+installed runtime, no installation is in flight, and that revision's own
+source (owner-landing.ts, loop-implementation-result.ts, workflow-trust.ts and
+loop-publication.ts, read at that commit) carries the policy: only a
+credential path unpublishable, `sentinelNeverMerges` on the same touch, the
+park decided by that touch and the trust read, the App's issue trusted, and a
+refused workflow push parked. Anything unproven holds it
+(`runtime_unreadable`, `runtime_installing`, `runtime_without_policy`).
+
+Charge bound: one charge per record to start, then the ordinary bounds
+(identical-attempt refusal, repeat-failure park, no-change base reviews,
+review rounds as accounting, rule C's park on a refused workflow push, the
+base-repair cap for 1370). The eight unpublished records each take one
+implementation start; the three pull-request records take one CI-fix start if
+their head is red or one review round if it is green. First round: at most
+eleven charges. On Sentinel's own repository a candidate that touches an
+authority path publishes and waits for the owner's merge (`owner_merge`).
+What code cannot give: the ubiquity organisation's Actions minutes (a head
+whose own CI never runs cannot prove the success a CI-changing head needs),
+the App's `workflows` permission (the first refused push parks after one
+charge) and a red ai.ubq.fi base.
+
+Not implemented here, design only: working the App's own "no pull_request CI"
+capability notices (pay.ubq.fi 509 and the notices of
+prospector-chrome-extension, stake.ubq.fi, prospector-monorepo and xp.ubq.fi,
+whose 73 records are parked `no_ci_and_no_local_verify`). The opt-out marker
+is read in at least nine places (pre-reservation, matrix cell, base review,
+queue delivery, published refresh, delivery, closure, queue policy and
+intake), the planner parks every record of an incapable target before any
+reservation, and the review-only merge is refused for such a target. A bounded
+change needs the notice to become an App-authored task (marker first, fixed
+task statement), an exemption at the planner park and merge evidence for
+exactly that task, and a reader landed before the writer for rollback. Until
+then the owner action is a pull_request CI workflow in each repository; the
+existing re-check then re-admits the parked records.
+
+Rollback: revert the release commit. Before its write the eleven stay parked;
+after it, each released record is an ordinary `work` record (or an
+existing-published-head continuation) the previous code handles normally. No
+persisted field or state format changes; older runtimes read every record.
