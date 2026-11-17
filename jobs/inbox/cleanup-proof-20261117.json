@@ -1,0 +1,13 @@
+{
+  "jobs": [
+    {
+      "id": "cleanup-proof-20261117",
+      "repository": "ubiquity-sentinel/sentinel",
+      "base": "claude/great-ride-tu5r70",
+      "model": "gpt-6.2-sol",
+      "minutes": 15,
+      "pr": true,
+      "prompt": "Add SENTINEL_CLEANUP_PROOF.md (throwaway test, will be deleted)\n\nCreate a file named SENTINEL_CLEANUP_PROOF.md in the repository root containing exactly one line: `Sentinel cleanup proof`. Change nothing else. Do not install anything or run any tests. In your final message, mention the file you created as a clickable file link, the way you normally reference files."
+    }
+  ]
+}
