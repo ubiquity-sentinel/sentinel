@@ -1,0 +1,20 @@
+{
+  "branches": [
+    {
+      "repository": "ubiquity-sentinel/sentinel",
+      "branch": "agent-jobs/cleanup-proof-20261117-44203044101-1"
+    },
+    {
+      "repository": "ubiquity-sentinel/sentinel",
+      "branch": "agent-jobs/cloud-dispatch-test-20261117-44195622667-1"
+    },
+    {
+      "repository": "ubiquity/xp.ubq.fi",
+      "branch": "agent-jobs/xp-ubq-fi-issue-8-20261117-44199674264-1"
+    },
+    {
+      "repository": "ubiquity/xp.ubq.fi",
+      "branch": "agent-jobs/xp-ubq-fi-issue-8-ci-20261117-44200417339-1"
+    }
+  ]
+}
