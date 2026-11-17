@@ -97,6 +97,12 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
         "  idle) ;;",
         "  fail) exit 7;;",
         "  hang) echo partial > partial.txt; sleep 30;;",
+        "  limit)",
+        '    if test -f "$TMPDIR/limited-once"; then echo recovered > work.txt',
+        '    else touch "$TMPDIR/limited-once"',
+        '      echo "ERROR: exceeded retry limit, last status: 429 Too Many Requests" >&2',
+        "      exit 1; fi;;",
+        "  starve) echo 'exceeded retry limit, last status: 429' >&2; exit 1;;",
         "esac",
       ].join("\n"),
     );
@@ -119,6 +125,8 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
           { ...base, id: "idles", prompt: "idle", pr: false },
           { ...base, id: "fails", prompt: "fail", pr: false },
           { ...base, id: "hangs", prompt: "hang", pr: false, minutes: 0.02 },
+          { ...base, id: "limited", prompt: "limit", pr: false },
+          { ...base, id: "starved", prompt: "starve", pr: false, minutes: 3 },
           {
             ...base,
             id: "nosetup",
@@ -161,15 +169,33 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
         ["idles", "no_changes"],
         ["fails", "agent_failed"],
         ["hangs", "timed_out"],
+        ["limited", "changed"],
+        ["starved", "agent_failed"],
         ["nosetup", "setup_failed"],
       ],
     );
-    assert.deepEqual(delays.sort((a, b) => a - b), [0, 120, 240, 360]);
+    assert.deepEqual(delays.sort((a, b) => a - b), [
+      0,
+      60,
+      60,
+      120,
+      240,
+      360,
+      480,
+      600,
+    ]);
     assert.equal(byId.writes.base, "main");
     assert.equal(byId.writes.baseSha, baseSha);
     assert.equal(byId.writes.title, "write hello");
     assert.ok(byId.writes.bundle && byId.hangs.bundle);
     assert.equal(byId.idles.bundle, null);
+    // A 429 exit is retried after a backoff; one that never clears stops
+    // at the job deadline (3 min: 60 s fits, the next 120 s does not).
+    assert.match(
+      byId.starved.detail,
+      /rate limited \(429\) through 2 attempts/,
+    );
+    assert.ok(lines.includes("limited: model 429, restarting in 60s"));
     // The client home (model token) is removed once the agent exits.
     await assert.rejects(Deno.stat(`${root}/work/writes/client`));
     assert.deepEqual(
@@ -200,6 +226,8 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
         ["idles", null],
         ["fails", null],
         ["hangs", "agent-jobs/hangs-77-1"],
+        ["limited", "agent-jobs/limited-77-1"],
+        ["starved", null],
         ["nosetup", null],
       ],
     );

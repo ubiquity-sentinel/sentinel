@@ -56,6 +56,12 @@ Jobs are spread one per runner until `max_cells` is used, then stacked up to
 Agent starts are staggered six seconds per cell and two minutes per slot,
 because the gateway answers simultaneous session starts with HTTP 429.
 
+Codex 0.154 does not retry an HTTP 429 from the gateway: it makes one request
+and exits (measured against a local endpoint; a 503 is retried). The cell
+therefore restarts a rate-limited agent itself, after 60 s, then 120 s, 240 s
+and 300 s thereafter, until the job deadline. A restarted agent keeps the
+working tree of the earlier attempt but not its conversation.
+
 The cells count against the same account-wide concurrent-job limit as the
 supervisor's own matrix and CI. A full request delays those jobs while it runs;
 lower `max_cells` to leave room.

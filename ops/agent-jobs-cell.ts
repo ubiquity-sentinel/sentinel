@@ -26,6 +26,22 @@ export const CELL_STAGGER_SECONDS = 6;
 export const SLOT_STAGGER_SECONDS = 120;
 const SETUP_TIMEOUT_SECONDS = 900;
 const KILL_GRACE_SECONDS = 30;
+/**
+ * Codex 0.154 does not retry an HTTP 429 from a custom provider: it makes one
+ * request and exits with this line (measured against a local endpoint; a 503
+ * is retried). The gateway answers bursts and exhausted account pools with
+ * 429, so the cell backs off and restarts the agent inside the job deadline.
+ */
+const RATE_LIMITED_MARKER = "exceeded retry limit, last status: 429";
+export const RATE_LIMIT_BACKOFF_SECONDS = 60;
+export const RATE_LIMIT_BACKOFF_MAX_SECONDS = 300;
+const RESTART_NOTE =
+  "\n\n(Note: an earlier attempt at this task was cut off by a model rate limit. The working tree may already hold partial work; inspect it and continue.)";
+
+async function rateLimited(errFile: string): Promise<boolean> {
+  const text = await Deno.readTextFile(errFile).catch(() => "");
+  return text.slice(-4000).includes(RATE_LIMITED_MARKER);
+}
 
 export type AgentJobStatus =
   | "changed"
@@ -170,7 +186,6 @@ async function runJob(
   const root = `${input.workRoot}/${job.id}`;
   const checkout = `${root}/checkout`;
   const tmpDir = `${root}/tmp`;
-  const logFile = `${root}/agent.log`;
   try {
     await Deno.mkdir(tmpDir, { recursive: true });
     const base = await cloneBranch({
@@ -210,13 +225,35 @@ async function runJob(
     };
     await ports.sleep(startDelaySeconds);
     await ports.prepareClient(start);
-    const agent = await bounded(ports.agentCommand(start), {
-      seconds: job.minutes * 60,
-      cwd: checkout,
-      env: codexChildEnv(start.clientHome, tmpDir, start.denoDir, path),
-      stdin: job.prompt,
-      logFile,
-    });
+    const deadlineSeconds = job.minutes * 60;
+    let spentSeconds = 0;
+    let attempt = 0;
+    let limited = false;
+    let agent: { code: number; timedOut: boolean };
+    for (;;) {
+      const logFile = `${root}/agent-${attempt}.log`;
+      const attemptStarted = Date.now();
+      agent = await bounded(ports.agentCommand(start), {
+        seconds: Math.max(1, deadlineSeconds - spentSeconds),
+        cwd: checkout,
+        env: codexChildEnv(start.clientHome, tmpDir, start.denoDir, path),
+        stdin: attempt === 0 ? job.prompt : job.prompt + RESTART_NOTE,
+        logFile,
+      });
+      spentSeconds += (Date.now() - attemptStarted) / 1000;
+      limited = !agent.timedOut && agent.code !== 0 &&
+        await rateLimited(`${logFile}.err`);
+      if (!limited) break;
+      const wait = Math.min(
+        RATE_LIMIT_BACKOFF_MAX_SECONDS,
+        RATE_LIMIT_BACKOFF_SECONDS * 2 ** attempt,
+      );
+      if (spentSeconds + wait >= deadlineSeconds) break;
+      ports.log(`${job.id}: model 429, restarting in ${wait}s`);
+      await ports.sleep(wait);
+      spentSeconds += wait;
+      attempt += 1;
+    }
     // The model token must not outlive the agent on this runner.
     await Deno.remove(start.clientHome, { recursive: true }).catch(() => {});
 
@@ -250,7 +287,14 @@ async function runJob(
     if (agent.timedOut) {
       return settle("timed_out", `deadline ${job.minutes} min`);
     }
-    if (agent.code !== 0) return settle("agent_failed", `exit ${agent.code}`);
+    if (agent.code !== 0) {
+      return settle(
+        "agent_failed",
+        limited
+          ? `model rate limited (429) through ${attempt + 1} attempts`
+          : `exit ${agent.code}`,
+      );
+    }
     return settle(result.headSha === null ? "no_changes" : "changed", "");
   } catch (error) {
     return settle(
