@@ -71,7 +71,7 @@ jobs:
           owner: ${{ matrix.owner }}
           repositories: ${{ matrix.repositories }}
           permission-contents: write
-          permission-pull-requests: read
+          permission-pull-requests: write
       - name: Delete agent branches
         env:
           AGENT_JOBS_CLEANUP_OWNER: ${{ matrix.owner }}

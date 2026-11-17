@@ -5,7 +5,8 @@
  * request file under `jobs/cleanup/`; this step refuses every branch name that
  * is not an `agent-jobs/<job>-<run>-<attempt>` branch, so it can only remove
  * what the publish step created. A branch with an open pull request is kept
- * unless the request says to close it. No model runs here and no Sentinel
+ * unless the request says to close it; the pull request is then closed
+ * explicitly, because GitHub does not reliably close it with the branch. No model runs here and no Sentinel
  * state is read or written.
  */
 
@@ -35,7 +36,9 @@ export interface AgentJobsCleanupResultV1 {
 }
 
 export interface AgentJobsCleanupPorts {
-  hasOpenPullRequest: (repository: string, branch: string) => Promise<boolean>;
+  /** Numbers of the open pull requests whose head is the branch. */
+  openPullRequests: (repository: string, branch: string) => Promise<number[]>;
+  closePullRequest: (repository: string, number: number) => Promise<void>;
   /** Delete the branch; `missing` when it does not exist. */
   deleteBranch: (
     repository: string,
@@ -122,20 +125,28 @@ export async function cleanupAgentJobBranches(
       detail: "",
     };
     try {
-      if (
-        !entry.closePullRequest &&
-        await ports.hasOpenPullRequest(entry.repository, entry.branch)
-      ) {
+      const open = await ports.openPullRequests(
+        entry.repository,
+        entry.branch,
+      );
+      if (open.length > 0 && !entry.closePullRequest) {
         result.status = "kept_open_pr";
         result.detail = "an open pull request uses this branch";
       } else {
+        for (const number of open) {
+          await ports.closePullRequest(entry.repository, number);
+          result.detail = `${result.detail} closed pull request ${number}`
+            .trim();
+        }
         result.status = await ports.deleteBranch(
           entry.repository,
           entry.branch,
         );
       }
     } catch (error) {
-      result.detail = error instanceof Error ? error.message : String(error);
+      result.detail = `${result.detail} ${
+        error instanceof Error ? error.message : String(error)
+      }`.trim();
     }
     results.push(result);
     ports.log(
@@ -154,10 +165,10 @@ export function githubCleanupPorts(token: string): AgentJobsCleanupPorts {
     "x-github-api-version": "2022-11-28",
   };
   return {
-    hasOpenPullRequest: async (repository, branch) => {
+    openPullRequests: async (repository, branch) => {
       const owner = repository.split("/")[0];
       const response = await fetch(
-        `https://api.github.com/repos/${repository}/pulls?state=open&per_page=1&head=${
+        `https://api.github.com/repos/${repository}/pulls?state=open&per_page=100&head=${
           encodeURIComponent(`${owner}:${branch}`)
         }`,
         { headers },
@@ -165,7 +176,23 @@ export function githubCleanupPorts(token: string): AgentJobsCleanupPorts {
       if (!response.ok) {
         throw new Error(`pull request lookup: HTTP ${response.status}`);
       }
-      return (await response.json() as unknown[]).length > 0;
+      return (await response.json() as { number: number }[]).map((pull) =>
+        pull.number
+      );
+    },
+    closePullRequest: async (repository, number) => {
+      const response = await fetch(
+        `https://api.github.com/repos/${repository}/pulls/${number}`,
+        {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify({ state: "closed" }),
+        },
+      );
+      await response.body?.cancel();
+      if (!response.ok) {
+        throw new Error(`pull request close: HTTP ${response.status}`);
+      }
     },
     deleteBranch: async (repository, branch) => {
       const response = await fetch(

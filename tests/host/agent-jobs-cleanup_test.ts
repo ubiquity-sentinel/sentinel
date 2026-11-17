@@ -64,9 +64,14 @@ Deno.test("agent jobs cleanup accepts only result branches", () => {
 
 Deno.test("agent jobs cleanup keeps open pull requests and survives failures", async () => {
   const deleted: string[] = [];
+  const closed: number[] = [];
   const ports: AgentJobsCleanupPorts = {
-    hasOpenPullRequest: (_repository, branch) =>
-      Promise.resolve(branch.startsWith("agent-jobs/open-")),
+    openPullRequests: (_repository, branch) =>
+      Promise.resolve(branch.startsWith("agent-jobs/open-") ? [7, 8] : []),
+    closePullRequest: (_repository, number) => {
+      closed.push(number);
+      return Promise.resolve();
+    },
     deleteBranch: (repository, branch) => {
       if (branch.startsWith("agent-jobs/boom-")) {
         return Promise.reject(new Error("branch delete: HTTP 403"));
@@ -103,6 +108,11 @@ Deno.test("agent jobs cleanup keeps open pull requests and survives failures", a
     "deleted",
   ]);
   assert.equal(results[1].detail, "branch delete: HTTP 403");
+  assert.equal(
+    results[3].detail,
+    "closed pull request 7 closed pull request 8",
+  );
+  assert.deepEqual(closed, [7, 8]);
   assert.deepEqual(deleted, [
     "ubiquity/a agent-jobs/open-2-1",
     "ubiquity/a agent-jobs/done-1-1",

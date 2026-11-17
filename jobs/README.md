@@ -129,12 +129,12 @@ fails the whole request. As with jobs, only files the pushed head commit adds or
 changes are read. Do not put a job file and a cleanup file for the same branch
 in one commit.
 
-| Status         | Meaning                                                                                               |
-| -------------- | ----------------------------------------------------------------------------------------------------- |
-| `deleted`      | The branch is gone.                                                                                   |
-| `missing`      | The branch did not exist, for example it was deleted after a merge.                                   |
-| `kept_open_pr` | An open pull request uses the branch. `closePullRequest` deletes it anyway, closing the pull request. |
-| `failed`       | GitHub refused; the detail gives the HTTP status. The run fails.                                      |
+| Status         | Meaning                                                                                            |
+| -------------- | -------------------------------------------------------------------------------------------------- |
+| `deleted`      | The branch is gone.                                                                                |
+| `missing`      | The branch did not exist, for example it was deleted after a merge.                                |
+| `kept_open_pr` | An open pull request uses the branch. `closePullRequest` closes the pull request, then deletes it. |
+| `failed`       | GitHub refused; the detail gives the HTTP status. The run fails.                                   |
 
 ## Capacity
 
