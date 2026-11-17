@@ -49,6 +49,25 @@ async function rateLimited(errFile: string): Promise<boolean> {
   return text.slice(-4000).includes(RATE_LIMITED_MARKER);
 }
 
+/**
+ * The client's own last error line, so a failed job can be diagnosed without
+ * the transcript. Only lines the client marks as errors are considered, long
+ * token-like runs are redacted, and the result is capped.
+ */
+export async function agentFailureReason(errFile: string): Promise<string> {
+  const text = await Deno.readTextFile(errFile).catch(() => "");
+  const lines = text.slice(-16000).split("\n")
+    .map((line) =>
+      line.replaceAll(String.fromCharCode(27), "").replace(/^\[[0-9;]*m/, "")
+        .trim()
+    )
+    .filter((line) => /^(error|fatal|panic)\b/i.test(line));
+  const last = lines.at(-1);
+  if (last === undefined) return "";
+  return last.replace(/[A-Za-z0-9_\-]{32,}/g, "<redacted>")
+    .replace(/\s+/g, " ").slice(0, 300);
+}
+
 export type AgentJobStatus =
   | "changed"
   | "no_changes"
@@ -304,7 +323,14 @@ async function runJob(
         "agent_failed",
         limited
           ? `model rate limited (429) through ${attempt + 1} attempts`
-          : `exit ${agent.code}`,
+          : await (async () => {
+            const reason = await agentFailureReason(
+              `${root}/agent-${attempt}.log.err`,
+            );
+            return reason
+              ? `exit ${agent.code}: ${reason}`
+              : `exit ${agent.code}`;
+          })(),
       );
     }
     return settle(result.headSha === null ? "no_changes" : "changed", "");

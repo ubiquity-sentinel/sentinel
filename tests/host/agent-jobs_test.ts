@@ -128,7 +128,8 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
         'case "$mode" in',
         '  write) echo "$rest" > work.txt; echo "summary: $rest" > "$1";;',
         "  idle) ;;",
-        "  fail) exit 7;;",
+        "  fail) echo 'working' >&2",
+        "    echo 'ERROR: unexpected status 400: flagged token sk-abcdefghijklmnopqrstuvwxyz0123456789ABCD end' >&2; exit 7;;",
         "  hang) echo partial > partial.txt; sleep 30;;",
         "  own) echo mine > own.txt; git add own.txt",
         "    git -c user.name=a -c user.email=a@b.c commit -q -m own;;",
@@ -214,6 +215,10 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
         ["starved", "agent_failed"],
         ["nosetup", "setup_failed"],
       ],
+    );
+    assert.equal(
+      byId.fails.detail,
+      "exit 7: ERROR: unexpected status 400: flagged token <redacted> end",
     );
     assert.deepEqual(delays.sort((a, b) => a - b), [
       0,
