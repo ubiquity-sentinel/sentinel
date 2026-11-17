@@ -46,11 +46,26 @@ const FORBIDDEN_CANDIDATES = [
   ".github/actions/hosted-runtime-control/action.yml",
 ] as const;
 
-async function assertForbiddenCandidate(path: string) {
+/** Sentinel's own repository (the self installation of the repair rig). */
+const SELF = {
+  owner: "ubiquity-sentinel",
+  name: "sentinel",
+  installationId: 9,
+} as const;
+
+/**
+ * Owner directive 2026-11-17 ("give sentinel full access"): a candidate that
+ * changes one of Sentinel's own authority files is no longer parked
+ * unpublished. It is pushed, CI-gated and reviewed like any candidate and
+ * carries the owner-landing flag, so Sentinel never merges it: only the
+ * repository owner does.
+ */
+async function assertOwnerLandingCandidate(path: string) {
   const rig = await makeRepairRig("hosted-authority", {
     model: { changedPaths: [path] },
     github: { candidateLifecycle: positiveLifecycle() },
     configOverrides: {
+      repository: SELF,
       protectedPaths: createLocalRepositoryConfig().protectedPaths,
     },
   });
@@ -58,17 +73,16 @@ async function assertForbiddenCandidate(path: string) {
     const outcome = await rig.run();
     assert.equal(outcome.status, "idle", JSON.stringify(outcome));
     const state = await rig.snapshot();
-    assert.equal(state.work[0].nextStep, "blocked");
-    assert.equal(
-      state.work[0].blocker?.message,
-      "candidate touches a protected path",
+    assert.equal(state.work[0].blocker, null, path);
+    assert.equal(state.work[0].nextStep, "review", path);
+    assert.ok(
+      (state.work[0].ownerLanding?.paths.length ?? 0) > 0,
+      `${path}: ${JSON.stringify(state.work[0].ownerLanding)}`,
     );
     assert.equal(rig.model.requests.length, 1);
-    assert.equal(state.reservations.length, 1);
     assert.equal(state.reservations[0].outcome, "submitted");
-    assert.equal(rig.github.pushes.length, 0);
-    assert.equal(rig.github.preservationRequests.length, 0);
-    assert.equal(rig.github.calls.includes("requestReview"), false);
+    assert.equal(rig.github.pushes.length, 1, path);
+    assert.equal(rig.github.calls.includes("merge"), false, path);
   } finally {
     await rig.ctx.cleanup();
   }
@@ -123,15 +137,15 @@ const ROUND3_AUTHORITY_PATHS = [
   "src/host/actions-supervisor-install-api.ts",
 ] as const;
 
-Deno.test("hosted authority: predicate, auto-follow, credential and promotion files stay forbidden and unpublished", async (t) => {
+Deno.test("hosted authority: predicate, auto-follow, credential and promotion files publish for the owner, never merged by Sentinel", async (t) => {
   for (const path of ROUND3_AUTHORITY_PATHS) {
-    await t.step(path, () => assertForbiddenCandidate(path));
+    await t.step(path, () => assertOwnerLandingCandidate(path));
   }
 });
 
-Deno.test("hosted authority: reduced authority files stay forbidden and unpublished", async (t) => {
+Deno.test("hosted authority: reduced authority files publish for the owner, never merged by Sentinel", async (t) => {
   for (const path of FORBIDDEN_CANDIDATES) {
-    await t.step(path, () => assertForbiddenCandidate(path));
+    await t.step(path, () => assertOwnerLandingCandidate(path));
   }
 });
 
@@ -145,7 +159,7 @@ Deno.test("hosted authority: the Passport deploy-check selector is protected", (
   );
 });
 
-Deno.test("hosted authority: a protected merge-gate dependency edit is refused", async (t) => {
+Deno.test("hosted authority: a protected merge-gate dependency edit lands only for the owner", async (t) => {
   // `port-merge.ts` imports `loop-checks.ts`, which imports the protected
   // Passport selector and `ci-rejection.ts`; `port-merge-policy.ts` also
   // imports `ci-rejection.ts`. Editing only a dependency must not weaken the
@@ -156,7 +170,7 @@ Deno.test("hosted authority: a protected merge-gate dependency edit is refused",
       "src/repair/ci-rejection.ts",
     ]
   ) {
-    await t.step(path, () => assertForbiddenCandidate(path));
+    await t.step(path, () => assertOwnerLandingCandidate(path));
   }
 });
 

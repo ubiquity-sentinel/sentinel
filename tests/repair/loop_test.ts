@@ -442,9 +442,12 @@ Deno.test("successful push reconciliation continues publication", async () => {
 Deno.test(
   "protected directory prefixes are normalized before candidate path checks",
   async () => {
+    // Since the owner's 2026-11-17 "full access" only a credential path under
+    // a configured prefix still parks on a target: an unnormalized prefix
+    // that missed it would publish the env file.
     const rig = await makeRig("protectedprefix", {
-      configOverrides: { protectedPaths: ["./.github/workflows/"] },
-      model: { changedPaths: [".github/workflows/file.yml"] },
+      configOverrides: { protectedPaths: ["./config/"] },
+      model: { changedPaths: ["config/.env.production"] },
     });
     try {
       const outcome = await rig.run();

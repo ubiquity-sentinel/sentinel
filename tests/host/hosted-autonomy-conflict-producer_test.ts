@@ -567,39 +567,41 @@ Deno.test("consumed conflict producer: authenticated source and preservation ref
       await w.rig.cleanup();
     }
   });
-  await t.step("trusted validator refuses", async () => {
-    const w = await conflictWalk(true);
-    try {
-      const before = await w.rig.hosted.snapshot();
-      w.rig.hosted.configs[0].protectedPaths = ["src/app.ts"];
-      const outcome = await captured(w.walk);
-      assert.equal(outcome.error, null);
-      assert.equal(
-        await present(w.rig, w.mirror, w.merge),
-        true,
-        "the refused preservation follows authenticated hydration",
-      );
-      const refused = await w.port(w.rig.hosted.state).preserveCandidate({
-        taskId: TASK,
-        candidate: {
-          operationKey: before.work[0].intent!.key,
-          base: w.rig.ctx.base,
-          head: w.merge,
-          ref: w.ref,
-        },
-        publishedHead: w.rig.ctx.head,
-      });
-      assert(
-        !refused.ok && refused.error.kind === "invalid",
-        JSON.stringify(refused),
-      );
-      assert.deepEqual(await w.rig.hosted.snapshot(), before);
-      assert.equal(await remoteRef(w.rig, w.ref), null);
-      assert.equal(w.writes.length, 0);
-    } finally {
-      await w.rig.cleanup();
-    }
-  });
+  await t.step(
+    "trusted validator no longer refuses a target's non-credential protected path",
+    async () => {
+      // Owner directive 2026-11-17 ("give sentinel full access"): on a target
+      // only credential paths refuse publication (`publicationProtectedPaths`);
+      // a configured protected source path is an ordinary change. Credential
+      // refusals keep their own cases (`owner-landing-publication_test.ts`,
+      // `review-snapshot-protected_test.ts`).
+      const w = await conflictWalk(true);
+      try {
+        const before = await w.rig.hosted.snapshot();
+        w.rig.hosted.configs[0].protectedPaths = ["src/app.ts"];
+        const outcome = await captured(w.walk);
+        assert.equal(outcome.error, null);
+        assert.equal(
+          await present(w.rig, w.mirror, w.merge),
+          true,
+          "the preservation follows authenticated hydration",
+        );
+        const preserved = await w.port(w.rig.hosted.state).preserveCandidate({
+          taskId: TASK,
+          candidate: {
+            operationKey: before.work[0].intent!.key,
+            base: w.rig.ctx.base,
+            head: w.merge,
+            ref: w.ref,
+          },
+          publishedHead: w.rig.ctx.head,
+        });
+        assert(preserved.ok, JSON.stringify(preserved));
+      } finally {
+        await w.rig.cleanup();
+      }
+    },
+  );
   await t.step("dedicated recovery keeps its reservation", async () => {
     const w = await conflictWalk(true);
     try {
