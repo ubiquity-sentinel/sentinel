@@ -51,6 +51,14 @@ export interface GitHubChecksReadOptionsV1 {
 }
 
 /** Optional narrowing of one open-issue listing. */
+/**
+ * The closed detail (and park message) of a push GitHub refused because the
+ * App installation lacks the `workflows` permission: owner action, never a
+ * retry or a further charged run.
+ */
+export const PUSH_WORKFLOWS_PERMISSION_DETAIL =
+  "app lacks workflows permission; owner action required";
+
 export interface GitHubIssueListOptionsV1 {
   /**
    * Which listed issues need their native relations read (one GraphQL read

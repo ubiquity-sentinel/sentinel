@@ -37,10 +37,12 @@ import type {
 import { hasPublishedIdentity } from "./selection.ts";
 import {
   clearIntent,
+  markBlocked,
   markTerminalBlocked,
   setIntent,
   setWait,
 } from "./transitions.ts";
+import { PUSH_WORKFLOWS_PERMISSION_DETAIL } from "../contracts/ports-github.ts";
 
 // ---------------------------------------------------------------------------
 // Publish phase (also reconciles every saved operation by exact remote object).
@@ -282,6 +284,21 @@ export async function executePublishStep(
         context,
         withIntent,
         queueRefusalIsTransient(push.error),
+      );
+    }
+    // GitHub refused a workflow change for want of the App's `workflows`
+    // permission: nothing was written and a retry repeats the refusal, so
+    // park for the owner (the charge stays; no retry, no new run).
+    if (push.error.detail === PUSH_WORKFLOWS_PERMISSION_DETAIL) {
+      return persistWork(
+        deps,
+        context,
+        markBlocked(
+          clearIntent(withIntent, now),
+          "other",
+          PUSH_WORKFLOWS_PERMISSION_DETAIL,
+          now,
+        ),
       );
     }
     // The saved push intent must stay durable: the response may have been

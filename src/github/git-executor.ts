@@ -71,7 +71,19 @@ export type GitPushStatusV1 =
   | "ambiguous"
   | "non_fast_forward"
   | "missing_object"
-  | "rejected";
+  | "rejected"
+  | "workflow_permission";
+
+/**
+ * GitHub's definitive refusal of a push that creates or updates a file under
+ * `.github/workflows/` when the credential lacks the `workflows` permission
+ * (an App installation) or `workflow` scope (an OAuth or personal token).
+ * Nothing was written; repeating the push repeats the refusal.
+ */
+export function isWorkflowsPermissionRefusal(text: string): boolean {
+  return /refusing to allow an? (GitHub App|OAuth App|Personal Access Token) to create or update workflow/i
+    .test(text);
+}
 
 export interface GitPushResultV1 {
   status: GitPushStatusV1;
@@ -463,6 +475,11 @@ export class DenoGitExecutor implements GitExecutorV1 {
             // The exact-ref guard rejected the transaction: a definitive
             // conflict (nothing was written).
             return portOk({ status: "rejected" });
+          }
+          // Before the generic "rejected" family: the remote names this
+          // refusal "[remote rejected]", which is not a fast-forward problem.
+          if (isWorkflowsPermissionRefusal(text)) {
+            return portOk({ status: "workflow_permission" });
           }
           if (
             /non-fast-forward|fetch first|rejected|needs fast-forward/i.test(

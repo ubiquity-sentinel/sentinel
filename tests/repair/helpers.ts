@@ -209,6 +209,8 @@ export interface FakeGithubOptionsV1 {
   reviewUnavailable?: boolean;
   reviewRequestedAt?: number;
   pushOutcome?: "applied" | "ambiguous";
+  /** One-shot definitive refusal detail of the next push (nothing written). */
+  pushRefusal?: string;
   pushFailNext?: boolean;
   createOutcome?: "applied" | "ambiguous";
   createFailNext?: boolean;
@@ -516,6 +518,11 @@ export class FakeGithub implements GitHubPort {
     expectedRef: GitSha | null,
   ): Promise<PortResultV1<"applied" | "ambiguous">> {
     this.calls.push(`push:${ref}:${sha.slice(0, 8)}`);
+    if (this.options.pushRefusal !== undefined) {
+      const detail = this.options.pushRefusal;
+      this.options.pushRefusal = undefined;
+      return Promise.resolve(portError("invalid", detail));
+    }
     if (this.options.pushFailNext) {
       this.options.pushFailNext = false;
       return Promise.resolve(

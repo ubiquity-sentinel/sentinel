@@ -1,5 +1,6 @@
 // port publication.
 
+import { PUSH_WORKFLOWS_PERMISSION_DETAIL } from "../contracts/ports-github.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import type { TakeoverEffectAuthorization } from "../contracts/existing-pr-takeover.ts";
 import type {
@@ -103,6 +104,8 @@ export abstract class GitHubPortPublication extends GitHubPortEvidence {
         return portError("invalid", "candidate commit is not available");
       case "rejected":
         return portError("conflict", "push was rejected");
+      case "workflow_permission":
+        return portError("invalid", PUSH_WORKFLOWS_PERMISSION_DETAIL);
       case "ambiguous":
         break;
     }
