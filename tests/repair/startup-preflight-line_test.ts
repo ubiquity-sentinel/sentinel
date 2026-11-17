@@ -138,10 +138,93 @@ Deno.test("startup preflight: the post-failure codex check tells a missing, non-
     assert.deepEqual(await checkCodexExecutable(healthy, path), {
       codex: "ok",
     });
-    assert.deepEqual(await checkCodexExecutable(hung, path, 100), {
+    assert.deepEqual(await checkCodexExecutable(hung, path, 100, 200), {
       codex: "timed_out",
     });
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+/** A unique `sleep` argument, so the test finds exactly its own process. */
+function sleeper(): string {
+  return `4.${String(Math.floor(Math.random() * 1e9)).padStart(9, "1")}`;
+}
+
+/** True while a non-zombie process runs exactly `sleep <seconds>`. */
+async function sleeping(seconds: string): Promise<boolean> {
+  const listed = await new Deno.Command("ps", {
+    args: ["-eo", "stat=,args="],
+    stdout: "piped",
+    stderr: "null",
+  }).output();
+  return new TextDecoder().decode(listed.stdout).split("\n").some((line) => {
+    const [stat, ...args] = line.trim().split(/\s+/);
+    return stat !== undefined && !stat.startsWith("Z") &&
+      args.join(" ") === `sleep ${seconds}`;
+  });
+}
+
+/** Whether the process stays gone, polled within `ms`. */
+async function goneWithin(seconds: string, ms: number): Promise<boolean> {
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    if (!(await sleeping(seconds))) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return !(await sleeping(seconds));
+}
+
+const LIMIT = 300;
+const GRACE = 400;
+
+/** One check of a temporary `#!/bin/sh` script, timed. */
+async function checkScript(body: string): Promise<{
+  result: Awaited<ReturnType<typeof checkCodexExecutable>>;
+  elapsed: number;
+}> {
+  const dir = await Deno.makeTempDir({ prefix: "sentinel-codex-bound-" });
+  try {
+    const file = `${dir}/codex`;
+    await Deno.writeTextFile(file, `#!/bin/sh\n${body}\n`);
+    await Deno.chmod(file, 0o700);
+    const path = Deno.env.get("PATH") ?? "/usr/bin:/bin";
+    const started = performance.now();
+    const result = await checkCodexExecutable(file, path, LIMIT, GRACE);
+    return { result, elapsed: performance.now() - started };
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+}
+
+Deno.test("startup preflight: a TERM-trapping codex check returns within its limit and grace", async () => {
+  // A wrapper that traps TERM and waits for its (hung) binary.
+  const stubborn = sleeper();
+  const { result, elapsed } = await checkScript(
+    `trap '' TERM\nexec sleep ${stubborn}`,
+  );
+  assert.deepEqual(result, { codex: "timed_out" });
+  // The whole addition to a failing preflight: the limit plus its grace.
+  assert.ok(elapsed < LIMIT + GRACE + 300, `${elapsed} ms`);
+  assert.equal(await goneWithin(stubborn, 1_000), true, "TERM-trapping child");
+});
+
+Deno.test("startup preflight: a timed-out codex check leaves no descendant behind", async () => {
+  // A wrapper whose descendant ignores TERM and would outlive the wrapper.
+  const orphan = sleeper();
+  const { result, elapsed } = await checkScript(
+    `/bin/sh -c 'trap "" TERM; exec sleep ${orphan}' &\nwait`,
+  );
+  assert.deepEqual(result, { codex: "timed_out" });
+  assert.ok(elapsed < LIMIT + GRACE + 300, `${elapsed} ms`);
+  assert.equal(await goneWithin(orphan, 1_000), true, "no leaked grandchild");
+});
+
+Deno.test("startup preflight: a codex check that exits in time leaves no descendant behind", async () => {
+  const left = sleeper();
+  const { result } = await checkScript(
+    `/bin/sh -c 'trap "" TERM; exec sleep ${left}' &\nsleep 0.1\nexit 0`,
+  );
+  assert.deepEqual(result, { codex: "ok" });
+  assert.equal(await goneWithin(left, 1_000), true, "no leftover after exit");
 });

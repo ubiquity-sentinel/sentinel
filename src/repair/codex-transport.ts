@@ -695,7 +695,10 @@ export class CodexSubprocessSession implements CodexSessionV1 {
  * way). Negative pid: the detached child is the group leader (pid == pgid),
  * so signaling reaches exactly this session's descendants, never siblings.
  */
-function signalGroup(child: Deno.ChildProcess, signo: Deno.Signal): void {
+export function signalGroup(
+  child: Deno.ChildProcess,
+  signo: Deno.Signal,
+): void {
   try {
     Deno.kill(-child.pid, signo);
     return;

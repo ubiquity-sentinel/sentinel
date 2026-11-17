@@ -18,6 +18,7 @@
 import {
   CodexProtocolError,
   CodexSubprocessSession,
+  signalGroup,
 } from "../repair/codex-transport.ts";
 import {
   parseStartupPreflightLine,
@@ -37,6 +38,8 @@ const ERROR_CAP = 2_000;
 const KIND = STARTUP_PREFLIGHT_KIND;
 /** Bound of the post-failure `codex --version` check. */
 const CODEX_CHECK_DEADLINE_MS = 5_000;
+/** Its TERM-then-KILL grace: the check never adds more than both. */
+const CODEX_CHECK_GRACE_MS = 1_000;
 const INSIDE_MARKER = "sentinel-inside-probe-marker";
 const OUTSIDE_MARKER = "sentinel-outside-probe-marker";
 const OVERWRITE_MARKER = "sentinel-outside-probe-overwrite";
@@ -82,20 +85,44 @@ export function preflightErrorCategory(
   return native.some((type) => error instanceof type) ? "io" : "other";
 }
 
+/** The settled value, or `undefined` once `ms` passed first. */
+async function settleWithin<T>(
+  promise: Promise<T>,
+  ms: number,
+): Promise<T | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => resolve(undefined), Math.max(0, ms));
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * After a failure only: does the resolved `codex` run at all? `--version`
  * with PATH alone and no output captured, so a missing executable or
  * interpreter, a non-executable file or a non-zero exit (a wrapper whose
  * native binary is missing) is told apart from a hung or refusing
  * app-server. Never throws and never changes the preflight's outcome.
+ *
+ * Bounded: the check runs in its own process group. At `deadlineMs` the
+ * whole group gets TERM, then KILL, and the check stops waiting after
+ * `graceMs` more whatever the group does (`timed_out`); a wrapper that traps
+ * TERM, or a descendant it left, is never waited for and never outlives the
+ * check (the group is killed after every outcome).
  */
 export async function checkCodexExecutable(
   executable: string | null,
   path: string,
   deadlineMs = CODEX_CHECK_DEADLINE_MS,
+  graceMs = CODEX_CHECK_GRACE_MS,
 ): Promise<{ codex: StartupPreflightCodexV1; exitCode?: number }> {
   if (executable === null) return { codex: "not_run" };
-  const abort = new AbortController();
   let child: Deno.ChildProcess;
   try {
     child = new Deno.Command(executable, {
@@ -105,7 +132,9 @@ export async function checkCodexExecutable(
       stdin: "null",
       stdout: "null",
       stderr: "null",
-      signal: abort.signal,
+      // Group leader (pgid = pid): the signals below reach exactly the
+      // check's own descendants, never a sibling.
+      detached: true,
     }).spawn();
   } catch (error) {
     if (error instanceof Deno.errors.NotFound) return { codex: "not_found" };
@@ -114,24 +143,24 @@ export async function checkCodexExecutable(
     }
     return { codex: "spawn_failed" };
   }
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    abort.abort();
-  }, deadlineMs);
-  try {
-    const status = await child.status;
-    if (timedOut) return { codex: "timed_out" };
-    if (status.success) return { codex: "ok" };
-    return {
-      codex: "exited",
-      exitCode: Math.min(255, Math.max(1, status.code)),
-    };
-  } catch {
-    return { codex: "spawn_failed" };
-  } finally {
-    clearTimeout(timer);
+  const exited = child.status.then((status) => status, () => null);
+  const status = await settleWithin(exited, deadlineMs);
+  if (status === undefined) {
+    signalGroup(child, "SIGTERM");
+    await settleWithin(exited, graceMs / 2);
   }
+  // Nothing of the check outlives it, whether it exited or timed out.
+  signalGroup(child, "SIGKILL");
+  if (status === undefined) {
+    await settleWithin(exited, graceMs / 2);
+    return { codex: "timed_out" };
+  }
+  if (status === null) return { codex: "spawn_failed" };
+  if (status.success) return { codex: "ok" };
+  return {
+    codex: "exited",
+    exitCode: Math.min(255, Math.max(1, status.code)),
+  };
 }
 
 /** Print the text-free failure line beside the bounded-text one. */
