@@ -149,6 +149,16 @@ export interface GitHubPort {
    */
   readCommitParents?(sha: GitSha): Promise<PortResultV1<GitSha[] | null>>;
   /**
+   * Optional paths one exact `base...head` comparison changes (null: not
+   * listed whole). Read only for a head whose CI ran no job to success, to
+   * apply the 2026-11-17 success rule to one that changes a CI-executable
+   * path (`ci-success-rule.ts`); absent, that rule fails closed.
+   */
+  readChangedPaths?(
+    base: GitSha,
+    head: GitSha,
+  ): Promise<PortResultV1<string[] | null>>;
+  /**
    * Optional exact tree of one commit (null: no such commit). A squash merge
    * (#331) is proven on exactly [reviewed base] by its tree equal to the
    * reviewed head's tree; absent, a single-parent merge is never booked.

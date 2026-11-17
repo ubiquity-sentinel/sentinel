@@ -12,9 +12,14 @@ import {
 import {
   isCiEvidenceCheck,
   isPassportDeployCheck,
+  isTargetCiSuccessCheck,
   selectMergeGateChecksV1,
 } from "./merge-gate-checks.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
+import {
+  hasTargetCiSuccess,
+  workflowSuccessRequired,
+} from "./ci-success-rule.ts";
 import { routeFailedDeliveryChecks } from "./loop-ci-correction.ts";
 import { isSelfScopeZero } from "./loop-legacy-loss.ts";
 import { persistWork } from "./loop-state.ts";
@@ -55,10 +60,17 @@ const SELF_AGGREGATE_CHECK = "test-local";
  * check run only once its dependencies finish. The CI-first review gate and
  * the carried delivery steps therefore also require coverage of the base the
  * head is tested against (`absentExpectedChecks`) before a "proceed" counts.
+ *
+ * `requireSuccess` (2026-11-17, a head that changes a CI-executable path,
+ * `ci-success-rule.ts`): a head whose evidence is only skipped or neutral
+ * jobs, or only backup-CI stand-ins, waits too; it proceeds only with at
+ * least one job its own CI ran and passed (`isTargetCiSuccessCheck`). Every
+ * caller that omits it decides exactly as before.
  */
 export function decideCiGate(
   checks: GitHubCheckV1[],
   repository?: Pick<RepositoryIdentityV1, "owner" | "name">,
+  options?: { readonly requireSuccess?: boolean },
 ): "proceed" | "wait" | { blocked: string } {
   const gating = selectMergeGateChecksV1(repository, checks).checks;
   if (gating.length === 0) return "wait";
@@ -82,7 +94,32 @@ export function decideCiGate(
   // apps (the gateway's lone skipped `CodeRabbit`, a scanner or a preview,
   // before any `Gateway CI` run) waits exactly like a head with no checks.
   if (!deduped.some(isCiEvidenceCheck)) return "wait";
+  if (
+    options?.requireSuccess === true && !deduped.some(isTargetCiSuccessCheck)
+  ) return "wait";
   return "proceed";
+}
+
+/**
+ * `decideCiGate` for `record`'s own head under the 2026-11-17 success rule
+ * (`ci-success-rule.ts`): a head that would proceed with no job its own CI
+ * passed is judged with `requireSuccess` when it changes a CI-executable path
+ * (one comparison read, only then; unreadable fails closed). Any other head,
+ * and any head with such a job, gets exactly `decideCiGate`'s verdict.
+ */
+export async function decideHeadCiGate(
+  deps: Pick<RepairCycleDepsV1, "github">,
+  record: Pick<WorkRecordV1, "target">,
+  checks: GitHubCheckV1[],
+  repository?: Pick<RepositoryIdentityV1, "owner" | "name">,
+): Promise<"proceed" | "wait" | { blocked: string }> {
+  const decision = decideCiGate(checks, repository);
+  if (
+    decision !== "proceed" ||
+    hasTargetCiSuccess(selectMergeGateChecksV1(repository, checks).checks) ||
+    !await workflowSuccessRequired(deps, record)
+  ) return decision;
+  return decideCiGate(checks, repository, { requireSuccess: true });
 }
 
 /**
@@ -173,7 +210,12 @@ export async function gateDeliveryOnChecks(
     // Transient read failure: defer without a wait so the next turn retries.
     return { kind: "deferred", detail: "CI check observation unavailable" };
   }
-  const decision = decideCiGate(observed.value.checks, record.repository);
+  const decision = await decideHeadCiGate(
+    deps,
+    record,
+    observed.value.checks,
+    record.repository,
+  );
   if (decision === "proceed") {
     // Every selected (deduped) CI check completed green: the CI gate passes
     // and the merge authorization proceeds. Deploy observations stay evidence.
