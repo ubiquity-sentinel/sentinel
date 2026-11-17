@@ -5710,3 +5710,89 @@ the current runner nor the definition. Store: no file changes
 shape; `v1/<owner>/<repo>/probe.json` and `v1/<owner>/<repo>/check-defs.json`
 are new and older code never reads them (a reverted reader ignores the
 definitions and keeps its per-check gate).
+
+## 2026-11-17: protected-path candidates publish and merge (owner: "give sentinel full access")
+
+Owner directive (2026-11-17, verbatim, answering whether Sentinel should open
+a pull request when its fix touches a workflow file instead of parking it
+invisibly; ai.ubq.fi #1370 and pay.ubq.fi #509 were stuck on exactly that):
+"dude give sentinel full access please this is unnecessarily nerfed". Earlier
+the same day, about the 1370 fix: "Verified just keep moving forward."
+
+- Changed, at its single source
+  ([src/repair/owner-landing.ts](../src/repair/owner-landing.ts)): on every
+  target other than Sentinel itself a candidate that changes a configured
+  protected path (`.github/workflows/` included; on ai.ubq.fi also its
+  owner-landing set: `AGENTS.md`, `docs/DECISIONS.md`, `src/sentinel/`, the
+  replay consumer, `.data/`, `.release/`, `.kv-migration/`,
+  `src/codex/supervisor-secret.ts`; on generic targets also a target's own
+  `sentinel.protected` entries) is published as an ordinary pull request
+  and merged through the unchanged gates: current-head CI not red, a
+  completed native review with no unresolved P0, task acceptance, custody
+  and accounting. Publication validation, the conflict-resolution check
+  and the launcher's merge-time gate (`sentinelNeverMerges`) use the same
+  predicate. This supersedes the "park unpublished" half of the 2026-11-05
+  owner-landing entry, the 2026-11-05 ai.ubq.fi owner-landing list and the
+  2026-11-17 never-published prompt entry.
+- Kept, never published on any target (`credentialPath`): `.git/`, every
+  `.env*` file, `.npmrc`, the act files the backup CI must never read
+  (`.secrets`, `.actrc`, `.vars`, `.input`) and `sentinel.protected`; the
+  secret-shaped-text detector and the publication bounds are unchanged.
+  Key files are refused only by that detector (no basename rule existed
+  before or was added).
+- Kept on Sentinel's own repository: every configured protected prefix
+  (`SENTINEL_AUTHORITY_PATHS`: credential minting and selection, write-token
+  dispatch, the merge gate, promotion, the protected-path policy itself and
+  `.github/`) is now published, CI-gated and natively reviewed, but only the
+  owner merges it (owner-landing: `owner_merge` wait, one progress comment,
+  the human merge completes the record). Reason: the self-merge executor
+  proves CI with the base's pinned pipeline (`SELF_MERGE_TRUSTED_PIPELINE`
+  and `SELF_MERGE_TRUSTED_SOURCES`: `.github/`, `.github/workflows/ci.yml`,
+  `test-local.ts`, `ops/native-ci-proof.ts`, `ops/ci-shards.ts`,
+  `ops/ci-test-timings.json`, `ops/code-size.ts`, `deno.json`,
+  `deno.lock`), and the ordinary launcher path would judge such a PR with
+  its own modified CI; an autonomous merge of the policy or merge-gate
+  files would also let one reviewed PR lift that proof for the next. The
+  same prefixes enforce the AGENTS.md hard rules (credentials and promotion
+  out of model workers; `sentinel-release` stays disabled through
+  `.github/`). The pipeline files outside the configured list (`deno.json`,
+  `deno.lock`, `test-local.ts`, `ops/ci-shards.ts`, `ops/ci-test-timings.json`,
+  `ops/code-size.ts`, `ops/native-ci-proof.ts`) are unchanged by this entry:
+  they publish and the executor still refuses their merge
+  (`self_merge_ci_pipeline_changed`). No branch protection rule or ruleset
+  is added anywhere.
+- Prompt: the never-published sentence now lists only the credential
+  prefixes and says that a change to any other listed prefix is published as
+  an ordinary pull request through the same CI and review gates, never
+  incidentally, and in place when the task needs it. Sentinel's own list has
+  no credential prefix, so its prompt returns to the 2026-11-05 text. The
+  template digest (`29921b7659c5…`) is unchanged, so none of the 5 live
+  repeat-failure parks re-arms; `GOLDEN_HOSTED_PROTECTED` returns to its
+  2026-11-05 value.
+- Residual risk, stated plainly: a model-written pull request can now change
+  a target's CI workflow and merge once that CI passes and native review
+  finds no P0 (P1 and lower never block). The head's CI runs the PR's own
+  modified workflow, so a workflow change that keeps one job green while
+  weakening the rest can pass. A head with no Actions check at all still
+  waits `ci_pending` (2026-11-05 positive-evidence rule), but a workflow
+  whose jobs all conclude `skipped` or `neutral` still reads as green; a
+  rule requiring at least one `success` on a workflow-changing head is
+  designed, not implemented here. A same-repository pull request's workflow
+  runs with that repository's Actions secrets; the 2026-10-24 basis for
+  approving held runs ("workflows stay protected") no longer holds for a
+  Sentinel pull request that changes a workflow.
+- Open, not changed here: pushing `.github/workflows/*` needs the App
+  installation's `workflows` permission; without it the push is refused
+  and today surfaces as an ordinary preservation failure (no closed code,
+  no owner comment). No existing data says whether the permission is
+  granted. The 11 records parked "candidate touches a protected path" all
+  carry `candidateState.preserved: null`: no preserved candidate survives
+  to publish without a new charged run, so each needs the owner's
+  `sentinel:retry` (or a release list) to proceed; this entry releases
+  none. Records already flagged `ownerLanding` keep waiting for the owner.
+
+Rollback: `git revert` the commit. No persisted field or state format
+changes; older runtimes read every record written here. Launcher (ops/) and
+runtime (src/) may roll back separately: an older launcher refuses at merge
+time (`protected_path`) what a newer runtime published, and an older
+runtime parks again before publication.
