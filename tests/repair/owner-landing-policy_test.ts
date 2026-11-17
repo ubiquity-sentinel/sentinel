@@ -1,6 +1,8 @@
 /**
- * Owner-landing policy: which protected changes publish for their owner, and
- * which (workflow and other CI-executable paths) never publish.
+ * Owner-landing policy (owner directive 2026-11-17, "give sentinel full
+ * access"): a protected change publishes as an ordinary pull request on every
+ * target, credential paths never publish, and on Sentinel's own repository a
+ * protected change publishes for its owner to merge.
  */
 import assert from "node:assert/strict";
 import { asCommandId } from "../../src/contracts/brands.ts";
@@ -9,10 +11,11 @@ import { selectTrustedTargetPolicyV1 } from "../../src/host/target-policy.ts";
 import { createLocalRepositoryConfig } from "../../src/host/local-config.ts";
 import {
   authorityPath,
-  ciExecutablePath,
+  credentialPath,
   ownerLandingTouch,
   protectedBeyondOwnerLanding,
   publicationProtectedPaths,
+  sentinelNeverMerges,
   withOwnerLanding,
 } from "../../src/repair/owner-landing.ts";
 import { T0, workRecord } from "../state/helpers.ts";
@@ -21,91 +24,105 @@ const named = {
   commands: { test: asCommandId("test"), replay: asCommandId("test") },
   protectedPaths: ["src/auth/", "ops/", ".github/workflows/", ".env"],
 };
+const TARGET = { owner: "ubiquity", name: "pay.ubq.fi" };
+const SELF = { owner: "ubiquity-sentinel", name: "sentinel" };
 
-Deno.test("owner landing policy: protected source publishes, CI-executable paths never do", () => {
-  assert.deepEqual(ownerLandingTouch(named, ["src/app.ts"]), { kind: "none" });
+Deno.test("owner landing policy: a target's protected change is ordinary, a credential path never publishes", () => {
+  assert.deepEqual(ownerLandingTouch(named, ["src/app.ts"], TARGET), {
+    kind: "none",
+  });
   assert.deepEqual(
-    ownerLandingTouch(named, ["src/auth/a.ts", "ops/x.ts", "src/app.ts"]),
-    { kind: "owner", paths: ["ops/", "src/auth/"] },
+    ownerLandingTouch(
+      named,
+      ["src/auth/a.ts", "ops/x.ts", ".github/workflows/ci.yml"],
+      TARGET,
+    ),
+    { kind: "none" },
   );
-  for (
-    const path of [
-      ".github/workflows/ci.yml",
-      ".env",
-    ]
-  ) {
+  for (const path of [".env", "apps/web/.env.local"]) {
     assert.deepEqual(
-      ownerLandingTouch(named, ["src/auth/a.ts", path]),
+      ownerLandingTouch(
+        { ...named, protectedPaths: [...named.protectedPaths, path] },
+        ["src/auth/a.ts", path],
+        TARGET,
+      ),
       { kind: "unpublishable" },
       path,
     );
   }
   for (
     const path of [
-      ".github/actions/setup/action.yml",
       "apps/web/.env.local",
       ".npmrc",
       ".actrc",
+      ".secrets",
+      ".vars",
+      ".input",
       "sentinel.protected",
       "a/.git/config",
     ]
-  ) assert.equal(ciExecutablePath(path), true, path);
-  assert.equal(ciExecutablePath("src/auth/session.ts"), false);
+  ) assert.equal(credentialPath(path), true, path);
+  for (
+    const path of [
+      ".github/workflows/ci.yml",
+      ".github/actions/setup/action.yml",
+      "src/auth/session.ts",
+    ]
+  ) assert.equal(credentialPath(path), false, path);
 });
 
-Deno.test("owner landing policy: the gateway's auth change is ordinary, its Sentinel code lands for the owner, its workflow change parks", () => {
+Deno.test("owner landing policy: the gateway's workflow and Sentinel-code changes are ordinary, its env file parks", () => {
   const gateway = selectTrustedTargetPolicyV1(createLocalRepositoryConfig(), {
     owner: "ubiquity",
     name: "ai.ubq.fi",
   });
-  // Owner directive 2026-11-05: the gateway's auth code is ordinary work.
-  assert.deepEqual(ownerLandingTouch(gateway, ["src/auth/login.ts"]), {
-    kind: "none",
+  const repository = { owner: "ubiquity", name: "ai.ubq.fi" };
+  for (
+    const path of [
+      "src/auth/login.ts",
+      "src/sentinel/probe.ts",
+      ".github/workflows/deno-deploy.yml",
+      "AGENTS.md",
+    ]
+  ) {
+    assert.deepEqual(ownerLandingTouch(gateway, [path], repository), {
+      kind: "none",
+    }, path);
+    assert.equal(sentinelNeverMerges(gateway, repository, [path]), false);
+  }
+  assert.deepEqual(ownerLandingTouch(gateway, [".env"], repository), {
+    kind: "unpublishable",
   });
-  assert.deepEqual(ownerLandingTouch(gateway, ["src/sentinel/probe.ts"]), {
-    kind: "owner",
-    paths: ["src/sentinel/"],
-  });
-  assert.deepEqual(
-    ownerLandingTouch(gateway, [".github/workflows/deno-deploy.yml"]),
-    { kind: "unpublishable" },
-  );
+  assert.equal(sentinelNeverMerges(gateway, repository, [".env"]), true);
 });
 
-Deno.test("owner landing policy: publication validates every protected path the flag does not name", () => {
+Deno.test("owner landing policy: a target's publication validates only credential prefixes", () => {
   const record = withOwnerLanding(workRecord("issue-1"), ["src/auth/"], T0);
   assert.deepEqual(
-    publicationProtectedPaths(named.protectedPaths, record),
-    ["ops/", ".github/workflows/", ".env"],
+    publicationProtectedPaths(named.protectedPaths, TARGET, record),
+    [".env"],
   );
   assert.deepEqual(
-    publicationProtectedPaths(named.protectedPaths, workRecord("issue-1")),
-    named.protectedPaths,
+    publicationProtectedPaths(named.protectedPaths, TARGET, null),
+    [".env"],
   );
-  // A flag can never lift a CI-executable path.
-  const forged = { ownerLanding: { paths: [".github/workflows/"], since: 1 } };
+  // A flag can never lift a credential path, on any repository.
+  const forged = { ownerLanding: { paths: [".env"], since: 1 } };
   assert.deepEqual(
-    publicationProtectedPaths(named.protectedPaths, forged),
-    named.protectedPaths,
+    publicationProtectedPaths(named.protectedPaths, SELF, forged),
+    ["src/auth/", "ops/", ".github/workflows/", ".env"],
   );
 });
 
-Deno.test("owner landing policy: a conflict merge may carry only the flagged prefixes", () => {
-  const plain = workRecord("issue-1");
-  const flagged = withOwnerLanding(plain, ["src/auth/"], T0);
-  const auth = ["src/auth/a.ts", "src/app.ts"];
+Deno.test("owner landing policy: a conflict merge on a target refuses only credential paths", () => {
+  const plain = {
+    ...workRecord("issue-1"),
+    repository: { ...TARGET, installationId: 1 },
+  };
+  const auth = ["src/auth/a.ts", "src/app.ts", ".github/workflows/a.yml"];
+  assert.equal(protectedBeyondOwnerLanding(named, plain, auth), false);
   assert.equal(
-    protectedBeyondOwnerLanding(named, plain, ["src/app.ts"]),
-    false,
-  );
-  assert.equal(protectedBeyondOwnerLanding(named, plain, auth), true);
-  assert.equal(protectedBeyondOwnerLanding(named, flagged, auth), false);
-  assert.equal(
-    protectedBeyondOwnerLanding(named, flagged, [...auth, "ops/x.ts"]),
-    true,
-  );
-  assert.equal(
-    protectedBeyondOwnerLanding(named, flagged, [".github/workflows/a.yml"]),
+    protectedBeyondOwnerLanding(named, plain, [...auth, ".env"]),
     true,
   );
 });
@@ -134,39 +151,40 @@ Deno.test("owner landing policy: the flag widens, keeps its first time and round
   assert.equal("ownerLanding" in parseWorkRecordV1(legacy), false);
 });
 
-Deno.test("owner landing policy: Sentinel authority files never publish, other self-protected paths do", () => {
+Deno.test("owner landing policy: Sentinel's own protected changes publish for its owner, never for Sentinel to merge", () => {
   const template = createLocalRepositoryConfig();
-  const self = {
-    commands: template.commands,
-    protectedPaths: [...template.protectedPaths, "docs/private/"],
-  };
+  const self = selectTrustedTargetPolicyV1(template, SELF);
   for (
-    const path of [
-      "src/repair/owner-landing.ts",
-      "src/repair/loop-owner-landing.ts",
-      "src/repair/loop-records.ts",
-      "src/host/local-config.ts",
-      ".github/actions/sentinel-app-token/action.yml",
+    const [path, prefix] of [
+      ["src/repair/owner-landing.ts", "src/repair/owner-landing.ts"],
+      ["src/repair/loop-records.ts", "src/repair/loop-records.ts"],
+      ["src/host/local-config.ts", "src/host/local-config.ts"],
+      ["src/host/supervisor-dispatch.ts", "src/host/supervisor-dispatch.ts"],
+      [".github/workflows/ci.yml", ".github/workflows/"],
+      [
+        ".github/actions/sentinel-app-token/action.yml",
+        ".github/actions/sentinel-app-token/",
+      ],
     ]
   ) {
     assert.equal(authorityPath(path), true, path);
-    assert.deepEqual(ownerLandingTouch(self, ["src/app.ts", path]), {
-      kind: "unpublishable",
+    assert.deepEqual(ownerLandingTouch(self, ["src/app.ts", path], SELF), {
+      kind: "owner",
+      paths: [prefix],
     }, path);
+    assert.equal(sentinelNeverMerges(self, SELF, [path]), true, path);
   }
-  assert.equal(authorityPath("docs/private/notes.md"), false);
-  assert.deepEqual(ownerLandingTouch(self, ["docs/private/notes.md"]), {
-    kind: "owner",
-    paths: ["docs/private/"],
+  assert.deepEqual(ownerLandingTouch(self, ["src/app.ts"], SELF), {
+    kind: "none",
   });
-  // An authority prefix is never dropped from the publication check.
+  assert.equal(sentinelNeverMerges(self, SELF, ["src/app.ts"]), false);
+  // The self publication check drops only the prefixes the flag names.
   assert.deepEqual(
-    publicationProtectedPaths(["src/repair/loop-records.ts", "docs/private/"], {
-      ownerLanding: {
-        paths: ["src/repair/loop-records.ts", "docs/private/"],
-        since: T0,
-      },
-    }),
+    publicationProtectedPaths(
+      ["src/repair/loop-records.ts", ".github/workflows/"],
+      SELF,
+      { ownerLanding: { paths: [".github/workflows/"], since: T0 } },
+    ),
     ["src/repair/loop-records.ts"],
   );
 });

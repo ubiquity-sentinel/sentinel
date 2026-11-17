@@ -224,6 +224,7 @@ export function createPublishedRefreshValidator(input: {
           createLocalRepositoryConfig(),
           input.repository,
         ).protectedPaths,
+        input.repository,
         record,
       );
       safeToRemove = false;

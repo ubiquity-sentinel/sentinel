@@ -268,9 +268,14 @@ export async function handleModelReceipt(
       config,
     );
   }
-  // A protected change is published for its owner to merge (never merged by
-  // Sentinel) unless it touches a CI-executable path, which never publishes.
-  const touch = ownerLandingTouch(config, candidate!.changedPaths);
+  // A protected change is published like any other (on Sentinel itself for
+  // its owner to merge) unless it touches a credential path, which never
+  // publishes (2026-11-17).
+  const touch = ownerLandingTouch(
+    config,
+    candidate!.changedPaths,
+    record.repository,
+  );
   const protectedHit = touch.kind === "unpublishable";
   // The verified prior published head: retained from existing V1 candidate
   // state, or proved by an ACTUAL owned-branch observation of the exact prior

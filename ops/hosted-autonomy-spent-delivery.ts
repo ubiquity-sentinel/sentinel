@@ -35,7 +35,6 @@ import { releaseRequestId } from "../src/repair/keys.ts";
 import { releaseRequestMatchesDelivery } from "../src/repair/loop-records.ts";
 import { createLocalRepositoryConfig } from "../src/host/local-config.ts";
 import { selectTrustedTargetPolicyV1 } from "../src/host/target-policy.ts";
-import { targetTouchesProtectedV1 } from "../src/host/target-policy-generic.ts";
 import { reviewAuthorizesMerge } from "../src/repair/review-gate.ts";
 import { advanceToDelivery } from "../src/repair/transitions.ts";
 import {
@@ -74,7 +73,10 @@ import type {
   HostedAutonomyPassContextV1,
   HostedAutonomyScopeV1,
 } from "./hosted-autonomy-scopes.ts";
-import { OWNER_MERGE_REQUIRED } from "../src/repair/owner-landing.ts";
+import {
+  OWNER_MERGE_REQUIRED,
+  sentinelNeverMerges,
+} from "../src/repair/owner-landing.ts";
 
 /**
  * Decision D3 (2026-10-16, launcher only), DISABLED: the coordinator chose
@@ -434,9 +436,10 @@ export async function adoptableSpentMerge(
  * spent rule, so the Gateway record is written with `advanceToDelivery`.
  */
 /**
- * Issue #158 item 2: a launcher merge never lands a change to the target's
- * protected paths (the list runtime publication refuses). A change set that
- * cannot be resolved for the target fails closed.
+ * Issue #158 item 2: a launcher merge never lands a change Sentinel never
+ * merges on its own (`sentinelNeverMerges`, 2026-11-17: a credential path on
+ * any target, or a protected path of Sentinel's own repository). A change set
+ * that cannot be resolved for the target fails closed.
  */
 function touchesTargetProtected(
   repository: RepositoryIdentityV1,
@@ -447,8 +450,10 @@ function touchesTargetProtected(
       createLocalRepositoryConfig(),
       repository,
     );
-    return changes.some((change) =>
-      targetTouchesProtectedV1(policy, change.path)
+    return sentinelNeverMerges(
+      policy,
+      repository,
+      changes.map((change) => change.path),
     );
   } catch {
     return true;
