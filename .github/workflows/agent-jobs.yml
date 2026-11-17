@@ -118,12 +118,15 @@ jobs:
           set -euo pipefail
           sudo install -m755 "$(command -v bun)" /usr/local/bin/bun
           sudo install -m755 "$(command -v node)" /usr/local/bin/node
-      # Newer than the supervisor's 0.154.0 pin: from 0.169 Codex waits out an
-      # HTTP 429 by its Retry-After instead of exiting on the first one.
-      - name: Install pinned Codex
+      # Follows the latest Codex release (the supervisor pins 0.154.0, which
+      # exits on the first HTTP 429; 0.169 and later wait by Retry-After).
+      # Set the repository variable to an exact version to hold one back.
+      - name: Install Codex
         env:
-          CODEX_VERSION: ${{ vars.SENTINEL_AGENT_JOBS_CODEX_VERSION || '0.169.0' }}
-        run: npm install --global "@openai/codex@${CODEX_VERSION}"
+          CODEX_VERSION: ${{ vars.SENTINEL_AGENT_JOBS_CODEX_VERSION || 'latest' }}
+        run: |
+          npm install --global "@openai/codex@${CODEX_VERSION}"
+          codex --version
       - name: Enable Linux user namespaces for bubblewrap
         continue-on-error: true
         run: |

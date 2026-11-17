@@ -61,8 +61,10 @@ model measured about 145 MB and 1% of a core each. What fills a 4 vCPU, 16 GB,
 14 GB-disk runner is the work the agents run (installs, builds, test suites),
 so the safe number per cell depends on the target, not on Codex.
 
-The lane installs Codex 0.169.0 (`SENTINEL_AGENT_JOBS_CODEX_VERSION`
-overrides it), not the supervisor's 0.154.0 pin. Measured against a local
+The lane installs the latest Codex release and prints its version in the cell
+log, rather than the supervisor's 0.154.0 pin. Set the repository variable
+`SENTINEL_AGENT_JOBS_CODEX_VERSION` to an exact version if a release breaks the
+sandbox configuration. Measured against a local
 endpoint, 0.154 exits on its first HTTP 429, while 0.169 retries by the
 response's `Retry-After`; the lane raises that budget to 12 retries. If Codex
 still gives up, the cell restarts the agent after 60 s, then 120 s, 240 s and
