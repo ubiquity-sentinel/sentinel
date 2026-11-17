@@ -5798,29 +5798,71 @@ the same day, about the 1370 fix: "Verified just keep moving forward."
   progress comment names it once). No existing data says whether the
   permission is granted; only the refusal does, so it cannot be detected
   before the charged start.
+- The CI integrity rule for a head that changes a CI-executable path: its
+  own CI runs its own modified workflow, and a job that workflow skipped or
+  marked neutral is not red (2026-10-24), so a workflow whose jobs are all
+  skipped would read as green and test nothing. Such a head is green only
+  with at least one job its own CI ran to `success` on the exact head
+  (GitHub Actions or no app; never a skipped or neutral job, another app's
+  check or a backup-CI stand-in, which runs the same modified workflow from
+  the merge tree and so proves nothing the head's own run does not).
+  Runtime ([src/repair/ci-success-rule.ts](../src/repair/ci-success-rule.ts),
+  `decideCiGate(..., { requireSuccess })`): the CI-first review gate spends
+  no review round on such a head; it waits `ci_pending` and parks after the
+  6-hour bound with "CI-first: the head changes a CI-executable path and no
+  CI job ran to success on it; owner action required"; the delivery and
+  carried gates wait. The changed paths are read (one exact `base...head`
+  comparison, the optional port read `readChangedPaths`) only when the head
+  has no passing job; an unreadable, possibly truncated (300 files) or absent
+  read fails closed. Launcher
+  ([ops/hosted-autonomy-pull-file-gates.ts](../ops/hosted-autonomy-pull-file-gates.ts)):
+  `preMergeGate` and the carried proof refuse `ci_success_required` unless
+  `hasTargetCiSuccess` proves such a job; an unreadable read refuses. A head
+  that changes no such path, or that has a passing job, is judged exactly as
+  before, with no extra read.
+- Delivery trains: the production train (`hosted-autonomy-delivery-train.ts`)
+  never carries a CI-executable change (`train_ci_executable`): the member
+  keeps the per-record path, so it is not stranded. Through the real
+  delivery pass the others land as one train and it waits at `delivery`
+  behind the moved tip, like a conflicting member, for its refresh and its
+  own merge gate. `computeTrainOverlayV1` (`src/repair/train-overlay.ts`,
+  `ejected:protected`) has no production caller; it is unchanged.
+- Unchanged residual refusers, and what each means now: the original-
+  candidate recovery pass skips a candidate touching any configured
+  protected path (that record keeps the ordinary flow, which now publishes
+  it); existing-PR takeover refuses to adopt a foreign pull request that
+  touches one (`protected_path` hold: a person's own PR is never adopted
+  with a workflow change); local-mode publication (`local-github.ts`)
+  validates against the full configured list (a local run still refuses);
+  the owner re-admission tool recognises only the exact unpublished
+  protected park (the untrusted-issue park is deliberately not re-admitted:
+  a retry would re-run the same untrusted task).
 - Residual risk, stated plainly: a model-written pull request, on a trusted
-  issue, can now change a target's CI workflow and merge once that CI
-  passes and native review finds no P0 (P1 and lower never block). The
-  head's CI runs the PR's own modified workflow, so a workflow change that
-  keeps one job green while weakening the rest can pass. A head with no
-  Actions check at all still waits `ci_pending` (2026-11-05
-  positive-evidence rule), but a workflow whose jobs all conclude `skipped`
-  or `neutral` still reads as green: the rule requiring at least one
-  target-own Actions `success` on a head that changes a CI-executable path
-  (never satisfied by a backup-CI stand-in, which runs the same modified
-  workflow from the merge tree) is designed, not implemented here. Code an
-  existing workflow step runs with secrets (tests, scripts) was already
-  ordinary candidate work before this entry.
+  issue, can now change a target's CI workflow and merge once that changed
+  CI runs at least one job to success on its head and native review finds
+  no P0 (P1 and lower never block). A workflow change that keeps one job
+  green while weakening the rest still passes. Code an existing workflow
+  step runs with secrets (tests, scripts) was already ordinary candidate
+  work before this entry.
 - Open, not changed here: the 11 records parked "candidate touches a
   protected path" all carry `candidateState.preserved: null`: no preserved
   candidate survives to publish without a new charged run, so each needs the
   owner's `sentinel:retry` (or a release list) to proceed; this entry
-  releases none. Records already flagged `ownerLanding` keep waiting for the
-  owner.
+  releases none. Records already flagged `ownerLanding` on a target keep
+  waiting for the owner (the flag is never re-classified). Sentinel's own
+  capability notice ("no pull_request CI workflow", pay.ubq.fi #509) is not
+  admitted as a task: its first body line is the intake skip marker, and
+  `no_ci_and_no_local_verify` parks every record of such a target before
+  review. Working it needs intake to admit exactly that App-authored issue
+  (one bounded task per repository) and the review gate to exempt its
+  candidate when it adds a pull_request workflow, whose own first run on
+  the head is then its CI evidence under the rule above.
 
 Rollback: `git revert` the commits in reverse order. No persisted field or
 state format changes (the issue wire's `authorAssociation` is an optional
-in-memory field); older runtimes read every record written here. Launcher
-(ops/) and runtime (src/) may roll back separately: an older launcher
-refuses at merge time (`protected_path`) what a newer runtime published,
-and an older runtime parks again before publication.
+in-memory field, and the new port and surface reads are optional);
+older runtimes read every record written here. Launcher (ops/) and runtime
+(src/) may roll back separately: an older launcher refuses at merge time
+(`protected_path`) what a newer runtime published, and merges a workflow
+pull request without the success read (the runtime gate still holds it
+before review); an older runtime parks again before publication.
