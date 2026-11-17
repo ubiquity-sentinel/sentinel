@@ -1,36 +1,36 @@
 /**
  * EXPERIMENTAL manual agent-job lane: one Actions cell.
  *
- * Runs the cell's jobs side by side on one runner. For each job the trusted
- * host clones the target with a read-only token, runs the job's setup
- * commands (network on, no credential in their environment), and only then
- * writes the model token and starts `codex exec` under the same sandboxed
- * client configuration the supervisor's issue cells use: the checkout is
- * writable, `.git` is read-only, the network is off and the shell environment
- * is empty. The host commits whatever the agent changed and seals it into a
- * Git bundle. The cell holds no write credential; `agent-jobs-publish.ts`
- * pushes the bundles from a separate job.
+ * Runs the cell's jobs side by side on one runner. For each job the host
+ * clones the target with a read-only token, runs the job's setup commands and
+ * starts `codex exec` with no sandbox: the agent has the runner's full
+ * filesystem, toolchains and network for up to the cell's six-hour window.
+ * The host commits whatever the agent left uncommitted and seals the branch
+ * into a Git bundle. The cell holds no write credential;
+ * `agent-jobs-publish.ts` pushes the bundles from a separate job.
  *
  * Agent output is kept out of the job log and the artifact (targets may be
  * private while this controller is public); only the bundle, the agent's
  * final message and a status row leave the runner.
  */
-import { codexChildEnv, ensureTaskClient } from "../src/host/local-client.ts";
-import { DEFAULT_PROVIDER_NAME } from "../src/host/local-policy.ts";
 import { cloneBranch, git, githubRemoteUrl, gitOk } from "./agent-jobs-git.ts";
 import type { RemoteUrl } from "./agent-jobs-git.ts";
-import type { AgentJobsPlanV1, AgentJobV1 } from "./agent-jobs-plan.ts";
+import {
+  AGENT_JOBS_MAX_MINUTES,
+  type AgentJobsPlanV1,
+  type AgentJobV1,
+} from "./agent-jobs-plan.ts";
 
 export const AGENT_JOB_BRANCH = "agent-job";
 /**
- * Every agent of a request starts six seconds after the previous one (first
+ * Every agent of a request starts three seconds after the previous one (first
  * slot of every cell, then the second slot of every cell...), so the gateway
  * never sees a burst of session starts.
  */
-export const START_STAGGER_SECONDS = 6;
+export const START_STAGGER_SECONDS = 3;
 /** In-session retries of a 429/5xx; verified to be honored by Codex 0.169. */
 const MODEL_MAX_RETRIES = 12;
-const SETUP_TIMEOUT_SECONDS = 900;
+const MODEL_PROVIDER = "uos";
 const KILL_GRACE_SECONDS = 30;
 /**
  * Codex exits with this line once it gives up on HTTP 429 (measured against a
@@ -84,8 +84,6 @@ export interface AgentStartV1 {
   job: AgentJobV1;
   checkout: string;
   clientHome: string;
-  tmpDir: string;
-  denoDir: string;
   model: string;
   lastMessageFile: string;
 }
@@ -94,8 +92,10 @@ export interface AgentJobsCellPorts {
   remoteUrl: RemoteUrl;
   /** Argument vector of the agent process; tests substitute a fake agent. */
   agentCommand: (start: AgentStartV1) => string[];
-  /** Write the sandboxed client home; tests need none. */
+  /** Write the Codex client home (config and model token). */
   prepareClient: (start: AgentStartV1) => Promise<void>;
+  /** The runner environment handed to setup commands and agents. */
+  agentEnv: () => Record<string, string>;
   sleep: (seconds: number) => Promise<void>;
   log: (line: string) => void;
 }
@@ -107,6 +107,8 @@ export interface AgentJobsCellInput {
   outDir: string;
   readToken: string | null;
   defaultModel: string;
+  /** Epoch ms after which the cell must be committing, not running agents. */
+  deadlineAtMs: number;
   ports: AgentJobsCellPorts;
 }
 
@@ -206,12 +208,14 @@ async function runJob(
       cwd: checkout,
     });
 
-    const path = Deno.env.get("PATH") ?? "/usr/bin:/bin";
+    const remainingSeconds = () =>
+      Math.max(1, Math.floor((input.deadlineAtMs - Date.now()) / 1000));
+    const env = { ...ports.agentEnv(), TMPDIR: tmpDir };
     for (const command of job.setup) {
       const setup = await bounded(["bash", "-c", command], {
-        seconds: SETUP_TIMEOUT_SECONDS,
+        seconds: remainingSeconds(),
         cwd: checkout,
-        env: { PATH: path, HOME: tmpDir, TMPDIR: tmpDir, CI: "1" },
+        env,
         stdin: null,
         logFile: `${root}/setup.log`,
       });
@@ -224,14 +228,12 @@ async function runJob(
       job,
       checkout,
       clientHome: `${root}/client`,
-      tmpDir,
-      denoDir: `${root}/deno`,
       model: job.model ?? input.defaultModel,
       lastMessageFile: `${root}/last-message.md`,
     };
     await ports.sleep(startDelaySeconds);
     await ports.prepareClient(start);
-    const deadlineSeconds = job.minutes * 60;
+    const deadlineSeconds = Math.min(job.minutes * 60, remainingSeconds());
     let spentSeconds = 0;
     let attempt = 0;
     let limited = false;
@@ -242,7 +244,7 @@ async function runJob(
       agent = await bounded(ports.agentCommand(start), {
         seconds: Math.max(1, deadlineSeconds - spentSeconds),
         cwd: checkout,
-        env: codexChildEnv(start.clientHome, tmpDir, start.denoDir, path),
+        env: { ...env, CODEX_HOME: start.clientHome },
         stdin: attempt === 0 ? job.prompt : job.prompt + RESTART_NOTE,
         logFile,
       });
@@ -263,22 +265,23 @@ async function runJob(
     // The model token must not outlive the agent on this runner.
     await Deno.remove(start.clientHome, { recursive: true }).catch(() => {});
 
+    // The agent may have committed on its own; the host commits the rest.
     await gitOk(["add", "--all"], { cwd: checkout });
     const staged = await git(["diff", "--cached", "--quiet"], {
       cwd: checkout,
     });
     if (staged.code !== 0) {
-      await gitOk([
-        "commit",
-        "--quiet",
-        "-m",
-        `agent job ${job.id}`,
-        "-m",
-        result.title,
-      ], {
+      await gitOk(
+        ["commit", "--quiet", "-m", `agent job ${job.id}`, "-m", result.title],
+        { cwd: checkout },
+      );
+    }
+    const head = await gitOk(["rev-parse", "HEAD"], { cwd: checkout });
+    if (head !== base.sha) {
+      await gitOk(["update-ref", `refs/heads/${AGENT_JOB_BRANCH}`, head], {
         cwd: checkout,
       });
-      result.headSha = await gitOk(["rev-parse", "HEAD"], { cwd: checkout });
+      result.headSha = head;
       result.bundle = `${job.id}.bundle`;
       await gitOk([
         "bundle",
@@ -291,7 +294,10 @@ async function runJob(
     await Deno.copyFile(start.lastMessageFile, `${input.outDir}/${job.id}.md`)
       .catch(() => {});
     if (agent.timedOut) {
-      return settle("timed_out", `deadline ${job.minutes} min`);
+      return settle(
+        "timed_out",
+        `deadline ${Math.round(deadlineSeconds / 60)} min`,
+      );
     }
     if (agent.code !== 0) {
       return settle(
@@ -340,25 +346,17 @@ export async function runAgentJobsCell(
   return cellResult;
 }
 
-async function resolveExecutable(name: string): Promise<string> {
-  const which = await new Deno.Command("which", {
-    args: [name],
-    stdout: "piped",
-  }).output();
-  const path = new TextDecoder().decode(which.stdout).trim();
-  if (which.code !== 0 || path.length === 0) {
-    throw new Error(`${name} is not installed on this runner`);
-  }
-  return await Deno.realPath(path);
-}
+/** Credentials of the cell process that no agent or setup command inherits. */
+const WITHHELD_ENV = ["UOS_AI_TOKEN", "AGENT_JOBS_READ_TOKEN"];
 
 /** CLI for `.github/workflows/agent-jobs.yml`. */
 if (import.meta.main) {
+  const startedAtMs = Date.now();
   const env = (name: string) => Deno.env.get(name) ?? "";
   const modelToken = env("UOS_AI_TOKEN");
   if (modelToken.length === 0) throw new Error("UOS_AI_TOKEN is not set");
-  const codex = await resolveExecutable("codex");
   const workspace = env("GITHUB_WORKSPACE") || Deno.cwd();
+  const baseUrl = env("SENTINEL_MODEL_BASE_URL") || "https://ai.ubq.fi/v1";
   const plan = JSON.parse(
     await Deno.readTextFile(env("AGENT_JOBS_PLAN")),
   ) as AgentJobsPlanV1;
@@ -369,39 +367,51 @@ if (import.meta.main) {
     outDir: `${workspace}/.agent-jobs/out`,
     readToken: env("AGENT_JOBS_READ_TOKEN") || null,
     defaultModel: env("SENTINEL_MODEL_ID") || "gpt-6.1-sol",
+    deadlineAtMs: startedAtMs + AGENT_JOBS_MAX_MINUTES * 60_000,
     ports: {
       remoteUrl: githubRemoteUrl,
       agentCommand: (start) => [
-        codex,
+        "codex",
         "exec",
+        "--dangerously-bypass-approvals-and-sandbox",
         "-C",
         start.checkout,
         "-m",
         start.model,
         "-c",
         'model_reasoning_effort="max"',
-        // A newer Codex waits out a 429 by its Retry-After inside the session,
-        // keeping the conversation; the cell's restart is the backstop.
-        "-c",
-        `model_providers.${DEFAULT_PROVIDER_NAME}.request_max_retries=${MODEL_MAX_RETRIES}`,
-        "-c",
-        `model_providers.${DEFAULT_PROVIDER_NAME}.stream_max_retries=${MODEL_MAX_RETRIES}`,
         "-o",
         start.lastMessageFile,
         "-",
       ],
-      prepareClient: (start) =>
-        ensureTaskClient({
-          clientHome: start.clientHome,
-          tmpDir: start.tmpDir,
-          denoDir: start.denoDir,
-          checkout: start.checkout,
-          token: modelToken,
-          codexExecutable: codex,
-          denoExecutable: Deno.execPath(),
-          trustedPath: env("PATH"),
-          baseUrl: env("SENTINEL_MODEL_BASE_URL") || "https://ai.ubq.fi/v1",
-        }),
+      prepareClient: async (start) => {
+        await Deno.mkdir(start.clientHome, { recursive: true, mode: 0o700 });
+        const tokenFile = `${start.clientHome}/model.token`;
+        await Deno.writeTextFile(tokenFile, modelToken, { mode: 0o600 });
+        // A newer Codex waits out a 429 by its Retry-After inside the
+        // session, keeping the conversation; the cell restart is the backstop.
+        await Deno.writeTextFile(
+          `${start.clientHome}/config.toml`,
+          [
+            `model_provider = "${MODEL_PROVIDER}"`,
+            `[model_providers.${MODEL_PROVIDER}]`,
+            `name = "${MODEL_PROVIDER}"`,
+            `base_url = ${JSON.stringify(baseUrl)}`,
+            'wire_api = "responses"',
+            `request_max_retries = ${MODEL_MAX_RETRIES}`,
+            `stream_max_retries = ${MODEL_MAX_RETRIES}`,
+            `[model_providers.${MODEL_PROVIDER}.auth]`,
+            'command = "/bin/cat"',
+            `args = [${JSON.stringify(tokenFile)}]`,
+            "",
+          ].join("\n"),
+        );
+      },
+      agentEnv: () => {
+        const all = Deno.env.toObject();
+        for (const name of WITHHELD_ENV) delete all[name];
+        return all;
+      },
       sleep: (seconds) =>
         new Promise((resolve) => setTimeout(resolve, seconds * 1000)),
       log: (line) => console.log(line),

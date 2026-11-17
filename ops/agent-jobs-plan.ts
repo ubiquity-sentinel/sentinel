@@ -2,29 +2,34 @@
  * EXPERIMENTAL manual agent-job lane: the `plan` step.
  *
  * An operator hands Sentinel a list of coding jobs (repository, base branch,
- * prompt). This step validates the request against the committed target array
- * and packs the jobs into at most twenty Actions cells, each running up to
- * `agentsPerCell` agents side by side. It reads no credential, starts no model
- * and writes no authoritative state; the lane never touches repair accounting.
+ * prompt). This step checks the request's shape and packs the jobs into
+ * Actions cells, each running `agentsPerCell` agents side by side. It reads no
+ * credential, starts no model and writes no authoritative state; the lane
+ * never touches repair accounting.
  *
  * Packing uses width before depth: every job gets its own runner until the
  * cell budget is spent, and only then do cells take a second, third... agent.
  * A cell holds jobs of one repository owner, because one App installation
  * token is minted per cell.
+ *
+ * The only bounds are platform facts: a matrix holds 256 jobs and a hosted
+ * job ends after six hours.
  */
 
-export const AGENT_JOBS_MAX_CELLS = 20;
-export const AGENT_JOBS_MAX_AGENTS_PER_CELL = 16;
+/** GitHub's matrix size limit. */
+export const AGENT_JOBS_MAX_CELLS = 256;
+/** The Free plan's concurrent-job limit; more cells would only queue. */
+export const AGENT_JOBS_DEFAULT_CELLS = 20;
 export const AGENT_JOBS_DEFAULT_AGENTS_PER_CELL = 4;
-export const AGENT_JOBS_DEFAULT_MINUTES = 120;
-export const AGENT_JOBS_MAX_MINUTES = 300;
+/** GitHub ends a hosted job at 360 minutes. */
+export const AGENT_JOBS_CELL_TIMEOUT_MINUTES = 360;
+/** Agent time inside that: the rest is toolchain install and upload. */
+export const AGENT_JOBS_MAX_MINUTES = 350;
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9._-]+$/;
 const REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,199}$/;
 const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-const MAX_PROMPT_CHARS = 20_000;
-const MAX_SETUP_COMMANDS = 8;
 
 /** One validated coding job; one job is one agent. */
 export interface AgentJobV1 {
@@ -33,7 +38,7 @@ export interface AgentJobV1 {
   /** Base branch; `null` means the repository default branch. */
   base: string | null;
   prompt: string;
-  /** Trusted host commands run before the model starts (network on). */
+  /** Host commands run in the checkout before the model starts. */
   setup: string[];
   minutes: number;
   /** Gateway model override; `null` keeps the workflow's model. */
@@ -47,7 +52,6 @@ export interface AgentJobsCellV1 {
   owner: string;
   /** Comma-separated repository names for the App token mint. */
   repositories: string;
-  /** Longest job bound plus setup/publication margin. */
   timeoutMinutes: number;
   jobs: AgentJobV1[];
 }
@@ -81,7 +85,7 @@ function boundedInt(
   return number;
 }
 
-function parseJob(value: unknown, targets: ReadonlySet<string>): AgentJobV1 {
+function parseJob(value: unknown): AgentJobV1 {
   if (!record(value)) fail("every job must be an object");
   const known = [
     "id",
@@ -103,22 +107,18 @@ function parseJob(value: unknown, targets: ReadonlySet<string>): AgentJobV1 {
   if (typeof repository !== "string" || !REPOSITORY_PATTERN.test(repository)) {
     fail(`job ${id}: repository must be owner/name`);
   }
-  if (!targets.has(repository)) {
-    fail(`job ${id}: ${repository} is not in sentinel.targets.json`);
-  }
   if (
     base !== undefined && base !== null &&
     (typeof base !== "string" || !REF_PATTERN.test(base) || base.includes(".."))
   ) fail(`job ${id}: base is not a plain branch name`);
-  if (
-    typeof prompt !== "string" || prompt.trim().length === 0 ||
-    prompt.length > MAX_PROMPT_CHARS
-  ) fail(`job ${id}: prompt must be 1 to ${MAX_PROMPT_CHARS} characters`);
+  if (typeof prompt !== "string" || prompt.trim().length === 0) {
+    fail(`job ${id}: prompt must not be empty`);
+  }
   const commands = setup ?? [];
   if (
-    !Array.isArray(commands) || commands.length > MAX_SETUP_COMMANDS ||
+    !Array.isArray(commands) ||
     commands.some((item) => typeof item !== "string" || item.length === 0)
-  ) fail(`job ${id}: setup must be at most ${MAX_SETUP_COMMANDS} commands`);
+  ) fail(`job ${id}: setup must be a list of commands`);
   if (
     model !== undefined && model !== null &&
     (typeof model !== "string" || !MODEL_PATTERN.test(model))
@@ -134,8 +134,8 @@ function parseJob(value: unknown, targets: ReadonlySet<string>): AgentJobV1 {
     setup: commands as string[],
     minutes: boundedInt(
       value.minutes,
-      AGENT_JOBS_DEFAULT_MINUTES,
-      5,
+      AGENT_JOBS_MAX_MINUTES,
+      1,
       AGENT_JOBS_MAX_MINUTES,
       `job ${id}: minutes`,
     ),
@@ -147,7 +147,6 @@ function parseJob(value: unknown, targets: ReadonlySet<string>): AgentJobV1 {
 /** Validate a request and pack it into cells. Pure. */
 export function planAgentJobs(
   request: unknown,
-  targets: readonly string[],
   overrides: { agentsPerCell?: unknown; maxCells?: unknown } = {},
 ): AgentJobsPlanV1 {
   const body = Array.isArray(request) ? { jobs: request } : request;
@@ -158,18 +157,17 @@ export function planAgentJobs(
     overrides.agentsPerCell ?? body.agentsPerCell,
     AGENT_JOBS_DEFAULT_AGENTS_PER_CELL,
     1,
-    AGENT_JOBS_MAX_AGENTS_PER_CELL,
+    Number.MAX_SAFE_INTEGER,
     "agentsPerCell",
   );
   const maxCells = boundedInt(
     overrides.maxCells ?? body.maxCells,
-    AGENT_JOBS_MAX_CELLS,
+    AGENT_JOBS_DEFAULT_CELLS,
     1,
     AGENT_JOBS_MAX_CELLS,
     "maxCells",
   );
-  const targetSet = new Set(targets);
-  const jobs = body.jobs.map((job) => parseJob(job, targetSet));
+  const jobs = body.jobs.map((job) => parseJob(job));
   const ids = new Set(jobs.map((job) => job.id));
   if (ids.size !== jobs.length) fail("job ids must be unique");
 
@@ -215,7 +213,7 @@ export function planAgentJobs(
         cellId: `c${String(cells.length + 1).padStart(2, "0")}`,
         owner,
         repositories: names.join(","),
-        timeoutMinutes: Math.max(...bucket.map((job) => job.minutes)) + 30,
+        timeoutMinutes: AGENT_JOBS_CELL_TIMEOUT_MINUTES,
         jobs: bucket,
       });
     }
@@ -249,8 +247,7 @@ if (import.meta.main) {
       Deno.args.map(async (path) => JSON.parse(await Deno.readTextFile(path))),
     );
   if (documents.length === 0) fail("no job request was supplied");
-  const targets = JSON.parse(await Deno.readTextFile("sentinel.targets.json"));
-  const plan = planAgentJobs(mergeAgentJobRequests(documents), targets, {
+  const plan = planAgentJobs(mergeAgentJobRequests(documents), {
     agentsPerCell: Deno.env.get("AGENT_JOBS_PER_CELL"),
     maxCells: Deno.env.get("AGENT_JOBS_MAX_CELLS"),
   });

@@ -1,9 +1,10 @@
-# EXPERIMENTAL manual agent-job lane (docs/agent-jobs.md).
+# EXPERIMENTAL manual agent-job lane (jobs/README.md).
 #
 # An operator hands Sentinel a list of coding jobs; each job is one Codex
-# agent working on one committed target repository. Jobs are packed into at
-# most twenty runner cells with several agents per cell, and each agent's work
-# is pushed to a fresh `agent-jobs/<job>-<run>` branch of its target.
+# agent working on one repository, unsandboxed and with network access, for up
+# to the six hours a hosted job may run. Jobs are packed several agents to a
+# runner, and each agent's work is pushed to a fresh
+# `agent-jobs/<job>-<run>` branch of its target.
 #
 # This lane is separate from the supervisor: it reads and writes no Sentinel
 # state ref, reserves and settles nothing, reviews nothing and merges nothing.
@@ -31,12 +32,12 @@ on:
         required: true
         type: string
       agents_per_cell:
-        description: Agents sharing one runner (1-16)
+        description: Agents sharing one runner
         required: false
         type: string
         default: "4"
       max_cells:
-        description: Runner cells this request may use (1-20)
+        description: Runner cells this request may use (1-256; 20 run at once)
         required: false
         type: string
         default: "20"
@@ -85,13 +86,13 @@ jobs:
           include-hidden-files: true
           retention-days: 7
 
-  # The model runs here. The cell holds a read-only App token for cloning and
-  # the gateway model token; it never holds a write credential.
+  # The model runs here, unsandboxed. The cell holds a read-only App token for
+  # cloning and the gateway model token; it never holds a write credential.
   cell:
     name: cell (${{ matrix.cellId }})
     needs: plan
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ matrix.timeoutMinutes }}
+    timeout-minutes: 360
     environment:
       name: ${{ vars.SENTINEL_AGENT_JOBS_ENVIRONMENT || 'sentinel-supervisor' }}
     strategy:
@@ -112,12 +113,6 @@ jobs:
         with:
           bun-version: 1.4.0
           no-cache: true
-      # Same sandbox-visible toolchain copies as the supervisor's issue cells.
-      - name: Expose the pinned Bun and Node to the model sandbox
-        run: |
-          set -euo pipefail
-          sudo install -m755 "$(command -v bun)" /usr/local/bin/bun
-          sudo install -m755 "$(command -v node)" /usr/local/bin/node
       # Follows the latest Codex release, like the supervisor (0.154.0 exits on
       # the first HTTP 429; 0.169 and later wait by Retry-After).
       # Set the repository variable to an exact version to hold one back.
@@ -127,18 +122,6 @@ jobs:
         run: |
           npm install --global "@openai/codex@${CODEX_VERSION}"
           codex --version
-      - name: Enable Linux user namespaces for bubblewrap
-        continue-on-error: true
-        run: |
-          set -euo pipefail
-          current_userns=$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || true)
-          if [ -n "$current_userns" ] && [ "$current_userns" != "1" ]; then
-            sudo sysctl -w kernel.unprivileged_userns_clone=1
-          fi
-          current_apparmor=$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true)
-          if [ -n "$current_apparmor" ] && [ "$current_apparmor" != "0" ]; then
-            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          fi
       - name: Mint the read-only App token
         id: read-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -161,10 +144,7 @@ jobs:
           SENTINEL_MODEL_BASE_URL: ${{ vars.SENTINEL_MODEL_BASE_URL }}
           SENTINEL_MODEL_ID: ${{ vars.SENTINEL_IMPLEMENTATION_MODEL_ID || 'gpt-6.1-sol' }}
         run: >-
-          deno run --no-lock
-          --allow-read --allow-write --allow-run
-          --allow-env=PATH,UOS_AI_TOKEN,AGENT_JOBS_PLAN,AGENT_JOBS_CELL_ID,AGENT_JOBS_READ_TOKEN,SENTINEL_MODEL_BASE_URL,SENTINEL_MODEL_ID,GITHUB_WORKSPACE,RUNNER_TEMP,GITHUB_STEP_SUMMARY
-          ops/agent-jobs-cell.ts
+          deno run --no-lock --allow-all ops/agent-jobs-cell.ts
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:

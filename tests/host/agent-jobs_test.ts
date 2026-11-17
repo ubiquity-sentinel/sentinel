@@ -16,28 +16,26 @@ import {
 } from "../../ops/agent-jobs-plan.ts";
 import { publishAgentJobsCell } from "../../ops/agent-jobs-publish.ts";
 
-const TARGETS = ["ubiquity-sentinel/sentinel", "ubiquity/a", "ubiquity/b"];
-
 function job(id: string, repository = "ubiquity/a", extra = {}) {
   return { id, repository, prompt: `Do ${id}\nmore detail`, ...extra };
 }
 
 Deno.test("agent jobs plan spreads jobs across cells before stacking them", () => {
   const jobs = ["j1", "j2", "j3", "j4", "j5"].map((id) => job(id));
-  const wide = planAgentJobs({ jobs }, TARGETS);
+  const wide = planAgentJobs({ jobs });
   assert.equal(wide.cells.length, 5);
   assert.equal(
-    planAgentJobs({ jobs }, TARGETS, { maxCells: 2 }).cells.length,
+    planAgentJobs({ jobs }, { maxCells: 2 }).cells.length,
     2,
   );
   assert.ok(wide.cells.every((cell) => cell.jobs.length === 1));
 
-  const stacked = planAgentJobs({ jobs }, TARGETS, {
+  const stacked = planAgentJobs({ jobs }, {
     agentsPerCell: "3",
     maxCells: "2",
   });
   assert.deepEqual(stacked.cells.map((cell) => cell.jobs.length), [3, 2]);
-  assert.equal(stacked.cells[0].timeoutMinutes, 150);
+  assert.equal(stacked.cells[0].timeoutMinutes, 360);
 });
 
 Deno.test("agent jobs plan keeps one repository owner per cell", () => {
@@ -46,7 +44,6 @@ Deno.test("agent jobs plan keeps one repository owner per cell", () => {
       [job("a1"), job("b1", "ubiquity/b")],
       { jobs: [job("s1", "ubiquity-sentinel/sentinel")] },
     ]),
-    TARGETS,
     { maxCells: 2 },
   );
   assert.deepEqual(
@@ -57,20 +54,20 @@ Deno.test("agent jobs plan keeps one repository owner per cell", () => {
 
 Deno.test("agent jobs plan refuses invalid requests", () => {
   const refuse = (request: unknown, pattern: RegExp, overrides = {}) =>
-    assert.throws(() => planAgentJobs(request, TARGETS, overrides), pattern);
+    assert.throws(() => planAgentJobs(request, overrides), pattern);
   refuse({ jobs: [] }, /at least one job/);
-  refuse([job("x", "ubiquity/other")], /not in sentinel.targets.json/);
+  refuse([job("x", "not a repository")], /owner\/name/);
   refuse([job("x"), job("x")], /unique/);
   refuse([job("Bad Id")], /job id/);
   refuse([job("x", "ubiquity/a", { base: "a..b" })], /base/);
   refuse([job("x", "ubiquity/a", { prompt: " " })], /prompt/);
-  refuse([job("x", "ubiquity/a", { minutes: 301 })], /minutes/);
+  refuse([job("x", "ubiquity/a", { minutes: 351 })], /minutes/);
   refuse([job("x", "ubiquity/a", { token: "t" })], /unknown job field/);
   refuse([job("x"), job("y"), job("z")], /need 3 cells/, {
     agentsPerCell: 1,
     maxCells: 2,
   });
-  refuse([job("x")], /maxCells/, { maxCells: 21 });
+  refuse([job("x")], /maxCells/, { maxCells: 257 });
 });
 
 Deno.test("agent jobs cell bundles agent work and publish pushes it", async () => {
@@ -101,6 +98,8 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
         "  idle) ;;",
         "  fail) exit 7;;",
         "  hang) echo partial > partial.txt; sleep 30;;",
+        "  own) echo mine > own.txt; git add own.txt",
+        "    git -c user.name=a -c user.email=a@b.c commit -q -m own;;",
         "  limit)",
         '    if test -f "$TMPDIR/limited-once"; then echo recovered > work.txt',
         '    else touch "$TMPDIR/limited-once"',
@@ -129,6 +128,7 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
           { ...base, id: "idles", prompt: "idle", pr: false },
           { ...base, id: "fails", prompt: "fail", pr: false },
           { ...base, id: "hangs", prompt: "hang", pr: false, minutes: 0.02 },
+          { ...base, id: "commits", prompt: "own", pr: false },
           { ...base, id: "limited", prompt: "limit", pr: false },
           { ...base, id: "starved", prompt: "starve", pr: false, minutes: 3 },
           {
@@ -148,6 +148,7 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
       agentCommand: (start) => ["bash", agent, start.lastMessageFile],
       prepareClient: (start) =>
         Deno.mkdir(start.clientHome, { recursive: true }),
+      agentEnv: () => ({ PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" }),
       sleep: (seconds) => {
         delays.push(seconds);
         return Promise.resolve();
@@ -162,6 +163,7 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
       outDir,
       readToken: null,
       defaultModel: "fake",
+      deadlineAtMs: Date.now() + 3_600_000,
       ports,
     });
 
@@ -173,6 +175,7 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
         ["idles", "no_changes"],
         ["fails", "agent_failed"],
         ["hangs", "timed_out"],
+        ["commits", "changed"],
         ["limited", "changed"],
         ["starved", "agent_failed"],
         ["nosetup", "setup_failed"],
@@ -180,11 +183,12 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
     );
     assert.deepEqual(delays.sort((a, b) => a - b), [
       0,
+      3,
       6,
+      9,
       12,
+      15,
       18,
-      24,
-      30,
       60,
       60,
     ]);
@@ -230,6 +234,7 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
         ["idles", null],
         ["fails", null],
         ["hangs", "agent-jobs/hangs-77-1"],
+        ["commits", "agent-jobs/commits-77-1"],
         ["limited", "agent-jobs/limited-77-1"],
         ["starved", null],
         ["nosetup", null],
@@ -238,6 +243,8 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
     const pushed = (ref: string, path: string) =>
       gitOk(["--git-dir", remote, "show", `${ref}:${path}`]);
     assert.equal(await pushed("agent-jobs/writes-77-1", "work.txt"), "hello");
+    // Work the agent committed itself is published as it stands.
+    assert.equal(await pushed("agent-jobs/commits-77-1", "own.txt"), "mine");
     assert.equal(
       await pushed("agent-jobs/hangs-77-1", "partial.txt"),
       "partial",

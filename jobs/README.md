@@ -1,0 +1,133 @@
+# Delegating coding work to Sentinel agent jobs
+
+Status: experimental. It lives on the `claude/great-ride-tu5r70` branch of
+`ubiquity-sentinel/sentinel` and is separate from the Sentinel supervisor.
+
+You hand over a list of coding tasks. Each task runs as one Codex agent on a
+GitHub-hosted runner (4 vCPU, 16 GB RAM), unsandboxed and with network access,
+for up to about six hours. Whatever the agent changes is pushed to a new branch
+of the target repository. Nothing is reviewed or merged for you.
+
+## How to delegate
+
+1. Check out the `claude/great-ride-tu5r70` branch of
+   `ubiquity-sentinel/sentinel`.
+2. Add a new file `jobs/inbox/<any-name>.json` (see the format below).
+3. Commit and push. The push starts the `sentinel-agent-jobs` workflow.
+
+Only request files that the pushed head commit adds or changes are run, so put
+all files of one batch in one commit. To run a job again, change its file (or
+add a new one) and push again.
+
+## Request format
+
+```json
+{
+  "jobs": [
+    {
+      "id": "pay-fix-rounding",
+      "repository": "ubiquity/pay.ubq.fi",
+      "prompt": "Fix the rounding error in the payout total.\n\nDetails: ..."
+    },
+    {
+      "id": "router-add-tests",
+      "repository": "ubiquity/ubq.fi-router",
+      "base": "development",
+      "prompt": "Add unit tests for the route matcher.",
+      "pr": true
+    }
+  ]
+}
+```
+
+| Field        | Required | Meaning                                                                                 |
+| ------------ | -------- | --------------------------------------------------------------------------------------- |
+| `id`         | yes      | Unique in the request; lowercase letters, digits and `-`, at most 40 characters.         |
+| `repository` | yes      | `owner/name`. The Sentinel GitHub App must be installed on it with write access.         |
+| `prompt`     | yes      | The task. Its first line becomes the commit and pull request title.                      |
+| `base`       | no       | Branch to start from. Defaults to the repository's default branch.                       |
+| `pr`         | no       | `true` opens a draft pull request for the pushed branch. Default `false`.                |
+| `setup`      | no       | Shell commands to run in the checkout before the agent starts.                           |
+| `minutes`    | no       | Agent deadline. Defaults to the maximum, 350. Work done before a deadline is still pushed. |
+| `model`      | no       | Gateway model id. Defaults to the workflow's implementation model.                       |
+
+One job is one agent. To put several agents on one repository, give each its
+own job with a task that does not overlap the others; each gets its own clone
+and its own branch.
+
+### Writing a good prompt
+
+The agent starts with a fresh clone and only your prompt. It does not see this
+conversation, other jobs or their results. Say what to change, where, and how
+to tell it is done (which command must pass). The agent can install
+dependencies, run the test suite and use the network itself. It reads the
+target repository's `AGENTS.md` if there is one.
+
+## Where the results are
+
+- **Code:** branch `agent-jobs/<id>-<run id>-<attempt>` in the target
+  repository, based on the base branch as it was when the job started. With
+  `"pr": true` there is also a draft pull request whose body is the agent's
+  final message.
+- **Status:** the workflow run in the Actions tab of
+  `ubiquity-sentinel/sentinel`. Each `cell` job's summary lists its jobs; each
+  `publish` job's summary lists the pushed branch or pull request.
+
+| Status         | Meaning                                                                   |
+| -------------- | ------------------------------------------------------------------------- |
+| `changed`      | The agent finished and its work was pushed.                               |
+| `no_changes`   | The agent finished without changing anything. Nothing is pushed.          |
+| `timed_out`    | The deadline ended the agent. Whatever it had changed is still pushed.    |
+| `agent_failed` | Codex exited with an error. Whatever it had changed is still pushed.      |
+| `setup_failed` | A `setup` command failed. The agent never started.                        |
+| `host_failed`  | Clone or commit failed, for example the App cannot read the repository.   |
+
+A job that ends `publish failed` could not be pushed; the usual cause is that
+the App lacks write access, or the agent changed `.github/workflows` files,
+which the App token may not push.
+
+## Capacity
+
+- Twenty runners run at once on this account; they are shared with the
+  Sentinel supervisor and CI. Extra cells wait in the queue.
+- The first twenty jobs of a request get a runner each. More jobs are stacked,
+  four agents per runner by default. Agents on one runner share its CPU and
+  14 GB disk.
+- The repository variables `SENTINEL_AGENT_JOBS_PER_CELL` and
+  `SENTINEL_AGENT_JOBS_MAX_CELLS` (up to 256) change the stacking.
+- All agents draw on the same model gateway (`ai.ubq.fi`) and its pool of
+  Codex accounts. Agents wait out HTTP 429 responses and are restarted if Codex
+  gives up, but an exhausted account pool stalls every agent until it resets.
+
+## What an agent can and cannot do
+
+- It has the runner to itself with no sandbox: full filesystem, `sudo`, Node,
+  Bun, Deno and the network.
+- It has no GitHub write credential. It cannot push, open issues or comment;
+  only the separate `publish` job pushes, after the agent has exited.
+- It can read the model gateway token on its runner. Do not point a job at
+  untrusted repositories or content.
+- Agent transcripts are not uploaded. The diff bundle and the agent's final
+  message are uploaded as run artifacts of this public repository, so a job on
+  a private repository exposes its diff there.
+
+## One-time setup (repository owner)
+
+The `cell` and `publish` jobs read `SENTINEL_SUPERVISOR_APP_PRIVATE_KEY` and
+`UOS_AI_TOKEN` from the environment named by the repository variable
+`SENTINEL_AGENT_JOBS_ENVIRONMENT` (default `sentinel-supervisor`). If that
+environment restricts deployment branches, allow this branch there or point
+the variable at another environment that holds the two secrets.
+
+Codex is installed at its latest release; the repository variable
+`SENTINEL_AGENT_JOBS_CODEX_VERSION` holds an exact version back.
+
+## Code
+
+`.github/workflows/agent-jobs.yml` runs `ops/agent-jobs-plan.ts` (validate and
+pack), `ops/agent-jobs-cell.ts` (run the agents) and
+`ops/agent-jobs-publish.ts` (push). Local check:
+
+```sh
+deno test --allow-read --allow-write --allow-run --allow-env=PATH tests/host/agent-jobs_test.ts
+```
