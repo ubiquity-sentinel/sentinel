@@ -170,9 +170,9 @@ async function cellMarker(
       continue;
     }
     if (value.kind !== REPAIR_CELL_MARKER_KIND) continue;
-    const at = instant(match[1]);
+    const stamped = instant(match[1]);
     if (
-      at + TOLERANCE < start || at > end + TOLERANCE ||
+      stamped + TOLERANCE < start || stamped > end + TOLERANCE ||
       !isRepairCellMarker(value, {
         ...input.run,
         revision: input.runtime.revision,
@@ -253,6 +253,10 @@ export async function authenticateRepairFanout(
     }
     // The check in progress names a refusal on the advisory fan-out line.
     const at: { check: RepairDeltaUnauthenticatedV1 } = { check: "ambiguous" };
+    // A `result.json` that is not a bounded JSON object (the decoder returns
+    // null for invalid or oversized bytes) is refused only at the digest
+    // check below; the line names its shape, the first check it failed.
+    let shapeless = false;
     try {
       if (rows.length !== 1 || producers.length !== 1) refuse();
       at.check = "provenance";
@@ -261,6 +265,8 @@ export async function authenticateRepairFanout(
       const files = await archive(rows[0]);
       at.check = "shape";
       const envelope = decodeRepairDeltaArtifactV1(only(files, "result.json"));
+      shapeless = typeof envelope !== "object" || envelope === null ||
+        Array.isArray(envelope);
       // A bounded refusal (written by the cell, or by its workflow when the
       // child never ran) carries no state: it is counted, never applied.
       if (parseRepairCellRefusalV1(envelope)?.cellId === cell.cellId) {
@@ -285,7 +291,7 @@ export async function authenticateRepairFanout(
       cells.push({
         cellId: cell.cellId,
         envelope: "unauthenticated",
-        unauthenticated: at.check,
+        unauthenticated: shapeless ? "shape" : at.check,
       });
     }
   }

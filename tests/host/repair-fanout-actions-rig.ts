@@ -23,14 +23,17 @@ export const RUN = { runId: 41, runAttempt: 1, launcherSha: SHA1 };
 export const RUNTIME = { revision: SHA2, generation: 3 };
 export const TOKEN = "fake-read-token-0123456789";
 
-async function sha256(bytes: Uint8Array): Promise<string> {
+export async function sha256(bytes: Uint8Array): Promise<string> {
   return [
     ...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes.slice())),
   ]
     .map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function zip(name: string, content: Uint8Array): Promise<Uint8Array> {
+export async function zip(
+  name: string,
+  content: Uint8Array,
+): Promise<Uint8Array> {
   const writer = new ZipWriter(new Uint8ArrayWriter(), {
     useWebWorkers: false,
   });

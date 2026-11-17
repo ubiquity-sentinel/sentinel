@@ -21,7 +21,9 @@ import {
   actionsRun,
   RUN,
   RUNTIME,
+  sha256,
   TOKEN,
+  zip,
 } from "./repair-fanout-actions-rig.ts";
 import {
   captured,
@@ -244,6 +246,46 @@ Deno.test("finalize names the closed check a cell failed: an artifact of another
     ...NO_CHECKS,
     provenance: 1,
   });
+});
+
+Deno.test("finalize names the shape of a result.json that is not JSON", async () => {
+  const [ALPHA, BETA] = REPOS;
+  const rig = makeRig([reviewing(ALPHA, 0), reviewing(BETA, 100)]);
+  const { fanout, envelopes } = await fanOut(rig);
+  const run = await actionsRun(rig, fanout, envelopes);
+  // beta uploaded a well-formed archive whose result.json is not JSON (its
+  // marker still names the sealed delta it reported).
+  const betaCell =
+    fanout.cells.find((cell) => cell.repository.name === "beta")!.cellId;
+  const artifact = run.artifacts.find((row) =>
+    String(row.name).endsWith(betaCell)
+  )!;
+  const bytes = await zip("result.json", new TextEncoder().encode("not json"));
+  run.archives.set(artifact.id as number, bytes);
+  artifact.size_in_bytes = bytes.length;
+  artifact.digest = "sha256:" + await sha256(bytes);
+  const shape = await captured(async () =>
+    runRepairFanoutFinalize({
+      token: TOKEN,
+      http: run.http,
+      clock: rig.clock,
+      state: rig.state,
+      run: RUN,
+      runtime: RUNTIME,
+      planDigest: await repairFanoutPlanDigestV1(fanout),
+      deadline: rig.clock.now() + 60 * MINUTE,
+    })
+  );
+  // Still rejected and handed back exactly as before; only the label moved.
+  assert.deepEqual(
+    shape.value?.rejected.map((entry) => [entry.repository.name, entry.reason]),
+    [["beta", "unauthenticated"]],
+  );
+  assert.deepEqual(
+    shape.value?.applied.map((entry) => entry.repository.name),
+    ["alpha"],
+  );
+  assert.deepEqual(unauthenticatedBy(shape.lines), { ...NO_CHECKS, shape: 1 });
 });
 
 Deno.test("finalize counts a refused and a missing repository cell, hands their records back and never fails", async () => {

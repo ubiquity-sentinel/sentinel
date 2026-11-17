@@ -14,9 +14,19 @@ export const REPAIR_DELTA_UNAUTHENTICATED_CHECKS = [
   "ambiguous",
   /** The artifact's workflow-run provenance is not this run's. */
   "provenance",
-  /** Download, archive digest/size verification or extraction failed. */
+  /**
+   * The archive reader refused it: the artifact's recorded state, size or
+   * digest, the download, the downloaded bytes against that size and digest,
+   * or an entry its rules refuse (a name other than `plan.json`,
+   * `result.json` or a bundle, a third entry, a directory, link or special
+   * file, or an entry over its bound).
+   */
   "archive",
-  /** The archive is not exactly one decodable `result.json`. */
+  /**
+   * The archive's files are not exactly one `result.json` (for example a
+   * `result.json` beside a bundle, which the reader accepts), or that file is
+   * not a bounded JSON object (invalid or oversized bytes decode to nothing).
+   */
   "shape",
   /** The producer job or its cell step is not the exact completed one. */
   "job",
