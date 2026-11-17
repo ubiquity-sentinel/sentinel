@@ -114,6 +114,19 @@ export function isBaseRepairBody(body: string): boolean {
   return body.split(/\r?\n/, 1)[0].startsWith(BASE_REPAIR_MARKER_PREFIX);
 }
 
+/**
+ * Whether `issue`, read for issue `number`, is a base-repair issue: the
+ * App's, with the marker on its first body line. `isBaseRepairTask`'s own
+ * check, shared with a reader that already holds the issue.
+ */
+export function isBaseRepairIssue(
+  issue: { number: number; author: string | null; body: string } | null,
+  number: number,
+): boolean {
+  return issue !== null && issue.number === number &&
+    issue.author === BASE_REPAIR_AUTHOR && isBaseRepairBody(issue.body);
+}
+
 /** Verdicts one run keeps (an issue's author and first line are its own). */
 const MEMO_MAX = 256;
 const recognised = new WeakMap<object, Map<string, boolean>>();
@@ -138,9 +151,7 @@ export async function isBaseRepairTask(
   try {
     const read = await deps.github.readIssue(number);
     if (!read.ok) return null;
-    verdict = read.value !== null && read.value.number === number &&
-      read.value.author === BASE_REPAIR_AUTHOR &&
-      isBaseRepairBody(read.value.body);
+    verdict = isBaseRepairIssue(read.value, number);
   } catch {
     return null;
   }

@@ -7,13 +7,12 @@ import {
 import { type GitHubPort, portError } from "../contracts/ports.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import {
-  BASE_REVIEW_CI_NOT_GREEN,
+  BASE_REVIEW_BASE_REPAIR_RED,
   baseResultSatisfied,
   baseResultWorkNeeded,
   type BaseTaskReviewPortV1,
   parseBaseReviewEvidenceRef,
 } from "../github/base-review-evidence.ts";
-import { isBaseRepairTask } from "./base-repair.ts";
 import { baseRepairNoChangeNext } from "./base-repair-no-change.ts";
 import {
   BASE_REVIEW_HOLD_MS,
@@ -208,15 +207,15 @@ export async function resumeBaseSatisfaction(
     deadline: latestStartAt,
   }).catch(() => portError("unavailable", "base review task unavailable"));
   if (!inspected.ok) {
-    // A base-repair task's no-change hold can never end in a review: its
-    // base is red by construction. It takes the ordinary no-change retry
-    // under the existing bounds, or parks, uncharged either way
-    // (`baseRepairNoChangeNext`); an unreadable issue (null) and every other
-    // task defer exactly as before.
+    // A base-repair issue's no-change hold whose exact base has a completed
+    // red check can never end in a review: it takes the ordinary no-change
+    // retry under the existing bounds, or parks, uncharged either way
+    // (`baseRepairNoChangeNext`). The review read that issue and those
+    // checks; a pending base, an unread issue and every other task defer
+    // exactly as before, without another read.
     if (
-      inspected.error.detail === BASE_REVIEW_CI_NOT_GREEN &&
-      record.intent?.kind === "implementation" &&
-      await isBaseRepairTask(deps, record) === true
+      inspected.error.detail === BASE_REVIEW_BASE_REPAIR_RED &&
+      record.intent?.kind === "implementation"
     ) {
       return persistWork(
         deps,

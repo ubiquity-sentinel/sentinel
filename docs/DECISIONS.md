@@ -5385,8 +5385,11 @@ chosen" paragraph; its blocker text is unchanged and is now the end state.
   a CI fix; nothing new is persisted or put in the request. The finding is
   not a CI fix: the start counts `counters.attempts`, never
   `counters.retries`, and is not capped. An unread issue or base check read
-  defers the start, uncharged. Ordinary requests and prompts are
-  byte-identical (digests pinned from the previous runtime).
+  defers the start, uncharged, and so does a base with no completed red
+  check while one is still running or none is reported yet
+  (`baseCheckState`; review follow-up), so it never starts without the
+  finding. Ordinary requests and prompts are byte-identical (digests pinned
+  from the previous runtime).
 - Not done: the log text is read in the cell after the admission, exactly as
   for a CI fix, and an unreadable log degrades there to the fixed one-line
   reason, as it does for a CI fix. Deferring at that point is not uncharged
@@ -5397,8 +5400,8 @@ chosen" paragraph; its blocker text is unchanged and is now the end state.
   unchanged, as is the sandbox policy.
 - No-change route
   ([src/repair/base-repair-no-change.ts](../src/repair/base-repair-no-change.ts)):
-  when the base review of a base-repair task's no-change hold meets its base
-  not green (`BASE_REVIEW_CI_NOT_GREEN`), the record returns to
+  when the base review of a base-repair task's no-change hold refuses with
+  `BASE_REVIEW_BASE_REPAIR_RED`, the record returns to
   implementation, uncharged, while the issue's no-change outcomes are below
   `MAX_NO_CHANGE_BASE_REVIEWS` = 3 (`issueNoChangeOutcomes`: attempt memory
   summed over the issue's records, its split parts included) and the next
@@ -5406,18 +5409,30 @@ chosen" paragraph; its blocker text is unchanged and is now the end state.
   current base and runtime). That start is admitted and charged by the
   ordinary gates and carries the evidence above. Otherwise it parks with
   `BASE_REPAIR_NO_CHANGE_DETAIL`, uncharged. No field is added.
+  The review answers that refusal, instead of `BASE_REVIEW_CI_NOT_GREEN`,
+  only when the issue it read is the App's with the marker
+  (`isBaseRepairIssue`, `isBaseRepairTask`'s own check) and the exact base
+  has a completed `failure`/`timed_out` merge-gate check (review follow-up:
+  `BASE_REVIEW_CI_NOT_GREEN` also covers a pending base and a required check
+  not reported yet, such as a person's fix still in CI, which now defers
+  exactly as before). It decides from the reads `inspect` already makes, so
+  the hold of any other task reads nothing more.
 - Charges per base-repair issue, at most: 3 charged starts that end without a
-  change, for the whole issue and its parts together (on one runtime, 1: the
-  retry would be identical, so it parks instead); other start outcomes under
-  the ordinary rules (the whole issue's start, launcher retries of transient
-  failures under their existing bounds, one start per split part, 2 to 4);
+  change, for the whole issue and its parts together (on one runtime and an
+  unmoved base, 1: the retry would be identical, so it parks instead; a base
+  that moves admits a retry even on one runtime, up to the same 3); other
+  start outcomes under the ordinary rules (the whole issue's start, launcher
+  retries of transient failures under their existing bounds, one start per
+  split part, 2 to 4);
   3 charged CI fixes (`BASE_REPAIR_CI_FIX_CAP`); and, once a head is green,
   the ordinary review rounds. Through the real loop with a red base and a
   model that never changes anything, a new runtime on every pass gives 3
   charged starts, the park and nothing more
   (`tests/repair/base-repair-no-change_test.ts`). No refunds.
-- 1370 (one charge, held until 2026-11-18T00:39:20Z): the new runtime's
-  next base-satisfaction step returns it to implementation; its second start
+- 1370 (one charge, held until 2026-11-18T00:39:20Z): while its base stays
+  red, the new runtime's next base-satisfaction step returns it to
+  implementation (a pending base defers it, a green one takes its base
+  review as before); its second start
   (`retry`, attempt 2) carries its red base's evidence. On a no-change
   outcome it parks on the next step on the same runtime: 2 charges; 3 at
   most, if a different runtime is installed between that start and its next

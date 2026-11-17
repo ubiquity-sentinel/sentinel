@@ -79,8 +79,12 @@ function issue(kind: Issue): GitHubIssueV1 {
 }
 
 /** One cycle over issue 1370's fresh record; the model changes nothing. */
-async function start(kind: Issue, checksReadable = true) {
-  const github = new RelationsFakeGithub({ baseSha: SHA2, checks: CHECKS });
+async function start(
+  kind: Issue,
+  checksReadable = true,
+  checks: GitHubCheckV1[] = CHECKS,
+) {
+  const github = new RelationsFakeGithub({ baseSha: SHA2, checks });
   github.latest.set(1370, issue(kind));
   if (!checksReadable) {
     github.readChecks = () =>
@@ -158,6 +162,27 @@ Deno.test("base-repair start: an unread base check defers the start without a wr
   assert.equal(rig.model.requests.length, 0);
   assert.deepEqual(after.reservations, []);
   assert.deepEqual(after.work, before.work);
+});
+
+Deno.test("base-repair start: a base with checks still running or none reported defers the start, uncharged", async () => {
+  const running = {
+    ...check("deno", null),
+    status: "in_progress",
+    completedAt: null,
+  } as GitHubCheckV1;
+  for (const checks of [[running, check("lint", "success")], []]) {
+    const { rig, before, after } = await start("app", true, checks);
+    assert.equal(rig.model.requests.length, 0);
+    assert.deepEqual(after.reservations, []);
+    assert.deepEqual(after.work, before.work);
+  }
+  // A completed red check starts it even while another is still running.
+  const { rig } = await start("app", true, [running, check("e2e", "failure")]);
+  assert.equal(rig.model.requests.length, 1);
+  assert.match(
+    rig.model.requests[0].reviewFindings?.[0].message ?? "",
+    /: e2e \(failure\)\. /,
+  );
 });
 
 Deno.test("base-repair start: an unread issue author defers; a base with no failed check carries nothing", async () => {

@@ -21,7 +21,9 @@ import {
   type GitHubCheckV1,
   type ModelRunRequestV1,
   portError,
+  portOk,
 } from "../../src/contracts/ports.ts";
+import { reviewTaskStatementDigest } from "../../src/contracts/review-receipt.ts";
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import {
@@ -53,8 +55,9 @@ import {
 /** The fixed park, as an older runtime and the launcher read it. */
 const NO_CHANGE_PARK =
   "base-repair implementation made no change while its base CI is not green; owner action required";
-/** The real base review service's refusal on a base that is not green. */
+/** The real base review service's refusals on a base that is not green. */
 const CI_NOT_GREEN = "base review CI is not green";
+const BASE_REPAIR_RED = "base review CI is red on a base-repair issue's base";
 const HOLD_EXPIRED = "base review did not complete within its hold bound";
 /** The base-repair CI finding's opening (the start's evidence key). */
 const RED_BASE =
@@ -133,40 +136,86 @@ async function held1370(): Promise<RepairStateSnapshotV1> {
   return snapshot;
 }
 
+const GREEN: GitHubCheckV1 = { ...RED, conclusion: "success" };
+const PENDING = {
+  ...RED,
+  status: "in_progress",
+  conclusion: null,
+  completedAt: null,
+} as unknown as GitHubCheckV1;
+
 /**
- * The loop over issue 1370 in `state`: its base is red, its base review can
- * never start, and the model never changes anything.
+ * The loop over issue 1370 in `state`: the model never changes anything, and
+ * the base review's `inspect` answers as the real service does from the
+ * issue and the exact base's checks it reads (pinned in
+ * `tests/github/base-review-service_test.ts`): the
+ * base-repair refusal on a red base of the App's issue, its usual refusal on
+ * any other base that is not green, and the task on a green one. `setChecks`
+ * changes the base's checks between passes.
  */
 async function loop(
   state: RepairStateSnapshotV1,
   author: Author = "app",
   readable = true,
 ) {
-  const github = new RelationsFakeGithub({ baseSha: SHA2, checks: [RED] });
+  const github = new RelationsFakeGithub({ baseSha: SHA2 });
   const rig = makeMemoryRig(github);
-  github.latest.set(
-    1370,
-    issueRecord(1370, {
-      title: "CI is failing on development",
-      body: `${MARKER}\n\nCI is failing on \`development\` at ${SHA2}.`,
-      // The marker alone never makes a base-repair task: only the App's.
-      author: author === "app" ? "ubiquity-sentinel[bot]" : "someone",
-      relations: { openBlockers: [], subIssueCount: 0 },
-    }),
-  );
+  const issue = issueRecord(1370, {
+    title: "CI is failing on development",
+    body: `${MARKER}\n\nCI is failing on \`development\` at ${SHA2}.`,
+    // The marker alone never makes a base-repair task: only the App's.
+    author: author === "app" ? "ubiquity-sentinel[bot]" : "someone",
+    relations: { openBlockers: [], subIssueCount: 0 },
+  });
+  github.latest.set(1370, issue);
   if (!readable) {
-    github.readIssue = () =>
-      Promise.resolve(portError("unavailable", "issue read unavailable"));
+    github.readIssue = (number: number) => {
+      github.calls.push(`readIssue:${number}`);
+      return Promise.resolve(
+        portError("unavailable", "issue read unavailable"),
+      );
+    };
   }
+  let checks: GitHubCheckV1[] = [RED];
+  github.readChecks = (head: GitSha) =>
+    Promise.resolve(
+      portOk({ head, checks: checks.map((check) => ({ ...check, head })) }),
+    );
   rig.model.runModel = (request: ModelRunRequestV1) => {
     rig.model.requests.push(request);
     return Promise.resolve(
       portError("unavailable", CANDIDATE_COMMIT_REFUSAL_DETAILS.unchanged_base),
     );
   };
+  const task = {
+    issueNumber: 1370,
+    title: issue.title,
+    body: issue.body,
+    digest: await reviewTaskStatementDigest({
+      issueNumber: 1370,
+      title: issue.title,
+      body: issue.body,
+    }),
+  };
   let reviews = 0;
   const port: BaseTaskReviewPortV1 = {
-    inspect: () => Promise.resolve(portError("unavailable", CI_NOT_GREEN)),
+    inspect: () => {
+      if (!readable) {
+        return Promise.resolve(portError("unavailable", "issue unavailable"));
+      }
+      const red = checks.some((check) =>
+        check.status === "completed" &&
+        (check.conclusion === "failure" || check.conclusion === "timed_out")
+      );
+      const green = checks.length > 0 &&
+        checks.every((check) => check.conclusion === "success");
+      return Promise.resolve(
+        green ? portOk(task) : portError(
+          "unavailable",
+          author === "app" && red ? BASE_REPAIR_RED : CI_NOT_GREEN,
+        ),
+      );
+    },
     run: () => {
       reviews++;
       return Promise.resolve(portError("unavailable", "never started"));
@@ -175,7 +224,13 @@ async function loop(
   };
   (github as BaseTaskReviewGitHubV1).baseTaskReview = port;
   await rig.state.writeRepair(state, null);
-  return { rig, reviews: () => reviews };
+  return {
+    rig,
+    reviews: () => reviews,
+    setChecks: (next: GitHubCheckV1[]) => checks = next,
+    issueReads: () =>
+      github.calls.filter((call) => call.startsWith("readIssue:")).length,
+  };
 }
 
 type Rig = Awaited<ReturnType<typeof loop>>["rig"];
@@ -300,8 +355,47 @@ Deno.test("base-repair no change: on one runtime the identical retry is never st
   assert.equal(seen.at(-1), `blocked:other:${NO_CHANGE_PARK}`);
 });
 
+Deno.test("base-repair no change: a pending or unreported base defers the hold without a read, write or charge until it is red", async () => {
+  const { rig, setChecks, issueReads, reviews } = await loop(
+    await held1370(),
+  );
+  const before = await rig.snapshot();
+  // A person's fix landed on the base: its CI is running, then not reported.
+  setChecks([PENDING]);
+  await cycles(rig, 3);
+  setChecks([]);
+  await cycles(rig, 2);
+  assert.equal(
+    canonicalStringify(await rig.snapshot()),
+    canonicalStringify(before),
+    "deferred exactly as before",
+  );
+  assert.equal(rig.model.requests.length, 0);
+  assert.equal(issueReads(), 0);
+  // Completed red: the retry starts, with its red base's checks.
+  setChecks([RED]);
+  await cycles(rig, 1);
+  assert.equal(rig.model.requests.length, 1);
+  assertEvidenceKeyed(rig.model.requests);
+  assert.equal(reviews(), 0);
+});
+
+Deno.test("base-repair no change: a green base takes its base review as before, never a start", async () => {
+  const { rig, setChecks, reviews } = await loop(await held1370());
+  setChecks([GREEN]);
+  await cycles(rig, 1);
+  const after = await rig.snapshot();
+  assert.equal(reviews(), 1, "the base review's native run");
+  assert.equal(rig.model.requests.length, 0);
+  assert.deepEqual(
+    after.reservations.map((row) => row.purpose),
+    ["implementation", "review_request"],
+  );
+  assert.equal(after.work[0].intent?.kind, "issue_closure");
+});
+
 Deno.test("base-repair no change: an ordinary task's hold is unchanged, the marker alone recognises nothing", async () => {
-  const { rig, reviews } = await loop(await held1370(), "person");
+  const { rig, reviews, issueReads } = await loop(await held1370(), "person");
   const before = await rig.snapshot();
   await rig.run();
   assert.equal(
@@ -319,6 +413,8 @@ Deno.test("base-repair no change: an ordinary task's hold is unchanged, the mark
   assert.equal(rig.model.requests.length, 0);
   assert.equal(reviews(), 0);
   assert.deepEqual((await rig.snapshot()).reservations, before.reservations);
+  // The base review read its issue; the hold reads nothing more (base: 0).
+  assert.equal(issueReads(), 0);
 });
 
 Deno.test("base-repair no change: an unreadable issue defers without a write, charge or park", async () => {

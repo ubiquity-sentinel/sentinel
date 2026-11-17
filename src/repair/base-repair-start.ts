@@ -11,12 +11,16 @@
  * the finding is built from check names and conclusions, and the evidence is
  * read only in the cell, never persisted or put in the request.
  */
+import type { GitHubCheckV1 } from "../contracts/ports.ts";
+import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { isBaseRepairBody, isBaseRepairTask } from "./base-repair.ts";
 import {
   CANDIDATE_CONCLUSIONS,
+  checkPending,
   ciCorrectionFinding,
   failedChecks,
+  latestChecks,
   readCiChecks,
 } from "./ci-rejection.ts";
 import type { RepairCycleDepsV1 } from "./loop-types.ts";
@@ -25,6 +29,33 @@ import { selectMergeGateChecksV1 } from "./merge-gate-checks.ts";
 /** Deferral of a base-repair start whose issue or base checks are unread. */
 export const BASE_REPAIR_START_UNAVAILABLE =
   "base-repair start waits for its issue and base checks";
+
+/** Deferral of a base-repair start whose base has no completed red check yet. */
+export const BASE_REPAIR_START_PENDING =
+  "base-repair start waits for its base checks to complete";
+
+/**
+ * A base's merge-gate checks as read: `red` with its completed
+ * `failure`/`timed_out` checks; else `pending` while one is still running or
+ * none is reported yet (no evidence is never settled); else `settled`.
+ */
+export function baseCheckState(
+  repository: RepositoryIdentityV1,
+  checks: readonly GitHubCheckV1[],
+):
+  | { kind: "red"; checks: GitHubCheckV1[] }
+  | { kind: "pending" }
+  | { kind: "settled" } {
+  const gate = selectMergeGateChecksV1(repository, checks).checks;
+  const red = failedChecks(gate).filter((check) =>
+    CANDIDATE_CONCLUSIONS.includes(check.conclusion ?? "")
+  );
+  if (red.length > 0) return { kind: "red", checks: red };
+  const latest = latestChecks(gate);
+  return latest.length === 0 || latest.some(checkPending)
+    ? { kind: "pending" }
+    : { kind: "settled" };
+}
 
 export type BaseRepairStartV1 =
   | { kind: "none" }
@@ -37,9 +68,10 @@ export type BaseRepairStartV1 =
 /**
  * The CI finding of a fresh start of `record` from `issue`: `none` for a
  * body without the base-repair marker (nothing is read), for an issue that
- * is not the App's (`isBaseRepairTask`), and for a base none of whose checks
- * failed; `unavailable` when the issue or the base's checks cannot be read,
- * so the caller defers, uncharged, instead of starting blind.
+ * is not the App's (`isBaseRepairTask`), and for a base whose checks all
+ * completed without a red one; `unavailable` when the issue or the base's
+ * checks cannot be read, or none is red yet while one is pending or none is
+ * reported, so the caller defers, uncharged, instead of starting blind.
  */
 export async function baseRepairStartFinding(
   deps: Pick<RepairCycleDepsV1, "github">,
@@ -58,12 +90,15 @@ export async function baseRepairStartFinding(
   try {
     const read = await readCiChecks(deps.github, base);
     if (!read.ok || read.value.head !== base) return unavailable;
-    const red = failedChecks(
-      selectMergeGateChecksV1(record.repository, read.value.checks).checks,
-    ).filter((check) => CANDIDATE_CONCLUSIONS.includes(check.conclusion ?? ""));
-    return red.length === 0
-      ? { kind: "none" }
-      : { kind: "finding", finding: ciCorrectionFinding(base, red, true) };
+    const state = baseCheckState(record.repository, read.value.checks);
+    return state.kind === "red"
+      ? {
+        kind: "finding",
+        finding: ciCorrectionFinding(base, state.checks, true),
+      }
+      : state.kind === "pending"
+      ? { kind: "unavailable", detail: BASE_REPAIR_START_PENDING }
+      : { kind: "none" };
   } catch {
     return unavailable;
   }

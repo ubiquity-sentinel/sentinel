@@ -26,6 +26,16 @@ export interface BaseReviewEvidenceV1 extends BaseReviewBindingV1 {
  */
 export const BASE_REVIEW_CI_NOT_GREEN = "base review CI is not green";
 
+/**
+ * `inspect`'s refusal instead of `BASE_REVIEW_CI_NOT_GREEN` when the issue it
+ * read is a base-repair issue (`isBaseRepairIssue`) and the exact base has a
+ * completed failing merge-gate check (`baseCheckState` red), decided from the
+ * reads `inspect` already made. A pending base or one without checks keeps
+ * `BASE_REVIEW_CI_NOT_GREEN`.
+ */
+export const BASE_REVIEW_BASE_REPAIR_RED =
+  "base review CI is red on a base-repair issue's base";
+
 /** No durable wrapper: each referenced payload uses an existing R80 parser. */
 export interface BaseTaskReviewPortV1 {
   inspect(input: {

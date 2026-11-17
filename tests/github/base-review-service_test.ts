@@ -20,7 +20,11 @@ import {
   baseReviewCommentPayload,
   type BaseReviewCommentV1,
 } from "../../src/github/base-review-comments.ts";
-import { parseBaseReviewEvidenceRef } from "../../src/github/base-review-evidence.ts";
+import {
+  BASE_REVIEW_BASE_REPAIR_RED,
+  BASE_REVIEW_CI_NOT_GREEN,
+  parseBaseReviewEvidenceRef,
+} from "../../src/github/base-review-evidence.ts";
 import {
   type BaseTaskReviewOptionsV1,
   BaseTaskReviewService,
@@ -825,4 +829,42 @@ Deno.test("Passport base service: stale task/base or untrusted CI cannot start r
   } finally {
     await f.cleanup();
   }
+});
+
+Deno.test("base service: inspect answers the base-repair refusal only for the App's marked issue on a completed red base", async () => {
+  const h = await rig();
+  const named = h.data.checks.checks;
+  const first = (status: string, conclusion: string | null) => ({
+    head: SHA1,
+    checks: named.map((check, index) =>
+      index === 0 ? { ...check, status, conclusion } : check
+    ),
+  } as GitHubChecksV1);
+  const answer = async () => {
+    const read = await h.service.inspect({
+      record: h.record,
+      deadline: h.clock.now() + 60_000,
+    });
+    return read.ok ? "task" : read.error.detail;
+  };
+  // A red base of any other issue keeps the usual refusal.
+  h.data.checks = first("completed", "failure");
+  assert.equal(await answer(), BASE_REVIEW_CI_NOT_GREEN);
+  // The App's issue with the base-repair marker on its first line.
+  h.data.issue = {
+    ...h.data.issue,
+    author: "ubiquity-sentinel[bot]",
+    body: `<!-- sentinel:base-repair:development@${SHA1} -->\n\nCI is failing.`,
+  };
+  assert.equal(await answer(), BASE_REVIEW_BASE_REPAIR_RED);
+  h.data.checks = first("completed", "timed_out");
+  assert.equal(await answer(), BASE_REVIEW_BASE_REPAIR_RED);
+  // Running, or not reported yet: not red, the usual refusal.
+  h.data.checks = first("in_progress", null);
+  assert.equal(await answer(), BASE_REVIEW_CI_NOT_GREEN);
+  h.data.checks = { head: SHA1, checks: [] } as GitHubChecksV1;
+  assert.equal(await answer(), BASE_REVIEW_CI_NOT_GREEN);
+  // Green: the task, as before.
+  h.data.checks = first("completed", "success");
+  assert.equal(await answer(), "task");
 });

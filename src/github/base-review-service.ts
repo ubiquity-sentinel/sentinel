@@ -19,6 +19,8 @@ import { findReservationV1 } from "../contracts/state-snapshots.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { decideCiGate } from "../repair/loop-checks.ts";
+import { isBaseRepairIssue } from "../repair/base-repair.ts";
+import { baseCheckState } from "../repair/base-repair-start.ts";
 import {
   baseReviewOrigin,
   noChangeIssue,
@@ -30,6 +32,7 @@ import {
   baseReviewCommentPayload,
 } from "./base-review-comments.ts";
 import {
+  BASE_REVIEW_BASE_REPAIR_RED,
   BASE_REVIEW_CI_NOT_GREEN,
   baseResultSatisfied,
   baseReviewEvidenceRef,
@@ -204,7 +207,20 @@ export class BaseTaskReviewService implements BaseTaskReviewPortV1 {
           checks.value.checks,
           generic ? this.options.repository : undefined,
         ) !== "proceed"
-    ) return portError("unavailable", BASE_REVIEW_CI_NOT_GREEN);
+    ) {
+      // A base-repair issue on a base with a completed red check: its
+      // no-change hold can never end in a review (`baseRepairNoChangeNext`).
+      // Decided from these reads, so no other task pays a read for it.
+      return portError(
+        "unavailable",
+        checks.value.head === record.target.base &&
+          isBaseRepairIssue(issue.value, record.related.issueNumber!) &&
+          baseCheckState(this.options.repository, checks.value.checks)
+              .kind === "red"
+          ? BASE_REVIEW_BASE_REPAIR_RED
+          : BASE_REVIEW_CI_NOT_GREEN,
+      );
+    }
     if (this.options.clock.now() >= deadline) {
       return portError("unavailable", "base review deadline reached");
     }
