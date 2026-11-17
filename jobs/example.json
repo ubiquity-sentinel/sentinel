@@ -1,0 +1,12 @@
+{
+  "jobs": [
+    {
+      "id": "example-job",
+      "repository": "ubiquity/pay.ubq.fi",
+      "prompt": "Describe the change you want here. The first line becomes the commit title.",
+      "setup": ["bun install --frozen-lockfile"],
+      "minutes": 120,
+      "pr": false
+    }
+  ]
+}
