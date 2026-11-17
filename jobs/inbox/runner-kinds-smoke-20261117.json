@@ -1,0 +1,22 @@
+{
+  "jobs": [
+    {
+      "id": "smoke-macos-arm64-20261117",
+      "repository": "ubiquity-sentinel/sentinel",
+      "base": "claude/great-ride-tu5r70",
+      "runner": "macos-arm64",
+      "minutes": 20,
+      "pr": false,
+      "prompt": "Smoke test of the agent-job lane on a macOS runner.\n\nCreate the file jobs/smoke/smoke-macos-arm64-20261117.txt containing these lines, each the output of one command: `uname -sm`, `sw_vers -productVersion`, `sysctl -n hw.ncpu`, `sysctl -n hw.memsize`, `codex --version`, `clang++ --version | head -1`, `cmake --version | head -1 || echo no-cmake`, `brew --version | head -1`, `command -v timeout`, and the HTTP status code from `curl -s -o /dev/null -w '%{http_code}' https://registry.npmjs.org/`. Change nothing else."
+    },
+    {
+      "id": "smoke-linux-arm64-20261117",
+      "repository": "ubiquity-sentinel/sentinel",
+      "base": "claude/great-ride-tu5r70",
+      "runner": "linux-arm64",
+      "minutes": 20,
+      "pr": false,
+      "prompt": "Smoke test of the agent-job lane on an ARM64 Linux runner.\n\nCreate the file jobs/smoke/smoke-linux-arm64-20261117.txt containing these lines, each the output of one command: `uname -srm`, `nproc`, `free -g | sed -n 2p`, `codex --version`, `g++ --version | head -1`, `clang++ --version | head -1 || echo no-clang`, `cmake --version | head -1 || echo no-cmake`, `ldd --version | head -1`, and the HTTP status code from `curl -s -o /dev/null -w '%{http_code}' https://registry.npmjs.org/`. Change nothing else."
+    }
+  ]
+}
