@@ -1,0 +1,778 @@
+{
+  "source": {
+    "commit": "b53e355a4571dc3705658c44d0dd9505a7d4d001",
+    "ref": "sentinel-state/repair",
+    "sequence": 97103
+  },
+  "work": [
+    {
+      "blocker": {
+        "kind": "other",
+        "message": "candidate touches a protected path",
+        "since": 1794904678248
+      },
+      "classification": {
+        "priority": null,
+        "severity": "P2"
+      },
+      "controller": {
+        "sha": "77931d130e055644b3d8c26c174ab40fdbc6dbdd"
+      },
+      "counters": {
+        "attempts": 2,
+        "retries": 0,
+        "reviewRounds": 0
+      },
+      "createdAt": 1794875079703,
+      "dependencies": [],
+      "evidence": [],
+      "failingRevision": null,
+      "fingerprint": null,
+      "firstSeenAt": 1794874149000,
+      "id": "issue-ubiquity-ai.ubq.fi-1370",
+      "intent": null,
+      "kind": "work",
+      "nextStep": "blocked",
+      "related": {
+        "incidentId": null,
+        "issueNumber": 1370
+      },
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "source": {
+        "id": "1370",
+        "kind": "issue",
+        "revision": "002fe15fa926674c97f0169355d24929bf529710"
+      },
+      "sourceSnapshotDigest": null,
+      "stepInputs": {
+        "deadline": 1794905317154,
+        "digest": "f07eb7273ed8b99d1c9f23c94af30dd62d852a832190e737403aa47b03f2f04d"
+      },
+      "target": {
+        "base": "002fe15fa926674c97f0169355d24929bf529710",
+        "branch": "sentinel/repair/issue-ubiquity-ai.ubq.fi-1370",
+        "candidateState": {
+          "preserved": null,
+          "publishedHead": null
+        },
+        "checkpoint": null,
+        "head": "624736b813ac5af68984b9bd1f3a223ade254f6f",
+        "pr": null
+      },
+      "updatedAt": 1794904678248,
+      "urgency": {
+        "activeProduction": false,
+        "reproducible5xx": false,
+        "severeSecurityOrDataLoss": false
+      },
+      "version": "v1",
+      "wait": null
+    },
+    {
+      "blocker": {
+        "kind": "other",
+        "message": "candidate touches a protected path",
+        "since": 1793886841514
+      },
+      "classification": {
+        "priority": null,
+        "severity": "P2"
+      },
+      "controller": {
+        "sha": "dcd82edb16c04ebda2f886fce8f51564bd4a2c9a"
+      },
+      "counters": {
+        "attempts": 8,
+        "retries": 6,
+        "reviewRounds": 0,
+        "stalled": 1
+      },
+      "createdAt": 1793531182968,
+      "dependencies": [],
+      "evidence": [],
+      "failingRevision": null,
+      "fingerprint": null,
+      "firstSeenAt": 1753284463000,
+      "id": "issue-ubiquity-arbitrage-bot-7",
+      "intent": null,
+      "kind": "work",
+      "nextStep": "blocked",
+      "related": {
+        "incidentId": null,
+        "issueNumber": 7
+      },
+      "repository": {
+        "installationId": 155687488,
+        "name": "arbitrage-bot",
+        "owner": "ubiquity"
+      },
+      "source": {
+        "id": "7",
+        "kind": "issue",
+        "revision": "08a36470b0bd6f5682d04d7b3bf5ae06acaa0f83"
+      },
+      "sourceSnapshotDigest": null,
+      "stepInputs": {
+        "deadline": 1793885527890,
+        "digest": "d8145280817368b1be0fdc6a0f76ced6526acae36fcf7aafae97eb3184074edf"
+      },
+      "target": {
+        "base": "08a36470b0bd6f5682d04d7b3bf5ae06acaa0f83",
+        "branch": "sentinel/repair/issue-ubiquity-arbitrage-bot-7",
+        "candidateState": {
+          "preserved": null,
+          "publishedHead": "14a648ec75295285178396cb1635cdc9d5020858"
+        },
+        "checkpoint": null,
+        "head": "fc1b3087031f33f13e869f97804cd199d3a6dac2",
+        "pr": 20
+      },
+      "updatedAt": 1793886841514,
+      "urgency": {
+        "activeProduction": false,
+        "reproducible5xx": false,
+        "severeSecurityOrDataLoss": false
+      },
+      "version": "v1",
+      "wait": null
+    },
+    {
+      "blocker": {
+        "kind": "other",
+        "message": "candidate touches a protected path",
+        "since": 1793886871055
+      },
+      "classification": {
+        "priority": null,
+        "severity": "P2"
+      },
+      "controller": {
+        "sha": "dcd82edb16c04ebda2f886fce8f51564bd4a2c9a"
+      },
+      "counters": {
+        "attempts": 7,
+        "retries": 5,
+        "reviewRounds": 0,
+        "stalled": 1
+      },
+      "createdAt": 1793531232637,
+      "dependencies": [],
+      "evidence": [],
+      "failingRevision": null,
+      "fingerprint": null,
+      "firstSeenAt": 1778998633000,
+      "id": "issue-ubiquity-demo.ubq.fi-23",
+      "intent": null,
+      "kind": "work",
+      "nextStep": "blocked",
+      "related": {
+        "incidentId": null,
+        "issueNumber": 23
+      },
+      "repository": {
+        "installationId": 155687488,
+        "name": "demo.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "source": {
+        "id": "23",
+        "kind": "issue",
+        "revision": "e0dc24247bd9965bb004e817d9cc42a78dc798b3"
+      },
+      "sourceSnapshotDigest": null,
+      "stepInputs": {
+        "deadline": 1793885422534,
+        "digest": "abc6fe649a098e1b08106953f47eb7e13e4371688b46e5ce0ec37afced85c852"
+      },
+      "target": {
+        "base": "e0dc24247bd9965bb004e817d9cc42a78dc798b3",
+        "branch": "sentinel/repair/issue-ubiquity-demo.ubq.fi-23",
+        "candidateState": {
+          "preserved": null,
+          "publishedHead": "977a8abb87f4ed339b7174b26e134e44adbf3b46"
+        },
+        "checkpoint": null,
+        "head": "4fdca851d827469134b26ab91e780c4bb22f801a",
+        "pr": 51
+      },
+      "updatedAt": 1793886871055,
+      "urgency": {
+        "activeProduction": false,
+        "reproducible5xx": false,
+        "severeSecurityOrDataLoss": false
+      },
+      "version": "v1",
+      "wait": null
+    },
+    {
+      "blocker": {
+        "kind": "other",
+        "message": "candidate touches a protected path",
+        "since": 1794532725068
+      },
+      "classification": {
+        "priority": null,
+        "severity": "P2"
+      },
+      "controller": {
+        "sha": "1ce932549934bf39228d47c92315fdf1ee27b89e"
+      },
+      "counters": {
+        "attempts": 2,
+        "retries": 0,
+        "reviewRounds": 1
+      },
+      "createdAt": 1793580853435,
+      "dependencies": [],
+      "evidence": [
+        {
+          "kind": "review_receipt",
+          "ref": "artifact:base-review/25/b5330c09e20de31b0e2385af8f4e6bbb9d62382d/56f41014dec0898d6057fbe2846b6785dabf2e863bc735a79a9b6cd887c29c86/920b443c01be0d467b33a98d0102c9d6ab97f70e1bb705b55468287d073b3047/6839522862/8de15e139e25a438b7f3a8fe7b24d3dd57676819353477d3bfcb9076e2db8dce/6839523171/c1a33552d1a480789904d2f0027e73819a707157f989175adefe076c47f62cd9"
+        }
+      ],
+      "failingRevision": null,
+      "fingerprint": null,
+      "firstSeenAt": 1793580483000,
+      "id": "issue-ubiquity-deno-deploy-workflow-25",
+      "intent": null,
+      "kind": "work",
+      "nextStep": "blocked",
+      "related": {
+        "incidentId": null,
+        "issueNumber": 25
+      },
+      "repository": {
+        "installationId": 155687488,
+        "name": "deno-deploy-workflow",
+        "owner": "ubiquity"
+      },
+      "source": {
+        "id": "25",
+        "kind": "issue",
+        "revision": "b5330c09e20de31b0e2385af8f4e6bbb9d62382d"
+      },
+      "sourceSnapshotDigest": null,
+      "stepInputs": {
+        "deadline": 1794533348113,
+        "digest": "fc1ed2292c9248900c4c1b29e8f130f2efebfb888b971c7b711a48403b20c1f9"
+      },
+      "target": {
+        "base": "b5330c09e20de31b0e2385af8f4e6bbb9d62382d",
+        "branch": "sentinel/repair/issue-ubiquity-deno-deploy-workflow-25",
+        "candidateState": {
+          "preserved": null,
+          "publishedHead": null
+        },
+        "checkpoint": null,
+        "head": "be5b7e277fabb76a89b64d406e736f8766f64a5c",
+        "pr": null
+      },
+      "updatedAt": 1794532725068,
+      "urgency": {
+        "activeProduction": false,
+        "reproducible5xx": false,
+        "severeSecurityOrDataLoss": false
+      },
+      "version": "v1",
+      "wait": null
+    },
+    {
+      "blocker": {
+        "kind": "other",
+        "message": "candidate touches a protected path",
+        "since": 1793881337642
+      },
+      "classification": {
+        "priority": null,
+        "severity": "P2"
+      },
+      "controller": {
+        "sha": "dcd82edb16c04ebda2f886fce8f51564bd4a2c9a"
+      },
+      "counters": {
+        "attempts": 6,
+        "retries": 0,
+        "reviewRounds": 1
+      },
+      "createdAt": 1793531274109,
+      "dependencies": [],
+      "evidence": [
+        {
+          "kind": "review_receipt",
+          "ref": "artifact:review-receipt/review-receipt:608459ae0027722f53e926f102a2521cfbe2fc2883784038eab6af62a14fcdaa"
+        }
+      ],
+      "failingRevision": null,
+      "fingerprint": null,
+      "firstSeenAt": 1763011144000,
+      "id": "issue-ubiquity-notifications.ubq.fi-13",
+      "intent": null,
+      "kind": "work",
+      "nextStep": "blocked",
+      "related": {
+        "incidentId": null,
+        "issueNumber": 13
+      },
+      "repository": {
+        "installationId": 155687488,
+        "name": "notifications.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "source": {
+        "id": "13",
+        "kind": "issue",
+        "revision": "1b417aa76670b0c2f941f7fca607dece386ecd22"
+      },
+      "sourceSnapshotDigest": null,
+      "stepInputs": {
+        "deadline": 1793880020103,
+        "digest": "818396760ce1bd086b2550528b95a8e0161893d738fd2b3d0baf0e8ada5b80ed"
+      },
+      "target": {
+        "base": "1b417aa76670b0c2f941f7fca607dece386ecd22",
+        "branch": "sentinel/repair/issue-ubiquity-notifications.ubq.fi-13",
+        "candidateState": {
+          "preserved": null,
+          "publishedHead": "9027ac67a79246ed97ce80754699f783522aa27b"
+        },
+        "checkpoint": null,
+        "head": "c5916357d92fcc3ce8550dca9e6bb7748e6d3282",
+        "pr": 33
+      },
+      "updatedAt": 1793881337642,
+      "urgency": {
+        "activeProduction": false,
+        "reproducible5xx": false,
+        "severeSecurityOrDataLoss": false
+      },
+      "version": "v1",
+      "wait": null
+    },
+    {
+      "blocker": {
+        "kind": "other",
+        "message": "candidate touches a protected path",
+        "since": 1794786847840
+      },
+      "classification": {
+        "priority": null,
+        "severity": "P2"
+      },
+      "controller": {
+        "sha": "1838df313105bab219d71602695a7f758a65125e"
+      },
+      "counters": {
+        "attempts": 6,
+        "retries": 0,
+        "reviewRounds": 0
+      },
+      "createdAt": 1792494798621,
+      "dependencies": [],
+      "evidence": [],
+      "failingRevision": null,
+      "fingerprint": null,
+      "firstSeenAt": 1792493826000,
+      "id": "issue-ubiquity-sentinel-177",
+      "intent": null,
+      "kind": "work",
+      "nextStep": "blocked",
+      "related": {
+        "incidentId": null,
+        "issueNumber": 177
+      },
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity-sentinel"
+      },
+      "source": {
+        "id": "177",
+        "kind": "issue",
+        "revision": "e05ba64f1142710e4a902a9ae088593a1ca411f5"
+      },
+      "sourceSnapshotDigest": null,
+      "stepInputs": {
+        "deadline": 1794786930708,
+        "digest": "3b7b171cf440258fa2dee0628787c538a5bd5d8aab4d062978c13eec5349357e"
+      },
+      "target": {
+        "base": "176b596f86b1ff6fab60f50715e60b00759339ee",
+        "branch": "sentinel/repair/issue-ubiquity-sentinel-177",
+        "candidateState": {
+          "preserved": null,
+          "publishedHead": null
+        },
+        "checkpoint": null,
+        "head": "bd2d4947fd8d3e139583f47b9fb2dc9619a82379",
+        "pr": null
+      },
+      "updatedAt": 1794786847840,
+      "urgency": {
+        "activeProduction": false,
+        "reproducible5xx": false,
+        "severeSecurityOrDataLoss": false
+      },
+      "version": "v1",
+      "wait": null
+    },
+    {
+      "blocker": {
+        "kind": "other",
+        "message": "candidate touches a protected path",
+        "since": 1793933334355
+      },
+      "classification": {
+        "priority": null,
+        "severity": "P2"
+      },
+      "controller": {
+        "sha": "e77e197f09f577cf0342985130fa8cb81956b925"
+      },
+      "counters": {
+        "attempts": 5,
+        "retries": 0,
+        "reviewRounds": 0
+      },
+      "createdAt": 1793512709510,
+      "dependencies": [],
+      "evidence": [],
+      "failingRevision": null,
+      "fingerprint": null,
+      "firstSeenAt": 1793512689000,
+      "id": "issue-ubiquity-sentinel-240",
+      "intent": null,
+      "kind": "work",
+      "nextStep": "blocked",
+      "related": {
+        "incidentId": null,
+        "issueNumber": 240
+      },
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity-sentinel"
+      },
+      "source": {
+        "id": "240",
+        "kind": "issue",
+        "revision": "e77e197f09f577cf0342985130fa8cb81956b925"
+      },
+      "sourceSnapshotDigest": null,
+      "stepInputs": {
+        "deadline": 1793934056453,
+        "digest": "08d58c87d434b46c22d55af7c897cfdb987f369c7509676525e2ac21dd5e5a00"
+      },
+      "target": {
+        "base": "ac11a4bed934e5d1ee2bd9e4842a164646742c0e",
+        "branch": "sentinel/repair/issue-ubiquity-sentinel-240",
+        "candidateState": {
+          "preserved": null,
+          "publishedHead": null
+        },
+        "checkpoint": null,
+        "head": "715847f7ca3dce464b6c8a84ee1dfd87a77a094d",
+        "pr": null
+      },
+      "updatedAt": 1793933334355,
+      "urgency": {
+        "activeProduction": false,
+        "reproducible5xx": false,
+        "severeSecurityOrDataLoss": false
+      },
+      "version": "v1",
+      "wait": null
+    },
+    {
+      "blocker": {
+        "kind": "other",
+        "message": "candidate touches a protected path",
+        "since": 1794542533053
+      },
+      "classification": {
+        "priority": null,
+        "severity": "P2"
+      },
+      "controller": {
+        "sha": "36efd970fff1045ea8edc4db9904093867be1a1e"
+      },
+      "counters": {
+        "attempts": 2,
+        "retries": 0,
+        "reviewRounds": 1
+      },
+      "createdAt": 1793529072833,
+      "dependencies": [],
+      "evidence": [
+        {
+          "kind": "review_receipt",
+          "ref": "artifact:base-review/270/052135a93d404f828b688d0af1b03fdfaa0ae969/f1f28fe85924f7ed27a20f60f6aabadd37c7d4396b5797a5d99f9623583f1a2d/9cae0818366da7f0ae3c5faf42ed7fbf7e2d54257886e5861b4588570cf350b1/6563535300/d833169c5cb1111f18132078b4b56da22a0be2b59a0b6bae00e6065a3ad6fa89/6563535467/68f3d3cbc5cd328f5e1eb02e18a09d9c5b396628a447ec9a0b6eec821b37991d"
+        }
+      ],
+      "failingRevision": null,
+      "fingerprint": null,
+      "firstSeenAt": 1793525595000,
+      "id": "issue-ubiquity-sentinel-270",
+      "intent": null,
+      "kind": "work",
+      "nextStep": "blocked",
+      "related": {
+        "incidentId": null,
+        "issueNumber": 270
+      },
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity-sentinel"
+      },
+      "source": {
+        "id": "270",
+        "kind": "issue",
+        "revision": "36efd970fff1045ea8edc4db9904093867be1a1e"
+      },
+      "sourceSnapshotDigest": null,
+      "stepInputs": {
+        "deadline": 1794543747732,
+        "digest": "740160b15acb3e5aa13c18baef47cac314c72758be2a1a588ae68a355545c09c"
+      },
+      "target": {
+        "base": "6706781035754fcc8b6b66b448fe182f711db81a",
+        "branch": "sentinel/repair/issue-ubiquity-sentinel-270",
+        "candidateState": {
+          "preserved": null,
+          "publishedHead": null
+        },
+        "checkpoint": null,
+        "head": "be76c32fe590f3acf34b4520768561109ec54ebb",
+        "pr": null
+      },
+      "updatedAt": 1794542533053,
+      "urgency": {
+        "activeProduction": false,
+        "reproducible5xx": false,
+        "severeSecurityOrDataLoss": false
+      },
+      "version": "v1",
+      "wait": null
+    },
+    {
+      "blocker": {
+        "kind": "other",
+        "message": "candidate touches a protected path",
+        "since": 1794542552067
+      },
+      "classification": {
+        "priority": null,
+        "severity": "P2"
+      },
+      "controller": {
+        "sha": "36efd970fff1045ea8edc4db9904093867be1a1e"
+      },
+      "counters": {
+        "attempts": 2,
+        "retries": 0,
+        "reviewRounds": 1
+      },
+      "createdAt": 1793529072833,
+      "dependencies": [],
+      "evidence": [
+        {
+          "kind": "review_receipt",
+          "ref": "artifact:base-review/277/052135a93d404f828b688d0af1b03fdfaa0ae969/3a7be310606bc489d39ad1f42c892d48a24a8b5c495f1f8243a8ec9315c638c7/ea0833220df2375c4f0f0031a86e8f51ff9cdd2dc09986f390c301144088dee1/6563614695/4de8cf7ee57452a03101ae382f18fcc5ed5f0bc779bc9898e124fdbb3a42fc1a/6563614946/713c869c3e3379eca654e5dc7f36ae9207acd03008eb0610a641668c893a780e"
+        }
+      ],
+      "failingRevision": null,
+      "fingerprint": null,
+      "firstSeenAt": 1793526143000,
+      "id": "issue-ubiquity-sentinel-277",
+      "intent": null,
+      "kind": "work",
+      "nextStep": "blocked",
+      "related": {
+        "incidentId": null,
+        "issueNumber": 277
+      },
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity-sentinel"
+      },
+      "source": {
+        "id": "277",
+        "kind": "issue",
+        "revision": "36efd970fff1045ea8edc4db9904093867be1a1e"
+      },
+      "sourceSnapshotDigest": null,
+      "stepInputs": {
+        "deadline": 1794543751878,
+        "digest": "7d1678cb9ba4cacd9b54571f51e54b769cbeca9b51e5988abd4a1a711f148ad5"
+      },
+      "target": {
+        "base": "6706781035754fcc8b6b66b448fe182f711db81a",
+        "branch": "sentinel/repair/issue-ubiquity-sentinel-277",
+        "candidateState": {
+          "preserved": null,
+          "publishedHead": null
+        },
+        "checkpoint": null,
+        "head": "4afd4b7a29fcdbf1ad33793e5f825e5e039bb9d8",
+        "pr": null
+      },
+      "updatedAt": 1794542552067,
+      "urgency": {
+        "activeProduction": false,
+        "reproducible5xx": false,
+        "severeSecurityOrDataLoss": false
+      },
+      "version": "v1",
+      "wait": null
+    },
+    {
+      "blocker": {
+        "kind": "other",
+        "message": "candidate touches a protected path",
+        "since": 1794532634705
+      },
+      "classification": {
+        "priority": null,
+        "severity": "P2"
+      },
+      "controller": {
+        "sha": "ac1bf97ca44f3add2be9b12e40e18149eff409b8"
+      },
+      "counters": {
+        "attempts": 2,
+        "retries": 0,
+        "reviewRounds": 1
+      },
+      "createdAt": 1794205192021,
+      "dependencies": [],
+      "evidence": [
+        {
+          "kind": "review_receipt",
+          "ref": "artifact:base-review/383/56e4d998ca779a5dff789ba1ae03f1c0d33ae778/b4e0b6e6cdeedc3f9435f678c75181a81de5890b2640dcbf3098c05015014228/f15fcfd983f5d36e105dd28a4eec985a1db59e1998d32abf5e132137437eae2a/6839427773/4856b680ad3a086033cd9506ec358e60ab9e04218960c0e51450fc5e228c165e/6839427975/69b97d91de1d6e52132874a66f3f16834c9d2e688c6da25b2c416b69b722ebd7"
+        }
+      ],
+      "failingRevision": null,
+      "fingerprint": null,
+      "firstSeenAt": 1794204907000,
+      "id": "issue-ubiquity-sentinel-383",
+      "intent": null,
+      "kind": "work",
+      "nextStep": "blocked",
+      "related": {
+        "incidentId": null,
+        "issueNumber": 383
+      },
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity-sentinel"
+      },
+      "source": {
+        "id": "383",
+        "kind": "issue",
+        "revision": "838d5c62e4e51935b9ed5453c651fedbaacd0538"
+      },
+      "sourceSnapshotDigest": null,
+      "stepInputs": {
+        "deadline": 1794533550789,
+        "digest": "ebd1808da3fad5b076c3eddffc5d310d686f370fe6014ff6a3b3c8ba4e0fcb43"
+      },
+      "target": {
+        "base": "56e4d998ca779a5dff789ba1ae03f1c0d33ae778",
+        "branch": "sentinel/repair/issue-ubiquity-sentinel-383",
+        "candidateState": {
+          "preserved": null,
+          "publishedHead": null
+        },
+        "checkpoint": null,
+        "head": "ef23c4d060775c8c08d3f530f5cd1bc00915782a",
+        "pr": null
+      },
+      "updatedAt": 1794532634705,
+      "urgency": {
+        "activeProduction": false,
+        "reproducible5xx": false,
+        "severeSecurityOrDataLoss": false
+      },
+      "version": "v1",
+      "wait": null
+    },
+    {
+      "blocker": {
+        "kind": "other",
+        "message": "candidate touches a protected path",
+        "since": 1794668251018
+      },
+      "classification": {
+        "priority": null,
+        "severity": "P2"
+      },
+      "controller": {
+        "sha": "6e745579368a4086d1ed304ac1595efe05071833"
+      },
+      "counters": {
+        "attempts": 2,
+        "retries": 0,
+        "reviewRounds": 1
+      },
+      "createdAt": 1794662854669,
+      "dependencies": [],
+      "evidence": [
+        {
+          "kind": "review_receipt",
+          "ref": "artifact:base-review/406/671ebc00c5c4886180d0b332cadc854e1db2b285/391fb2ae634421b47dfb85bb732a9530ab890d5a068af41f2d9897f904331006/24e0c3ac9d9426651dad27ee0142c37fdb185ca3f3c6ea8ce4db34a2a2c9bd47/6878647700/0ef4ebc0cec0d64bc902245372ef7424384cea9f790abb25b4fa94c81c1d452c/6878647871/f8150c831c9f0d2feaa29e9694a8dca1c464c5e0462e867abe9a3c6dec43b304"
+        }
+      ],
+      "failingRevision": null,
+      "fingerprint": null,
+      "firstSeenAt": 1794662622000,
+      "id": "issue-ubiquity-sentinel-406",
+      "intent": null,
+      "kind": "work",
+      "nextStep": "blocked",
+      "related": {
+        "incidentId": null,
+        "issueNumber": 406
+      },
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity-sentinel"
+      },
+      "source": {
+        "id": "406",
+        "kind": "issue",
+        "revision": "671ebc00c5c4886180d0b332cadc854e1db2b285"
+      },
+      "sourceSnapshotDigest": null,
+      "stepInputs": {
+        "deadline": 1794669376619,
+        "digest": "474f5a7a8ccfa3448b9b67b67343c220a819949123aa98ebef9869fc1ee9ba16"
+      },
+      "target": {
+        "base": "671ebc00c5c4886180d0b332cadc854e1db2b285",
+        "branch": "sentinel/repair/issue-ubiquity-sentinel-406",
+        "candidateState": {
+          "preserved": null,
+          "publishedHead": null
+        },
+        "checkpoint": null,
+        "head": "ac68befd39b4d0f342f7192d33b40edd8aabbac4",
+        "pr": null
+      },
+      "updatedAt": 1794668251018,
+      "urgency": {
+        "activeProduction": false,
+        "reproducible5xx": false,
+        "severeSecurityOrDataLoss": false
+      },
+      "version": "v1",
+      "wait": null
+    }
+  ]
+}

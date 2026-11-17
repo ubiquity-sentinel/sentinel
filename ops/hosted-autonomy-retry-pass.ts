@@ -111,6 +111,12 @@ import {
   protectedReadmissionPlan,
   takeProtectedReadmissions,
 } from "./hosted-autonomy-protected-readmission.ts";
+import {
+  applyProtectedReleases,
+  planProtectedReleases,
+  protectedReleasePlan,
+  takeProtectedReleases,
+} from "./hosted-autonomy-protected-release.ts";
 import { implementerPromptTemplateDigest } from "../src/repair/model-port-prompt-digest.ts";
 import { readBaseReviewWorkNeeded } from "./hosted-autonomy-base-review-verdicts.ts";
 
@@ -675,6 +681,26 @@ export async function runHostedRetryPass(
     actions,
   );
   plans.push(...protectedTaken.map(protectedReadmissionPlan));
+  // The owner's one-time release of the exact 2026-11-17 protected parks
+  // (hosted-autonomy-protected-release.ts): the same uncharged work plan, in
+  // this same write, only while the installed runtime carries the policy.
+  const protectedReleased = await takeProtectedReleases(
+    snapshot,
+    planProtectedReleases(
+      snapshot,
+      closedIssues,
+      (id) =>
+        settled(id) || owned.has(id) ||
+        protectedTaken.some((entry) => entry.id === id),
+      deps.clock.now(),
+    ),
+    release,
+    deps.githubFor,
+    scopeFor,
+    readPull,
+    actions,
+  );
+  plans.push(...protectedReleased.map(protectedReleasePlan));
   // Every new published trial reentry requires current custody, even when
   // its settled admission and target still share the same base.
   for (const candidates of [plans, readmissions]) {
@@ -741,7 +767,10 @@ export async function runHostedRetryPass(
           applyBaseRefreshReadmissions(
             applyRepeatFailureParks(
               applyHostedRetries(
-                dropProtectedCandidates(snapshot, protectedTaken),
+                dropProtectedCandidates(
+                  applyProtectedReleases(snapshot, protectedReleased),
+                  protectedTaken,
+                ),
                 observedHead as GitSha,
                 plans,
                 now,

@@ -35,6 +35,15 @@
  *   disposition's six-charge cap is seven for its exact refused park, so the
  *   disposition re-enters it once through its own gates and the ordinary
  *   retry grant, and the runtime charges one more start (the seventh).
+ *
+ * 2026-11-17 (owner: "dude give sentinel full access please this is
+ * unnecessarily nerfed", then "dude so confusing just make sentinel close out
+ * all my issues"; docs/DECISIONS.md, 2026-11-17):
+ *
+ * - `OWNER_PROTECTED_RELEASES_2026_11_17`: the eleven exact "candidate
+ *   touches a protected path" parks, each released once by
+ *   `hosted-autonomy-protected-release.ts`, and only while the INSTALLED
+ *   runtime carries the 2026-11-17 publication policy.
  */
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
@@ -86,6 +95,53 @@ export function ownerReleased(
       entry.blocker.since === blocker.since
     );
 }
+
+/** The ubiquity organisation's App installation (every target below). */
+const UBIQUITY_INSTALLATION = 155687488;
+
+/** One exact protected-path park of `name` (`ubiquity-sentinel` or ubiquity). */
+function protectedPark(
+  name: string,
+  issue: number,
+  since: number,
+): OwnerReleaseV1 {
+  const self = name === "sentinel";
+  return Object.freeze({
+    repository: self ? SENTINEL : Object.freeze({
+      owner: "ubiquity",
+      name,
+      installationId: UBIQUITY_INSTALLATION,
+    }),
+    id: `issue-ubiquity-${name}-${issue}`,
+    blocker: Object.freeze({
+      kind: "other" as const,
+      message: "candidate touches a protected path",
+      since,
+    }),
+  });
+}
+
+/**
+ * The owner's 2026-11-17 protected-path releases, verbatim from
+ * sentinel-state/repair at b53e355a4571 (sequence 97103). Every one holds
+ * `candidateState.preserved: null`: its protected candidate survives only in
+ * an expired artifact, so a release returns the record to a new charged run
+ * under the 2026-11-17 policy, which publishes what the old one parked.
+ */
+export const OWNER_PROTECTED_RELEASES_2026_11_17: readonly OwnerReleaseV1[] =
+  Object.freeze([
+    protectedPark("sentinel", 177, 1794786847840),
+    protectedPark("sentinel", 240, 1793933334355),
+    protectedPark("sentinel", 270, 1794542533053),
+    protectedPark("sentinel", 277, 1794542552067),
+    protectedPark("sentinel", 383, 1794532634705),
+    protectedPark("sentinel", 406, 1794668251018),
+    protectedPark("ai.ubq.fi", 1370, 1794904678248),
+    protectedPark("deno-deploy-workflow", 25, 1794532725068),
+    protectedPark("demo.ubq.fi", 23, 1793886871055),
+    protectedPark("arbitrage-bot", 7, 1793886841514),
+    protectedPark("notifications.ubq.fi", 13, 1793881337642),
+  ]);
 
 /**
  * One exact refused-preservation park whose record the owner allowed more
