@@ -374,6 +374,14 @@ export async function planBackupCiCommit(
     const planned = planBackupCiJob(wf, group.checkName);
     if (!planned.ok) {
       refuse(key, `unsupported:${planned.reason}`);
+      // The stored reason stays the closed v1 code; the input is log only.
+      if (planned.input !== undefined) {
+        deps.log(
+          `backup-ci:${repo.owner}/${repo.name}@${commit.slice(0, 12)}:${
+            trustedCheckName(key.checkName)
+          }:checkout_input=${planned.input}`,
+        );
+      }
       continue;
     }
     const actions = await resolveBackupCiActions(

@@ -352,15 +352,46 @@ export interface BackupCiJobPlanV1 {
 }
 
 function checkoutRefusal(withInputs: Obj | undefined): Reason | null {
+  return backupCiCheckoutInput(withInputs) === null ? null : "checkout_inputs";
+}
+
+/** Closed names of `actions/checkout` inputs (log only; never target text). */
+const CHECKOUT_INPUT_CODES: Record<string, string> = {
+  "fetch-depth": "fetch_depth",
+  "fetch-tags": "fetch_tags",
+  submodules: "submodules",
+  lfs: "lfs",
+  ref: "ref",
+  path: "path",
+  repository: "repository",
+  token: "token",
+  "ssh-key": "ssh_key",
+  "ssh-known-hosts": "ssh_key",
+  "ssh-strict": "ssh_key",
+  "ssh-user": "ssh_key",
+  "sparse-checkout": "sparse_checkout",
+  "sparse-checkout-cone-mode": "sparse_checkout",
+  filter: "filter",
+  "set-safe-directory": "set_safe_directory",
+  "github-server-url": "server_url",
+};
+
+/**
+ * The closed code of the first `actions/checkout` input outside the v1
+ * shape (`other` for an unknown key), or null when the inputs are supported.
+ * The leg short-circuits checkout onto a depth-1 synthetic merge, so only
+ * inputs that cannot change what is checked out are reproduced faithfully.
+ */
+export function backupCiCheckoutInput(
+  withInputs: Obj | undefined,
+): string | null {
   for (const [key, value] of Object.entries(withInputs ?? {})) {
-    if (!CHECKOUT_KEYS.has(key)) return "checkout_inputs";
-    if (key === "fetch-depth" && value !== 1 && value !== "1") {
-      return "checkout_inputs";
-    }
     if (
-      (key === "submodules" || key === "lfs") && value !== false &&
-      value !== "false"
-    ) return "checkout_inputs";
+      !CHECKOUT_KEYS.has(key) ||
+      (key === "fetch-depth" && value !== 1 && value !== "1") ||
+      ((key === "submodules" || key === "lfs") && value !== false &&
+        value !== "false")
+    ) return CHECKOUT_INPUT_CODES[key] ?? "other";
   }
   return null;
 }
@@ -452,7 +483,9 @@ function stepRefusal(
 export function planBackupCiJob(
   workflow: BackupCiWorkflowV1,
   checkName: string,
-): { ok: true; plan: BackupCiJobPlanV1 } | { ok: false; reason: Reason } {
+):
+  | { ok: true; plan: BackupCiJobPlanV1 }
+  | { ok: false; reason: Reason; input?: string } {
   if (!workflow.ok) return workflow;
   const matches = workflow.rendered.filter((r) => r.checkName === checkName);
   if (matches.length !== 1 || !BACKUP_CI_CHECK_NAME_PATTERN.test(checkName)) {
@@ -501,7 +534,16 @@ export function planBackupCiJob(
   const local = new Set<string>();
   for (let index = 0; index < steps.length; index++) {
     const step = stepRefusal(steps[index], index);
-    if (typeof step === "string") return { ok: false, reason: step };
+    if (typeof step === "string") {
+      const raw = steps[index] as Obj;
+      return step === "checkout_inputs"
+        ? {
+          ok: false,
+          reason: step,
+          input: backupCiCheckoutInput(raw.with as Obj | undefined) ?? "other",
+        }
+        : { ok: false, reason: step };
+    }
     planned.push(step.planned);
     if (step.remote !== undefined) remote.add(step.remote);
     if (step.local !== undefined) local.add(step.local);
