@@ -64,8 +64,12 @@ export function authorityPath(path: string): boolean {
   return touchesProtected(SENTINEL_AUTHORITY_PATHS, normalizePathPrefix(path));
 }
 
-/** A protected path or prefix that is never published. */
-function unpublishablePath(path: string): boolean {
+/**
+ * A protected path or prefix that is never published. The implementer
+ * prompt names the configured prefixes this refuses (`model-port-prompt.ts`),
+ * so the prompt and this gate share one predicate.
+ */
+export function unpublishablePath(path: string): boolean {
   return ciExecutablePath(path) || authorityPath(path);
 }
 

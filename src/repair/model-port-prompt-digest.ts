@@ -11,6 +11,12 @@
  * more as a local iteration, so a prose change in any section changes the
  * digest. Placeholders are constant: no repository, issue, base, model route
  * or protected-path list of a real record reaches it.
+ *
+ * The placeholder prefix `protected/` is publishable, so the never-published
+ * sentence (`renderNeverPublishedPaths`, 2026-11-17) is deliberately outside
+ * the template: adding it left this digest unchanged and re-arms no park
+ * (owner requirement: that prompt change re-admits and re-charges nothing),
+ * and a later edit of that sentence alone re-arms none either.
  */
 import { createHash } from "node:crypto";
 import type { GitSha, WorkItemId } from "../contracts/brands.ts";

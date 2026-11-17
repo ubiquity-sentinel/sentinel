@@ -10,6 +10,7 @@ import {
   MAX_PROMPT_CHARS,
 } from "./model-port-policy.ts";
 import { renderCiEvidenceUnavailable } from "./ci-evidence-render.ts";
+import { unpublishablePath } from "./owner-landing.ts";
 import {
   MAX_CHANGED_PATHS,
   MAX_FILE_BYTES,
@@ -36,25 +37,15 @@ export const MAX_PROMPT_PROTECTED_PATH_CHARS = 4_000;
  * such exit; and "avoid where you can" alone made ai.ubq.fi 1281/1282 and
  * 1210/1211 commit tests and unapplied `patches/*.patch` files that spent
  * every review round without changing the real file (see
- * `candidate-shape.ts`).
+ * `candidate-shape.ts`). The prefixes the publication gate never publishes
+ * are narrowed again by `renderNeverPublishedPaths`, rendered right after.
  */
 export function renderProtectedPaths(paths: readonly string[]): string {
   const unique = [...new Set(paths)].sort();
   if (unique.length === 0) return "";
-  const named: string[] = [];
-  let chars = 0;
-  for (const path of unique) {
-    const quoted = JSON.stringify(path);
-    if (
-      named.length >= MAX_PROMPT_PROTECTED_PATHS ||
-      chars + quoted.length + 2 > MAX_PROMPT_PROTECTED_PATH_CHARS
-    ) break;
-    named.push(quoted);
-    chars += quoted.length + 2;
-  }
-  const rest = unique.length - named.length;
+  const { named, rest } = boundedPrefixes(unique);
   return " The trusted repository configuration protects exactly these " +
-    `path prefixes (sorted): ${named.join(", ")}` +
+    `path prefixes (sorted): ${named}` +
     (rest === 0
       ? ""
       : ` (and ${rest} more protected prefix${
@@ -68,6 +59,56 @@ export function renderProtectedPaths(paths: readonly string[]): string {
     "outcome. Never substitute tests only, an unapplied .patch or .diff " +
     "file, a copy of the file elsewhere, or a no-op for that change: such a " +
     "candidate leaves the real file unchanged and can never be accepted.";
+}
+
+/**
+ * The never-published sentence (2026-11-17): of the configured prefixes, the
+ * ones the publication gate refuses outright (`unpublishablePath`, the same
+ * predicate `ownerLandingTouch` parks with: CI-executable paths and
+ * Sentinel's authority files). A candidate changing one is parked
+ * `candidate touches a protected path` without being pushed, so the charged
+ * run produced nothing anyone can land (ai.ubq.fi 1370 attempt 2 changed
+ * `.github/workflows/deno-deploy.yml`; sentinel #177 re-parked the same way
+ * after its owner retry). For these prefixes alone the in-place rule above
+ * does not apply; a task that cannot be solved without them ends in the
+ * existing no-change outcome and its final response, never a new channel.
+ * Same bounds as the configured list; empty when no configured prefix is
+ * never published, so such a prompt is byte-identical to the earlier one.
+ */
+export function renderNeverPublishedPaths(paths: readonly string[]): string {
+  const unique = [...new Set(paths)].filter(unpublishablePath).sort();
+  if (unique.length === 0) return "";
+  const { named, rest } = boundedPrefixes(unique);
+  return " Of those, a change under any of these prefixes is never " +
+    `published (sorted): ${named}` +
+    (rest === 0
+      ? ""
+      : ` (and ${rest} more never-published prefix${
+        rest === 1 ? "" : "es"
+      } not listed here)`) +
+    ". A candidate that changes one is parked unpublished and its run is " +
+    "wasted, so for these prefixes neither the in-place rule above nor any " +
+    "fact above asking for an in-place protected change applies: solve the " +
+    "task without changing them. If it cannot be solved without changing " +
+    "one, leave them all unchanged and say so in your final response.";
+}
+
+/** Sorted prefixes JSON-quoted within the prompt bounds, and the rest. */
+function boundedPrefixes(
+  unique: readonly string[],
+): { named: string; rest: number } {
+  const named: string[] = [];
+  let chars = 0;
+  for (const path of unique) {
+    const quoted = JSON.stringify(path);
+    if (
+      named.length >= MAX_PROMPT_PROTECTED_PATHS ||
+      chars + quoted.length + 2 > MAX_PROMPT_PROTECTED_PATH_CHARS
+    ) break;
+    named.push(quoted);
+    chars += quoted.length + 2;
+  }
+  return { named: named.join(", "), rest: unique.length - named.length };
 }
 
 /**
@@ -267,6 +308,7 @@ export function buildPrompt(
     "protected paths, do not write or commit credentials, and do not " +
     "rewrite expected test assertions to force success." +
     renderProtectedPaths(protectedPaths) +
+    renderNeverPublishedPaths(protectedPaths) +
     " Keep the change " +
     "minimal and do not refactor beyond it." +
     PUBLICATION_BOUNDS_SENTENCE +

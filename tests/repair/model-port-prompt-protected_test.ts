@@ -52,11 +52,20 @@ const SENTENCE =
   ' The trusted repository configuration protects exactly these path prefixes (sorted): ".github/workflows/", "AGENTS.md", "deno.json", "ops/". Fix the issue without changing them when a correct fix outside them exists. When the issue\'s fix genuinely requires changing a protected path, this narrows the rule above: make the real, complete change in place in that file, because a candidate that changes a protected path is parked for the repository owner to land as is, which is the useful outcome. Never substitute tests only, an unapplied .patch or .diff file, a copy of the file elsewhere, or a no-op for that change: such a candidate leaves the real file unchanged and can never be accepted.';
 
 /**
+ * The never-published sentence (2026-11-17) for PATHS: of them, only
+ * `.github/workflows/` is never published (`unpublishablePath`).
+ */
+const NEVER_PUBLISHED =
+  ' Of those, a change under any of these prefixes is never published (sorted): ".github/workflows/". A candidate that changes one is parked unpublished and its run is wasted, so for these prefixes neither the in-place rule above nor any fact above asking for an in-place protected change applies: solve the task without changing them. If it cannot be solved without changing one, leave them all unchanged and say so in your final response.';
+
+/**
  * SHA-256 of `buildPrompt(REQUEST, false, undefined, PATHS)` (pinned
- * 2026-10-25; re-pinned 2026-11-05 for the in-place protected-fix guidance).
+ * 2026-10-25; re-pinned 2026-11-05 for the in-place protected-fix guidance;
+ * re-pinned 2026-11-17 because PATHS holds `.github/workflows/`, which now
+ * adds the never-published sentence).
  */
 const GOLDEN_HOSTED_PROTECTED =
-  "5658b4f877bc9f10f2f8dde79e728a52946a102240e6d0ee35fa246c02c002bf";
+  "00186e29820d8956e92ff0c098f913d30aefb4a5968b9f1ea13260a0ed704040";
 
 async function sha256(text: string): Promise<string> {
   const digest = await crypto.subtle.digest(
@@ -119,7 +128,7 @@ Deno.test("the prompt carries the sentence inside the role, and none without pre
     guarded,
     plain.replace(
       "to force success. Keep the change",
-      `to force success.${SENTENCE} Keep the change`,
+      `to force success.${SENTENCE}${NEVER_PUBLISHED} Keep the change`,
     ),
   );
   // The #333 publication-bounds sentence is the only later addition.
