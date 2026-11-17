@@ -2477,8 +2477,9 @@ either way.
 Once per maintenance pass, after the whole chain including every phase it
 continued to (unless it failed), and never starting a read or create later than
 `HOSTED_AUTONOMY_PASS_DEADLINE_MS` after the pass started (otherwise
-`followup:deadline`), the launcher files one issue per merged PR in the target
-repository for unresolved P2/P3 findings from its clean current-head review.
+`followup:deadline`), the launcher files one issue in the target repository per
+unresolved P1/P2/P3 finding from each merged PR's clean current-head review. The
+2026-10-31 owner directive supersedes the original combined-issue behavior.
 Candidates include production requests (open or fulfilled) and carried off-tip
 parks with a bound App review and recorded merge revision, created at or after
 2026-10-16T00:00Z. The fixed epoch preserves work older than 72 hours when the
@@ -2490,28 +2491,30 @@ Each candidate is re-verified through the existing native direct/queue delivery
 proof, including its exact head, merge, review/request identity, trusted App
 actors, branch and integration evidence. Hand or owner merges do not qualify.
 The body's first line is
-`<!-- sentinel:review-followup:v1 repo=<owner>/<name> pr=<pr> receipt=<receipt id> depth=<d> -->`.
+`<!-- sentinel:review-followup:v2 repo=<owner>/<name> pr=<pr> receipt=<receipt id> finding=<finding key> depth=<d> -->`.
 Before any create, the repository's created-since listing is read. An observed
-App-authored issue marker for the same repository and PR means already filed,
-regardless of receipt or depth. A capped listing proves absence only for
-candidates whose full ten-minute request/GitHub clock margin is strictly newer
-than its oldest item; timestamp ties and older uncovered candidates remain
-`listing_unproven`, while covered newer candidates can continue. Ambiguous
-creates remain charged to the pass and are reconciled from the next listing.
+App-authored v2 marker for the same repository, PR, receipt and finding means
+that finding is already filed, regardless of depth. A legacy v1 combined-issue
+marker for the same repository and PR covers every finding, regardless of
+receipt or depth. A capped listing proves absence only for candidates whose full
+ten-minute request/GitHub clock margin is strictly newer than its oldest item;
+timestamp ties and older uncovered candidates remain `listing_unproven`, while
+covered newer candidates can continue. Ambiguous creates are reconciled from the
+next listing.
 
 Reviewer text is quoted inert (controls removed, no live mention, issue
 reference or line-leading slash command) inside a tilde fence. Each finding
 links its `path:a-b` at the reviewed head. Depths 1 and 2 remain ordinary
 Sentinel-admissible issues; depth 3 is filed with the existing `sentinel:skip`
-opt-out and is not automatically repaired. Limits remain two creates, four merge
-checks and eight unfiled candidates per pass, five listing pages, a 60-second
-budget, twenty findings of at most 1,500 characters, a 12,000-character body and
-a 120-character title. The `followUpIssues` capability (repository-bound listing
-GET, issue GET and issue POST with verified App creator) exists only on the
-launcher's port, never in `src/github` or a model worker. An
-administrator-deleted follow-up can be filed again because its remote marker is
-the duplicate evidence; elapsed time alone never proves absence or refunds an
-ambiguous reservation.
+opt-out and is not automatically repaired. There is no per-pass create-count
+cap. Remaining limits are four merge checks and eight unfiled candidates per
+pass, five listing pages, a 60-second budget, at most 1,500 characters per
+finding, a 12,000-character body and a 120-character title. The `followUpIssues`
+capability (repository-bound listing GET, issue GET and issue POST with verified
+App creator) exists only on the launcher's port, never in `src/github` or a
+model worker. An administrator-deleted follow-up can be filed again because its
+remote marker is the duplicate evidence; elapsed time alone never proves absence
+or refunds an ambiguous reservation.
 
 Rollback: the written snapshots parse under R79 549c7a691, R79's own binding
 binds them and its delivery step waits on the open request (no merge, no refresh
