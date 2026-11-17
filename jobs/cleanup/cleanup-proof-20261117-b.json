@@ -1,0 +1,9 @@
+{
+  "branches": [
+    {
+      "repository": "ubiquity-sentinel/sentinel",
+      "branch": "agent-jobs/cleanup-proof-20261117-44203044101-1",
+      "closePullRequest": true
+    }
+  ]
+}
