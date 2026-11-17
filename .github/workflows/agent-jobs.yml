@@ -201,6 +201,7 @@ jobs:
           repositories: ${{ matrix.repositories }}
           permission-contents: write
           permission-pull-requests: write
+          permission-workflows: write
       - name: Push agent branches
         env:
           AGENT_JOBS_ARTIFACT_DIR: .agent-jobs/out
