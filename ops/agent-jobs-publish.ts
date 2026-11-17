@@ -57,6 +57,34 @@ export interface AgentJobsPublishInput {
   ports: AgentJobsPublishPorts;
 }
 
+/**
+ * The agent's final message links files by their path on the runner, which
+ * leads nowhere in a pull request. Links into this job's checkout become
+ * links to the pushed commit; any other absolute-path link keeps its label
+ * only.
+ */
+export function linkAgentMessage(
+  message: string,
+  target: { id: string; repository: string; headSha: string },
+): string {
+  const checkout = `/agent-jobs/${target.id}/checkout/`;
+  return message.replace(
+    /\[([^\]\n]+)\]\((\/[^)\s]*)\)/g,
+    (_link, label: string, path: string) => {
+      const at = path.indexOf(checkout);
+      if (at < 0) return label;
+      const [, file, colon, anchor] = /^([^#:]+)(?::(\d+))?(?:#L(\d+))?/.exec(
+        path.slice(at + checkout.length),
+      ) ?? [];
+      if (!file) return label;
+      const line = colon ?? anchor;
+      return `[${label}](https://github.com/${target.repository}/blob/${target.headSha}/${file}${
+        line ? `#L${line}` : ""
+      })`;
+    },
+  );
+}
+
 async function publishOne(
   input: AgentJobsPublishInput,
   result: AgentJobResultV1,
@@ -122,8 +150,13 @@ async function publishOne(
       head: branch,
       base: result.base,
       title: result.title,
-      body: `Manual Sentinel agent job \`${result.id}\`.\n\n${message}`
-        .slice(0, 60_000),
+      body: `Manual Sentinel agent job \`${result.id}\`.\n\n${
+        linkAgentMessage(message, {
+          id: result.id,
+          repository: result.repository,
+          headSha: tip,
+        })
+      }`.slice(0, 60_000),
     });
   }
   return publication;

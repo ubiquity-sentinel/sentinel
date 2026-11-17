@@ -93,8 +93,48 @@ run the test suite and use the network itself. It reads the target repository's
 | `host_failed`  | Clone or commit failed, for example the App cannot read the repository. |
 
 A job that ends `publish failed` could not be pushed; the usual cause is that
-the App lacks write access, or the agent changed `.github/workflows` files,
-which the App token may not push.
+the App lacks write access to the repository. The publish token carries the
+`workflows` permission, so a branch that changes `.github/workflows` files is
+pushed like any other.
+
+Each job's status is also printed in its `cell` job log as `<id>: <status>`.
+
+In a pull request body, links the agent made to files in its checkout point at
+the pushed commit; other runner-local links are reduced to their text.
+
+## Deleting result branches
+
+Result branches are never deleted for you. To delete some, add a file
+`jobs/cleanup/<any-name>.json` on this branch, commit and push. The push starts
+the `sentinel-agent-jobs-cleanup` workflow.
+
+```json
+{
+  "branches": [
+    {
+      "repository": "ubiquity/pay.ubq.fi",
+      "branch": "agent-jobs/pay-fix-rounding-44195622667-1"
+    },
+    {
+      "repository": "ubiquity/ubq.fi-router",
+      "branch": "agent-jobs/router-add-tests-44195622667-1",
+      "closePullRequest": true
+    }
+  ]
+}
+```
+
+Only `agent-jobs/<id>-<run id>-<attempt>` branches are accepted; any other name
+fails the whole request. As with jobs, only files the pushed head commit adds or
+changes are read. Do not put a job file and a cleanup file for the same branch
+in one commit.
+
+| Status         | Meaning                                                                                               |
+| -------------- | ----------------------------------------------------------------------------------------------------- |
+| `deleted`      | The branch is gone.                                                                                   |
+| `missing`      | The branch did not exist, for example it was deleted after a merge.                                   |
+| `kept_open_pr` | An open pull request uses the branch. `closePullRequest` deletes it anyway, closing the pull request. |
+| `failed`       | GitHub refused; the detail gives the HTTP status. The run fails.                                      |
 
 ## Capacity
 
@@ -136,8 +176,9 @@ Codex is installed at its latest release; the repository variable
 
 `.github/workflows/agent-jobs.yml` runs `ops/agent-jobs-plan.ts` (validate and
 pack), `ops/agent-jobs-cell.ts` (run the agents) and `ops/agent-jobs-publish.ts`
-(push). Local check:
+(push). `.github/workflows/agent-jobs-cleanup.yml` runs
+`ops/agent-jobs-cleanup.ts`. Local check:
 
 ```sh
-deno test --allow-read --allow-write --allow-run --allow-env=PATH tests/host/agent-jobs_test.ts
+deno test --allow-read --allow-write --allow-run --allow-env=PATH tests/host/agent-jobs_test.ts tests/host/agent-jobs-cleanup_test.ts
 ```
