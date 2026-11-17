@@ -44,6 +44,11 @@ import {
   withoutOwnerLanding,
 } from "./owner-landing.ts";
 import {
+  PROTECTED_PATH_PARK,
+  UNTRUSTED_WORKFLOW_PARK,
+  workflowChangeTrust,
+} from "./workflow-trust.ts";
+import {
   loadSnapshot,
   persistTransition,
   replaceWorkMutation,
@@ -276,7 +281,17 @@ export async function handleModelReceipt(
     candidate!.changedPaths,
     record.repository,
   );
-  const protectedHit = touch.kind === "unpublishable";
+  // The one gate kept (2026-11-17): a CI-executable change runs with the
+  // target's secrets once pushed, so it is pushed only on a trusted issue's
+  // authority; an unreadable author fails closed into today's park. Read
+  // before anything is consumed, and only for such a candidate.
+  const trust = touch.kind === "unpublishable"
+    ? "trusted"
+    : await workflowChangeTrust(deps, record, candidate!.changedPaths);
+  const protectedHit = touch.kind === "unpublishable" || trust !== "trusted";
+  const protectedPark = trust === "untrusted"
+    ? UNTRUSTED_WORKFLOW_PARK
+    : PROTECTED_PATH_PARK;
   // The verified prior published head: retained from existing V1 candidate
   // state, or proved by an ACTUAL owned-branch observation of the exact prior
   // target head for a legacy record. Model output never establishes it. It is
@@ -365,14 +380,13 @@ export async function handleModelReceipt(
     }, now);
   // The full base..head change set decides the flag afresh: a later
   // candidate that no longer touches a protected path is delivered normally.
-  // An unpublishable touch parks below and keeps the published flag.
-  const withCandidate = touch.kind === "unpublishable"
-    ? candidateRecord
-    : replaceOwnerLanding(
-      candidateRecord,
-      touch.kind === "owner" ? touch.paths : [],
-      now,
-    );
+  // A candidate that parks below (unpublishable or untrusted) keeps the
+  // published flag.
+  const withCandidate = protectedHit ? candidateRecord : replaceOwnerLanding(
+    candidateRecord,
+    touch.kind === "owner" ? touch.paths : [],
+    now,
+  );
   if (protectedHit) {
     // An unpublished park carries no owner-landing flag, so the owner's
     // `sentinel:retry` exit still recognizes its fresh shape.
@@ -381,7 +395,7 @@ export async function handleModelReceipt(
         ? withoutOwnerLanding(withCandidate)
         : withCandidate,
       "other",
-      "candidate touches a protected path",
+      protectedPark,
       now,
     );
     const r1 = await persistTransition(

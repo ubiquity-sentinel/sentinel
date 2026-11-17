@@ -29,7 +29,9 @@ export async function runHostedApprovalPass(
       record.nextStep === "blocked" && record.intent === null &&
       record.blocker?.kind === "other" &&
       (record.blocker.message === HOSTED_AUTONOMY_RETIRED ||
-        (record.blocker.message === "candidate touches a protected path" &&
+        (record.blocker.message.startsWith(
+          "candidate touches a protected path",
+        ) &&
           candidate?.preserved === null &&
           record.target.head !== candidate.publishedHead))
     ) return false;
