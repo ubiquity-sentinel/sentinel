@@ -26,6 +26,7 @@ import {
   BASE_REPAIR_AUTHOR,
   BASE_REPAIR_CI_FIX_CAP,
   BASE_REPAIR_CI_FIX_CAP_DETAIL,
+  BASE_REPAIR_NO_CHANGE_DETAIL,
   baseRepairCiFixesSpent,
   baseRepairMarker,
   isBaseRepairBody,
@@ -317,6 +318,8 @@ Deno.test("base repair: the CI fix cap is the owner's pending number, parked wit
   for (const prefix of prefixes) {
     assert.ok(prefix.length > 0, "an empty prefix would match every park");
     assert.ok(!BASE_REPAIR_CI_FIX_CAP_DETAIL.startsWith(prefix), prefix);
+    // Nor the no-change park (`base-repair-no-change_test.ts`).
+    assert.ok(!BASE_REPAIR_NO_CHANGE_DETAIL.startsWith(prefix), prefix);
   }
 });
 

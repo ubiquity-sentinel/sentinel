@@ -20,6 +20,12 @@ export interface BaseReviewEvidenceV1 extends BaseReviewBindingV1 {
   executionDigest: string;
 }
 
+/**
+ * `inspect`'s refusal when the exact base's CI is not green (failed, pending
+ * or without evidence): no base review can start on that base.
+ */
+export const BASE_REVIEW_CI_NOT_GREEN = "base review CI is not green";
+
 /** No durable wrapper: each referenced payload uses an existing R80 parser. */
 export interface BaseTaskReviewPortV1 {
   inspect(input: {

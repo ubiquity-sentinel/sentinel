@@ -30,6 +30,7 @@ import {
   baseReviewCommentPayload,
 } from "./base-review-comments.ts";
 import {
+  BASE_REVIEW_CI_NOT_GREEN,
   baseResultSatisfied,
   baseReviewEvidenceRef,
   baseReviewRequestId,
@@ -203,7 +204,7 @@ export class BaseTaskReviewService implements BaseTaskReviewPortV1 {
           checks.value.checks,
           generic ? this.options.repository : undefined,
         ) !== "proceed"
-    ) return portError("unavailable", "base review CI is not green");
+    ) return portError("unavailable", BASE_REVIEW_CI_NOT_GREEN);
     if (this.options.clock.now() >= deadline) {
       return portError("unavailable", "base review deadline reached");
     }

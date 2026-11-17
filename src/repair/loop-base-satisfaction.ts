@@ -7,11 +7,16 @@ import {
 import { type GitHubPort, portError } from "../contracts/ports.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import {
+  BASE_REVIEW_CI_NOT_GREEN,
   baseResultSatisfied,
   baseResultWorkNeeded,
   type BaseTaskReviewPortV1,
   parseBaseReviewEvidenceRef,
 } from "../github/base-review-evidence.ts";
+import {
+  BASE_REPAIR_NO_CHANGE_DETAIL,
+  isBaseRepairTask,
+} from "./base-repair.ts";
 import {
   BASE_REVIEW_HOLD_MS,
   BASE_REVIEW_NOT_ESTABLISHED,
@@ -205,6 +210,26 @@ export async function resumeBaseSatisfaction(
     deadline: latestStartAt,
   }).catch(() => portError("unavailable", "base review task unavailable"));
   if (!inspected.ok) {
+    // A base-repair task's no-change hold can never end in a review: its
+    // base is red by construction. It parks now, uncharged, instead of at the
+    // hold's bound; an unreadable issue (null) and every other task defer
+    // exactly as before.
+    if (
+      inspected.error.detail === BASE_REVIEW_CI_NOT_GREEN &&
+      record.intent?.kind === "implementation" &&
+      await isBaseRepairTask(deps, record) === true
+    ) {
+      return persistWork(
+        deps,
+        context,
+        markBlocked(
+          record,
+          "other",
+          BASE_REPAIR_NO_CHANGE_DETAIL,
+          deps.clock.now(),
+        ),
+      );
+    }
     return {
       kind: "deferred",
       detail: "base review waits for current task and green CI",

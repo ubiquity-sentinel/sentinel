@@ -5319,3 +5319,49 @@ writes leaves 249 retained at six; after it wrote, 249 is in the ordinary
 retryable class or at work, which the previous code handles normally. Reverting
 the detector restores the previous pattern, and candidates that edit this file
 are refused again. No state format or persisted field changes.
+
+## 2026-11-17: a base-repair task's no-change hold parks at once on its red base
+
+Live record (`sentinel-state/repair` at c7fbe96f30): ai.ubq.fi issue 1370, the
+App's base-repair issue for `development` at 002fe15f, was admitted and its
+first implementation (matrix run 43985877863, 00:27-00:34Z) completed without
+any change to its checkout (`model_candidate_unchanged_base`); the admission
+settled ambiguous (one charge) and the record entered the no-change hold
+(`holdNoChange`, until 2026-11-18T00:39:20Z). That hold's only exit is a base
+review, and `inspect` refuses one unless the exact base's CI is green
+(`BASE_REVIEW_CI_NOT_GREEN`). A base-repair task's base is red by
+construction, so every cycle deferred until the 24-hour bound and the record
+then parked under the generic "base review did not complete within its hold
+bound". Reproduced through the real repair loop with fake GitHub and review
+ports and an injected clock (`tests/repair/base-repair-no-change_test.ts`):
+24 hourly deferrals, then that park; no charge either way.
+
+- Change: when `inspect` answers `BASE_REVIEW_CI_NOT_GREEN` for a record held
+  with its implementation intent and `isBaseRepairTask` (App author, marker on
+  the first line) is true, the base-satisfaction step parks it at once,
+  uncharged, with `BASE_REPAIR_NO_CHANGE_DETAIL` ("base-repair implementation
+  made no change while its base CI is not green; owner action required"), kind
+  `other`. No launcher retry prefix takes it (pinned by the lane test); the
+  owner ends it by closing the issue. An unreadable issue defers with no write
+  (as before); every other task's hold is byte-identical (pinned).
+- Not chosen: returning the outcome to the ordinary no-change retry. The first
+  start already carried the red base and the failing check names (the issue
+  body, `baseRepairIssue`, within `MAX_ISSUE_BODY_CHARS`); a retry at the same
+  base and runtime is refused as identical (#334) and, on a new runtime, the
+  prior no-change fact is no longer carried, so each retry would be a charged
+  replay of the same inputs. What the first start lacks, compared with a CI
+  fix, is the fenced CI failure evidence (and its sandbox has no network to
+  reproduce the checks); giving a first start that untrusted text is a new
+  prompt channel and is left for the owner.
+- Charges: none added and none refunded. The no-change branch now costs the
+  one charged start that produced it; the bound of the 2026-11-16 filing entry
+  (implementation starts under the ordinary rules plus 3 charged CI fixes) is
+  unchanged. 1370 holds one charge and gets no second.
+- 1370 after install: its next base-satisfaction step parks it as above, or,
+  if the install comes after its hold's bound, under the generic hold-bound
+  park; both uncharged. Its open issue keeps filing held until it is closed.
+- The runtime gate (`runtimeSourceCarriesCap`) is unchanged and passes on this
+  tree; it guards the CI-fix cap's charges, and this park adds no charge path.
+
+Rollback: revert the commit. No state format or persisted field changes; a
+record already parked keeps a blocker no rule re-admits under either runtime.
