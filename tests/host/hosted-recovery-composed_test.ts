@@ -178,7 +178,9 @@ Deno.test("composed recovery: exact historical producer refusal restores its ori
       await runHostedOriginalCandidateRecoveryPass(f.context()),
       null,
     );
-    assert.deepEqual(f.rig.github.calls, []);
+    // The one issue read of the 2026-11-17 workflow-trust gate (the historical
+    // producer changes a workflow); an author it cannot prove keeps the park.
+    assert.deepEqual(f.rig.github.calls, ["readIssue:1"]);
   } finally {
     await f.rig.cleanup();
   }
