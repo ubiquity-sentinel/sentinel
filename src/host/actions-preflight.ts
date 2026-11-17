@@ -15,7 +15,16 @@
  * mismatch; no model call is ever made (the client's endpoint stays the
  * non-routable dummy below and only `thread/start` is submitted).
  */
-import { CodexSubprocessSession } from "../repair/codex-transport.ts";
+import {
+  CodexProtocolError,
+  CodexSubprocessSession,
+} from "../repair/codex-transport.ts";
+import {
+  parseStartupPreflightLine,
+  STARTUP_PREFLIGHT_KIND,
+  type StartupPreflightCodexV1,
+  type StartupPreflightErrorV1,
+} from "../repair/startup-preflight-line.ts";
 import { ensurePrivateDir, ensureTaskClient, joinPath } from "./local.ts";
 import { type ModelRouteV1, resolveModelRoute } from "./model-route.ts";
 
@@ -25,7 +34,9 @@ const BASE_URL = "http://127.0.0.1:1/v1";
 const TOKEN = "unused-no-model-call";
 const OPERATION_DEADLINE_MS = 20_000;
 const ERROR_CAP = 2_000;
-const KIND = "sentinel_startup_preflight";
+const KIND = STARTUP_PREFLIGHT_KIND;
+/** Bound of the post-failure `codex --version` check. */
+const CODEX_CHECK_DEADLINE_MS = 5_000;
 const INSIDE_MARKER = "sentinel-inside-probe-marker";
 const OUTSIDE_MARKER = "sentinel-outside-probe-marker";
 const OVERWRITE_MARKER = "sentinel-outside-probe-overwrite";
@@ -38,6 +49,111 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null
     ? value as Record<string, unknown>
     : null;
+}
+
+/** A preflight check of its own, with its closed category. */
+class PreflightCheckError extends Error {
+  constructor(
+    readonly code: "codex_not_found" | "evidence" | "sandbox" | "unsettled",
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/** The closed category of a failure; never derived from its text. */
+export function preflightErrorCategory(
+  stage: string,
+  error: unknown,
+): StartupPreflightErrorV1 {
+  if (error instanceof PreflightCheckError) return error.code;
+  if (error instanceof CodexProtocolError) {
+    if (
+      error.detail === "operation_deadline" ||
+      error.detail === "timeout_without_terminal"
+    ) return "deadline";
+    if (error.detail === "server_error") return "server_error";
+    if (error.detail === "child_exited_without_terminal") {
+      return stage === "open" ? "spawn_failed" : "child_exited";
+    }
+    return "protocol";
+  }
+  const native = Object.values(Deno.errors) as (new () => Error)[];
+  return native.some((type) => error instanceof type) ? "io" : "other";
+}
+
+/**
+ * After a failure only: does the resolved `codex` run at all? `--version`
+ * with PATH alone and no output captured, so a missing executable or
+ * interpreter, a non-executable file or a non-zero exit (a wrapper whose
+ * native binary is missing) is told apart from a hung or refusing
+ * app-server. Never throws and never changes the preflight's outcome.
+ */
+export async function checkCodexExecutable(
+  executable: string | null,
+  path: string,
+  deadlineMs = CODEX_CHECK_DEADLINE_MS,
+): Promise<{ codex: StartupPreflightCodexV1; exitCode?: number }> {
+  if (executable === null) return { codex: "not_run" };
+  const abort = new AbortController();
+  let child: Deno.ChildProcess;
+  try {
+    child = new Deno.Command(executable, {
+      args: ["--version"],
+      clearEnv: true,
+      env: { PATH: path },
+      stdin: "null",
+      stdout: "null",
+      stderr: "null",
+      signal: abort.signal,
+    }).spawn();
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return { codex: "not_found" };
+    if (error instanceof Deno.errors.PermissionDenied) {
+      return { codex: "not_executable" };
+    }
+    return { codex: "spawn_failed" };
+  }
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    abort.abort();
+  }, deadlineMs);
+  try {
+    const status = await child.status;
+    if (timedOut) return { codex: "timed_out" };
+    if (status.success) return { codex: "ok" };
+    return {
+      codex: "exited",
+      exitCode: Math.min(255, Math.max(1, status.code)),
+    };
+  } catch {
+    return { codex: "spawn_failed" };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Print the text-free failure line beside the bounded-text one. */
+function logFailureCode(
+  stage: string,
+  error: unknown,
+  check: { codex: StartupPreflightCodexV1; exitCode?: number },
+  started: number,
+): void {
+  try {
+    const line = parseStartupPreflightLine({
+      kind: KIND,
+      pass: false,
+      stage,
+      errorCode: preflightErrorCategory(stage, error),
+      ...check,
+      elapsedMs: Math.max(0, Math.round(performance.now() - started)),
+    });
+    if (line !== null) console.log(JSON.stringify(line));
+  } catch {
+    // Advisory only: the failure itself is still thrown.
+  }
 }
 
 /** Bound any failure message; the probe holds no secret or private payload. */
@@ -70,7 +186,10 @@ async function execProbe(
     record === null || typeof record.exitCode !== "number" ||
     typeof record.stdout !== "string"
   ) {
-    throw new Error("command/exec response missing exitCode/stdout evidence");
+    throw new PreflightCheckError(
+      "evidence",
+      "command/exec response missing exitCode/stdout evidence",
+    );
   }
   return { exitCode: record.exitCode, stdout: record.stdout };
 }
@@ -87,7 +206,10 @@ async function resolveCodex(path: string): Promise<string> {
       // Continue through the explicitly trusted PATH only.
     }
   }
-  throw new Error("installed codex executable not found on PATH");
+  throw new PreflightCheckError(
+    "codex_not_found",
+    "installed codex executable not found on PATH",
+  );
 }
 
 export async function runActionsPreflight(
@@ -100,6 +222,8 @@ export async function runActionsPreflight(
   if (path === undefined || path.length === 0) {
     throw new Error("PATH is required to resolve the installed codex");
   }
+  const started = performance.now();
+  let codexExecutable: string | null = null;
   let root: string | null = null;
   let session: CodexSubprocessSession | null = null;
   let passed = false;
@@ -119,7 +243,7 @@ export async function runActionsPreflight(
     const outsideMarker = joinPath(root, "outside-marker.txt");
 
     stage = "resolve_codex";
-    const codexExecutable = await resolveCodex(path);
+    codexExecutable = await resolveCodex(path);
     log({ stage, codexExecutable });
 
     stage = "client";
@@ -168,7 +292,10 @@ export async function runActionsPreflight(
       }),
     );
     if (initialized === null || typeof initialized.userAgent !== "string") {
-      throw new Error("initialize response missing evidence");
+      throw new PreflightCheckError(
+        "evidence",
+        "initialize response missing evidence",
+      );
     }
     session.notify("initialized", {});
     log({ stage });
@@ -189,19 +316,24 @@ export async function runActionsPreflight(
     );
     const threadId = asRecord(response?.thread)?.id;
     if (typeof threadId !== "string" || threadId.length === 0) {
-      throw new Error("thread/start response missing a thread id");
+      throw new PreflightCheckError(
+        "evidence",
+        "thread/start response missing a thread id",
+      );
     }
     if (
       response === null || response.model !== MODEL ||
       response.modelProvider !== PROVIDER ||
       response.reasoningEffort !== REASONING
     ) {
-      throw new Error(
+      throw new PreflightCheckError(
+        "evidence",
         "thread/start response does not acknowledge model/provider/reasoning",
       );
     }
     if (asRecord(response.activePermissionProfile)?.id !== PROFILE) {
-      throw new Error(
+      throw new PreflightCheckError(
+        "evidence",
         "thread/start response does not acknowledge the permission profile",
       );
     }
@@ -219,10 +351,16 @@ export async function runActionsPreflight(
       insideMarker,
     ]);
     if (inside.exitCode !== 0) {
-      throw new Error("sandbox inside write did not succeed");
+      throw new PreflightCheckError(
+        "sandbox",
+        "sandbox inside write did not succeed",
+      );
     }
     if (await Deno.readTextFile(insideMarker) !== INSIDE_MARKER) {
-      throw new Error("sandbox inside write not observed on host");
+      throw new PreflightCheckError(
+        "sandbox",
+        "sandbox inside write not observed on host",
+      );
     }
     log({ stage, ok: true });
 
@@ -232,7 +370,10 @@ export async function runActionsPreflight(
       outsideMarker,
     ]);
     if (read.exitCode === 0 || read.stdout.includes(OUTSIDE_MARKER)) {
-      throw new Error("sandbox outside read was not denied");
+      throw new PreflightCheckError(
+        "sandbox",
+        "sandbox outside read was not denied",
+      );
     }
     log({ stage, ok: true });
 
@@ -247,7 +388,10 @@ export async function runActionsPreflight(
     // Linux may accept a write into its synthetic mount; the unchanged real
     // host marker is authoritative, not the command's exit status.
     if (await Deno.readTextFile(outsideMarker) !== OUTSIDE_MARKER) {
-      throw new Error("sandbox outside marker changed");
+      throw new PreflightCheckError(
+        "sandbox",
+        "sandbox outside marker changed",
+      );
     }
     log({
       stage,
@@ -262,6 +406,8 @@ export async function runActionsPreflight(
     // bounded message is safe to surface for the hosted startup boundary.
     primary = error;
     log({ pass: false, stage, error: boundedMessage(error) });
+    const check = await checkCodexExecutable(codexExecutable, path);
+    logFailureCode(stage, error, check, started);
   }
 
   // Cleanup is sequential, never a throwing `finally`: the primary startup
@@ -275,7 +421,10 @@ export async function runActionsPreflight(
       await session.close();
       settled = session.isSettled();
       if (!settled) {
-        cleanup = new Error("codex preflight session did not settle");
+        cleanup = new PreflightCheckError(
+          "unsettled",
+          "codex preflight session did not settle",
+        );
       }
     } catch (error) {
       cleanup = error;
@@ -291,11 +440,13 @@ export async function runActionsPreflight(
   if (primary !== null) {
     if (cleanup !== null) {
       log({ pass: false, stage: "cleanup", error: boundedMessage(cleanup) });
+      logFailureCode("cleanup", cleanup, { codex: "not_run" }, started);
     }
     throw primary;
   }
   if (cleanup !== null) {
     log({ pass: false, stage: "close", error: boundedMessage(cleanup) });
+    logFailureCode("close", cleanup, { codex: "not_run" }, started);
     throw cleanup;
   }
   if (passed) log({ pass: true });
