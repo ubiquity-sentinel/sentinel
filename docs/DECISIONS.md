@@ -5769,30 +5769,58 @@ the same day, about the 1370 fix: "Verified just keep moving forward."
   template digest (`29921b7659c5…`) is unchanged, so none of the 5 live
   repeat-failure parks re-arms; `GOLDEN_HOSTED_PROTECTED` returns to its
   2026-11-05 value.
-- Residual risk, stated plainly: a model-written pull request can now change
-  a target's CI workflow and merge once that CI passes and native review
-  finds no P0 (P1 and lower never block). The head's CI runs the PR's own
-  modified workflow, so a workflow change that keeps one job green while
-  weakening the rest can pass. A head with no Actions check at all still
-  waits `ci_pending` (2026-11-05 positive-evidence rule), but a workflow
-  whose jobs all conclude `skipped` or `neutral` still reads as green; a
-  rule requiring at least one `success` on a workflow-changing head is
-  designed, not implemented here. A same-repository pull request's workflow
-  runs with that repository's Actions secrets; the 2026-10-24 basis for
-  approving held runs ("workflows stay protected") no longer holds for a
-  Sentinel pull request that changes a workflow.
-- Open, not changed here: pushing `.github/workflows/*` needs the App
-  installation's `workflows` permission; without it the push is refused
-  and today surfaces as an ordinary preservation failure (no closed code,
-  no owner comment). No existing data says whether the permission is
-  granted. The 11 records parked "candidate touches a protected path" all
-  carry `candidateState.preserved: null`: no preserved candidate survives
-  to publish without a new charged run, so each needs the owner's
-  `sentinel:retry` (or a release list) to proceed; this entry releases
-  none. Records already flagged `ownerLanding` keep waiting for the owner.
+- The one safeguard kept, and why: a candidate that changes any `.github/`
+  path (`ciExecutablePath`: workflows, composite actions, repository
+  automation) is pushed only when its issue was opened by the Sentinel App
+  (its capability notices and base-repair issues) or by an author GitHub
+  reports as `OWNER`, `MEMBER` or `COLLABORATOR` at read time
+  ([src/repair/workflow-trust.ts](../src/repair/workflow-trust.ts)).
+  Sentinel pushes its candidate branch into the target repository itself,
+  so a changed workflow runs on `push`/`pull_request` with that
+  repository's Actions secrets before any review, and the implementer
+  prompt carries the issue title and body, which anyone can write on a
+  public repository. A leaked secret is not undone by a revert, so this is
+  not part of the nerf the owner lifted. An outsider's issue parks with
+  "candidate touches a protected path: workflow change from an untrusted
+  issue author; owner action required" (the owner lands it, or re-files the
+  issue); an unreadable author fails closed into the plain protected park.
+  Issue comments never reach the prompt (title and body only), and only the
+  author or a collaborator can edit the body. A candidate that changes no
+  CI-executable path costs no read and publishes as above. The check runs
+  after the charged run: whether a candidate will touch `.github/` is not
+  known before it.
+- App `workflows` permission: GitHub refuses a push that creates or updates
+  `.github/workflows/*` when the installation lacks it. The executor read
+  that "[remote rejected]" text as a non-fast-forward conflict; it is now a
+  closed status, and publication and preservation park the record with
+  "app lacks workflows permission; owner action required" (intent cleared,
+  charge kept, no retry and no further charged run; the ordinary blocked
+  progress comment names it once). No existing data says whether the
+  permission is granted; only the refusal does, so it cannot be detected
+  before the charged start.
+- Residual risk, stated plainly: a model-written pull request, on a trusted
+  issue, can now change a target's CI workflow and merge once that CI
+  passes and native review finds no P0 (P1 and lower never block). The
+  head's CI runs the PR's own modified workflow, so a workflow change that
+  keeps one job green while weakening the rest can pass. A head with no
+  Actions check at all still waits `ci_pending` (2026-11-05
+  positive-evidence rule), but a workflow whose jobs all conclude `skipped`
+  or `neutral` still reads as green: the rule requiring at least one
+  target-own Actions `success` on a head that changes a CI-executable path
+  (never satisfied by a backup-CI stand-in, which runs the same modified
+  workflow from the merge tree) is designed, not implemented here. Code an
+  existing workflow step runs with secrets (tests, scripts) was already
+  ordinary candidate work before this entry.
+- Open, not changed here: the 11 records parked "candidate touches a
+  protected path" all carry `candidateState.preserved: null`: no preserved
+  candidate survives to publish without a new charged run, so each needs the
+  owner's `sentinel:retry` (or a release list) to proceed; this entry
+  releases none. Records already flagged `ownerLanding` keep waiting for the
+  owner.
 
-Rollback: `git revert` the commit. No persisted field or state format
-changes; older runtimes read every record written here. Launcher (ops/) and
-runtime (src/) may roll back separately: an older launcher refuses at merge
-time (`protected_path`) what a newer runtime published, and an older
-runtime parks again before publication.
+Rollback: `git revert` the commits in reverse order. No persisted field or
+state format changes (the issue wire's `authorAssociation` is an optional
+in-memory field); older runtimes read every record written here. Launcher
+(ops/) and runtime (src/) may roll back separately: an older launcher
+refuses at merge time (`protected_path`) what a newer runtime published,
+and an older runtime parks again before publication.
