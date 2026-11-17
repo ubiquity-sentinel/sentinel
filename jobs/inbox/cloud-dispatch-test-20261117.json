@@ -1,0 +1,13 @@
+{
+  "jobs": [
+    {
+      "id": "cloud-dispatch-test-20261117",
+      "repository": "ubiquity-sentinel/sentinel",
+      "base": "claude/great-ride-tu5r70",
+      "model": "gpt-6.2-sol",
+      "minutes": 15,
+      "pr": false,
+      "prompt": "Add SENTINEL_DISPATCH_TEST.md (cloud dispatch test)\n\nCreate a file named SENTINEL_DISPATCH_TEST.md in the repository root containing exactly one line: `Sentinel cloud dispatch test 2026-11-17`. Change nothing else. Do not install anything or run any tests."
+    }
+  ]
+}
