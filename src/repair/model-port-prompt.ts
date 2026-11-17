@@ -38,7 +38,8 @@ export const MAX_PROMPT_PROTECTED_PATH_CHARS = 4_000;
  * 1210/1211 commit tests and unapplied `patches/*.patch` files that spent
  * every review round without changing the real file (see
  * `candidate-shape.ts`). The prefixes the publication gate never publishes
- * are narrowed again by `renderNeverPublishedPaths`, rendered right after.
+ * get one more sentence right after (`renderNeverPublishedPaths`), which
+ * keeps this in-place rule and never asks for no change.
  */
 export function renderProtectedPaths(paths: readonly string[]): string {
   const unique = [...new Set(paths)].sort();
@@ -66,14 +67,18 @@ export function renderProtectedPaths(paths: readonly string[]): string {
  * ones the publication gate refuses outright (`unpublishablePath`, the same
  * predicate `ownerLandingTouch` parks with: CI-executable paths and
  * Sentinel's authority files). A candidate changing one is parked
- * `candidate touches a protected path` without being pushed, so the charged
- * run produced nothing anyone can land (ai.ubq.fi 1370 attempt 2 changed
- * `.github/workflows/deno-deploy.yml`; sentinel #177 re-parked the same way
- * after its owner retry). For these prefixes alone the in-place rule above
- * does not apply; a task that cannot be solved without them ends in the
- * existing no-change outcome and its final response, never a new channel.
- * Same bounds as the configured list; empty when no configured prefix is
- * never published, so such a prompt is byte-identical to the earlier one.
+ * `candidate touches a protected path` without being pushed (ai.ubq.fi 1370
+ * attempt 2 changed `.github/workflows/deno-deploy.yml`; sentinel #177
+ * re-parked the same way after its owner retry), and the sentence above
+ * invited that in-place change for these prefixes too. This one keeps the
+ * in-place rule: no incidental change, a solution outside them where one
+ * exists, and otherwise the minimal, complete change, parked for the
+ * repository owner to make. It never asks for no change, for a candidate
+ * without the needed protected part, or for a final-response report: a
+ * compliant no-change run costs more charges and loses the park's protected
+ * signal (2026-10-25 withdrawal; 2026-11-17 review). Same bounds as the
+ * configured list; empty when no configured prefix is never published, so
+ * such a prompt is byte-identical to the earlier one.
  */
 export function renderNeverPublishedPaths(paths: readonly string[]): string {
   const unique = [...new Set(paths)].filter(unpublishablePath).sort();
@@ -86,11 +91,11 @@ export function renderNeverPublishedPaths(paths: readonly string[]): string {
       : ` (and ${rest} more never-published prefix${
         rest === 1 ? "" : "es"
       } not listed here)`) +
-    ". A candidate that changes one is parked unpublished and its run is " +
-    "wasted, so for these prefixes neither the in-place rule above nor any " +
-    "fact above asking for an in-place protected change applies: solve the " +
-    "task without changing them. If it cannot be solved without changing " +
-    "one, leave them all unchanged and say so in your final response.";
+    ". Never change these incidentally, and prefer a solution that does not " +
+    "touch them. Change one only when the task cannot be solved otherwise: " +
+    "such a candidate is parked unpublished and the repository owner must " +
+    "make that change themselves, so keep the change under these prefixes " +
+    "minimal and complete.";
 }
 
 /** Sorted prefixes JSON-quoted within the prompt bounds, and the rest. */

@@ -5450,3 +5450,44 @@ Rollback: revert the commits in reverse order. Reverting the route alone
 restores the park-at-once; reverting the evidence alone leaves the retries
 bounded but without the finding or evidence. No state format or persisted
 field changes, and an older runtime reads every record shape written here.
+
+## 2026-11-17: the implementer prompt names the never-published protected prefixes
+
+- Before: the role named every configured protected prefix and said that a
+  fix which genuinely requires one is made in place because the owner lands
+  it (2026-11-05). That holds only for owner-landing prefixes. A change under
+  a prefix the publication gate refuses outright (`unpublishablePath`,
+  [src/repair/owner-landing.ts](../src/repair/owner-landing.ts): CI-executable
+  paths and Sentinel's authority files) parks `candidate touches a protected
+  path` unpublished after a full charged run. The live repair state held 11
+  such parks on 2026-11-17 (Sentinel #177, #240, #270, #277, #383, #406;
+  ai.ubq.fi 1370, whose attempt 2 changed `.github/workflows/deno-deploy.yml`
+  after a 767 s run; four generic-target records). For Sentinel, Passport and
+  the fixed generic boundary every configured prefix is of that kind, so the
+  old text invited exactly that change.
+- Now ([src/repair/model-port-prompt.ts](../src/repair/model-port-prompt.ts)):
+  right after the configured list, one fixed sentence names those of the same
+  configured prefixes the gate's own predicate never publishes, and says:
+  never change them incidentally; prefer a solution that does not touch
+  them; change one only when the task cannot be solved otherwise, since such
+  a candidate is parked unpublished and the repository owner must make that
+  change themselves, so keep it minimal and complete. The in-place rule and
+  the gate are unchanged.
+- The 2026-10-25 withdrawal of a no-change instruction stands. The sentence
+  asks for no no-change outcome, no candidate without the needed protected
+  part and no final-response report. The first draft of this change did ask
+  for that; review reproduced through the real loop that a compliant
+  no-change run costs more (an ordinary issue from 1 charge to up to 6: three
+  implementations and three charged base reviews; a base-repair task from 1
+  to 3), loses the protected signal on its park, lets a base review that
+  answers "already satisfied" close the issue, and that nothing reads the
+  final response. The follow-up commit replaced that clause.
+- Unchanged: a prompt whose configured prefixes include none never published
+  is byte-identical, and so is the implementer prompt template digest
+  (`29921b7659c5…`, which does not cover this sentence), so no repeat-failure
+  park re-arms and this change re-admits or re-charges no parked record.
+  `GOLDEN_HOSTED_PROTECTED` is re-pinned: its paths include
+  `.github/workflows/`.
+
+Rollback: revert the two commits in reverse order. No state format or
+persisted field changes.

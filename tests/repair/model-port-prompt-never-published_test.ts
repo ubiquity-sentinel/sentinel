@@ -2,8 +2,11 @@
  * The never-published sentence (2026-11-17): the implementer prompt names,
  * from the target's own configured prefixes, exactly those the publication
  * gate never publishes (`unpublishablePath`, the predicate
- * `ownerLandingTouch` parks with), and tells the model to solve the task
- * without them or leave them unchanged and say so. ai.ubq.fi 1370 attempt 2
+ * `ownerLandingTouch` parks with), and tells the model never to change them
+ * incidentally, to prefer a solution outside them, and to change one only
+ * when the task needs it, minimally and completely, for the owner to make.
+ * It never asks for no change or a final-response report (a compliant
+ * no-change run costs more; 2026-10-25 withdrawal). ai.ubq.fi 1370 attempt 2
  * spent a 767 s charged run on a candidate that changed
  * `.github/workflows/deno-deploy.yml` and parked unpublished. Prompts whose
  * prefixes include none are unchanged, and so is the template digest the
@@ -57,7 +60,9 @@ function policyFor(owner: string, name: string, facts?: TargetTreeFactsV1) {
 
 /** The JSON-quoted prefixes the never-published sentence lists. */
 function listed(sentence: string): string[] {
-  const match = sentence.match(/never published \(sorted\): (.*?)\. A cand/);
+  const match = sentence.match(
+    /never published \(sorted\): (.*?)\. Never change these/,
+  );
   assert.ok(match !== null, sentence);
   return JSON.parse(`[${match[1]}]`);
 }
@@ -151,13 +156,39 @@ Deno.test("the sentence follows the configured list in every prompt variant and 
   }
   const sentence = renderNeverPublishedPaths(paths);
   assert.ok(sentence.startsWith(" Of those, a change under any of these"));
-  assert.ok(sentence.includes("solve the task without changing them"));
-  assert.ok(
-    sentence.endsWith(
-      "leave them all unchanged and say so in your final response.",
-    ),
-  );
+  assert.ok(sentence.endsWith(" minimal and complete."));
   assert.ok(!sentence.includes(REQUEST.issue!.title));
+});
+
+/** The exact sentence for the 1370 shape: one never-published prefix. */
+const WORKFLOWS_SENTENCE =
+  ' Of those, a change under any of these prefixes is never published (sorted): ".github/workflows/". Never change these incidentally, and prefer a solution that does not touch them. Change one only when the task cannot be solved otherwise: such a candidate is parked unpublished and the repository owner must make that change themselves, so keep the change under these prefixes minimal and complete.';
+
+Deno.test("the sentence keeps the in-place rule and asks for no no-change outcome or final-response report", () => {
+  const paths = [".github/workflows/", "AGENTS.md"];
+  const sentence = renderNeverPublishedPaths(paths);
+  assert.equal(sentence, WORKFLOWS_SENTENCE);
+  // A compliant no-change run costs more than the park and loses its
+  // protected signal (2026-10-25 withdrawal); nothing reads the response.
+  for (
+    const banned of [
+      "make no change",
+      "no change",
+      "final response",
+      "say so",
+      "leave them",
+      "unchanged",
+      "without changing them",
+      "does not apply",
+      "OWNER_LANDING_REQUIRED",
+    ]
+  ) assert.ok(!sentence.includes(banned), banned);
+  // It narrows, never contradicts, the in-place sentence before it.
+  const configured = renderProtectedPaths(paths);
+  assert.ok(configured.includes("make the real, complete change in place"));
+  assert.ok(sentence.includes("minimal and complete"));
+  assert.ok(sentence.includes("only when the task cannot be solved otherwise"));
+  assert.ok(sentence.includes("the repository owner must make that change"));
 });
 
 Deno.test("a prompt with no never-published prefix is byte-identical, and the template digest is unchanged", () => {

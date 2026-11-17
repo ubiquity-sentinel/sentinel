@@ -56,16 +56,17 @@ const SENTENCE =
  * `.github/workflows/` is never published (`unpublishablePath`).
  */
 const NEVER_PUBLISHED =
-  ' Of those, a change under any of these prefixes is never published (sorted): ".github/workflows/". A candidate that changes one is parked unpublished and its run is wasted, so for these prefixes neither the in-place rule above nor any fact above asking for an in-place protected change applies: solve the task without changing them. If it cannot be solved without changing one, leave them all unchanged and say so in your final response.';
+  ' Of those, a change under any of these prefixes is never published (sorted): ".github/workflows/". Never change these incidentally, and prefer a solution that does not touch them. Change one only when the task cannot be solved otherwise: such a candidate is parked unpublished and the repository owner must make that change themselves, so keep the change under these prefixes minimal and complete.';
 
 /**
  * SHA-256 of `buildPrompt(REQUEST, false, undefined, PATHS)` (pinned
  * 2026-10-25; re-pinned 2026-11-05 for the in-place protected-fix guidance;
  * re-pinned 2026-11-17 because PATHS holds `.github/workflows/`, which now
- * adds the never-published sentence).
+ * adds the never-published sentence, and again the same day for its
+ * corrected wording, which keeps the in-place rule).
  */
 const GOLDEN_HOSTED_PROTECTED =
-  "00186e29820d8956e92ff0c098f913d30aefb4a5968b9f1ea13260a0ed704040";
+  "e006878fc59e958c87be72f9a4e0598fc17d7fc95a6431fa8e5c5b3614f024b0";
 
 async function sha256(text: string): Promise<string> {
   const digest = await crypto.subtle.digest(

@@ -5,18 +5,21 @@
  * once, while an install that leaves the prompt as it was never does.
  *
  * The template is rendered by the real `buildPrompt` over one constant
- * placeholder request that turns on every optional section (issue, evidence,
- * scope, review findings, merge conflict, refused and prior attempts,
- * repository lessons, regressions, protected paths, CI evidence) and once
- * more as a local iteration, so a prose change in any section changes the
- * digest. Placeholders are constant: no repository, issue, base, model route
- * or protected-path list of a real record reaches it.
+ * placeholder request that turns on these optional sections: issue,
+ * evidence, scope, review findings, merge conflict, refused and prior
+ * attempts, repository lessons, regressions, the configured protected-path
+ * sentence (`renderProtectedPaths`, over the one placeholder prefix
+ * `protected/`) and CI evidence, and once more as a local iteration. A prose
+ * change in any of those sections changes the digest. Placeholders are
+ * constant: no repository, issue, base, model route or protected-path list
+ * of a real record reaches it.
  *
- * The placeholder prefix `protected/` is publishable, so the never-published
- * sentence (`renderNeverPublishedPaths`, 2026-11-17) is deliberately outside
- * the template: adding it left this digest unchanged and re-arms no park
- * (owner requirement: that prompt change re-admits and re-charges nothing),
- * and a later edit of that sentence alone re-arms none either.
+ * Not covered: the never-published sentence (`renderNeverPublishedPaths`,
+ * 2026-11-17). It renders only for a prefix the publication gate never
+ * publishes, and `protected/` is publishable, so the placeholder never turns
+ * it on. Adding it left this digest unchanged and re-armed no park (that
+ * prompt change re-admits and re-charges nothing), and a prose change to that
+ * sentence alone does not change the digest or re-arm a park either.
  */
 import { createHash } from "node:crypto";
 import type { GitSha, WorkItemId } from "../contracts/brands.ts";
