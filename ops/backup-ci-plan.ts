@@ -99,7 +99,7 @@ const STEP_PRIORITY: Record<string, BackupCiPriorityV1> = {
 };
 
 /** Whether a file holds any entry of the mode class (backup engaged there). */
-function engaged(
+export function backupCiEngaged(
   file: BackupCiCommitFileV1 | null | undefined,
   mode: "shadow" | "on",
 ): boolean {
@@ -213,7 +213,9 @@ export function backupCiCandidates(
   for (const record of input.records) {
     const b = record.target.base;
     if (b === input.baseTip || bases.has(b)) continue;
-    if (!engaged(input.files.get(record.target.head!), input.mode)) continue;
+    if (!backupCiEngaged(input.files.get(record.target.head!), input.mode)) {
+      continue;
+    }
     bases.add(b);
     out.push(base(3, b, "stand_in"));
   }
@@ -222,7 +224,10 @@ export function backupCiCandidates(
     const head = record.target.head!;
     const headFile = input.files.get(head);
     const baseFile = input.files.get(record.target.base);
-    if (engaged(headFile, input.mode) || engaged(baseFile, input.mode)) {
+    if (
+      backupCiEngaged(headFile, input.mode) ||
+      backupCiEngaged(baseFile, input.mode)
+    ) {
       out.push(base(4, record.target.base, "peer", { recordId: record.id }));
       out.push(base(4, head, "peer", {
         recordId: record.id,

@@ -9,6 +9,7 @@
 import type { GitSha } from "../src/contracts/brands.ts";
 import { HOSTED_AUTONOMY_TRUSTED_AUTHORS } from "./hosted-autonomy-policy.ts";
 import {
+  BACKUP_CI_CALIBRATION,
   BACKUP_CI_MAX_COMMITS_READ_PER_TARGET,
   backupCiCalibrationPath,
   type BackupCiCommitFileV1,
@@ -32,6 +33,7 @@ import {
   mergeBackupCiFile,
 } from "../src/github/backup-ci-store.ts";
 import type { BackupCiActionSourceV1 } from "./backup-ci-actions.ts";
+import { sampleBackupCiCalibration } from "./backup-ci-calibrate.ts";
 import { resolveBackupCiTargets } from "./backup-ci-enrol.ts";
 import {
   type BackupCiIngestDepsV1,
@@ -47,6 +49,7 @@ import {
 import {
   backupCiCandidateDisposition,
   backupCiCandidates,
+  backupCiEngaged,
   backupCiFairSelect,
   backupCiFreeSlots,
   backupCiRecords,
@@ -279,25 +282,61 @@ async function planTarget(
     ...deps.calibrationCommits(target.repository),
   ]);
   const files = new Map<string, BackupCiCommitFileV1 | null>();
-  for (const commit of commits) {
+  const load = async (commit: GitSha) => {
+    if (files.has(commit)) return files.get(commit) ?? null;
     let file = await readFile(deps.store, repo, commit);
     const pending = changes.files.get(`${repo.owner}/${repo.name}@${commit}`);
     if (pending !== undefined) {
       file = mergeBackupCiFile(file, { ...pending, now: deps.now() }).file;
     }
     files.set(commit, file);
-  }
+    return file;
+  };
+  for (const commit of commits) await load(commit);
   const calibrationValue = await deps.store.read(
     backupCiCalibrationPath(repo.owner, repo.name),
   );
   const calibration = calibrationValue === null
     ? null
     : parseBackupCiCalibration(calibrationValue);
+  // Automatic calibration (backup-ci-calibrate.ts): sampled from the
+  // target's own native history once one of its records needed a stand-in.
+  const sampled = await sampleBackupCiCalibration({
+    calibration,
+    runnerId,
+    demand: records.some((r) =>
+      backupCiEngaged(files.get(r.target.head!), deps.mode)
+    ),
+    defaultBranch: info.defaultBranch,
+    pushRuns: reads.pushRuns === undefined
+      ? undefined
+      : (branch) => reads.pushRuns!(branch),
+    file: load,
+    now: deps.now(),
+  });
+  const row = calibration?.runners.find((r) => r.runnerId === runnerId);
+  deps.log(
+    `sentinel_backup_ci_calibration ${
+      JSON.stringify({
+        repository: target.repository,
+        agreements: row?.agreements ?? 0,
+        failureAgreements: row?.failureAgreements ?? 0,
+        of: BACKUP_CI_CALIBRATION.agreements,
+        reason: sampled.reason,
+        sampled: sampled.commits.length,
+      })
+    }`,
+  );
   const candidates = backupCiCandidates({
     records,
     baseTip,
     defaultBranch: info.defaultBranch,
-    calibrationCommits: deps.calibrationCommits(target.repository),
+    calibrationCommits: [
+      ...new Set([
+        ...deps.calibrationCommits(target.repository),
+        ...sampled.commits,
+      ]),
+    ],
     calibrated: isBackupCiCalibrated(calibration, runnerId),
     files,
     mode: deps.mode,

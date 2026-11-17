@@ -242,6 +242,13 @@ export interface BackupCiTargetReadsV1 {
   pullMerge(
     number: number,
   ): Promise<{ parents: string[]; tree: string } | "absent" | null>;
+  /**
+   * The newest completed `push` workflow runs on `branch` (one page): the
+   * target's own native history that automatic calibration samples.
+   */
+  pushRuns?(
+    branch: string,
+  ): Promise<{ headSha: GitSha; conclusion: string }[] | null>;
 }
 
 export function createBackupCiTargetReads(
@@ -269,6 +276,24 @@ export function createBackupCiTargetReads(
       );
       const sha = row(body?.object)?.sha;
       return sha40(sha) ? sha as GitSha : null;
+    },
+    async pushRuns(branch) {
+      const body = row(
+        await api.get(
+          `${repo}/actions/runs?branch=${
+            encodeURIComponent(branch)
+          }&event=push&status=completed&per_page=50`,
+        ),
+      );
+      const runs = body?.workflow_runs;
+      if (!Array.isArray(runs)) return null;
+      return runs.flatMap((value) => {
+        const run = row(value);
+        return run !== null && sha40(run.head_sha) &&
+            typeof run.conclusion === "string"
+          ? [{ headSha: run.head_sha as GitSha, conclusion: run.conclusion }]
+          : [];
+      });
     },
     async checkRuns(sha, filter) {
       const runs = await backupCiCompleteListing(
