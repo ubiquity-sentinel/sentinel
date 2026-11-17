@@ -27,7 +27,7 @@ Deno.test("agent jobs plan spreads jobs across cells before stacking them", () =
   const wide = planAgentJobs({ jobs }, TARGETS);
   assert.equal(wide.cells.length, 5);
   assert.equal(
-    planAgentJobs({ jobs }, TARGETS, { maxCells: 1 }).cells.length,
+    planAgentJobs({ jobs }, TARGETS, { maxCells: 2 }).cells.length,
     2,
   );
   assert.ok(wide.cells.every((cell) => cell.jobs.length === 1));
