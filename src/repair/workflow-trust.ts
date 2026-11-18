@@ -21,7 +21,9 @@
  *   line, a self-reference or an origin that does not exist is untrusted;
  * - every other App kind (a CI outage notice, a throughput watchdog issue,
  *   anything else), any other author, and a record with no issue (an
- *   incident, from production text): untrusted.
+ *   incident, from production text): untrusted, and so is a number that
+ *   no longer names an issue here (deleted, or transferred: GitHub answers
+ *   with the moved issue's own number).
  * A failed read is `unavailable`: the caller defers and never pushes, and a
  * transient failure parks nothing.
  * Issue comments never reach the prompt (`observeIssueForModel` passes only
@@ -72,12 +74,13 @@ export function unsafeChangedPath(path: string): boolean {
 
 /**
  * A path CI executes or that configures how it runs: anything under
- * `.github/` (workflows, composite actions, repository automation), and any
- * path no predicate can classify (`unsafeChangedPath`).
+ * `.github/` in any letter case (workflows, composite actions, repository
+ * automation; a case variant is CI-executable on a case-insensitive
+ * checkout), and any path no predicate can classify (`unsafeChangedPath`).
  */
 export function ciExecutablePath(path: string): boolean {
   if (unsafeChangedPath(path)) return true;
-  return normalizePathPrefix(path).split("/")[0] === ".github";
+  return normalizePathPrefix(path).split("/")[0].toLowerCase() === ".github";
 }
 
 /** How far one candidate's CI-executable change may be pushed. */
@@ -135,9 +138,11 @@ export async function recordCiTrust(
     try {
       const read = await deps.github.readIssue(current);
       if (!read.ok) return "unavailable";
-      // An issue that does not exist can never vouch for anything.
+      // An issue that does not exist can never vouch for anything, and
+      // neither can a number GitHub answers with another issue (a transfer
+      // or a move: definitive, so it parks instead of deferring for ever).
       if (read.value === null) return "untrusted";
-      if (read.value.number !== current) return "unavailable";
+      if (read.value.number !== current) return "untrusted";
       issue = read.value;
     } catch {
       return "unavailable";
