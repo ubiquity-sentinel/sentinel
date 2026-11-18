@@ -76,6 +76,9 @@ export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
     "src/repair/trust-markers.ts",
     "src/github/merged-pull-heads.ts",
     "src/github/changed-paths-read.ts",
+    // The launcher admission gate's author parse (the gate itself lives in
+    // the owner-merged `ops/hosted-autonomy-pull-file-gates.ts`).
+    "ops/hosted-autonomy-issue-facts.ts",
     "src/github/merge-content-gate.ts",
     "src/github/port-self-merge.ts",
     "ops/hosted-autonomy-pull-file-gates.ts",

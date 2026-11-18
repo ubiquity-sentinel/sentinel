@@ -40,7 +40,10 @@ import { GitHubClientChecks } from "./client-checks.ts";
 import { parseWire, parseWith, repoPath } from "./client-response.ts";
 import { REVIEW_DECISION_QUERY } from "./client-issue-wire.ts";
 import { readPassportBaseReviewChecks } from "./base-review-ci.ts";
-import { mergedPullsQuery, parseMergedPullHeads } from "./merged-pull-heads.ts";
+import {
+  collectMergedPullHeads,
+  mergedPullsQuery,
+} from "./merged-pull-heads.ts";
 import { comparedPaths } from "./changed-paths-read.ts";
 export {
   MAX_WORKFLOW_EVENT_READS,
@@ -249,30 +252,27 @@ export abstract class GitHubClientReads extends GitHubClientChecks {
   }
 
   /**
-   * The heads of the most recently merged pull requests into `baseRef`,
-   * newest merge first (`merged-pull-heads.ts`: one request, the launcher's
-   * exact query and parse).
+   * The heads of the (up to five) most recently merged pull requests into
+   * `baseRef`, newest merge first, proven from the update-sorted listing
+   * (`merged-pull-heads.ts`: the launcher's exact query and proof); an
+   * unreadable or unproven listing is `unavailable`.
    */
   async readMergedPullHeads(
     baseRef: string,
   ): Promise<PortResultV1<MergedPullHeadsV1>> {
-    const response = await this.request(
-      "GET",
-      `/repos/${repoPath(this.repository)}/pulls`,
-      mergedPullsQuery(baseRef),
-    );
-    if (!response.ok) return response;
-    if (response.value.status === 404) {
-      return portError("unavailable", "merged pull requests unavailable");
-    }
-    const parsed = parseWire(
-      response.value,
-      (value) => parseMergedPullHeads(value, baseRef),
-    );
-    if (!parsed.ok) return parsed;
-    return parsed.value === null
-      ? portError("invalid", "merged pull request listing is malformed")
-      : portOk(parsed.value);
+    const proven = await collectMergedPullHeads(async (page) => {
+      const response = await this.request(
+        "GET",
+        `/repos/${repoPath(this.repository)}/pulls`,
+        mergedPullsQuery(baseRef, page),
+      );
+      if (!response.ok || response.value.status !== 200) return null;
+      const parsed = parseWire(response.value, (value) => value);
+      return parsed.ok ? parsed.value : null;
+    }, baseRef);
+    return proven === null
+      ? portError("unavailable", "merged pull requests unproven")
+      : portOk(proven);
   }
 
   /** The exact parents of one commit, in order; null when it does not exist. */

@@ -35,6 +35,7 @@ import {
   parkedStep,
   protectedPathRefusal,
 } from "./hosted-autonomy-spent-delivery.ts";
+import { sourceAdmissionRefusal } from "./hosted-autonomy-pull-file-gates.ts";
 import type {
   HostedAutonomyGitHubV1,
   HostedAutonomyPullV1,
@@ -107,6 +108,9 @@ export async function trainMemberGate(
     !HOSTED_AUTONOMY_TRUSTED_AUTHORS.includes(pull.author)
   ) return { refusal: "foreign_author" };
   if (pull.baseRef !== scope.baseBranch) return { refusal: "base_mismatch" };
+  // 2026-11-17 admission, before admission and again before each merge.
+  const admission = await sourceAdmissionRefusal(surface, record);
+  if (admission !== null) return { refusal: admission };
   return { refusal: null, receipt: verdict.receipt, pull };
 }
 

@@ -226,6 +226,8 @@ Deno.test("authority: the modules that define admission, trust and the CI rule a
       "src/github/changed-paths-read.ts",
       "src/github/merge-content-gate.ts",
       "src/github/port-merge.ts",
+      "ops/hosted-autonomy-pull-file-gates.ts",
+      "ops/hosted-autonomy-issue-facts.ts",
     ]
   ) assert.equal(touchesProtected(protectedPaths, path), true, path);
   for (
@@ -238,6 +240,8 @@ Deno.test("authority: the modules that define admission, trust and the CI rule a
       "src/repair/loop-intake.ts",
       "src/repair/loop-merge.ts",
       "ops/hosted-autonomy-github.ts",
+      "ops/hosted-autonomy-source-reads.ts",
+      "ops/hosted-autonomy-spent-delivery.ts",
     ]
   ) assert.equal(touchesProtected(protectedPaths, path), false, path);
 });
