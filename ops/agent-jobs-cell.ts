@@ -130,6 +130,33 @@ export async function agentHeartbeat(probe: {
     `quiet ${Math.round(quietMs / 1000)}s`;
 }
 
+/**
+ * The distinct client error and reconnect lines of one agent attempt, most
+ * frequent first, with counts. Only lines the client itself marks as an error,
+ * warning or reconnect are kept, cut short and with long tokens redacted, so
+ * the summary can be published with the result.
+ */
+export async function agentErrorLines(
+  errFile: string,
+  limit = 20,
+): Promise<{ line: string; count: number }[]> {
+  const text = await Deno.readTextFile(errFile).catch(() => "");
+  const counts = new Map<string, number>();
+  for (const raw of text.slice(-400_000).split("\n")) {
+    const line = raw.replaceAll(String.fromCharCode(27), "")
+      .replace(/\[[0-9;]*m/g, "").trim();
+    if (
+      !/^(error|warn|warning|fatal|panic)\b|reconnect|stream (disconnected|error)|retry limit|status:? \d{3}/i
+        .test(line)
+    ) continue;
+    const key = line.replace(/[A-Za-z0-9_\-]{32,}/g, "<redacted>")
+      .replace(/\d+\/\d+/g, "N/N").replace(/\s+/g, " ").slice(0, 200);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return [...counts.entries()].sort((x, y) => y[1] - x[1]).slice(0, limit)
+    .map(([line, count]) => ({ line, count }));
+}
+
 export async function agentFailureReason(errFile: string): Promise<string> {
   const text = await Deno.readTextFile(errFile).catch(() => "");
   const lines = text.slice(-16000).split("\n")
@@ -351,6 +378,19 @@ async function runJob(
     let rateLimitAttempts = 0;
     let disconnects = 0;
     let restartNote = "";
+    const telemetry = {
+      schema: "sentinel.agent-jobs.telemetry/v1",
+      id: job.id,
+      attempts: [] as {
+        attempt: number;
+        seconds: number;
+        exitCode: number;
+        timedOut: boolean;
+        cause: string;
+        errors: { line: string; count: number }[];
+      }[],
+      heartbeats: [] as string[],
+    };
     let agent: { code: number; timedOut: boolean };
     for (;;) {
       const logFile = `${root}/agent-${attempt}.log`;
@@ -363,17 +403,18 @@ async function runJob(
         logFile,
         heartbeat: {
           seconds: input.heartbeatSeconds ?? HEARTBEAT_SECONDS,
-          emit: async () =>
-            ports.log(
-              await agentHeartbeat({
-                id: job.id,
-                checkout,
-                baseSha: base.sha,
-                logFile,
-                startedAtMs: jobStartedAtMs,
-                restarts: attempt,
-              }),
-            ),
+          emit: async () => {
+            const line = await agentHeartbeat({
+              id: job.id,
+              checkout,
+              baseSha: base.sha,
+              logFile,
+              startedAtMs: jobStartedAtMs,
+              restarts: attempt,
+            });
+            telemetry.heartbeats.push(line);
+            ports.log(line);
+          },
         },
       });
       spentSeconds += (Date.now() - attemptStarted) / 1000;
@@ -381,6 +422,24 @@ async function runJob(
         ? await interruption(`${logFile}.err`)
         : null;
       limited = cause === "rate_limit";
+      const attemptSeconds = Math.round((Date.now() - attemptStarted) / 1000);
+      const errors = await agentErrorLines(`${logFile}.err`);
+      telemetry.attempts.push({
+        attempt,
+        seconds: attemptSeconds,
+        exitCode: agent.code,
+        timedOut: agent.timedOut,
+        cause: cause ?? (agent.timedOut ? "deadline" : "exit"),
+        errors,
+      });
+      const seen = errors.reduce((sum, row) => sum + row.count, 0);
+      ports.log(
+        `${job.id}: attempt ${attempt} ended after ${attemptSeconds}s, exit ${agent.code}, ` +
+          `${seen} client error or reconnect lines` +
+          (errors.length > 0
+            ? `, most frequent x${errors[0].count}: ${errors[0].line}`
+            : ""),
+      );
       if (cause === null) break;
       if (cause === "disconnect") {
         if (disconnects >= DISCONNECT_RESTART_LIMIT) break;
@@ -408,6 +467,11 @@ async function runJob(
       rateLimitAttempts += 1;
       attempt += 1;
     }
+    await Deno.mkdir(input.outDir, { recursive: true });
+    await Deno.writeTextFile(
+      `${input.outDir}/${job.id}.telemetry.json`,
+      JSON.stringify(telemetry, null, 2) + "\n",
+    );
     // The model token must not outlive the agent on this runner.
     await Deno.remove(start.clientHome, { recursive: true }).catch(() => {});
 

@@ -261,6 +261,31 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
       ),
       lines.join("\n"),
     );
+    // Each job leaves a telemetry record: attempts with their client error
+    // lines (tokens redacted) and the liveness lines it printed.
+    const telemetryOf = async (id: string) =>
+      JSON.parse(await Deno.readTextFile(`${outDir}/${id}.telemetry.json`));
+    const droppedTelemetry = await telemetryOf("dropped");
+    assert.deepEqual(
+      droppedTelemetry.attempts.map((row: { cause: string }) => row.cause),
+      ["disconnect", "exit"],
+    );
+    assert.equal(
+      droppedTelemetry.attempts[0].errors[0].line,
+      "ERROR: stream disconnected before completion: stream closed before response.completed",
+    );
+    const failsTelemetry = await telemetryOf("fails");
+    assert.equal(
+      failsTelemetry.attempts[0].errors[0].line,
+      "ERROR: unexpected status 400: flagged token <redacted> end",
+    );
+    assert.ok((await telemetryOf("hangs")).heartbeats.length > 0);
+    assert.ok(
+      lines.some((line) =>
+        /^dropped: attempt 0 ended after \d+s, exit 1, 1 client error or reconnect lines, most frequent x1: ERROR: stream disconnected/
+          .test(line)
+      ),
+    );
     // A dropped model stream restarts the agent in the same checkout.
     assert.ok(
       lines.includes("dropped: model stream dropped, restart 1 in 15s"),

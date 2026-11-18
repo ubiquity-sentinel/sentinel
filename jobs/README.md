@@ -107,6 +107,13 @@ minutes:
 quiet for many minutes with no new commits is stuck, not working. The log of a
 running job is streamed on its page in the Actions tab.
 
+Each job also leaves `<id>.telemetry.json` in the cell's artifact: one entry per
+agent attempt (seconds, exit code, why it ended, and the client's distinct error
+and reconnect lines with counts, long tokens redacted) and the liveness lines it
+printed. When an attempt ends the cell log gets a one-line summary of it. Use
+these to tell a model outage or dropped streams from a task that failed on its
+own.
+
 In a pull request body, links the agent made to files in its checkout point at
 the pushed commit; other runner-local links are reduced to their text.
 
