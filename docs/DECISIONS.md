@@ -6428,3 +6428,75 @@ which the final source does not carry, so it holds every release
 
 Rollback: revert the commits; Passport then plans legs again and its older
 receipts stand in again, which this decision forbids.
+
+## 2026-11-18: Sentinel works no private target repository (owner decision)
+
+- An audit found that ordinary supervisor runs, which execute in this public
+  repository, publish private target content: Actions artifacts kept seven
+  days and downloadable by any signed-in user (`sentinel-matrix-plan-*`
+  `plan.json` with each cell's model request, issue title and full body;
+  `sentinel-matrix-cell-*` with `result.json` and a `git bundle` holding the
+  full contents of every file the model added or changed) and review receipts
+  on the public `sentinel-state/repair` branch (prose summaries with
+  file:line descriptions). Asked "should Sentinel stop working prospector and
+  passport until the exposure in its normal runs is fixed? I recommend yes.",
+  the owner answered, verbatim: "2 ok". Earlier the same day: "So moving
+  forward let's simplify the logic: no private repos."
+- One predicate, one owner-merged authority file
+  ([src/repair/target-visibility.ts](../src/repair/target-visibility.ts),
+  added to `HOSTED_AUTHORITY_PROTECTED_PATHS`): `sentinelWorksRepositoryV1`
+  accepts a repository only when GitHub's own answer on the repository read
+  says it is public (`private: false`, and `visibility: "public"` when sent).
+  `private: true`, `visibility` `private` or `internal` is private; a missing
+  or malformed field is unknown and is never treated as public. There is no
+  owner switch: a future deployment that may work private repositories
+  replaces this predicate.
+- Where it applies: target load (`loadTargetConfigsV1`, `src/host/targets.ts`)
+  reads the visibility from the same `GET /repos/{owner}/{name}` answer that
+  already gives the default branch (`resolveRepository`; no extra read). A
+  private target is never configured (`privateTargets`); an unknown answer
+  skips the target like an unreadable default branch. Every caller of the
+  loader uses it: the runtime's serial repair job, the matrix planner and
+  cells and repair cells (`runActionsRepairHost`), the launcher's
+  closed-matrix recovery (`ops/hosted-autonomy-matrix-adapters.ts`), the
+  maintenance publication and the local host. A record of an unconfigured
+  target is already skipped by every runtime cycle (`selection.ts`
+  `unconfigured`, existing-PR reconciliation, the planner's ranking), so a
+  private target gets no issue listing into a plan, no model request, no
+  cell, no bundle, no review, no receipt, no progress comment and no state
+  row from the runtime. The runtime prints one text-free line
+  `{"kind":"sentinel_private_targets","reason":"private_repository",
+  "skipped":N,"listed":M,"configured":K}`.
+- A private skip is never a read failure: the "every committed target read
+  was unavailable" deferral counts only the targets that are not private, so
+  a deployment whose public targets load runs normally. Private plus
+  unreadable with nothing configured defers or fails exactly as the
+  unreadable targets alone would. A setting whose every target is private
+  configures nothing and refuses as an empty setting (`targets_empty`, red),
+  as a setting that authorizes no work always has.
+- Existing private-target records (prospector, passport and any other
+  private target; the runtime decides live, no list is written) are not
+  parked, rewritten, charged, commented on or closed by the runtime; their
+  pull requests and unsettled reservations stay as they are and resume
+  untouched if the predicate is later replaced.
+- Not yet covered (open): the launcher maintenance passes
+  (`ops/hosted-autonomy-*`) walk repair-state records, not the target
+  setting, so they still step existing private-target records (delivery and
+  merge of a record with a clean review and current-head CI, retries and
+  re-arms, closures, follow-ups, capability and CI-outage notices,
+  base-repair filing, CI resume). They publish no new private content to
+  artifacts (the runtime no longer plans, runs or reviews these targets), but
+  they are work on a private repository and this decision forbids it. The
+  fix needs one launcher choke point applied before any pass reads a record:
+  a production-composed state view that hides every row of a repository whose
+  visibility is not public (read once per repository per pass through the
+  launcher's own surface) and writes those rows back unchanged, plus a
+  `githubFor` that answers null for such a repository.
+- Already published artifacts and state history are not deleted (the owner
+  declined deletion), and no workflow is changed here. A later workflow
+  change should shorten matrix artifact retention and stop uploading
+  `plan.json` and cell bundles in the clear (encrypt them or keep them out
+  of artifacts).
+
+Rollback: revert the commits; private targets are then configured, planned
+and run again, which this decision forbids.
