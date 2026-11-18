@@ -54,9 +54,21 @@ function reasonOf(
     facts.memoryRefused > 0 ||
     anyOf(facts.deferredByReason, ["admission_capacity", "memory_refused"])
   ) return "reservation_denied";
-  if (anyOf(facts.deferredByReason, ["cooldown", "admission", "progress"])) {
-    return "target_unavailable";
-  }
+  // A failed preparation can leave the record ready (for example, when
+  // admission and its wait cannot be persisted). These are explicit target
+  // holds, not a successful pass that silently chose to plan no cells.
+  if (
+    anyOf(facts.deferredByReason, [
+      "cooldown",
+      "admission",
+      "progress",
+      "artifact",
+      "blocked",
+      "state_error",
+      "deferred",
+      "other",
+    ])
+  ) return "target_unavailable";
   return null;
 }
 

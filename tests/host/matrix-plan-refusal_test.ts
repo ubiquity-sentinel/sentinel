@@ -8,6 +8,7 @@ import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
+import { portError } from "../../src/contracts/ports.ts";
 import { createMetricsCollectorV1 } from "../../src/contracts/throughput-metrics-collector.ts";
 import {
   foldThroughputRecordV1,
@@ -16,6 +17,7 @@ import {
   THROUGHPUT_METRICS_RECORD_MAX_BYTES,
 } from "../../src/contracts/throughput-metrics.ts";
 import {
+  MATRIX_PLAN_DEFERRED_REASONS,
   matrixPlanDiagnosticLineOf,
   scanPlanDiagnostic,
   scanPlanRefusalFromLog,
@@ -27,6 +29,7 @@ import {
   runtimeSummaryWithPlanRefusal,
 } from "../../src/host/run-summary.ts";
 import { collectFinalizeMetricsV1 } from "../../src/host/throughput-metrics-finalize.ts";
+import { evaluateThroughputWatchdogV1 } from "../../src/host/throughput-watchdog.ts";
 import { DurableGitHubCooldownGate } from "../../src/repair/github-cooldown.ts";
 import {
   FakeClock,
@@ -103,6 +106,117 @@ Deno.test("planner: a pass with no ready record refuses as no_ready_records with
     reason: "no_ready_records",
     readyUnplanned: 0,
   });
+});
+
+Deno.test("planner: unavailable admission writes explain ready work left without a cell", async () => {
+  const ready = workRecord("issue-unavailable-admission", {
+    target: {
+      ...workRecord("issue-unavailable-admission").target,
+      branch: "sentinel/repair/issue-unavailable-admission",
+    },
+  });
+  const { deps, options } = planner([ready], 60 * 60_000);
+  const writeRepair = deps.state.writeRepair.bind(deps.state);
+  deps.state.writeRepair = () =>
+    Promise.resolve(portError("unavailable", "state write unavailable"));
+
+  const report = await planMatrixWave(deps, options);
+  assert.equal(report.prepared, 0);
+  assert.deepEqual(report.deferredByReason, { state_error: 1 });
+  assert.deepEqual(report.refusal, {
+    reason: "target_unavailable",
+    readyUnplanned: 1,
+  });
+  assert.deepEqual(deps.state.repair!.work, [ready]);
+  assert.equal(deps.state.repair!.reservations.length, 0);
+
+  // Carry this real planner result through the launcher diagnostic and
+  // finalize, then evaluate an eligible window with the unchanged threshold.
+  const diagnostic = scanPlanDiagnostic(
+    JSON.stringify(matrixPlanDiagnosticLineOf({
+      ...report,
+      waveId: options.waveId,
+      cause: "planner",
+    })),
+    { id: options.waveId },
+  );
+  const summary = runtimeSummaryWithPlanRefusal(
+    [
+      { ...childSummary(), kind: "hosted_runtime_summary" },
+      diagnostic,
+    ].map((line) => JSON.stringify(line)).join("\n"),
+  );
+  const records = Array.from(
+    { length: 10 },
+    (_, index) =>
+      collectFinalizeMetricsV1({
+        cycle: { runId: index + 1, attempt: 1 },
+        finalizeStartedAtMs: T0 + index * 60_000 + 1_000,
+        nowMs: T0 + index * 60_000 + 2_000,
+        jobs: [{
+          name: "matrix_plan",
+          conclusion: "success",
+          summary,
+          startedAtMs: T0 + index * 60_000,
+          completedAtMs: T0 + index * 60_000 + 1_000,
+        }],
+        runSummary: null,
+        repair: deps.state.repair,
+      }),
+  );
+  assert.equal(records[0].counts.cellsPlanned, 0);
+  assert.equal(records[0].counts.readyRecordsNotPlanned, 1);
+  const verdict = evaluateThroughputWatchdogV1({
+    records,
+    daily: [],
+    nowMs: T0 + 10 * 60_000,
+  }).find((entry) => entry.id === "cells_planned")!;
+  assert.equal(verdict.verdict, "met");
+  assert.equal(verdict.measured, 0);
+  assert.equal(verdict.limit, 0);
+  const silent = evaluateThroughputWatchdogV1({
+    records: records.map((record, index) =>
+      index === 0 ? { ...record, plannerRefusal: null } : record
+    ),
+    daily: [],
+    nowMs: T0 + 10 * 60_000,
+  }).find((entry) => entry.id === "cells_planned")!;
+  assert.equal(silent.verdict, "missed");
+  assert.equal(silent.measured, 1);
+
+  // The same task can be admitted after the state port recovers, without
+  // rewriting its counters or settling a reservation that never existed.
+  deps.state.writeRepair = writeRepair;
+  deps.clock.advance(60_000);
+  const recovered = await planMatrixWave(deps, options);
+  assert.equal(recovered.prepared, 1);
+  assert.deepEqual(recovered.refusal, { reason: null, readyUnplanned: 0 });
+  assert.equal(deps.state.repair!.reservations.length, 1);
+  assert.equal(deps.state.repair!.reservations[0].outcome, "reserved");
+  assert.equal(deps.model.requests.length, 0);
+});
+
+Deno.test("refusal classification: every closed preparation deferral explains unplanned ready work", () => {
+  for (const deferredReason of MATRIX_PLAN_DEFERRED_REASONS) {
+    const reason = deferredReason === "bounds"
+      ? "deadline_margin"
+      : ["memory_refused", "admission_capacity"].includes(deferredReason)
+      ? "reservation_denied"
+      : "target_unavailable";
+    assert.deepEqual(
+      classifyMatrixPlanRefusalV1({
+        prepared: 0,
+        readyIds: ["ready"],
+        plannedTaskIds: new Set<string>(),
+        stoppedByDeadline: false,
+        modelStartsDisabled: false,
+        deferredByReason: { [deferredReason]: 1 },
+        memoryRefused: 0,
+      }),
+      { reason, readyUnplanned: 1 },
+      deferredReason,
+    );
+  }
 });
 
 Deno.test("refusal classification: closed reasons and the unplanned count", () => {
