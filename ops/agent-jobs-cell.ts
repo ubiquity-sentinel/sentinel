@@ -52,6 +52,20 @@ const RESTART_NOTE =
  */
 /** Seconds between liveness lines of a running agent. */
 export const HEARTBEAT_SECONDS = 300;
+/**
+ * Every Nth liveness line is also raised as a notice annotation. The API does
+ * not serve the log of a running job, but it does serve its annotations, so
+ * this is the only view of a running agent from outside the Actions page. A
+ * step keeps ten notices: the first line and every seventh after it cover a
+ * full 350 minute job.
+ */
+export const HEARTBEAT_NOTICE_EVERY = 7;
+/** A liveness line as a workflow command that raises a notice annotation. */
+export function heartbeatNotice(id: string, line: string): string {
+  const data = line.replace(/%/g, "%25").replace(/\r/g, "%0D")
+    .replace(/\n/g, "%0A");
+  return `::notice title=agent ${id.replace(/[^a-z0-9-]/g, "")}::${data}`;
+}
 const DISCONNECTED_MARKER = "stream disconnected before completion";
 export const DISCONNECT_BACKOFF_SECONDS = 15;
 /** Restarts after dropped streams per job; the job deadline still applies. */
@@ -414,6 +428,11 @@ async function runJob(
             });
             telemetry.heartbeats.push(line);
             ports.log(line);
+            if (
+              (telemetry.heartbeats.length - 1) % HEARTBEAT_NOTICE_EVERY === 0
+            ) {
+              ports.log(heartbeatNotice(job.id, line));
+            }
           },
         },
       });

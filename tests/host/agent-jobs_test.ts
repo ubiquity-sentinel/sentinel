@@ -282,6 +282,11 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
     assert.ok((await telemetryOf("hangs")).heartbeats.length > 0);
     assert.ok(
       lines.some((line) =>
+        line.startsWith("::notice title=agent hangs::hangs: alive ")
+      ),
+    );
+    assert.ok(
+      lines.some((line) =>
         /^dropped: attempt 0 ended after \d+s, exit 1, 1 client error or reconnect lines, most frequent x1: ERROR: stream disconnected/
           .test(line)
       ),
