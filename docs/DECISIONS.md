@@ -6512,11 +6512,13 @@ receipts stand in again, which this decision forbids.
     run, so no merge, comment, issue, CI re-run or approval, notice or
     backup-CI demand reaches it.
   - Visibility is one `GET /repos/{owner}/{name}` per distinct repository
-    the hot state names (about 30), per run, cached for the run on the
-    launcher surface, which now also serves every later default-branch read
-    of the run from that answer (each pass scope used to read it again). At
-    most about 30 reads per run, 360 an hour at one run every five minutes,
-    against the App installation's 5,000 an hour, and largely offset by the
+    the hot state names, per run, cached for the run on the launcher
+    surface, which now also serves every later default-branch read of the
+    run from that answer (each pass scope used to read it again). The hot
+    state of 2026-11-18 holds 479 work records over 25 repositories
+    (prospector 77, passport 14, Sentinel itself 95, never read): at most
+    24 reads per run, under 300 an hour at one run every five minutes,
+    against the App installation's 5,000 an hour, and partly offset by the
     repeated reads it replaces. Unknown or unreadable hides the repository
     for the run. Sentinel's own repository is never read or
     hidden: it is the public repository the launcher runs in, so a failed
