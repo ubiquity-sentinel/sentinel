@@ -51,6 +51,7 @@ import { runHostedRetiredPullPass } from "./hosted-autonomy-retired-pulls.ts";
 import { runHostedOutageObservationPass } from "./hosted-autonomy-outage-observation.ts";
 import { runHostedQueueCustody } from "./hosted-autonomy-queue-pass.ts";
 import { protectQueueState } from "./hosted-autonomy-queue-state.ts";
+import { gateHostedAutonomyDepsV1 } from "./hosted-autonomy-private-targets.ts";
 import type {
   HostedQueueCustodyContext,
   QueueCustodyResult,
@@ -121,6 +122,24 @@ function integrityFault(error: unknown): boolean {
  * pass instead of running past the job's own limit.
  */
 export async function runHostedAutonomy(
+  deps: HostedAutonomyDepsV1,
+): Promise<HostedAutonomyResultV1> {
+  // Owner decision 2026-11-18: every pass below reads and writes state and
+  // resolves surfaces through the private-target gate, then one text-free
+  // line counts what it hid (`hosted-autonomy-private-targets.ts`).
+  try {
+    return await runGatedHostedAutonomy(gateHostedAutonomyDepsV1(deps));
+  } finally {
+    try {
+      const line = deps.privateTargets?.line() ?? null;
+      if (line !== null) console.log(JSON.stringify(line));
+    } catch {
+      // Advisory only.
+    }
+  }
+}
+
+async function runGatedHostedAutonomy(
   deps: HostedAutonomyDepsV1,
 ): Promise<HostedAutonomyResultV1> {
   deps = withHostedOpenIssueCache(deps);

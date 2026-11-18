@@ -193,6 +193,15 @@ export interface HostedAutonomyGitHubV1 {
    */
   readDefaultBranch(): Promise<string | null>;
   /**
+   * GitHub's answer about the repository's visibility, from the same
+   * repository read as `readDefaultBranch` (one read per surface and run).
+   * The private-target gate (`hosted-autonomy-private-targets.ts`) works a
+   * repository only when this says public; absent or unreadable is not.
+   */
+  readVisibility?(): Promise<
+    import("../src/repair/target-visibility.ts").TargetVisibilityV1
+  >;
+  /**
    * Current tip of one repository branch — the repository's configured base
    * branch or a managed candidate branch — or null when it cannot be read. The
    * response must name exactly `refs/heads/<branch>`: a ref that names any
@@ -683,6 +692,15 @@ export interface HostedAutonomyDepsV1 {
    * borrows another repository's surface.
    */
   githubFor(repository: RepositoryIdentityV1): HostedAutonomyGitHubV1 | null;
+  /**
+   * The private-target gate (owner decision 2026-11-18): `runHostedAutonomy`
+   * reads and writes state, and resolves surfaces, only through it, so no
+   * pass sees, writes or touches a repository not proven public. The
+   * production maintenance composition (`hosted-autonomy-main.ts`) always
+   * sets it; a test composition without it runs ungated.
+   */
+  privateTargets?:
+    import("./hosted-autonomy-private-targets.ts").PrivateTargetGateV1;
   /**
    * `owner/name` of every committed backup CI target
    * (`sentinel.backup-ci-targets.json`); absent means none.

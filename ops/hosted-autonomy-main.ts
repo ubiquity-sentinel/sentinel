@@ -11,6 +11,7 @@ import {
   writeUpkeepDeferralOutput,
 } from "./hosted-autonomy-queue-output.ts";
 import { createHostedQueueCoordinator } from "./hosted-autonomy-queue-host.ts";
+import { createPrivateTargetGateV1 } from "./hosted-autonomy-private-targets.ts";
 import { createMaintenancePublicationFor } from "../src/host/maintenance-existing-pr-publication.ts";
 import { DurableGitHubCooldownGate } from "../src/repair/github-cooldown.ts";
 import {
@@ -485,10 +486,20 @@ async function runHostedAutonomyMainResult(
       const artifactRoot = await Deno.makeTempDir({
         prefix: "sentinel-maintenance-matrix-",
       });
+      // Owner decision 2026-11-18: one gate for the whole run. The runner
+      // routes every pass through it; the queue coordinator and its
+      // publication get the gated state and surfaces here.
+      const privateTargets = createPrivateTargetGateV1({
+        readVisibility: async (repository) =>
+          await githubFor(repository).readVisibility?.() ?? "unknown",
+      });
+      const gatedState = privateTargets.wrapState(state);
+      const gatedGithubFor = privateTargets.githubFor(githubFor);
       try {
         result = await runFromVerifiedSource({
           ciMinutes,
           state,
+          privateTargets,
           currentMatrixIndex: new GitMaintenanceIndex({
             scratchDir: `${scratch}/maintenance-index`,
             remoteUrl: HOSTED_CONTROLLER_REMOTE,
@@ -501,14 +512,14 @@ async function runHostedAutonomyMainResult(
           clock: { now: () => Date.now() },
           queue: createHostedQueueCoordinator({
             queueMode: env("SENTINEL_MERGE_QUEUE"),
-            state,
-            githubFor,
+            state: gatedState,
+            githubFor: gatedGithubFor,
             token: apiToken,
             clock: { now: () => Date.now() },
             publicationFor: createMaintenancePublicationFor({
               sourceDir: Deno.cwd(),
               scratch,
-              state,
+              state: gatedState,
               clock: { now: () => Date.now() },
               token: apiToken,
               gate: new DurableGitHubCooldownGate({

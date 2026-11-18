@@ -66,6 +66,7 @@ import { createReadIssueComment } from "./hosted-autonomy-base-review-verdicts.t
 import { createTargetTreeFactsResolver } from "../src/host/target-tree-facts.ts";
 import { fetchHttpTransport } from "../src/github/http.ts";
 import { createHostedDeliveryReads } from "./hosted-autonomy-github-delivery.ts";
+import { createHostedRepositoryReads } from "./hosted-autonomy-github-repository.ts";
 import {
   hostedMergeBody,
   readSquashTrees,
@@ -334,12 +335,9 @@ export function createHostedAutonomyGitHub(
       token,
       repository,
     ),
-    async readDefaultBranch() {
-      const repo = await request("GET", `/repos/${scope}`);
-      if (repo === null || typeof repo !== "object") return null;
-      const branch = (repo as Record<string, unknown>)["default_branch"];
-      return typeof branch === "string" && branch.length > 0 ? branch : null;
-    },
+    // One repository read per surface and run: default branch and the
+    // visibility the private-target gate decides on.
+    ...createHostedRepositoryReads(request, scope),
     async readBaseTip(branch: string) {
       const ref = await request(
         "GET",
