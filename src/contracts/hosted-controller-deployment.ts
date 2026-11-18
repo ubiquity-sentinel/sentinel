@@ -91,10 +91,13 @@ export type HostedControllerSelectionV1 =
     repository: string;
   };
 
-// The private role's own wiring (Sentinel self passes off rather than
-// re-pointed, release, install promotion and backup CI refused, state on its
-// own remote only) is not in this revision, so a private selection refuses to
-// start even with bound workflow ids. The change that wires it sets this.
+// The private role's gates are in place and proven through real consumers
+// (tests/host/private-deployment-role_test.ts: own identity and remotes, no
+// request naming the public repository, no backup CI, its self installation
+// only, owner-install refusal, a reviewed target merged through its own
+// surface, the closed reason for its own tracker). Its issue-to-pull-request
+// half has no private-role proof yet, so a private selection still refuses to
+// start even with bound workflow ids; the change that adds it sets this.
 const PRIVATE_ROLE_WIRED = false;
 
 /**
