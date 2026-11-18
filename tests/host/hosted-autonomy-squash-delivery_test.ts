@@ -28,6 +28,7 @@ import {
   isForeignPath,
   jsonResponse,
   MERGE,
+  OWNER_ISSUE_USER,
   SHARED_ISSUE_NUMBER,
 } from "./hosted-autonomy-fixtures.ts";
 import { makeRig, repairSnapshot, run } from "./hosted-autonomy-rig.ts";
@@ -104,6 +105,8 @@ function stubForeign(headTree: string): Stub {
         number: SHARED_ISSUE_NUMBER,
         title: FOREIGN_TASK_TITLE,
         body: FOREIGN_TASK_BODY,
+        // The owner opened it: the launcher's admission read admits it.
+        user: OWNER_ISSUE_USER,
       }
       : {
         default_branch: FOREIGN_BRANCH,

@@ -267,6 +267,21 @@ export class QueueGithub extends FakeGithub {
         };
         return { ...text, digest: await reviewTaskStatementDigest(text) };
       },
+      // The launcher admission gate's live author read (2026-11-17): the
+      // same issue the runtime port reads, the admitted owner by default.
+      readIssueFacts: async (number) => {
+        const read = await this.readIssue(number);
+        if (!read.ok || read.value === null) return null;
+        const issue = read.value;
+        return {
+          number: issue.number,
+          title: issue.title,
+          body: issue.body,
+          state: issue.state,
+          author: issue.author,
+          ...(issue.authorId === undefined ? {} : { authorId: issue.authorId }),
+        };
+      },
       readIssueOptedOut: () => Promise.resolve(false),
       baseAdvanced: (base, tip) =>
         Promise.resolve(this.refreshedFrom.get(tip)?.onto === base),
