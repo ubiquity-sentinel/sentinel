@@ -310,6 +310,19 @@ export interface BackupCiComparisonV1 {
   sample: BackupCiCalibrationSampleV1;
   nativeCheckRunId: number;
   receipt: string;
+  /**
+   * The compared key and its class (2026-11-17): only comparisons bound to
+   * the unit's event and merge base exist (`backup-ci-compare.ts`). Absent
+   * in a pass file of an older launcher: such a comparison counts for the
+   * pooled calibration only, never for a per-check one.
+   */
+  key?: {
+    context: "push" | "pull_request";
+    workflowPath: string;
+    checkName: string;
+    base: GitSha | null;
+  };
+  class?: "green" | "red" | "false_green" | "false_red";
 }
 
 /** A comparison that requires a suspension of its runner. */

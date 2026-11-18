@@ -423,7 +423,13 @@ export async function planBackupCiCommit(
         base: { ...pull.base, sha: base! },
       },
     });
-    const latest = group.latest[group.latest.length - 1];
+    // The native run compared with (peers, calibration) is one of the unit's
+    // own event: a push run never stands for a pull_request merge, nor the
+    // reverse (review MUST 2; ingest re-binds event and merge base).
+    const eventOf = new Map(obs.suites.map((s) => [s.suiteId, s.event]));
+    const latest = group.latest.filter((o) =>
+      eventOf.get(o.suiteId ?? 0) === context
+    ).at(-1);
     const neverStarted = group.neverStarted
       ? {
         checkRunIds: group.all.map((o) => o.checkRunId).sort((a, b) => a - b)

@@ -39,7 +39,12 @@ import type {
   BackupCiComparisonV1,
   BackupCiNoEvidenceEventV1,
 } from "../src/github/backup-ci-store.ts";
-import { completedJobNeverStarted } from "../src/github/never-started-job.ts";
+import {
+  type BackupCiComparisonClassV1,
+  type BackupCiNativeEvidenceV1,
+  classifyBackupCiComparison,
+  readBackupCiNativeEvidence,
+} from "./backup-ci-compare.ts";
 import {
   type BackupCiLegReadsV1,
   unzipBackupCiResult,
@@ -48,7 +53,6 @@ import {
   artifactBinds,
   backupCiFailureExcerpt,
   backupCiLogLines,
-  backupCiTime,
   findBackupCiMarker,
   legRunBinds,
   verifyBackupCiResult,
@@ -59,10 +63,7 @@ import type { BackupCiTargetReadsV1 } from "./backup-ci-plan-reads.ts";
 export const BACKUP_CI_STUCK_EXTRA_MS = 30 * 60_000;
 export const BACKUP_CI_LOG_RETRIES = 2;
 
-type Obj = Record<string, unknown>;
 type Reason = BackupCiNoEvidenceReasonV1;
-const row = (v: unknown): Obj | null =>
-  typeof v === "object" && v !== null && !Array.isArray(v) ? v as Obj : null;
 const posInt = (v: unknown): number | null =>
   typeof v === "number" && Number.isSafeInteger(v) && v > 0 ? v : null;
 export type BackupCiIngestOutcomeV1 =
@@ -89,42 +90,17 @@ export interface BackupCiIngestDepsV1 {
   log(line: string): void;
 }
 
-/** The native started, completed run of the unit's group, if any. */
-async function nativeRun(
+/**
+ * The native run a result of `item` binds to (event, merge base, job), or
+ * null; any read failure is null (no comparison).
+ */
+async function nativeEvidence(
   deps: BackupCiIngestDepsV1,
   item: BackupCiIngestItemV1,
-): Promise<{ checkRunId: number; conclusion: string } | null> {
-  const unit = item.entry.unit;
-  if (unit.native !== null) return unit.native;
+): Promise<BackupCiNativeEvidenceV1 | null> {
   const reads = deps.targetReads(item.repository.owner, item.repository.name);
   if (reads === null) return null;
-  const [runs, suites] = await Promise.all([
-    reads.checkRuns(unit.commit, "all"),
-    reads.suites(unit.commit),
-  ]);
-  if (runs === null || suites === null) return null;
-  const paths = new Map(suites.map((s) => [s.suiteId, s.workflowPath]));
-  const ordered = runs.filter((r) =>
-    r.name === unit.key.checkName && row(r.app)?.slug === "github-actions" &&
-    paths.get(posInt(row(r.check_suite)?.id) ?? 0) === unit.key.workflowPath &&
-    r.status === "completed" &&
-    ["success", "failure", "timed_out"].includes(String(r.conclusion))
-  ).sort((a, b) =>
-    (backupCiTime(b.started_at) ?? 0) - (backupCiTime(a.started_at) ?? 0)
-  );
-  for (const run of ordered) {
-    const id = posInt(run.id)!;
-    if (run.conclusion !== "success") {
-      const verdict = completedJobNeverStarted(
-        await reads.job(id),
-        id,
-        unit.commit,
-      );
-      if (verdict !== false) continue;
-    }
-    return { checkRunId: id, conclusion: String(run.conclusion) };
-  }
-  return null;
+  return await readBackupCiNativeEvidence(reads, item.entry.unit);
 }
 
 /** Resolves one dispatched entry (§9.2 steps 1-8). */
@@ -215,7 +191,10 @@ export async function ingestBackupCiEntry(
   if (typeof result === "string") return none(result);
   if (result.outcome === "no_evidence") return none(result.reason!);
   const red = result.outcome !== "success";
-  const native = await nativeRun(deps, item).catch(() => null);
+  const evidence = await nativeEvidence(deps, item).catch(() => null);
+  const native = evidence === null
+    ? null
+    : { checkRunId: evidence.checkRunId, conclusion: evidence.conclusion };
   const resultEntry: BackupCiResultEntryV1 = {
     state: "result",
     key: entry.key,
@@ -252,33 +231,93 @@ export async function ingestBackupCiEntry(
   };
   const final = entry.key.attempt === 2 || !red;
   const repo = `${item.repository.owner}/${item.repository.name}`;
-  const comparison: BackupCiComparisonV1 | null = native !== null && final
-    ? {
-      runnerId: entry.runnerId,
-      sample: {
-        commit: unit.commit,
-        checkName: unit.key.checkName,
-        native: native.conclusion,
-        backup: result.outcome,
+  const receipt = backupCiReceiptId(repo, unit.commit, entry.key);
+  let comparison: BackupCiComparisonV1 | null = null;
+  if (evidence !== null && final) {
+    // A planned native run (peers, calibration) was read as started when it
+    // was planned; an unreadable job then still counts for a false green.
+    const job = evidence.job ?? (unit.native === null ? null : {
+      conclusion: evidence.conclusion,
+      neverStarted: false,
+      failingStep: null,
+    });
+    const verdict = classifyBackupCiComparison({
+      nativeEvent: evidence.event,
+      native: job === null ? null : { ...job, conclusion: evidence.conclusion },
+      nativeMerge: evidence.merge,
+      context: entry.key.context,
+      commit: unit.commit,
+      base: entry.key.base,
+      backup: {
+        conclusion: result.outcome,
+        failingStep: result.failingStep,
+        excerpt: resultEntry.failure?.excerpt ?? null,
       },
-      nativeCheckRunId: native.checkRunId,
-      receipt: backupCiReceiptId(repo, unit.commit, entry.key),
+    });
+    if (verdict.kind === "incomparable") {
+      deps.log(
+        `sentinel_backup_ci_incomparable ${
+          JSON.stringify({ receipt, reason: verdict.reason })
+        }`,
+      );
+    } else {
+      comparison = backupCiComparison(
+        verdict.class,
+        entry,
+        evidence,
+        result.outcome,
+        receipt,
+      );
+      if (verdict.class === "false_green" || verdict.class === "false_red") {
+        deps.log(`sentinel_backup_ci_disagreement ${
+          JSON.stringify({
+            receipt,
+            native: evidence.conclusion,
+            backup: result.outcome,
+          })
+        }`);
+      }
     }
-    : null;
-  if (
-    comparison !== null &&
-    (comparison.sample.backup === "success") !==
-      (native!.conclusion === "success")
-  ) {
-    deps.log(`sentinel_backup_ci_disagreement ${
-      JSON.stringify({
-        receipt: comparison.receipt,
-        native: native!.conclusion,
-        backup: result.outcome,
-      })
-    }`);
   }
   return { kind: "result", entry: resultEntry, comparison };
+}
+
+/**
+ * The comparison of a classified result: its sample spells the class in
+ * the native/backup conclusions `mergeCalibration` counts, and it carries
+ * the key and class the per-check calibration counts.
+ */
+function backupCiComparison(
+  cls: BackupCiComparisonClassV1,
+  entry: BackupCiDispatchedEntryV1,
+  evidence: BackupCiNativeEvidenceV1,
+  backup: BackupCiResultEntryV1["conclusion"],
+  receipt: string,
+): BackupCiComparisonV1 {
+  const sample = cls === "green"
+    ? { native: "success", backup: "success" as const }
+    : cls === "red"
+    ? { native: "failure", backup: "failure" as const }
+    : cls === "false_green"
+    ? { native: evidence.conclusion, backup: "success" as const }
+    : { native: "success", backup };
+  return {
+    runnerId: entry.runnerId,
+    sample: {
+      commit: entry.unit.commit,
+      checkName: entry.key.checkName,
+      ...sample,
+    },
+    nativeCheckRunId: evidence.checkRunId,
+    receipt,
+    key: {
+      context: entry.key.context,
+      workflowPath: entry.key.workflowPath,
+      checkName: entry.key.checkName,
+      base: entry.key.base,
+    },
+    class: cls,
+  };
 }
 
 /**

@@ -54,6 +54,11 @@ export interface BackupCiApiV1 {
     path: string,
     maxBytes: number,
   ): Promise<Uint8Array | "unserved" | null>;
+  /** As `redirected`, but the first `maxBytes` bytes of a longer body. */
+  redirectedPrefix?(
+    path: string,
+    maxBytes: number,
+  ): Promise<Uint8Array | "unserved" | null>;
 }
 
 export function createBackupCiApi(
@@ -75,7 +80,35 @@ export function createBackupCiApi(
       clearTimeout(timer);
     }
   };
+  const redirect = (path: string, maxBytes: number, prefix: boolean) =>
+    timed(async (signal) => {
+      const first = await fetcher(`${BACKUP_CI_API}${path}`, {
+        headers,
+        redirect: "manual",
+        signal,
+      });
+      await first.body?.cancel();
+      if (first.status === 404) return "unserved" as const;
+      if (first.status !== 302 && first.status !== 301) return null;
+      const location = trustedActionsLogUrl(
+        first.headers.get("location") ?? "",
+      );
+      if (location === null) return null;
+      const second = await fetcher(location, { redirect: "error", signal });
+      if (second.status === 404) {
+        await second.body?.cancel();
+        return "unserved" as const;
+      }
+      if (second.status !== 200) {
+        await second.body?.cancel();
+        return null;
+      }
+      return prefix
+        ? await readBodyPrefix(second, maxBytes)
+        : await readBoundedBody(second, maxBytes);
+    }).catch(() => null);
   return {
+    redirectedPrefix: (path, maxBytes) => redirect(path, maxBytes, true),
     get: (path, maxBytes = MAX_JSON_BYTES) =>
       timed(async (signal) => {
         const response = await fetcher(`${BACKUP_CI_API}${path}`, {
@@ -115,32 +148,28 @@ export function createBackupCiApi(
         }
         return { status: response.status, body: parsed };
       }).catch(() => null),
-    redirected: (path, maxBytes) =>
-      timed(async (signal) => {
-        const first = await fetcher(`${BACKUP_CI_API}${path}`, {
-          headers,
-          redirect: "manual",
-          signal,
-        });
-        await first.body?.cancel();
-        if (first.status === 404) return "unserved" as const;
-        if (first.status !== 302 && first.status !== 301) return null;
-        const location = trustedActionsLogUrl(
-          first.headers.get("location") ?? "",
-        );
-        if (location === null) return null;
-        const second = await fetcher(location, { redirect: "error", signal });
-        if (second.status === 404) {
-          await second.body?.cancel();
-          return "unserved" as const;
-        }
-        if (second.status !== 200) {
-          await second.body?.cancel();
-          return null;
-        }
-        return await readBoundedBody(second, maxBytes);
-      }).catch(() => null),
+    redirected: (path, maxBytes) => redirect(path, maxBytes, false),
   };
+}
+
+/** The first `max` bytes of a body (the rest is cancelled, not read). */
+async function readBodyPrefix(
+  response: Response,
+  max: number,
+): Promise<Uint8Array> {
+  const reader = response.body?.getReader();
+  if (reader === undefined) return new Uint8Array(0);
+  const out = new Uint8Array(max);
+  let total = 0;
+  while (total < max) {
+    const step = await reader.read();
+    if (step.done) break;
+    const take = Math.min(step.value.byteLength, max - total);
+    out.set(step.value.subarray(0, take), total);
+    total += take;
+  }
+  await reader.cancel().catch(() => undefined);
+  return out.slice(0, total);
 }
 
 /**
@@ -249,7 +278,15 @@ export interface BackupCiTargetReadsV1 {
   pushRuns?(
     branch: string,
   ): Promise<{ headSha: GitSha; conclusion: string }[] | null>;
+  /**
+   * The first `BACKUP_CI_NATIVE_LOG_PREFIX_BYTES` of a native job's log
+   * (UNTRUSTED text: only `backupCiNativeMergeParents` reads it), or null.
+   */
+  jobLogPrefix?(jobId: number): Promise<string | null>;
 }
+
+/** Enough for a job's set-up and first (checkout) step sections. */
+export const BACKUP_CI_NATIVE_LOG_PREFIX_BYTES = 256 * 1024;
 
 export function createBackupCiTargetReads(
   api: BackupCiApiV1,
@@ -276,6 +313,16 @@ export function createBackupCiTargetReads(
       );
       const sha = row(body?.object)?.sha;
       return sha40(sha) ? sha as GitSha : null;
+    },
+    async jobLogPrefix(jobId) {
+      if (api.redirectedPrefix === undefined) return null;
+      const bytes = await api.redirectedPrefix(
+        `${repo}/actions/jobs/${jobId}/logs`,
+        BACKUP_CI_NATIVE_LOG_PREFIX_BYTES,
+      );
+      return bytes === null || bytes === "unserved"
+        ? null
+        : new TextDecoder().decode(bytes);
     },
     async pushRuns(branch) {
       const body = row(
