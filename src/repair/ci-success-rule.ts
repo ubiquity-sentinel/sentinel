@@ -6,20 +6,24 @@
  * (2026-10-24: skipped and neutral are not red), and an edit could drop or
  * skip the real tests and pass on a trivial new job.
  *
- * The expected jobs compare like with like: the job names GitHub Actions ran
- * to `success` on the head of the most recently merged pull request into the
- * same base branch (the same pull-request context: a base commit's runs come
- * from `push`, where a deploy or other push-only job runs that a pull request
- * head never runs). Every such name must also conclude `success` (its latest
- * run) on the candidate head; no name is exempt, skipped or absent, renamed
- * or not. When that merged pull request has no successful Actions job, up to
- * `CI_REFERENCE_PULLS_MAX` merged pull requests are walked back, newest merge
- * first. Only after that bound (or every merged pull request there is, when
- * the listing is provably complete) is there "no prior CI": then the base's
- * own Actions successes are expected (the strongest reference left), and
- * only when the base has none either is it a first CI workflow, which needs
- * at least one Actions job to succeed on the head. Anything unreadable, or a
- * listing that cannot prove the walk, is `unknown`: never satisfied (wait).
+ * The expected jobs compare like with like: the UNION of the job names GitHub
+ * Actions ran to `success` on the heads of the `CI_REFERENCE_PULLS_MAX` most
+ * recently merged pull requests into the same base branch (the same
+ * pull-request context: a base commit's runs come from `push`, where a deploy
+ * or other push-only job runs that a pull request head never runs; the union,
+ * because a path-filtered workflow may run only some jobs for one pull
+ * request, and the most recent may have been docs-only). The listing is
+ * proven by merge time against a comment flood (`merged-pull-heads.ts`).
+ * Every expected name must also conclude `success` (its latest run) on the
+ * candidate head; no name is exempt, skipped or absent, renamed or not. Only
+ * when none of those heads has an Actions success (or there is no merged pull
+ * request) is there "no prior CI": then the base's own Actions successes are
+ * expected (the strongest reference left), and only when the base has none
+ * either is it a first CI workflow, which needs at least one Actions job to
+ * succeed on the head. Anything unreadable or unproven is `unknown`: never
+ * satisfied (wait). Liveness cost, accepted: a job only some pull requests
+ * trigger is required of every workflow-changing head, which then waits and
+ * parks; the owner lands it.
  *
  * Only GitHub Actions check runs count (`isTargetCiSuccessCheck`): never a
  * commit status, another app's check, a skipped or neutral job, or a backup-CI
@@ -43,6 +47,7 @@ import {
   selectMergeGateChecksV1,
 } from "./merge-gate-checks.ts";
 import type { RepairCycleDepsV1 } from "./loop-types.ts";
+import { MERGED_PULLS_WANTED } from "../github/merged-pull-heads.ts";
 import { ciExecutablePath } from "./workflow-trust.ts";
 
 /** The pre-review park of such a head once its bounded wait ends. */
@@ -51,8 +56,8 @@ export const WORKFLOW_CI_SUCCESS_DETAIL =
   "run to success every job the last merged pull request passed; owner " +
   "action required";
 
-/** Merged pull requests walked back for a reference at most. */
-export const CI_REFERENCE_PULLS_MAX = 5;
+/** Merged pull requests whose successes the reference unites (the listing's). */
+export const CI_REFERENCE_PULLS_MAX = MERGED_PULLS_WANTED;
 
 /** The job names GitHub Actions ran to success on one commit (latest each). */
 export function actionsSuccessNames(
@@ -71,8 +76,8 @@ export function actionsSuccessNames(
 export type CiExpectationV1 =
   | {
     readonly kind: "reference";
-    /** The merged pull request head the names were read from. */
-    readonly head: string;
+    /** The merged pull request heads whose success names are united. */
+    readonly heads: readonly string[];
     readonly names: readonly string[];
   }
   | { readonly kind: "base"; readonly names: readonly string[] }
@@ -101,15 +106,19 @@ export async function readCiExpectation(
     const listing = await reads.mergedPullHeads();
     if (listing === null) return UNKNOWN;
     const walked = listing.heads.slice(0, CI_REFERENCE_PULLS_MAX);
+    // Fewer than the bound is a reference only when it is every merged pull
+    // request there is.
+    if (walked.length < CI_REFERENCE_PULLS_MAX && !listing.complete) {
+      return UNKNOWN;
+    }
+    const united = new Set<string>();
     for (const head of walked) {
       const names = await reads.successNames(head);
       if (names === null) return UNKNOWN;
-      if (names.length > 0) return { kind: "reference", head, names };
+      for (const name of names) united.add(name);
     }
-    // "No prior CI" needs the whole bound walked, or every merged pull
-    // request there is; a full page with fewer merged ones proves nothing.
-    if (walked.length < CI_REFERENCE_PULLS_MAX && !listing.complete) {
-      return UNKNOWN;
+    if (united.size > 0) {
+      return { kind: "reference", heads: walked, names: [...united].sort() };
     }
     const names = await reads.successNames(base);
     if (names === null) return UNKNOWN;

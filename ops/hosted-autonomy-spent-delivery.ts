@@ -74,6 +74,7 @@ import { OWNER_MERGE_REQUIRED } from "../src/repair/owner-landing.ts";
 import {
   ciSuccessRefusal,
   protectedPathRefusal,
+  sourceAdmissionRefusal,
   touchesTargetProtected,
 } from "./hosted-autonomy-pull-file-gates.ts";
 
@@ -495,8 +496,11 @@ export async function preMergeGate(input: {
     }
     if (!green) return { refusal: "base_ci_pending", spent: false };
   }
-  // Last, so only a head about to merge pays for the file listing; a head
-  // that changes a CI-executable path also needs a job its own CI passed.
+  // Last, so only a head about to merge pays for these reads: the source
+  // issue's author (2026-11-17 admission), then the file listing; a head
+  // that changes a CI-executable path also needs its CI rule.
+  const admission = await sourceAdmissionRefusal(surface, record);
+  if (admission !== null) return { refusal: admission, spent: false };
   const protectedRefusal = await protectedPathRefusal(
     surface,
     record.repository,
@@ -912,6 +916,8 @@ export async function carriedMergeGate(input: {
     contained = false;
   }
   if (!contained) return { refusal: "carried_not_on_tip", proof: null };
+  const admission = await sourceAdmissionRefusal(surface, record);
+  if (admission !== null) return { refusal: admission, proof: null };
   const patch = await carriedPatchRefusal(surface, receipt, head, base);
   if (patch.refusal !== null) return { refusal: patch.refusal, proof: null };
   let runs: number[] | null = null;

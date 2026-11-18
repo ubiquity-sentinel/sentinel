@@ -19,8 +19,14 @@
  * - a delivery train never carries such a change (`train_ci_executable`): the
  *   member keeps the per-record path, which applies the rule above.
  *
+ * - every launcher merge (delivery, spent and carried delivery, a train
+ *   member) refuses unless the record's source issue was opened by the owner
+ *   account (login and id) or the App (`sourceAdmissionRefusal`), read live:
+ *   the launcher runs before the runtime each cycle, so the runtime's own
+ *   admission parks cannot stand in for it.
+ *
  * An unreadable listing or success read refuses; a fixture surface without
- * the file listing skips these gates.
+ * the file listing skips the file gates (never the admission gate).
  */
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import { neverMergedChange } from "../src/github/merge-content-gate.ts";
@@ -33,7 +39,11 @@ import {
 import { ciExecutablePath } from "../src/repair/workflow-trust.ts";
 import { SENTINEL_BACKUP_FIELD } from "./hosted-autonomy-backup-ci-read.ts";
 import type { HostedTreeChangeV1 } from "./hosted-autonomy-github-trees.ts";
-import type { HostedAutonomyGitHubV1 } from "./hosted-autonomy-types.ts";
+import type {
+  HostedAutonomyGitHubV1,
+  HostedAutonomyRecordV1,
+} from "./hosted-autonomy-types.ts";
+import { issueAuthorAdmitted } from "../src/repair/issue-admission.ts";
 
 /** A launcher merge never lands a change Sentinel never merges itself. */
 export function touchesTargetProtected(
@@ -155,4 +165,37 @@ export async function protectedPathRefusal(
     paths,
     gate.baseBranch,
   );
+}
+
+/** The launcher admission gate's closed refusals. */
+export type SourceAdmissionRefusalV1 =
+  | "issue_not_admitted"
+  | "issue_author_unverified";
+
+/**
+ * Owner directive 2026-11-17 (`src/repair/issue-admission.ts`): Sentinel
+ * merges an issue's work only when the issue's author is the owner account
+ * (login and numeric id) or the Sentinel App. Read live with the
+ * author-carrying read (`readIssueFacts`); a surface without it, an
+ * unreadable or different issue refuses `issue_author_unverified` (no merge,
+ * the record waits), another author `issue_not_admitted`. A record without a
+ * source issue (an incident) is no issue's work and passes.
+ */
+export async function sourceAdmissionRefusal(
+  surface: HostedAutonomyGitHubV1 | null,
+  record: Pick<HostedAutonomyRecordV1, "related">,
+): Promise<SourceAdmissionRefusalV1 | null> {
+  const number = record.related.issueNumber;
+  if (number === null) return null;
+  const read = surface?.readIssueFacts;
+  if (surface === null || read === undefined) return "issue_author_unverified";
+  try {
+    const issue = await read.call(surface, number);
+    if (issue === null || issue.number !== number) {
+      return "issue_author_unverified";
+    }
+    return issueAuthorAdmitted(issue) ? null : "issue_not_admitted";
+  } catch {
+    return "issue_author_unverified";
+  }
 }

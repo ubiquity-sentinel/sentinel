@@ -1,3 +1,4 @@
+import type { HostedIssueFactsV1 } from "../../ops/hosted-autonomy-issue-facts.ts";
 import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import { MemoryState } from "../repair/helpers.ts";
 import { CONTROLLER } from "./controller-identity-fixture.ts";
@@ -341,6 +342,10 @@ export async function makeRig(
     defaultBranch?: string | null;
     issueOpen?: boolean | null;
     /** Trusted source-issue statement override, e.g. for body drift. */
+    /** The source issue's facts (default: the owner's, admitted). */
+    issueFacts?: (
+      number: number,
+    ) => Partial<HostedIssueFactsV1> | null;
     issueTask?: (
       number: number,
     ) => Promise<ReviewTaskStatementV1 | null>;
@@ -503,6 +508,8 @@ export async function makeRig(
           ? taskFor(number)
           : options.issueTask(number),
       ),
+    readIssueFacts: (number: number) =>
+      Promise.resolve(ownerIssueFacts(number, options.issueFacts)),
     listParkedRuns: () => Promise.resolve([]),
     approveRun: () => Promise.resolve(true),
     merge: () => {
@@ -543,4 +550,22 @@ export async function readRequests(rig: RigV1) {
   const read = await rig.state.readRepair();
   if (!read.ok || read.value.status !== "found") throw new Error("unreadable");
   return read.value.snapshot.releaseRequests;
+}
+
+/** The admitted owner's source issue, unless a case overrides its facts. */
+export function ownerIssueFacts(
+  number: number,
+  override?: (number: number) => Partial<HostedIssueFactsV1> | null,
+): HostedIssueFactsV1 | null {
+  const facts = override === undefined
+    ? { author: "0x4007", authorId: 4975670 }
+    : override(number);
+  return facts === null ? null : {
+    number,
+    title: `issue ${number}`,
+    body: "",
+    state: "open",
+    author: null,
+    ...facts,
+  };
 }

@@ -66,7 +66,7 @@ const SKIPPED = [
 
 /** The expectation a reference merged pull request's names give. */
 function reference(...names: string[]): CiExpectationV1 {
-  return { kind: "reference", head: SHA1, names };
+  return { kind: "reference", heads: [SHA1], names };
 }
 
 Deno.test("success rule: only GitHub Actions jobs count, and every reference job must pass on the head", () => {
@@ -167,7 +167,7 @@ function reads(
 Deno.test("success rule (review probe A/A2): a push-only deploy job the base passes is not expected on a pull request head", async () => {
   // Base (push): test + deploy; the last merged pull request head: test.
   const expectation = await readCiExpectation(
-    reads({ heads: [M1], complete: false }, {
+    reads({ heads: [M1], complete: true }, {
       [M1]: ["test"],
       [SHA1]: ["deploy", "test"],
     }),
@@ -175,7 +175,7 @@ Deno.test("success rule (review probe A/A2): a push-only deploy job the base pas
   );
   assert.deepEqual(expectation, {
     kind: "reference",
-    head: M1,
+    heads: [M1],
     names: ["test"],
   });
   for (
@@ -196,7 +196,7 @@ Deno.test("success rule (review probe B/B2): pull-request-only CI or a skipped/s
   // commit status only); the merged pull requests' heads have the tests.
   for (const base of [[], null] as const) {
     const expectation = await readCiExpectation(
-      reads({ heads: [M1, M2], complete: false }, {
+      reads({ heads: [M1, M2], complete: true }, {
         [M1]: [],
         [M2]: ["lint", "test"],
         ...(base === null ? {} : { [SHA1]: base }),
@@ -205,7 +205,7 @@ Deno.test("success rule (review probe B/B2): pull-request-only CI or a skipped/s
     );
     assert.deepEqual(expectation, {
       kind: "reference",
-      head: M2,
+      heads: [M1, M2],
       names: ["lint", "test"],
     });
     assert.equal(
@@ -422,4 +422,39 @@ Deno.test("success rule: at the merge gate a reviewed workflow head merges only 
       await rig.ctx.cleanup();
     }
   }
+});
+
+Deno.test("success rule (third review C): the expected set unites the five most recent merges, so a docs-only last merge cannot shrink it", async () => {
+  // The last merged pull request was docs-only (path filters ran only lint);
+  // the one before ran test and lint. The head dropped test.
+  const expectation = await readCiExpectation(
+    reads({ heads: [M1, M2], complete: true }, {
+      [M1]: ["lint"],
+      [M2]: ["lint", "test"],
+    }),
+    SHA1,
+  );
+  assert.deepEqual(expectation, {
+    kind: "reference",
+    heads: [M1, M2],
+    names: ["lint", "test"],
+  });
+  assert.equal(ciExpectationSatisfied(expectation, ["lint"]), false);
+  assert.equal(ciExpectationSatisfied(expectation, ["lint", "test"]), true);
+  // Five merges walked, every name any of them passed is expected.
+  const seen: string[] = [];
+  const five = await readCiExpectation(
+    reads({ heads: [M1, M2, M3, M4, M5], complete: false }, {
+      [M1]: ["lint"],
+      [M3]: ["e2e"],
+      [M5]: ["test"],
+    }, seen),
+    SHA1,
+  );
+  assert.deepEqual(five, {
+    kind: "reference",
+    heads: [M1, M2, M3, M4, M5],
+    names: ["e2e", "lint", "test"],
+  });
+  assert.deepEqual(seen, [M1, M2, M3, M4, M5], "the base is not read");
 });
