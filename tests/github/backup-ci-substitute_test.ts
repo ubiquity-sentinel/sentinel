@@ -20,6 +20,7 @@ import {
 import {
   calibration,
   CHECK,
+  checkCalibration,
   commitFile,
   coverage,
   H,
@@ -82,6 +83,7 @@ function input(
     file: commitFile([result()]),
     suspensions: [],
     calibration: calibration(),
+    checks: checkCalibration(),
     excluded: { all: false, runnerIds: [] },
     ...over,
   };
@@ -309,15 +311,27 @@ Deno.test("an uncalibrated or suspended runner, or a wrong binding, gives none",
   ) {
     assert.deepEqual(conclusions(input({ suspensions: [s] })), [], s.scope);
   }
-  // Another runner's suspension, or another target's, does not apply.
+  // Another runner's suspension, or another target's operator suspension,
+  // does not apply here.
   assert.deepEqual(
     conclusions(input({
       suspensions: [
         suspension({ runnerIds: [RUNNER2] }),
-        suspension({ scope: "ubiquity/ai.ubq.fi" }),
+        suspension({ scope: "ubiquity/ai.ubq.fi", reason: "operator" }),
       ],
     })),
     [[102, "success"]],
+  );
+  // A false green on any target excludes the runner everywhere (review
+  // MUST 1): the reader reports it in `excluded`.
+  assert.deepEqual(
+    conclusions(input({ excluded: { all: false, runnerIds: [RUNNER] } })),
+    [],
+  );
+  // Calibrated pooled but not for this check: no stand-in (MUST 2).
+  assert.deepEqual(
+    conclusions(input({ checks: checkCalibration([{ checkName: "lint" }]) })),
+    [],
   );
   // A file of another repository id, even with that id's calibration.
   const otherId = input({

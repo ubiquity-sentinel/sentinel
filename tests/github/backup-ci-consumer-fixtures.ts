@@ -25,6 +25,7 @@ import {
 import {
   calibration,
   CHECK,
+  checkCalibration,
   H,
   NAME,
   OWNER,
@@ -117,6 +118,7 @@ export function okRead(
   over: {
     suspensions?: BackupCiSuspensionV1[];
     calibration?: BackupCiCalibrationV1 | null;
+    checks?: ReturnType<typeof checkCalibration> | null;
     excluded?: { all: boolean; runnerIds: string[] };
   } = {},
 ): BackupCiReadV1 {
@@ -127,6 +129,7 @@ export function okRead(
     calibration: over.calibration === undefined
       ? calibration()
       : over.calibration,
+    checks: over.checks === undefined ? checkCalibration() : over.checks,
     excluded: over.excluded ?? { all: false, runnerIds: [] },
     tip: "e".repeat(40) as GitSha,
   };

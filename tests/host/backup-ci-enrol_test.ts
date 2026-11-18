@@ -16,6 +16,7 @@ import type { BackupCiTargetReadsV1 } from "../../ops/backup-ci-plan-reads.ts";
 import {
   calibration,
   CHECK,
+  checkCalibration,
   commitFile,
   H,
   NAME,
@@ -127,6 +128,7 @@ Deno.test("the stand-in rule binds an enrolled row to its calibration's id", () 
     statusContexts: new Set<string>(),
     file: commitFile([result()]),
     suspensions: [],
+    checks: checkCalibration(),
     excluded: { all: false, runnerIds: [] },
   };
   const bound = selectBackupStandIns({

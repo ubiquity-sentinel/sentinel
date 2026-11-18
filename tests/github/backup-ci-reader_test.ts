@@ -15,6 +15,7 @@ import {
   backupCiCommitPath,
   backupCiSuspensionPath,
 } from "../../src/contracts/backup-ci.ts";
+import { backupCiCheckCalibrationPath } from "../../src/contracts/backup-ci-trust.ts";
 import type { RepositoryIdentityV1 } from "../../src/contracts/shared.ts";
 import {
   type BackupCiReaderV1,
@@ -23,6 +24,7 @@ import {
 import { DenoGitRunner, type GitRunnerV1 } from "../../src/state/state-git.ts";
 import {
   calibration,
+  checkCalibration,
   commitFile,
   H,
   NAME,
@@ -30,6 +32,7 @@ import {
   OWNER,
   REPO_ID,
   result,
+  RUNNER,
   RUNNER2,
   suspension,
   T0,
@@ -145,6 +148,8 @@ Deno.test("an absent branch, or an absent file, reads as nothing", async () => {
       file: null,
       suspensions: [],
       calibration: null,
+      checks: null,
+      excluded: { all: false, runnerIds: [] },
       tip: null,
     });
     const tip = await s.publish({ "README.md": "store\n" });
@@ -154,6 +159,8 @@ Deno.test("an absent branch, or an absent file, reads as nothing", async () => {
       file: null,
       suspensions: [],
       calibration: null,
+      checks: null,
+      excluded: { all: false, runnerIds: [] },
       tip,
     });
   } finally {
@@ -172,6 +179,7 @@ Deno.test("the reader returns the commit file, suspensions and calibration", asy
       [backupCiSuspensionPath()]: global,
       [backupCiSuspensionPath(OWNER, NAME)]: local,
       [backupCiCalibrationPath(OWNER, NAME)]: calibration(),
+      [backupCiCheckCalibrationPath(OWNER, NAME)]: checkCalibration(),
     });
     const read = await reader(s, { t: T0 }).read(REPOSITORY, H);
     assert.deepEqual(read, {
@@ -179,6 +187,10 @@ Deno.test("the reader returns the commit file, suspensions and calibration", asy
       file,
       suspensions: [global, local],
       calibration: calibration(),
+      checks: checkCalibration(),
+      // Both suspensions are false greens: their runners are excluded on
+      // every target (review MUST 1), whatever the suspension's scope.
+      excluded: { all: false, runnerIds: [RUNNER, RUNNER2].sort() },
       tip,
     });
   } finally {

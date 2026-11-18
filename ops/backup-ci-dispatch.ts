@@ -35,6 +35,12 @@ import {
   mergeCalibration,
   mergeSuspension,
 } from "../src/github/backup-ci-store.ts";
+import {
+  backupCiCheckCalibrationPath,
+  type BackupCiCheckCalibrationV1,
+  parseBackupCiCheckCalibration,
+} from "../src/contracts/backup-ci-trust.ts";
+import { mergeCheckCalibration } from "../src/github/backup-ci-check-store.ts";
 import type { BackupCiPassFileV1 } from "./backup-ci-pass.ts";
 import {
   type BackupCiApiV1,
@@ -215,7 +221,32 @@ export async function backupCiStoreChanges(
       now,
     );
     changes.set(path, merged.calibration);
-    if (merged.disagreements.length === 0) continue;
+    // The per-check ledger (review MUST 2) counts the same comparisons per
+    // (runner, context, path, check); its disagreements suspend as well.
+    const checksPath = backupCiCheckCalibrationPath(
+      repository.owner,
+      repository.name,
+    );
+    const checks = mergeCheckCalibration(
+      await current(
+        view,
+        checksPath,
+        parseBackupCiCheckCalibration,
+      ) as BackupCiCheckCalibrationV1 | null,
+      repository,
+      comparisons,
+      now,
+    );
+    if (checks !== null) changes.set(checksPath, checks.checks);
+    const disagreements = [
+      ...merged.disagreements,
+      ...(checks?.disagreements ?? []),
+    ].filter((d, i, all) =>
+      all.findIndex((e) =>
+        e.kind === d.kind && e.comparison.receipt === d.comparison.receipt
+      ) === i
+    );
+    if (disagreements.length === 0) continue;
     const scope = `${repository.owner}/${repository.name}` as const;
     const suspensionPath = backupCiSuspensionPath(
       repository.owner,
@@ -228,7 +259,7 @@ export async function backupCiStoreChanges(
     ) as
       | BackupCiSuspensionV1
       | null;
-    for (const disagreement of merged.disagreements) {
+    for (const disagreement of disagreements) {
       const { comparison } = disagreement;
       suspension = mergeSuspension(suspension, {
         scope,

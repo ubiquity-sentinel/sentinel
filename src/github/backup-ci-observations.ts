@@ -373,6 +373,7 @@ export async function selectBackupCiForCommit(
       file,
       suspensions: input.store.suspensions,
       calibration: input.store.calibration,
+      checks: input.store.checks,
       excluded: input.store.excluded,
     }),
   };

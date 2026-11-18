@@ -35,8 +35,11 @@ import {
 import {
   BACKUP_CI_NOTHING_EXCLUDED,
   BACKUP_CI_TRUST_FILE_RE,
+  backupCiCheckCalibrationPath,
+  type BackupCiCheckCalibrationV1,
   backupCiExcludedRunners,
   type BackupCiExcludedRunnersV1,
+  parseBackupCiCheckCalibration,
 } from "../contracts/backup-ci-trust.ts";
 import type { Clock } from "../contracts/ports.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
@@ -48,6 +51,8 @@ export type BackupCiReadV1 =
     file: BackupCiCommitFileV1 | null;
     suspensions: BackupCiSuspensionV1[];
     calibration: BackupCiCalibrationV1 | null;
+    /** The target's per-check calibration (`checks.json`), or null. */
+    checks: BackupCiCheckCalibrationV1 | null;
     /** Runners a false green on any target excludes (`backup-ci-trust.ts`). */
     excluded: BackupCiExcludedRunnersV1;
     /** The store tip read; null when the branch does not exist. */
@@ -133,6 +138,7 @@ class BackupCiStoreReader implements BackupCiReaderV1 {
         file: null,
         suspensions: [],
         calibration: null,
+        checks: null,
         excluded: BACKUP_CI_NOTHING_EXCLUDED,
         tip: null,
       };
@@ -147,9 +153,10 @@ class BackupCiStoreReader implements BackupCiReaderV1 {
       backupCiSuspensionPath(),
       backupCiSuspensionPath(owner, name),
       backupCiCalibrationPath(owner, name),
+      backupCiCheckCalibrationPath(owner, name),
     ]);
     if (!Array.isArray(reads)) return reads;
-    const [file, global, local, calibration] = reads;
+    const [file, global, local, calibration, checks] = reads;
     try {
       const parsedFile = file === null ? null : parseBackupCiCommitFile(file);
       const suspensions = [global, local].map((value) =>
@@ -158,6 +165,9 @@ class BackupCiStoreReader implements BackupCiReaderV1 {
       const parsedCalibration = calibration === null
         ? null
         : parseBackupCiCalibration(calibration);
+      const parsedChecks = checks === null
+        ? null
+        : parseBackupCiCheckCalibration(checks);
       // An enrolled row without a committed id binds the id the store's
       // calibration file pinned. Without that file nothing binds (and no
       // runner is calibrated), so the commit file reads as absent.
@@ -175,11 +185,15 @@ class BackupCiStoreReader implements BackupCiReaderV1 {
       if (parsedCalibration !== null && !binds(parsedCalibration.repository)) {
         return invalid("backup CI calibration does not bind its path");
       }
+      if (parsedChecks !== null && !binds(parsedChecks.repository)) {
+        return invalid("backup CI check calibration does not bind its path");
+      }
       return {
         kind: "ok",
         file: pinned === null ? null : parsedFile,
         suspensions: suspensions.filter((s) => s !== null),
         calibration: parsedCalibration,
+        checks: parsedChecks,
         excluded,
         tip,
       };
@@ -313,6 +327,7 @@ class BackupCiStoreReader implements BackupCiReaderV1 {
     if (!listed.ok) return unavailable("backup CI store tree is unreadable");
     const suspensions: BackupCiSuspensionV1[] = [];
     const calibrations: BackupCiCalibrationV1[] = [];
+    const checks: BackupCiCheckCalibrationV1[] = [];
     for (const line of listed.stdout.split("\n")) {
       const match = /^(\d{6}) (\w+) ([0-9a-f]{40})\t(.+)$/.exec(line);
       if (match === null || !BACKUP_CI_TRUST_FILE_RE.test(match[4])) continue;
@@ -328,12 +343,14 @@ class BackupCiStoreReader implements BackupCiReaderV1 {
       try {
         if (match[4].endsWith("suspended.json")) {
           suspensions.push(parseBackupCiSuspension(blob.value));
+        } else if (match[4].endsWith("checks.json")) {
+          checks.push(parseBackupCiCheckCalibration(blob.value));
         } else calibrations.push(parseBackupCiCalibration(blob.value));
       } catch {
         return invalid("backup CI trust file does not parse");
       }
     }
-    const value = backupCiExcludedRunners(suspensions, calibrations);
+    const value = backupCiExcludedRunners(suspensions, calibrations, checks);
     this.exclusionMemo = { tip, value };
     return value;
   }

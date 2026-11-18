@@ -22,8 +22,10 @@ import {
 } from "../src/contracts/backup-ci.ts";
 import {
   BACKUP_CI_TRUST_FILE_RE,
+  type BackupCiCheckCalibrationV1,
   backupCiExcludedRunners,
   type BackupCiExcludedRunnersV1,
+  parseBackupCiCheckCalibration,
 } from "../src/contracts/backup-ci-trust.ts";
 import type { BackupCiTargetReadsV1 } from "./backup-ci-plan-reads.ts";
 
@@ -38,9 +40,15 @@ export async function readBackupCiExclusion(store: {
 }): Promise<BackupCiExcludedRunnersV1> {
   const suspensions: BackupCiSuspensionV1[] = [];
   const calibrations: BackupCiCalibrationV1[] = [];
+  const checks: BackupCiCheckCalibrationV1[] = [];
   const kinds = [
     ["sentinel_backup_ci_suspension", suspensions, parseBackupCiSuspension],
     ["sentinel_backup_ci_calibration", calibrations, parseBackupCiCalibration],
+    [
+      "sentinel_backup_ci_check_calibration",
+      checks,
+      parseBackupCiCheckCalibration,
+    ],
   ] as const;
   for (const [kind, out, parse] of kinds) {
     for (
@@ -51,7 +59,7 @@ export async function readBackupCiExclusion(store: {
       if (value !== null) (out as unknown[]).push(parse(value as never));
     }
   }
-  return backupCiExcludedRunners(suspensions, calibrations);
+  return backupCiExcludedRunners(suspensions, calibrations, checks);
 }
 
 /** A target whose repository id is known for this pass. */

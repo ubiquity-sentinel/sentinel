@@ -44,7 +44,9 @@ import type {
   GitHubCheckV1,
 } from "../contracts/ports-github-requests.ts";
 import {
+  type BackupCiCheckCalibrationV1,
   type BackupCiExcludedRunnersV1,
+  isBackupCiCheckCalibrated,
   isBackupCiRunnerExcluded,
 } from "../contracts/backup-ci-trust.ts";
 import { trustedCheckName } from "../repair/ci-rejection.ts";
@@ -82,6 +84,8 @@ export interface BackupCiSelectInputV1 {
   file: BackupCiCommitFileV1 | null;
   suspensions: BackupCiSuspensionV1[];
   calibration: BackupCiCalibrationV1 | null;
+  /** Per-check calibration: an entry needs its own (context, path, name). */
+  checks: BackupCiCheckCalibrationV1 | null;
   /** Runners a false green on any target excludes (never usable). */
   excluded: BackupCiExcludedRunnersV1;
 }
@@ -170,9 +174,13 @@ export function selectBackupStandIns(
   const calibration = input.calibration?.repository.id === pinned
     ? input.calibration
     : null;
+  const checks = input.checks?.repository.id === pinned ? input.checks : null;
+  // The pooled gate stays (older meaning, false reds across checks); the
+  // per-check gate binds calibration to exactly what the entry stands in for.
   const usable = (entry: BackupCiEntryV1) =>
     !isBackupCiRunnerExcluded(input.excluded, entry.runnerId) &&
     isBackupCiCalibrated(calibration, entry.runnerId) &&
+    isBackupCiCheckCalibrated(checks, entry.runnerId, entry.key) &&
     !isBackupCiSuspended(input.suspensions, target.repository, entry.runnerId);
   const suites = new Map(input.suites.map((s) => [s.suiteId, s]));
   const allIds = new Set(input.all.map((o) => o.checkRunId));
@@ -279,13 +287,28 @@ export function selectBackupStandIns(
     }
     if (standIns.length !== latest.length) {
       // Visible cause: receipts exist, but only from runners a false green
-      // excludes everywhere (`backup-ci-trust.ts`).
-      const excludedOnly = file.entries.some((e) =>
+      // excludes everywhere, or not calibrated for this very check.
+      const receipts = file.entries.filter((e) =>
         e.state === "result" && e.key.workflowPath === path &&
-        e.key.checkName === checkName &&
-        isBackupCiRunnerExcluded(input.excluded, e.runnerId)
+        e.key.checkName === checkName
       );
-      refuse(excludedOnly ? "runner_excluded" : "unresolved");
+      const excludedOnly = receipts.length > 0 &&
+        receipts.every((e) =>
+          isBackupCiRunnerExcluded(input.excluded, e.runnerId)
+        );
+      const uncalibrated = receipts.length > 0 && !excludedOnly &&
+        receipts.every((e) =>
+          isBackupCiRunnerExcluded(input.excluded, e.runnerId) ||
+          !isBackupCiCheckCalibrated(checks, e.runnerId, e.key) ||
+          !isBackupCiCalibrated(calibration, e.runnerId)
+        );
+      refuse(
+        excludedOnly
+          ? "runner_excluded"
+          : uncalibrated
+          ? "uncalibrated"
+          : "unresolved",
+      );
       continue;
     }
     for (const standIn of standIns) {

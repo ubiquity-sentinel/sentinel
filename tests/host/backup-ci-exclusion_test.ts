@@ -23,6 +23,7 @@ import { readBackupCiExclusion } from "../../ops/backup-ci-enrol.ts";
 import {
   calibration,
   CHECK,
+  checkCalibration,
   commitFile,
   H,
   key,
@@ -92,6 +93,7 @@ Deno.test("an excluded runner calibrated on another target stands in for nothing
     file: otherFile,
     suspensions: [],
     calibration: otherCalibration,
+    checks: checkCalibration(undefined, { ...OTHER }),
   };
   // Without the rule this runner stood in on Prospector despite Passport's
   // false green (the reviewer's MUST 1).

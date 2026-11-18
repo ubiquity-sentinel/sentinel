@@ -23,6 +23,7 @@ import {
   type BackupCiUnitV1,
   type BackupCiWorkflowCoverageV1,
 } from "../../src/contracts/backup-ci.ts";
+import type { BackupCiCheckCalibrationV1 } from "../../src/contracts/backup-ci-trust.ts";
 
 export const OWNER = "ubiquity";
 export const NAME = "passport.ubq.fi";
@@ -313,6 +314,45 @@ export function calibration(
       falseGreens: r.falseGreens ?? 0,
       falseReds: 0,
       samples: [],
+    })),
+    updatedAt: T0,
+  };
+}
+
+/**
+ * A per-check calibration where each row passes the gate for CHECK on
+ * WORKFLOW (default: both contexts; 4 green and 1 red distinct commits).
+ */
+export function checkCalibration(
+  rows: {
+    runnerId?: string;
+    context?: "push" | "pull_request";
+    checkName?: string;
+    workflowPath?: string;
+    greens?: number;
+    reds?: number;
+    falseGreens?: number;
+  }[] = [{ context: "push" }, { context: "pull_request" }],
+  repository = { ...REPOSITORY },
+): BackupCiCheckCalibrationV1 {
+  const commit = (n: number) => n.toString(16).padStart(40, "0") as GitSha;
+  return {
+    version: 1,
+    kind: "sentinel_backup_ci_check_calibration",
+    repository,
+    rows: rows.map((r) => ({
+      runnerId: r.runnerId ?? RUNNER,
+      context: r.context ?? "push",
+      workflowPath: r.workflowPath ?? WORKFLOW,
+      checkName: r.checkName ?? CHECK,
+      greens: Array.from(
+        { length: r.greens ?? 4 },
+        (_, i) => commit(0x100 + i),
+      ),
+      reds: Array.from({ length: r.reds ?? 1 }, (_, i) => commit(0x200 + i)),
+      falseGreens: r.falseGreens ?? 0,
+      falseReds: 0,
+      disputed: [],
     })),
     updatedAt: T0,
   };

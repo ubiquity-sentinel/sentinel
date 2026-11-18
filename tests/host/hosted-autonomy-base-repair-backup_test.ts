@@ -16,6 +16,7 @@ import type { GitSha } from "../../src/contracts/brands.ts";
 import type { BackupCiReadV1 } from "../../src/github/backup-ci-reader.ts";
 import {
   calibration,
+  checkCalibration,
   commitFile,
   coverage,
   key,
@@ -64,6 +65,8 @@ const CONFIRMED_RED = [
   result(key({ attempt: 2 }), { conclusion: "failure", commit: HEAD }),
 ];
 const CALIBRATED = { ...calibration(), repository: BOUND };
+// Calibrated for this very check too (review MUST 2: per-check gate).
+const CHECKS = checkCalibration(undefined, BOUND);
 
 async function withFetch<T>(body: () => Promise<T>): Promise<T> {
   const original = globalThis.fetch;
@@ -151,7 +154,7 @@ async function pass(label: string, read: BackupCiReadV1) {
 Deno.test("base repair backup: a calibrated, confirmed backup red on the tip files its issue", async () => {
   const { actions, filed } = await pass(
     "red",
-    okRead(file(CONFIRMED_RED), { calibration: CALIBRATED }),
+    okRead(file(CONFIRMED_RED), { calibration: CALIBRATED, checks: CHECKS }),
   );
   assert.deepEqual(actions, ["base-repair:ubiquity/ai.ubq.fi:filed=#4242"]);
   assert.equal(filed.length, 1);
@@ -162,9 +165,12 @@ Deno.test("base repair backup: uncalibrated, provisional or missing backup evide
     ["uncal", okRead(file(CONFIRMED_RED), { calibration: null })],
     [
       "prov",
-      okRead(file([CONFIRMED_RED[0]]), { calibration: CALIBRATED }),
+      okRead(file([CONFIRMED_RED[0]]), {
+        calibration: CALIBRATED,
+        checks: CHECKS,
+      }),
     ],
-    ["none", okRead(null, { calibration: CALIBRATED })],
+    ["none", okRead(null, { calibration: CALIBRATED, checks: CHECKS })],
     ["outage", { kind: "unavailable", detail: "synthetic" }],
   ];
   for (const [label, read] of cases) {

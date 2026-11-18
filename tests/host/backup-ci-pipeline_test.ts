@@ -22,6 +22,8 @@ import {
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import { createBackupCiReader } from "../../src/github/backup-ci-reader.ts";
 import { mergeCalibration } from "../../src/github/backup-ci-store.ts";
+import { mergeCheckCalibration } from "../../src/github/backup-ci-check-store.ts";
+import { backupCiCheckCalibrationPath } from "../../src/contracts/backup-ci-trust.ts";
 import { selectBackupStandIns } from "../../src/github/backup-ci-substitute.ts";
 import { DenoGitRunner } from "../../src/state/state-git.ts";
 import {
@@ -525,6 +527,7 @@ Deno.test("plan, dispatch, leg, ingest, store: a receipt the stand-in rule accep
         file: read.file,
         suspensions: read.suspensions,
         calibration: read.calibration,
+        checks: read.checks,
         excluded: read.excluded,
       });
     };
@@ -559,6 +562,46 @@ Deno.test("plan, dispatch, leg, ingest, store: a receipt the stand-in rule accep
           new Map([[
             backupCiCalibrationPath("ubiquity", "passport.ubq.fi"),
             calibration,
+          ]]),
+        );
+      },
+    });
+    now += 11_000;
+    // Pooled agreements alone no longer calibrate a check (review MUST 2).
+    assert.equal((await select()).standIns.size, 0);
+    await writeBackupCiStore({
+      ...storeInput,
+      runId: 9003,
+      now: () => now,
+      mutate: () => {
+        const keyed = ["1", "2", "3", "4", "5"].map((c, i) => ({
+          runnerId: RUNNER,
+          sample: {
+            commit: c.repeat(40) as GitSha,
+            checkName: unit.key.checkName,
+            native: i === 0 ? "failure" : "success",
+            backup: (i === 0 ? "failure" : "success") as "failure" | "success",
+          },
+          nativeCheckRunId: 900 + i,
+          receipt: "bci1:x",
+          key: {
+            context: unit.key.context,
+            workflowPath: unit.key.workflowPath,
+            checkName: unit.key.checkName,
+            base: unit.key.base,
+          },
+          class: (i === 0 ? "red" : "green") as "red" | "green",
+        }));
+        const merged = mergeCheckCalibration(
+          null,
+          { owner: "ubiquity", name: "passport.ubq.fi", id: ID },
+          keyed,
+          now,
+        );
+        return Promise.resolve(
+          new Map([[
+            backupCiCheckCalibrationPath("ubiquity", "passport.ubq.fi"),
+            merged!.checks,
           ]]),
         );
       },

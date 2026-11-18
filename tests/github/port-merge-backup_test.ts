@@ -17,6 +17,7 @@ import {
   type BackupCiTargetV1,
 } from "../../src/contracts/backup-ci.ts";
 import { createBackupCiReader } from "../../src/github/backup-ci-reader.ts";
+import { backupCiCheckCalibrationPath } from "../../src/contracts/backup-ci-trust.ts";
 import { BoundedAnonymousGitRunner } from "../../src/host/backup-ci-compose.ts";
 import {
   checkRunWire,
@@ -42,6 +43,7 @@ import {
 } from "./merge-helpers.ts";
 import {
   calibration,
+  checkCalibration,
   commitFile,
   coverage,
   key,
@@ -75,6 +77,8 @@ const FILE = commitFile([result(key({ checkName: CI }), { commit: SHA1 })], {
   workflows: [coverage({ expected: [CI] })],
 });
 const CALIBRATION = { ...calibration(), repository: BOUND };
+// Calibrated for this very check (review MUST 2: per-check gate).
+const CHECKS = checkCalibration([{ checkName: CI, context: "push" }], BOUND);
 
 function ciRun(id: number) {
   return checkRunWire({
@@ -130,7 +134,7 @@ function script(
 
 Deno.test("merge port backup: a stand-in for a never-started required check merges the exact head", async () => {
   const reader = new FakeBackupCiReader(
-    () => okRead(FILE, { calibration: CALIBRATION }),
+    () => okRead(FILE, { calibration: CALIBRATION, checks: CHECKS }),
     [TARGET],
   );
   const { port, transport } = makePort({
@@ -158,7 +162,7 @@ Deno.test("merge port backup: a stand-in for a never-started required check merg
 
 Deno.test("merge port backup: a natively started attempt 1 under a never-started attempt 2 refuses", async () => {
   const reader = new FakeBackupCiReader(
-    () => okRead(FILE, { calibration: CALIBRATION }),
+    () => okRead(FILE, { calibration: CALIBRATION, checks: CHECKS }),
     [TARGET],
   );
   const { port, transport } = makePort({
@@ -182,6 +186,7 @@ Deno.test("merge port backup: a suspension written after a gate read refuses the
     await store.publish({
       [backupCiCommitPath(REPO.owner, REPO.name, SHA1)]: FILE,
       [backupCiCalibrationPath(REPO.owner, REPO.name)]: CALIBRATION,
+      [backupCiCheckCalibrationPath(REPO.owner, REPO.name)]: CHECKS,
     });
     const clock = new FakeClock(T0 + 200_000);
     const reader = createBackupCiReader({
