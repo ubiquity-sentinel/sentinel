@@ -134,6 +134,12 @@ const LEAF_NOTES: Partial<Record<Phase, string>> = {
  */
 const OWNER_GATES: ReadonlySet<string> = new Set([
   "impl.protected_path",
+  // The 2026-11-17 owner-action parks (each says "owner action required").
+  "adm.not_admitted",
+  "impl.untrusted_workflow",
+  "pub.workflows_permission",
+  "ci.workflow_success",
+  "merge.change_set_unreadable",
   "impl.admission_disabled",
   "impl.no_receipt@cap200",
   "rev.admission_refused",
