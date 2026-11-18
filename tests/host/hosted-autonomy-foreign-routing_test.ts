@@ -127,100 +127,112 @@ Deno.test(
   },
 );
 
+/**
+ * The REST surface of a reviewed, green foreign head whose source issue
+ * `issueUser` opened: every read, the merge and the closure are recorded in
+ * `requests`.
+ */
+function stubGreenForeign(
+  requests: { method: string; url: string }[],
+  issueUser: { readonly login: string; readonly id: number },
+): void {
+  let mergedNow = false;
+  globalThis.fetch = ((
+    input: string | URL | Request,
+    init?: RequestInit,
+  ) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    requests.push({ method, url });
+    if (!isForeignPath(url)) {
+      return Promise.resolve(new Response("{}", { status: 404 }));
+    }
+    if (method === "PUT" && url.endsWith(`/pulls/${FOREIGN_PR}/merge`)) {
+      mergedNow = true;
+      return Promise.resolve(jsonResponse({ merged: true, sha: MERGE }));
+    }
+    if (
+      method === "PATCH" && url.endsWith(`/issues/${SHARED_ISSUE_NUMBER}`)
+    ) {
+      return Promise.resolve(
+        jsonResponse({ state: "closed", number: SHARED_ISSUE_NUMBER }),
+      );
+    }
+    if (url.includes(`/pulls/${FOREIGN_PR}/files`)) {
+      // The merge gate's protected-path listing (issue #158).
+      return Promise.resolve(jsonResponse([
+        { filename: "README.md", status: "modified" },
+      ]));
+    }
+    if (url.includes(`/pulls/${FOREIGN_PR}`)) {
+      return Promise.resolve(jsonResponse(
+        mergedNow
+          ? {
+            state: "closed",
+            merged: true,
+            merge_commit_sha: MERGE,
+            head: { sha: HEAD },
+            base: { ref: FOREIGN_BRANCH },
+            user: { login: "ubiquity-sentinel[bot]" },
+            number: FOREIGN_PR,
+          }
+          : {
+            state: "open",
+            merged: false,
+            merge_commit_sha: null,
+            head: { sha: HEAD },
+            base: { ref: FOREIGN_BRANCH },
+            user: { login: "ubiquity-sentinel[bot]" },
+            number: FOREIGN_PR,
+          },
+      ));
+    }
+    // Each listing is bound to the commit it was asked for: the merge gate
+    // reads the head's runs and the reviewed base's (whose suites name the
+    // checks the head must report too).
+    const listed = /\/commits\/([0-9a-f]{40})\/check-runs/.exec(url)?.[1];
+    const payload = listed !== undefined
+      ? checkRunPage([
+        checkRun("validate", { head_sha: listed }),
+        checkRun("verify-artifact", { head_sha: listed }),
+      ], 2)
+      : url.includes("/commits/")
+      ? { parents: [{ sha: BASE }, { sha: HEAD }] }
+      : url.includes("/compare/")
+      ? {
+        status: "ahead",
+        base_commit: { sha: MERGE },
+        merge_base_commit: { sha: MERGE },
+      }
+      : url.includes("/git/ref/")
+      ? { ref: `refs/heads/${FOREIGN_BRANCH}`, object: { sha: BASE } }
+      : url.includes("/actions/runs")
+      ? { workflow_runs: [] }
+      : url.includes("/issues/")
+      ? {
+        state: "open",
+        number: SHARED_ISSUE_NUMBER,
+        title: FOREIGN_TASK_TITLE,
+        body: FOREIGN_TASK_BODY,
+        // Its author, as the launcher's live admission read parses it.
+        user: issueUser,
+      }
+      : {
+        default_branch: FOREIGN_BRANCH,
+        // The target forbids squash (#331): the merge keeps its commit.
+        allow_squash_merge: false,
+        allow_merge_commit: true,
+      };
+    return Promise.resolve(jsonResponse(payload));
+  }) as typeof fetch;
+}
+
 Deno.test(
   "hosted autonomy: a green foreign head merges and closes its own issue without a release",
   async () => {
     const requests: { method: string; url: string }[] = [];
     const original = globalThis.fetch;
-    let mergedNow = false;
-    globalThis.fetch = ((
-      input: string | URL | Request,
-      init?: RequestInit,
-    ) => {
-      const url = String(input);
-      const method = init?.method ?? "GET";
-      requests.push({ method, url });
-      if (!isForeignPath(url)) {
-        return Promise.resolve(new Response("{}", { status: 404 }));
-      }
-      if (method === "PUT" && url.endsWith(`/pulls/${FOREIGN_PR}/merge`)) {
-        mergedNow = true;
-        return Promise.resolve(jsonResponse({ merged: true, sha: MERGE }));
-      }
-      if (
-        method === "PATCH" && url.endsWith(`/issues/${SHARED_ISSUE_NUMBER}`)
-      ) {
-        return Promise.resolve(
-          jsonResponse({ state: "closed", number: SHARED_ISSUE_NUMBER }),
-        );
-      }
-      if (url.includes(`/pulls/${FOREIGN_PR}/files`)) {
-        // The merge gate's protected-path listing (issue #158).
-        return Promise.resolve(jsonResponse([
-          { filename: "README.md", status: "modified" },
-        ]));
-      }
-      if (url.includes(`/pulls/${FOREIGN_PR}`)) {
-        return Promise.resolve(jsonResponse(
-          mergedNow
-            ? {
-              state: "closed",
-              merged: true,
-              merge_commit_sha: MERGE,
-              head: { sha: HEAD },
-              base: { ref: FOREIGN_BRANCH },
-              user: { login: "ubiquity-sentinel[bot]" },
-              number: FOREIGN_PR,
-            }
-            : {
-              state: "open",
-              merged: false,
-              merge_commit_sha: null,
-              head: { sha: HEAD },
-              base: { ref: FOREIGN_BRANCH },
-              user: { login: "ubiquity-sentinel[bot]" },
-              number: FOREIGN_PR,
-            },
-        ));
-      }
-      // Each listing is bound to the commit it was asked for: the merge gate
-      // reads the head's runs and the reviewed base's (whose suites name the
-      // checks the head must report too).
-      const listed = /\/commits\/([0-9a-f]{40})\/check-runs/.exec(url)?.[1];
-      const payload = listed !== undefined
-        ? checkRunPage([
-          checkRun("validate", { head_sha: listed }),
-          checkRun("verify-artifact", { head_sha: listed }),
-        ], 2)
-        : url.includes("/commits/")
-        ? { parents: [{ sha: BASE }, { sha: HEAD }] }
-        : url.includes("/compare/")
-        ? {
-          status: "ahead",
-          base_commit: { sha: MERGE },
-          merge_base_commit: { sha: MERGE },
-        }
-        : url.includes("/git/ref/")
-        ? { ref: `refs/heads/${FOREIGN_BRANCH}`, object: { sha: BASE } }
-        : url.includes("/actions/runs")
-        ? { workflow_runs: [] }
-        : url.includes("/issues/")
-        ? {
-          state: "open",
-          number: SHARED_ISSUE_NUMBER,
-          title: FOREIGN_TASK_TITLE,
-          body: FOREIGN_TASK_BODY,
-          // The owner opened it: the launcher's admission read admits it.
-          user: OWNER_ISSUE_USER,
-        }
-        : {
-          default_branch: FOREIGN_BRANCH,
-          // The target forbids squash (#331): the merge keeps its commit.
-          allow_squash_merge: false,
-          allow_merge_commit: true,
-        };
-      return Promise.resolve(jsonResponse(payload));
-    }) as typeof fetch;
+    stubGreenForeign(requests, OWNER_ISSUE_USER);
     try {
       const { rig } = await makeRig("autonomy-foreign-green", {
         repair: repairSnapshot([foreignRecord()], [foreignReceipt()]),
@@ -267,6 +279,56 @@ Deno.test(
       await Deno.remove(rig.tmp, { recursive: true });
     } finally {
       globalThis.fetch = original;
+    }
+  },
+);
+
+Deno.test(
+  "hosted autonomy: a green foreign head of an issue the owner did not open never merges",
+  async (t) => {
+    // Owner directive 2026-11-17: the launcher reads the source issue's
+    // author live (login AND id) before every merge.
+    const authors = [
+      ["another author", { login: "outside-contributor", id: 1234567 }],
+      ["the owner's login on another account", {
+        login: OWNER_ISSUE_USER.login,
+        id: OWNER_ISSUE_USER.id + 1,
+      }],
+    ] as const;
+    for (const [name, user] of authors) {
+      await t.step(name, async () => {
+        const requests: { method: string; url: string }[] = [];
+        const original = globalThis.fetch;
+        stubGreenForeign(requests, user);
+        try {
+          const { rig } = await makeRig(
+            `autonomy-foreign-outsider-${user.id}`,
+            {
+              repair: repairSnapshot([foreignRecord()], [foreignReceipt()]),
+              resolver: (repository) =>
+                createHostedAutonomyGitHub(
+                  "fixture-token",
+                  repository,
+                  undefined,
+                  INACTIVE_CI_MINUTES,
+                ),
+            },
+          );
+          const result = await run(rig);
+          assert.ok(
+            result.actions.includes(
+              `delivery:${FOREIGN_TARGET}:issue_not_admitted`,
+            ),
+            JSON.stringify(result),
+          );
+          assert.deepEqual([...result.revisions], []);
+          // Neither a merge nor a closure was attempted.
+          assert.ok(!requests.some((entry) => entry.method !== "GET"));
+          await Deno.remove(rig.tmp, { recursive: true });
+        } finally {
+          globalThis.fetch = original;
+        }
+      });
     }
   },
 );
