@@ -907,6 +907,21 @@ export function makePort(
       ),
       repeat: true,
     },
+    // The merge executor's 2026-11-17 content gate reads the exact
+    // comparison: an ordinary fixture changes no protected or CI path.
+    ...[SHA1, SHA2, SHA3, SHA4].flatMap((base) =>
+      [SHA1, SHA2, SHA3, SHA4].filter((head) => head !== base).map((
+        head,
+      ) => ({
+        ...httpRespond(
+          "GET",
+          `/repos/${repository.owner}/${repository.name}/compare/${base}...${head}?per_page=1`,
+          200,
+          { files: [{ filename: "src/app.ts" }] },
+        ),
+        repeat: true,
+      }))
+    ),
   ]);
   const portOptions: GitHubPortOptionsV1 = {
     nativeQueue: options.nativeQueue === null

@@ -171,6 +171,48 @@ Deno.test("self merge ops: a change to what CI runs is still refused before any 
   }
 });
 
+Deno.test("self merge ops: a change to Sentinel's own authority files only its owner merges (2026-11-17)", async (t) => {
+  for (
+    const path of [
+      "src/repair/workflow-trust.ts",
+      "src/repair/issue-admission.ts",
+      "src/github/merge-content-gate.ts",
+      "src/github/port-self-merge.ts",
+      "ops/hosted-autonomy-pull-file-gates.ts",
+      "src/repair/loop-records.ts",
+      // A path no predicate can classify is never merged either.
+      "src/we\\ird.ts",
+    ]
+  ) {
+    await t.step(path, async () => {
+      await withRig({
+        ...LAUNCHER,
+        [path]: `weakened safeguard ${path}\n`,
+      }, async (rig) => {
+        const result = await rig.port.mergePullRequest(
+          rig.request,
+          rig.execution,
+        );
+        assert.deepEqual(result, {
+          ok: false,
+          error: {
+            kind: "invalid",
+            detail: "self merge protected path requires owner",
+          },
+        });
+        assert.equal(
+          mergeDetailCode("self merge protected path requires owner"),
+          "self_merge_protected_path",
+        );
+        assert.equal(rig.state.saved.length, 0);
+        assert.equal(rig.state.pushes.length, 0);
+        assert.deepEqual(await development(rig), { ok: true, value: rig.base });
+        assert.equal(rig.calls.some((c) => c.method !== "GET"), false);
+      });
+    });
+  }
+});
+
 /** The outcome and observable effects of one merge call under `arrange`. */
 async function refusal(
   candidate: Record<string, string> | undefined,

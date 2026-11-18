@@ -31,6 +31,8 @@ export const MERGE_DETAIL_CODES = [
   ["self merge object store is masked", "self_merge_object_store"],
   ["self merge commit malformed", "self_merge_commit_malformed"],
   ["self merge ref malformed", "self_merge_ref_malformed"],
+  // 2026-11-17: only the owner merges Sentinel's own protected change.
+  ["self merge protected path requires owner", "self_merge_protected_path"],
   ["native CI self scope mismatch", "self_merge_ci_scope"],
 ] as const;
 

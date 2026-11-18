@@ -12,14 +12,10 @@ import {
 import {
   isCiEvidenceCheck,
   isPassportDeployCheck,
-  isTargetCiSuccessCheck,
   selectMergeGateChecksV1,
 } from "./merge-gate-checks.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
-import {
-  hasTargetCiSuccess,
-  workflowSuccessRequired,
-} from "./ci-success-rule.ts";
+import { ciChangeSatisfied, headCiChange } from "./ci-success-rule.ts";
 import { routeFailedDeliveryChecks } from "./loop-ci-correction.ts";
 import { isSelfScopeZero } from "./loop-legacy-loss.ts";
 import { persistWork } from "./loop-state.ts";
@@ -62,15 +58,20 @@ const SELF_AGGREGATE_CHECK = "test-local";
  * head is tested against (`absentExpectedChecks`) before a "proceed" counts.
  *
  * `requireSuccess` (2026-11-17, a head that changes a CI-executable path,
- * `ci-success-rule.ts`): a head whose evidence is only skipped or neutral
- * jobs, or only backup-CI stand-ins, waits too; it proceeds only with at
- * least one job its own CI ran and passed (`isTargetCiSuccessCheck`). Every
- * caller that omits it decides exactly as before.
+ * `ci-success-rule.ts`): such a head waits unless GitHub Actions ran every
+ * job name it ran to success on `baseChecks` (the base's own checks) to
+ * success on this head too, or, when the base has none, at least one job
+ * (`ciChangeSatisfied`). Skipped, neutral, stand-in, status and other-app
+ * observations never count. Every caller that omits it decides exactly as
+ * before.
  */
 export function decideCiGate(
   checks: GitHubCheckV1[],
   repository?: Pick<RepositoryIdentityV1, "owner" | "name">,
-  options?: { readonly requireSuccess?: boolean },
+  options?: {
+    readonly requireSuccess?: boolean;
+    readonly baseChecks?: readonly GitHubCheckV1[];
+  },
 ): "proceed" | "wait" | { blocked: string } {
   const gating = selectMergeGateChecksV1(repository, checks).checks;
   if (gating.length === 0) return "wait";
@@ -95,17 +96,23 @@ export function decideCiGate(
   // before any `Gateway CI` run) waits exactly like a head with no checks.
   if (!deduped.some(isCiEvidenceCheck)) return "wait";
   if (
-    options?.requireSuccess === true && !deduped.some(isTargetCiSuccessCheck)
+    options?.requireSuccess === true &&
+    !ciChangeSatisfied(
+      gating,
+      selectMergeGateChecksV1(repository, options.baseChecks ?? []).checks,
+    )
   ) return "wait";
   return "proceed";
 }
 
 /**
  * `decideCiGate` for `record`'s own head under the 2026-11-17 success rule
- * (`ci-success-rule.ts`): a head that would proceed with no job its own CI
- * passed is judged with `requireSuccess` when it changes a CI-executable path
- * (one comparison read, only then; unreadable fails closed). Any other head,
- * and any head with such a job, gets exactly `decideCiGate`'s verdict.
+ * (`ci-success-rule.ts`): a head that would proceed and that one exact
+ * comparison shows changing a CI-executable path is judged with
+ * `requireSuccess` against its base's own checks (an unreadable base listing
+ * waits). A head the comparison shows unchanged, or cannot show at all,
+ * gets exactly `decideCiGate`'s verdict; the merge executors hold the
+ * unknown case fail closed.
  */
 export async function decideHeadCiGate(
   deps: Pick<RepairCycleDepsV1, "github">,
@@ -114,12 +121,14 @@ export async function decideHeadCiGate(
   repository?: Pick<RepositoryIdentityV1, "owner" | "name">,
 ): Promise<"proceed" | "wait" | { blocked: string }> {
   const decision = decideCiGate(checks, repository);
-  if (
-    decision !== "proceed" ||
-    hasTargetCiSuccess(selectMergeGateChecksV1(repository, checks).checks) ||
-    !await workflowSuccessRequired(deps, record)
-  ) return decision;
-  return decideCiGate(checks, repository, { requireSuccess: true });
+  if (decision !== "proceed") return decision;
+  if (await headCiChange(deps, record) !== "ci") return decision;
+  const base = await readCiChecks(deps.github, record.target.base);
+  if (!base.ok) return "wait";
+  return decideCiGate(checks, repository, {
+    requireSuccess: true,
+    baseChecks: base.value.checks,
+  });
 }
 
 /**

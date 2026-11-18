@@ -11,11 +11,15 @@ import type {
 } from "../contracts/self-merge.ts";
 import { parseSelfMergeProof } from "../contracts/self-merge.ts";
 import { SELF_MERGE_TRUSTED_PIPELINE } from "./self-merge-git.ts";
+import { neverMergedChange } from "./merge-content-gate.ts";
 import type { GitExecutorV1 } from "./git-executor.ts";
 import type { GitHubApiClient } from "./client.ts";
 import type { Clock } from "../contracts/ports.ts";
+import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 
 export interface SelfMergeControllerV1 {
+  /** The port's own repository (its never-merge verdict's policy). */
+  repository: RepositoryIdentityV1;
   client: GitHubApiClient;
   git: GitExecutorV1;
   clock: Clock;
@@ -138,6 +142,26 @@ export async function executeSelfMerge(
         "invalid",
         "self merge tested tree or trusted source mismatch",
       );
+    }
+    // 2026-11-17: Sentinel never merges what only its owner merges
+    // (`sentinelNeverMerges`: its authority files, any `.github/` path, which
+    // the pipeline pin above also refuses, or a path no predicate can
+    // classify), read from the local `base..head` tree diff. Checked until
+    // the source write: a proof past it settles a merge already on the base.
+    if (
+      proof === null || proof.stage === "prepared" ||
+      proof.stage === "preserved"
+    ) {
+      const changed = await g.changedPaths?.(
+        request.expectedBase,
+        request.expectedHead,
+      );
+      if (changed === undefined || !changed.ok) {
+        return portError("unavailable", "self merge change set unavailable");
+      }
+      if (neverMergedChange(io.repository, changed.value)) {
+        return portError("invalid", "self merge protected path requires owner");
+      }
     }
     if (proof === null) {
       const auth = await io.authorize(false);

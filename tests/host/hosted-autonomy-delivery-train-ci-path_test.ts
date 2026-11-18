@@ -44,7 +44,7 @@ Deno.test("train: a member that changes a workflow leaves the train for the per-
     ...base,
     listPullFiles: (number: number) =>
       Promise.resolve(files.get(number) ?? null),
-    hasTargetCiSuccess: () => Promise.resolve(true),
+    targetCiSuccessNames: () => Promise.resolve(["test"]),
   };
   try {
     const { actions } = await run(rig, surface, {

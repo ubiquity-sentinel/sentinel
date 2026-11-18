@@ -268,8 +268,9 @@ Deno.test("carried merge (launcher): nothing short of the full proof merges", as
       "protected_path",
     ],
     [
-      // 2026-11-17: a workflow change needs a job its own CI passed; this
-      // surface proves none (no `hasTargetCiSuccess`), so it fails closed.
+      // 2026-11-17: a workflow change needs every base Actions job passing
+      // on its head; this surface proves none (no `targetCiSuccessNames`),
+      // so it fails closed.
       "workflow change without a passing job",
       refreshed618(),
       {},

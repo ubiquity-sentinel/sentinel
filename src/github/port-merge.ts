@@ -11,6 +11,7 @@ import { mergeLanding, queueMayHaveMerged } from "../repair/merge-off-tip.ts";
 import type { GitHubEffectiveProtectionsV1 } from "./port-contracts.ts";
 import type { TakeoverEffectAuthorization } from "../contracts/existing-pr-takeover.ts";
 import { executeSelfMerge } from "./port-self-merge.ts";
+import { mergeContentRefusal } from "./merge-content-gate.ts";
 import { decideCiGate } from "../repair/loop-checks.ts";
 import { tryParse } from "../contracts/validation.ts";
 import {
@@ -78,6 +79,7 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
       if (!custody.ok) return custody;
       return await executeSelfMerge(
         {
+          repository: this.repository,
           client: this.client,
           git: this.git,
           clock: this.clock,
@@ -190,6 +192,19 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
     }
     if (checkState === "failed") {
       return blocked("checks_failed", pull.value.head);
+    }
+    // 2026-11-17: the executor's own content gate (`merge-content-gate.ts`):
+    // no unprotected caller is the only barrier. The native self merge
+    // applies the same never-merge verdict itself, after its pipeline pin.
+    if (!conditionalSelf) {
+      const content = await mergeContentRefusal(
+        this.client,
+        this.repository,
+        merge.expectedBase,
+        merge.expectedHead,
+        checks.value.checks,
+      );
+      if (content !== null) return blocked(content, pull.value.head);
     }
     // 6. Required GitHub approvals (distinct from the review receipt). The
     // REST pull response does not carry the authoritative approval state;

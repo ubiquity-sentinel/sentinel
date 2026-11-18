@@ -75,11 +75,7 @@ import {
 } from "./ci-first-policy.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
 import { absentExpectedChecks, decideCiGate } from "./loop-checks.ts";
-import {
-  hasTargetCiSuccess,
-  WORKFLOW_CI_SUCCESS_DETAIL,
-  workflowSuccessRequired,
-} from "./ci-success-rule.ts";
+import { headCiChange, WORKFLOW_CI_SUCCESS_DETAIL } from "./ci-success-rule.ts";
 import { selectMergeGateChecksV1 } from "./merge-gate-checks.ts";
 import {
   observeHeadFailure,
@@ -284,21 +280,30 @@ export async function gateReviewOnCi(
   const checks = observed.value.checks;
   const gating = selectMergeGateChecksV1(record.repository, checks).checks;
   const decision = decideCiGate(gating);
-  // 2026-11-17: no review round is spent on a head that changes a
-  // CI-executable path while its own (modified) CI ran no job to success; it
-  // waits like running CI and parks with its own reason after the bound.
+  // 2026-11-17: no review round is spent on a head one exact comparison shows
+  // changing a CI-executable path while its own (modified) CI did not run
+  // every job its base passes to success; it waits like running CI and parks
+  // with its own reason after the bound. An unreadable comparison decides as
+  // before (the merge executors hold that case fail closed).
   if (
-    decision === "proceed" && !hasTargetCiSuccess(gating) &&
-    await workflowSuccessRequired(deps, record)
+    decision === "proceed" && await headCiChange(deps, record) === "ci"
   ) {
-    return awaitChecks(
-      deps,
-      context,
-      record,
-      [],
-      now,
-      () => WORKFLOW_CI_SUCCESS_DETAIL,
-    );
+    const base = await readCiChecks(deps.github, record.target.base);
+    if (!base.ok) return UNAVAILABLE;
+    const verdict = decideCiGate(gating, record.repository, {
+      requireSuccess: true,
+      baseChecks: base.value.checks,
+    });
+    if (verdict === "wait") {
+      return awaitChecks(
+        deps,
+        context,
+        record,
+        [],
+        now,
+        () => WORKFLOW_CI_SUCCESS_DETAIL,
+      );
+    }
   }
   if (decision === "proceed") {
     // Every existing run is green; the jobs GitHub has not created yet are

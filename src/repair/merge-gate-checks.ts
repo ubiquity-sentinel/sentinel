@@ -139,16 +139,19 @@ export function isCiEvidenceCheck(check: GitHubCheckV1): boolean {
 }
 
 /**
- * A job the target's own CI actually ran and passed on this head: completed
- * `success` from an evidence source (GitHub Actions or no app). A skipped or
- * neutral job is not one, and neither is a verified backup-CI stand-in: it
- * runs the same workflow from the pull request's merge tree, so for a head
- * that changes that workflow it proves nothing the head's own run does not
- * (owner directive 2026-11-17, `ci-success-rule.ts`).
+ * A job the target's own CI actually ran and passed on this head: a GitHub
+ * Actions check run (never a commit status or app-less observation, another
+ * app's check or a review bot) completed `success`. A skipped or neutral job
+ * is not one, and neither is a verified backup-CI stand-in: it runs the same
+ * workflow from the pull request's merge tree, so for a head that changes
+ * that workflow it proves nothing the head's own run does not (owner
+ * directive 2026-11-17, `ci-success-rule.ts`). The launcher's
+ * `targetCiSuccessNames` reads exactly the same set.
  */
 export function isTargetCiSuccessCheck(check: GitHubCheckV1): boolean {
   return check.status === "completed" && check.conclusion === "success" &&
-    check.backup === undefined && isCiEvidenceSource(check.app, check.name);
+    check.backup === undefined && check.app === GITHUB_ACTIONS_APP_SLUG &&
+    !isReviewBotCheck(check.name);
 }
 
 /** One observation split into the gate set and retained evidence. */
