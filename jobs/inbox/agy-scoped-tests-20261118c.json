@@ -1,0 +1,13 @@
+{
+  "jobs": [
+    {
+      "id": "agy-scoped-tests-20261118c",
+      "repository": "ubiquity/ai.ubq.fi",
+      "base": "agent-jobs/agy-meter-fidelity-20261118b-44260700632-1",
+      "model": "gpt-6.2-sol",
+      "minutes": 20,
+      "pr": false,
+      "prompt": "test(admin): register Gemini quota cases with the scoped Bun loader\n\nOwn the single failing declaration in tests/admin-gemini-quota.test.ts on base 105264f3ff90dbec4e395d9c12ea4a01eff64a46. The VPS independently ran pinned Bun 1.4.0 with the normal repository test-scope-preload enabled. On line 151 test.each([\"absolute\", \"countdown\"])(...) fails to register all tests with ERR_INVALID_THIS (Expected this to be instanceof ScopeFunctions). The ordinary scope shim wraps test in a Proxy and binds this differently from native test.each. Register both cases as ordinary top-level test() calls, for example iterate over the two first representations and include first in each test's name. Preserve all assertions, fixture isolation, coverage and both production corrections. Do not edit the preload, any other files, or CI. Required verification: normal changed-scope registration for the seven tests, no TEST_SCOPE_ACTIVE=1 / TEST_SCOPE_FORCE=1 when checking the reported regression; provide TEST_SCOPE_PATHS=tests/admin-gemini-quota.test.ts or TEST_SCOPE_BASE=70afb98dc1651a7a5851d8ee4f79ace5d4c836d1 in the child's environment. Run Bun --no-env-file --no-install test tests/admin-gemini-quota.test.ts under the existing repository network namespace (on hosted Linux, a private bind mount of checkout/installed Bun using sudo unshare can restore traversal). Verify formatting and diff. No additional tiers or jobs, deployments, secrets or paid API calls. One small unit, estimated five minutes. Return a clean commit plus exact commands, pass count, tree and actual model/effort if exposed."
+    }
+  ]
+}
