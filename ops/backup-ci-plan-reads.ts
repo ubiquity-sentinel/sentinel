@@ -16,6 +16,12 @@ import {
   failedActionsJobId,
 } from "../src/github/never-started-job.ts";
 import { trustedActionsLogUrl } from "../src/github/client-hosted-log-wire.ts";
+import {
+  backupCiNativeRunsPath,
+  type BackupCiNativeRunV1,
+  parseBackupCiNativeRuns,
+  parseBackupCiRunJobs,
+} from "./backup-ci-history-reads.ts";
 import { readBoundedBody } from "./backup-ci-materialize.ts";
 import type {
   BackupCiPlanObservationV1,
@@ -316,12 +322,17 @@ export interface BackupCiTargetReadsV1 {
     number: number,
   ): Promise<{ parents: string[]; tree: string } | "absent" | null>;
   /**
-   * The newest completed `push` workflow runs on `branch` (one page): the
-   * target's own native history that automatic calibration samples.
+   * One page of completed native runs of one workflow file and event (on
+   * `branch` when given): the history automatic calibration samples.
    */
-  pushRuns?(
-    branch: string,
-  ): Promise<{ headSha: GitSha; conclusion: string }[] | null>;
+  workflowRuns?(
+    workflowPath: string,
+    event: "push" | "pull_request",
+    branch: string | null,
+    page: number,
+  ): Promise<BackupCiNativeRunV1[] | null>;
+  /** The jobs of one native run (raw objects), or null. */
+  runJobs?(runId: number): Promise<Obj[] | null>;
   /**
    * The first `BACKUP_CI_NATIVE_LOG_PREFIX_BYTES` of a native job's log
    * (UNTRUSTED text: only `backupCiNativeMergeParents` reads it), or null.
@@ -374,23 +385,24 @@ export function createBackupCiTargetReads(
         ? null
         : new TextDecoder().decode(bytes);
     },
-    async pushRuns(branch) {
-      const body = row(
-        await api.get(
-          `${repo}/actions/runs?branch=${
-            encodeURIComponent(branch)
-          }&event=push&status=completed&per_page=50`,
-        ),
+    async workflowRuns(workflowPath, event, branch, page) {
+      const path = backupCiNativeRunsPath(
+        `${owner}/${name}`,
+        workflowPath,
+        event,
+        branch,
+        page,
+        50,
       );
-      const runs = body?.workflow_runs;
-      if (!Array.isArray(runs)) return null;
-      return runs.flatMap((value) => {
-        const run = row(value);
-        return run !== null && sha40(run.head_sha) &&
-            typeof run.conclusion === "string"
-          ? [{ headSha: run.head_sha as GitSha, conclusion: run.conclusion }]
-          : [];
-      });
+      if (path === null) return null;
+      const body = await api.get(path);
+      return body === null ? null : parseBackupCiNativeRuns(body);
+    },
+    async runJobs(runId) {
+      const body = await api.get(
+        `${repo}/actions/runs/${runId}/jobs?filter=latest&per_page=100`,
+      );
+      return body === null ? null : parseBackupCiRunJobs(body);
     },
     async checkRuns(sha, filter) {
       const runs = await backupCiCompleteListing(

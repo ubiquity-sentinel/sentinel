@@ -101,7 +101,15 @@ function targetGroups(
     g.latest.every((o) =>
       o.status === "completed" && NATIVE.has(o.conclusion ?? "")
     );
-  if (candidate.purpose === "calibration") return groups.filter(settled);
+  if (candidate.purpose === "calibration") {
+    // A sampled calibration unit is about exactly its own check (MUST 2).
+    return groups.filter((g) =>
+      settled(g) &&
+      (candidate.key === null ||
+        (g.workflowPath === candidate.key.workflowPath &&
+          g.checkName === candidate.key.checkName))
+    );
+  }
   // Peers: a native group whose other side holds backup results for (P, N).
   const record = input.deps.snapshot?.work.find((r) =>
     r.id === candidate.recordId
@@ -183,12 +191,19 @@ export async function planBackupCiCommit(
     base,
     attempt: candidate.attempt,
   });
+  // A sampled calibration unit replays one past native pull_request run of
+  // the target's own history: its base and head are bound by that run's own
+  // checkout (backup-ci-calibrate.ts), so the PR may be closed and its
+  // author, branch and current head are not this unit's concern; it must
+  // still be a same-repository PR into the default branch.
+  const sampled = candidate.purpose === "calibration" &&
+    candidate.nativeCheckRunId !== undefined;
   if (context === "pull_request") {
     const number = candidate.pullRequest;
     if (number === null || base === null) return [];
     pull = await reads.pull(number);
     if (pull === null) return [];
-    if (pull.state !== "open") {
+    if (pull.state !== "open" && !sampled) {
       chosen.forEach((g) => refuse(keyOf(g), "pr_not_open"));
       return [];
     }
@@ -197,10 +212,11 @@ export async function planBackupCiCommit(
       ? await reads.branchTip(info.defaultBranch)
       : base;
     if (
-      pull.head.sha !== commit || pull.base.ref !== info.defaultBranch ||
-      pull.head.ref !== candidate.branch ||
-      !HOSTED_AUTONOMY_TRUSTED_AUTHORS.includes(pull.user) ||
-      pull.draft ||
+      (!sampled &&
+        (pull.head.sha !== commit || pull.head.ref !== candidate.branch ||
+          !HOSTED_AUTONOMY_TRUSTED_AUTHORS.includes(pull.user) ||
+          pull.draft)) ||
+      pull.base.ref !== info.defaultBranch ||
       pull.head.repo.full_name !== repository ||
       pull.base.repo.full_name !== repository || tip !== base
     ) {
@@ -427,9 +443,24 @@ export async function planBackupCiCommit(
     // own event: a push run never stands for a pull_request merge, nor the
     // reverse (review MUST 2; ingest re-binds event and merge base).
     const eventOf = new Map(obs.suites.map((s) => [s.suiteId, s.event]));
-    const latest = group.latest.filter((o) =>
-      eventOf.get(o.suiteId ?? 0) === context
-    ).at(-1);
+    const bound = candidate.nativeCheckRunId === undefined
+      ? undefined
+      : [...group.latest, ...group.all].find((o) =>
+        o.checkRunId === candidate.nativeCheckRunId &&
+        eventOf.get(o.suiteId ?? 0) === context
+      );
+    if (candidate.nativeCheckRunId !== undefined && bound === undefined) {
+      deps.log(
+        `backup-ci:${repo.owner}/${repo.name}@${
+          commit.slice(0, 12)
+        }:calibration_native_missing`,
+      );
+      continue;
+    }
+    const latest = bound ??
+      group.latest.filter((o) => eventOf.get(o.suiteId ?? 0) === context).at(
+        -1,
+      );
     const neverStarted = group.neverStarted
       ? {
         checkRunIds: group.all.map((o) => o.checkRunId).sort((a, b) => a - b)

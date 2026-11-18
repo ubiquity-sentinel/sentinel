@@ -124,6 +124,30 @@ export function backupCiNativeMergeParents(
   return { head: merges[0][1] as GitSha, base: merges[0][2] as GitSha };
 }
 
+/**
+ * The pull request number a native `pull_request` job checked out
+ * (`refs/remotes/pull/<n>/merge` in its first-step checkout section), or
+ * null unless exactly one number appears there.
+ */
+export function backupCiNativePullNumber(log: string): number | null {
+  const lines = log.split(/\r?\n/);
+  const headers = lines.flatMap((line, i) =>
+    STEP_HEADER.test(line) ? [{ i, step: STEP_HEADER.exec(line)![1] }] : []
+  );
+  if (headers.length < 2 || !/^actions\/checkout@/i.test(headers[0].step)) {
+    return null;
+  }
+  const numbers = new Set<number>();
+  for (const line of lines.slice(headers[0].i + 1, headers[1].i)) {
+    for (
+      const match of line.matchAll(/refs\/remotes\/pull\/([0-9]{1,9})\/merge/g)
+    ) {
+      numbers.add(Number(match[1]));
+    }
+  }
+  return numbers.size === 1 ? [...numbers][0] : null;
+}
+
 /** A backup red whose own excerpt shows a missing tool (not genuine). */
 export function backupCiInfraExcerpt(excerpt: string | null): boolean {
   return excerpt !== null &&

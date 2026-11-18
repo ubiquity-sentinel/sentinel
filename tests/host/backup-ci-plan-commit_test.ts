@@ -1011,3 +1011,80 @@ Deno.test("review regression: legacy trusted publication author passes both plan
     await w.repo.close();
   }
 });
+
+Deno.test("a sampled calibration replays a closed past pull request run bound to its base and job", async () => {
+  const w = await world();
+  try {
+    // The head's own jobs ran natively (push and pull_request) and failed.
+    const started = (id: number, suite: number) => ({
+      ...neverStarted(id, w.head, suite),
+      id,
+    });
+    w.runs.set(w.head, [started(201, 31), started(202, 32)]);
+    for (const id of [201, 202]) {
+      w.jobs.set(id, {
+        id,
+        head_sha: w.head,
+        status: "completed",
+        conclusion: "failure",
+        steps: [{ name: "Set up job", number: 1, conclusion: "success" }],
+        runner_id: 5,
+      });
+    }
+    // A closed PR by anyone, whose head moved on after the sampled run.
+    w.pull = {
+      ...w.pull!,
+      state: "closed",
+      user: "a-contributor",
+      head: { ...w.pull!.head, sha: "f".repeat(40), ref: "feature" },
+    };
+    const sampled = {
+      priority: 1 as const,
+      purpose: "calibration" as const,
+      recordId: null,
+      branch: "main",
+      key: {
+        context: "pull_request" as const,
+        workflowPath: WORKFLOW_PATH,
+        checkName: "deno",
+        base: w.base,
+      },
+      nativeCheckRunId: 202,
+    };
+    const { units } = await plan(w, sampled);
+    assert.equal(units.length, 1);
+    const planned = parseBackupCiUnit(
+      JSON.parse(JSON.stringify(units[0].unit)),
+    );
+    assert.equal(planned.purpose, "calibration");
+    assert.deepEqual(planned.key, {
+      context: "pull_request",
+      workflowPath: WORKFLOW_PATH,
+      checkName: "deno",
+      base: w.base,
+      attempt: 1,
+    });
+    // Compared only with the bound native job of its own event.
+    assert.deepEqual(planned.native, {
+      checkRunId: 202,
+      conclusion: "failure",
+    });
+    assert.equal(planned.pullRequest?.number, 7);
+    // A native job the run listing does not show plans nothing.
+    assert.equal(
+      (await plan(w, { ...sampled, nativeCheckRunId: 999 })).units.length,
+      0,
+    );
+    // Never a fork's pull request.
+    w.pull = {
+      ...w.pull!,
+      head: {
+        ...w.pull!.head,
+        repo: { ...w.pull!.head.repo, full_name: "someone/fork" },
+      },
+    };
+    assert.equal((await plan(w, sampled)).units.length, 0);
+  } finally {
+    await w.repo.close();
+  }
+});

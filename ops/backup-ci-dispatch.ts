@@ -36,9 +36,12 @@ import {
   mergeSuspension,
 } from "../src/github/backup-ci-store.ts";
 import {
+  BACKUP_CI_CALIBRATION_CAPS,
+  BACKUP_CI_CALIBRATION_LEGS_PATH,
   backupCiCheckCalibrationPath,
   type BackupCiCheckCalibrationV1,
   backupCiEnrolmentPath,
+  parseBackupCiCalibrationLegs,
   parseBackupCiCheckCalibration,
   parseBackupCiEnrolment,
 } from "../src/contracts/backup-ci-trust.ts";
@@ -284,6 +287,35 @@ export async function backupCiStoreChanges(
       }`);
     }
     changes.set(suspensionPath, suspension);
+  }
+  // Every admitted calibration leg counts toward the daily caps (review
+  // MUST 3), whatever its outcome; entries older than 48 hours drop out.
+  const calibrationLegs = dispatched.filter((d) =>
+    d.entry.unit.purpose === "calibration"
+  );
+  if (calibrationLegs.length > 0) {
+    const ledger = await current(
+      view,
+      BACKUP_CI_CALIBRATION_LEGS_PATH,
+      parseBackupCiCalibrationLegs,
+    );
+    const caps = BACKUP_CI_CALIBRATION_CAPS;
+    changes.set(
+      BACKUP_CI_CALIBRATION_LEGS_PATH,
+      parseBackupCiCalibrationLegs({
+        version: 1,
+        kind: "sentinel_backup_ci_calibration_legs",
+        legs: [
+          ...(ledger?.legs ?? []).filter((leg) => leg.at > now - caps.keepMs),
+          ...calibrationLegs.map((d) => ({
+            repository: `${d.repository.owner}/${d.repository.name}`,
+            runnerId: d.entry.runnerId,
+            unitId: d.entry.unit.unitId,
+            at: now,
+          })),
+        ].slice(-caps.maxLegs),
+      }),
+    );
   }
   // First enrolments pin the id once; an existing pin is never replaced.
   for (const repository of pass.enrolments ?? []) {

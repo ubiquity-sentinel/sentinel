@@ -9,7 +9,6 @@
 import type { GitSha } from "../src/contracts/brands.ts";
 import { HOSTED_AUTONOMY_TRUSTED_AUTHORS } from "./hosted-autonomy-policy.ts";
 import {
-  BACKUP_CI_CALIBRATION,
   BACKUP_CI_MAX_COMMITS_READ_PER_TARGET,
   backupCiCalibrationPath,
   type BackupCiCommitFileV1,
@@ -33,7 +32,7 @@ import {
   mergeBackupCiFile,
 } from "../src/github/backup-ci-store.ts";
 import type { BackupCiActionSourceV1 } from "./backup-ci-actions.ts";
-import { sampleBackupCiCalibration } from "./backup-ci-calibrate.ts";
+import { planBackupCiCalibration } from "./backup-ci-calibrate.ts";
 import {
   enrolBackupCiTarget,
   pinnedBackupCiTargets,
@@ -44,7 +43,15 @@ import {
   backupCiDemandRecords,
 } from "./backup-ci-demand.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
-import { isBackupCiRunnerExcluded } from "../src/contracts/backup-ci-trust.ts";
+import {
+  BACKUP_CI_CALIBRATION_CAPS,
+  BACKUP_CI_CALIBRATION_LEGS_PATH,
+  backupCiCalibrationLegsToday,
+  backupCiCheckCalibrationPath,
+  isBackupCiRunnerExcluded,
+  parseBackupCiCalibrationLegs,
+  parseBackupCiCheckCalibration,
+} from "../src/contracts/backup-ci-trust.ts";
 import {
   type BackupCiIngestDepsV1,
   type BackupCiIngestItemV1,
@@ -59,7 +66,6 @@ import {
 import {
   backupCiCandidateDisposition,
   backupCiCandidates,
-  backupCiEngaged,
   backupCiFairSelect,
   backupCiFreeSlots,
   backupCiScanOrder,
@@ -274,6 +280,8 @@ async function planTarget(
   want: number,
   /** The target's live records with stand-in demand (`backup-ci-demand.ts`). */
   records: RepairStateSnapshotV1["work"],
+  /** Calibration legs this target may still start (ledger caps). */
+  legsLeft: number,
 ): Promise<BackupCiPlannedUnitV1[]> {
   const repo = repoOf(target);
   const runnerId = deps.runnerId!;
@@ -310,45 +318,34 @@ async function planTarget(
   const calibration = calibrationValue === null
     ? null
     : parseBackupCiCalibration(calibrationValue);
-  // Automatic calibration (backup-ci-calibrate.ts): sampled from the
-  // target's own native history once one of its records needed a stand-in.
-  const sampled = await sampleBackupCiCalibration({
-    calibration,
-    runnerId,
-    demand: records.some((r) =>
-      backupCiEngaged(files.get(r.target.head!), deps.mode)
-    ),
-    defaultBranch: info.defaultBranch,
-    pushRuns: reads.pushRuns === undefined
-      ? undefined
-      : (branch) => reads.pushRuns!(branch),
-    file: load,
-    now: deps.now(),
-  });
-  const row = calibration?.runners.find((r) => r.runnerId === runnerId);
-  deps.log(
-    `sentinel_backup_ci_calibration ${
-      JSON.stringify({
-        repository: target.repository,
-        agreements: row?.agreements ?? 0,
-        failureAgreements: row?.failureAgreements ?? 0,
-        of: BACKUP_CI_CALIBRATION.agreements,
-        reason: sampled.reason,
-        sampled: sampled.commits.length,
-      })
-    }`,
+  // Automatic calibration per demanded check (backup-ci-calibrate.ts),
+  // within the leg caps the pass computed from the ledger.
+  const checksValue = await deps.store.read(
+    backupCiCheckCalibrationPath(repo.owner, repo.name),
   );
+  const sampled = await planBackupCiCalibration({
+    repository: target.repository,
+    defaultBranch: info.defaultBranch,
+    runnerId,
+    mode: deps.mode,
+    heads: records.map((r) => files.get(r.target.head!) ?? null),
+    checks: checksValue === null
+      ? null
+      : parseBackupCiCheckCalibration(checksValue),
+    reads,
+    file: load,
+    legsLeft,
+    log: deps.log,
+  });
   const candidates = backupCiCandidates({
     records,
     baseTip,
     defaultBranch: info.defaultBranch,
-    calibrationCommits: [
-      ...new Set([
-        ...deps.calibrationCommits(target.repository),
-        ...sampled.commits,
-      ]),
-    ],
+    calibrationCommits: legsLeft > 0
+      ? deps.calibrationCommits(target.repository)
+      : [],
     calibrated: isBackupCiCalibrated(calibration, runnerId),
+    sampled,
     files,
     mode: deps.mode,
     runnerId,
@@ -436,6 +433,13 @@ async function currentPlannedUnit(
     ? await reads.branchTip(unit.pullRequest.baseRef)
     : unit.pullRequest.base;
   const repository = `${unit.repository.owner}/${unit.repository.name}`;
+  if (unit.purpose === "calibration") {
+    // A replayed past run (backup-ci-calibrate.ts): its base and head are
+    // bound by the native run; only the same-repository shape is rechecked.
+    return pull !== null && pull.base.ref === unit.pullRequest.baseRef &&
+      pull.head.repo.full_name === repository &&
+      pull.base.repo.full_name === repository;
+  }
   return pull !== null && pull.state === "open" && !pull.draft &&
     HOSTED_AUTONOMY_TRUSTED_AUTHORS.includes(pull.user) &&
     pull.head.sha === unit.commit &&
@@ -542,6 +546,14 @@ export async function runBackupCiPass(
     deps.log(`backup-ci:plan:p=${p}:free=${free}:demand=${order.length}`);
     if (free > 0) {
       const perTarget = new Map<string, BackupCiPlannedUnitV1[]>();
+      // Calibration legs: every one started in the last 24 hours counts
+      // (the ledger), per target and globally; an unreadable ledger plans
+      // no calibration at all.
+      const ledger = await deps.store.read(BACKUP_CI_CALIBRATION_LEGS_PATH)
+        .then((v) => v === null ? null : parseBackupCiCalibrationLegs(v))
+        .catch(() => "invalid" as const);
+      const caps = BACKUP_CI_CALIBRATION_CAPS;
+      let calibrating = 0;
       for (const name of order) {
         if (deps.now() - startedAt > BACKUP_CI_PASS_BUDGET_MS) {
           deps.log("backup-ci:plan:deadline");
@@ -566,16 +578,31 @@ export async function runBackupCiPass(
         // One target's unreadable store file or read failure plans nothing
         // for that target only.
         const resolved = target;
+        const now = deps.now();
+        const legsLeft = ledger === "invalid" ? 0 : Math.max(
+          0,
+          Math.min(
+            caps.perTargetPerPass,
+            caps.perTargetPerDay -
+              backupCiCalibrationLegsToday(ledger, now, name),
+            caps.perDay - backupCiCalibrationLegsToday(ledger, now) -
+              calibrating,
+            caps.perPass - calibrating,
+          ),
+        );
         const units = await planTarget(
           deps,
           resolved,
           changes,
           2 * free,
           demand.get(name)!,
+          legsLeft,
         ).catch(() => {
           deps.log(`backup-ci:${resolved.repository}:plan_refused`);
           return [];
         });
+        calibrating += units.filter((u) => u.unit.purpose === "calibration")
+          .length;
         perTarget.set(name, units);
       }
       const selected = backupCiFairSelect(

@@ -70,6 +70,21 @@ export interface BackupCiCandidateV1 {
   /** Confirm/peer units: the exact key family (null: every group). */
   key: Omit<BackupCiEntryKeyV1, "attempt"> | null;
   attempt: 1 | 2;
+  /** Sampled calibration: the bound native run it is compared with. */
+  nativeCheckRunId?: number;
+}
+
+/** A sampled calibration commit (`backup-ci-calibrate.ts`). */
+export interface BackupCiSampledCalibrationV1 {
+  commit: GitSha;
+  key: {
+    context: BackupCiContextV1;
+    workflowPath: string;
+    checkName: string;
+    base: GitSha | null;
+  };
+  pullRequest: number | null;
+  nativeCheckRunId: number;
 }
 
 type Work = RepairStateSnapshotV1["work"][number];
@@ -144,8 +159,11 @@ export interface BackupCiCandidateInputV1 {
   records: readonly Work[];
   baseTip: GitSha | null;
   defaultBranch: string;
+  /** Committed calibration commits (any settled group, push context). */
   calibrationCommits: readonly GitSha[];
   calibrated: boolean;
+  /** Per-check samples (review MUST 2): already bound and capped. */
+  sampled?: readonly BackupCiSampledCalibrationV1[];
   /** Store files already read for the commits of interest. */
   files: ReadonlyMap<string, BackupCiCommitFileV1 | null>;
   mode: "shadow" | "on";
@@ -207,6 +225,14 @@ export function backupCiCandidates(
         !calibrationTaken(input.files.get(commit), input.mode, input.runnerId)
       ).slice(0, BACKUP_CI_MAX_CALIBRATION_PER_PASS)
     ) out.push(base(1, commit, "calibration"));
+  }
+  for (const sample of input.sampled ?? []) {
+    out.push(base(1, sample.commit, "calibration", {
+      pullRequest: sample.pullRequest,
+      base: sample.key.base,
+      key: { ...sample.key },
+      nativeCheckRunId: sample.nativeCheckRunId,
+    }));
   }
   // The default-branch tip is no candidate of its own (review MUST 3): only
   // a record base a backed-up head needs for attribution is, the live tip

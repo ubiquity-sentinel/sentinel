@@ -114,6 +114,67 @@ export function parseBackupCiEnrolment(input: unknown): BackupCiEnrolmentV1 {
   };
 }
 
+/**
+ * v1/calibration-legs.json: every calibration leg dispatched in the last
+ * 48 hours, whatever became of it (review MUST 3: a leg that ended without
+ * evidence still counts), for the per-target and global daily caps. Written
+ * only by the commit step that dispatches calibration legs.
+ */
+export interface BackupCiCalibrationLegsV1 {
+  version: 1;
+  kind: "sentinel_backup_ci_calibration_legs";
+  legs: { repository: string; runnerId: string; unitId: string; at: number }[];
+}
+
+export const BACKUP_CI_CALIBRATION_LEGS_PATH = "v1/calibration-legs.json";
+export const BACKUP_CI_CALIBRATION_CAPS = {
+  perTargetPerPass: 1,
+  perPass: 2,
+  perTargetPerDay: 6,
+  perDay: 24,
+  keepMs: 48 * 3_600_000,
+  maxLegs: 512,
+} as const;
+
+export function parseBackupCiCalibrationLegs(
+  input: unknown,
+): BackupCiCalibrationLegsV1 {
+  const o = expectRecord(input, "$");
+  expectExactKeys(o, ["version", "kind", "legs"], "$");
+  if (o.version !== 1) bad("$.version", "1");
+  if (o.kind !== "sentinel_backup_ci_calibration_legs") bad("$.kind", "kind");
+  const legs = expectArray(
+    o.legs,
+    "$.legs",
+    BACKUP_CI_CALIBRATION_CAPS.maxLegs,
+    (v, at) => {
+      const leg = expectRecord(v, at);
+      expectExactKeys(leg, ["repository", "runnerId", "unitId", "at"], at);
+      const repository = expectString(leg.repository, `${at}.repository`, 201);
+      const runnerId = expectString(leg.runnerId, `${at}.runnerId`, 16);
+      const unitId = expectString(leg.unitId, `${at}.unitId`, 24);
+      if (
+        !/^[A-Za-z0-9._-]{1,100}\/[A-Za-z0-9._-]{1,100}$/.test(repository) ||
+        !RUNNER_RE.test(runnerId) || !/^[0-9a-f]{24}$/.test(unitId)
+      ) bad(at, "a repository, runner and unit id");
+      return { repository, runnerId, unitId, at: count(leg.at, `${at}.at`) };
+    },
+  );
+  return { version: 1, kind: "sentinel_backup_ci_calibration_legs", legs };
+}
+
+/** Calibration legs started in the 24 hours before `now`. */
+export function backupCiCalibrationLegsToday(
+  ledger: BackupCiCalibrationLegsV1 | null,
+  now: number,
+  repository?: string,
+): number {
+  return (ledger?.legs ?? []).filter((leg) =>
+    leg.at > now - 24 * 3_600_000 && leg.at <= now &&
+    (repository === undefined || leg.repository === repository)
+  ).length;
+}
+
 /** Store paths whose files feed the exclusion (every target's). */
 export const BACKUP_CI_TRUST_FILE_RE =
   /^v1\/(?:[A-Za-z0-9-]+\/[A-Za-z0-9._-]+\/)?(?:suspended|calibration|checks)\.json$/;
