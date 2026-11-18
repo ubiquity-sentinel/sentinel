@@ -97,7 +97,10 @@ function network(clock: FakeClock) {
     try {
       await new Promise<void>((resolve) => {
         if (pending.length === 0) {
-          queueMicrotask(() => {
+          queueMicrotask(async () => {
+            // Drain ready continuations before the next network tick. Promise
+            // wrapper depth must not manufacture extra fake latency waves.
+            for (let i = 0; i < 100; i++) await Promise.resolve();
             clock.advance(1_000);
             for (const resume of pending.splice(0)) resume();
           });
@@ -186,8 +189,8 @@ Deno.test("repair fallback: 60 PR records overlap issue reads with PR/check read
   assert.deepEqual(rig.state.repair!.reservations, [], "no model charges");
 });
 
-Deno.test("repair fallback: a failed issue read drains its sibling before reusing the record slot", async () => {
-  const rig = makeRig(8);
+Deno.test("repair fallback: failed issue reads still drain the eight-request pool", async () => {
+  const rig = makeRig(16);
   const readPull = rig.github.readPullRequest.bind(rig.github);
   const pending: (() => void)[] = [];
   let started = 0;
@@ -206,16 +209,16 @@ Deno.test("repair fallback: a failed issue read drains its sibling before reusin
   };
   await drainMicrotasks();
   try {
-    assert.equal(started, 4, "only four fallback records may be in flight");
+    assert.equal(started, 8, "only eight fallback reads may be in flight");
     assert.equal(
       pending.length,
-      4,
+      8,
       "a thrown issue read must not abandon its PR read",
     );
     for (const resume of pending.splice(0)) resume();
     await drainMicrotasks();
-    assert.equal(started, 8);
-    assert.equal(pending.length, 4);
+    assert.equal(started, 16);
+    assert.equal(pending.length, 8);
   } finally {
     for (const resume of pending.splice(0)) resume();
     await priming;
@@ -260,4 +263,77 @@ Deno.test("repair fallback: either failed read chain is unavailable, while expli
     baseTip: SHA1,
   });
   assert.equal(live.metrics.recordsRead, 1);
+});
+
+Deno.test("repair fallback: 60 records fill the eight-request budget across PR/check chains", async () => {
+  const rig = makeRig();
+  const net = network(rig.clock);
+  const readIssue = rig.github.readIssue.bind(rig.github);
+  const readPull = rig.github.readPullRequest.bind(rig.github);
+  const readChecks = rig.github.readChecks.bind(rig.github);
+  const readRef = rig.github.readRef.bind(rig.github);
+  rig.github.readIssue = (number) => net.read(() => readIssue(number));
+  rig.github.readPullRequest = (number) => net.read(() => readPull(number));
+  rig.github.readChecks = (head) => net.read(() => readChecks(head));
+  rig.github.readRef = (ref) => net.read(() => readRef(ref));
+
+  const start = rig.clock.now();
+  const first = await pass(rig);
+  assert.equal(first.summary.recordsRead, 60);
+  assert.equal(first.summary.batchUnavailable, 1);
+  assert.equal(first.summary.recordsStepped, 60);
+  assert.deepEqual(net.stats(), { active: 0, peak: 8, calls: 181 });
+  assert.ok(
+    rig.clock.now() - start <= 24_000,
+    `the existing eight-request budget must stay busy across PR/check chains; took ${
+      rig.clock.now() - start
+    }ms`,
+  );
+
+  rig.clock.advance(5 * 60_000);
+  const head = rig.state.repairHead;
+  const unchanged = await pass(rig);
+  assert.deepEqual(unchanged.stepped, []);
+  assert.equal(unchanged.summary.recordsSkipped, 60);
+  assert.equal(rig.state.repairHead, head, "unchanged inputs cost no write");
+  assert.deepEqual(rig.state.repair!.reservations, [], "no model charges");
+});
+
+Deno.test("repair fallback: queued reads do not start after the run deadline", async () => {
+  const rig = makeRig(16);
+  const net = network(rig.clock);
+  const readIssue = rig.github.readIssue.bind(rig.github);
+  const readPull = rig.github.readPullRequest.bind(rig.github);
+  const readRef = rig.github.readRef.bind(rig.github);
+  rig.bounds.runDeadline = rig.clock.now() + 2_000;
+  const readStarts: number[] = [];
+  let checkReads = 0;
+  const beforeRead = () => readStarts.push(rig.clock.now());
+  rig.github.readIssue = (number) => {
+    beforeRead();
+    return net.read(() => readIssue(number));
+  };
+  rig.github.readPullRequest = (number) => {
+    beforeRead();
+    return net.read(() => readPull(number));
+  };
+  rig.github.readRef = (ref) => net.read(() => readRef(ref));
+  rig.github.readChecks = () => {
+    checkReads++;
+    return Promise.resolve(portError("unavailable", "check read unavailable"));
+  };
+
+  const live = new PassLiveInputs(rig.deps, rig.bounds);
+  await live.prime(rig.work);
+  assert.deepEqual(net.stats(), { active: 0, peak: 8, calls: 9 });
+  assert.ok(readStarts.every((start) => start < rig.bounds.runDeadline));
+  assert.equal(checkReads, 0, "queued checks do not start after the deadline");
+  assert.equal(
+    live.metrics.recordsRead,
+    0,
+    "incomplete inputs stay unavailable",
+  );
+  for (const record of rig.work.slice(0, 8)) {
+    assert.equal(await live.inputsFor(record), null);
+  }
 });
