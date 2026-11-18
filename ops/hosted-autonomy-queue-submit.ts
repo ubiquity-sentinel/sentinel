@@ -20,6 +20,7 @@ import {
   queueReentryIntent,
 } from "./hosted-autonomy-queue-intent.ts";
 import { queueHold } from "./hosted-autonomy-queue-writer.ts";
+import { sourceAdmissionRefusal } from "./hosted-autonomy-pull-file-gates.ts";
 import {
   decideQueuePolicy,
   hasCompleteQueueAuthorizationFacts,
@@ -40,6 +41,20 @@ export async function submitQueueAdmission(
   const { deps, queue, writer } = input;
   const stop = (): QueueRecordOutcome => ({ ready: false, submitted: false });
   const tag = `queue:${input.record.id}`;
+  // 2026-11-17 admission (the owner-merged launcher gate): the work of an
+  // issue whose author is neither the owner account nor the App is never
+  // enqueued. Checked before the intent: nothing is written or charged.
+  let surface = null;
+  try {
+    surface = deps.githubFor(input.record.repository);
+  } catch {
+    surface = null;
+  }
+  const admission = await sourceAdmissionRefusal(surface, input.record);
+  if (admission !== null) {
+    writer.actions.push(`${tag}:pre_effect_${admission}`);
+    return { ready: true, submitted: false };
+  }
   let intent = previous === null
     ? await createQueueIntent(input.record, binding, deps.clock.now())
     : previous.stage === "dequeue_complete"
