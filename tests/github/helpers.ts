@@ -291,6 +291,16 @@ export class FakeGitExecutor implements GitExecutorV1 {
   ambiguousAppliesEffect = false;
   /** When set, isAncestor always returns this value. */
   ancestryEvery: boolean | null = null;
+  /** The local base..head change set (2026-11-17 gates); none by default. */
+  changed: string[] | null = [];
+
+  changedPaths(_base: GitSha, _head: GitSha) {
+    return Promise.resolve(
+      this.changed === null
+        ? portError("unavailable", "changed path read failed")
+        : portOk([...this.changed]),
+    );
+  }
 
   readRemoteRef(ref: string): Promise<PortResultV1<GitSha | null>> {
     this.remoteReads.push({ ref });

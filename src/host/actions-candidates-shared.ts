@@ -139,10 +139,14 @@ export interface ActionsCandidatePreserverInputV1 {
   /** Trusted API base for tests; production uses the public API. */
   apiBaseUrl?: string;
   /** THE same host port instance: authenticated readRef + create-only push. */
-  port: Pick<
-    GitHubPort,
-    "readRef" | "pushHead" | "nativeQueue" | "existingPrTakeover"
-  >;
+  port:
+    & Pick<
+      GitHubPort,
+      "readRef" | "pushHead" | "nativeQueue" | "existingPrTakeover"
+    >
+    // The source read of the 2026-11-17 push backstop; absent, a
+    // CI-executable change is never preserved (fail closed).
+    & Partial<Pick<GitHubPort, "readIssue">>;
   /** Trusted configured protected paths (from the real repository config). */
   protectedPaths: readonly string[];
   /**

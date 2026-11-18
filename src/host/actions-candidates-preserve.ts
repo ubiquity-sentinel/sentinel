@@ -1,3 +1,8 @@
+import {
+  PUSH_PATHS_UNAVAILABLE,
+  pushGuardRefusal,
+} from "../github/push-content-guard.ts";
+import { recordCiTrust } from "../repair/workflow-trust.ts";
 import { isNativeQueueTarget } from "../github/native-queue-guard.ts";
 import { hasTakeoverCustody } from "../github/existing-pr-takeover-provenance.ts";
 /** Hosted actions-candidates-preserve responsibility. */
@@ -36,7 +41,10 @@ import {
 import type { ActionsCandidatePreserverInputV1 } from "./actions-candidates-shared.ts";
 import type { PreserverGitRunV1 } from "./actions-candidates-objects.ts";
 import { freshStoreProof } from "./actions-candidates-proof.ts";
-import { publicationProtectedPaths } from "../repair/owner-landing.ts";
+import {
+  ownerMergesProtectedChanges,
+  publicationProtectedPaths,
+} from "../repair/owner-landing.ts";
 
 /**
  * Trusted candidate preservation over the SAME host port instance.
@@ -206,6 +214,34 @@ export function createCandidatePreserver(
         return portError("unavailable", STATIC_PRESERVE_LOCAL);
       }
       if (!ensured.ok) return ensured;
+      // 2026-11-17 push backstop: the paths this preservation push carries,
+      // from the source mirror's own base..head tree diff (never a receipt).
+      const refused = await pushGuardRefusal(
+        async (base, head) => {
+          const listed = await runGit(input.sourcePath, [
+            "diff",
+            "--no-renames",
+            "--name-only",
+            "-z",
+            base,
+            head,
+          ], false);
+          return listed === null || listed.code !== 0 || !listed.exited ||
+              listed.truncated
+            ? portError("unavailable", PUSH_PATHS_UNAVAILABLE)
+            : portOk(listed.stdout.split("\0").filter((path) => path !== ""));
+        },
+        {
+          base: candidate.base,
+          ownRepository: ownerMergesProtectedChanges(repository),
+          trust: () =>
+            input.port.readIssue === undefined
+              ? Promise.resolve("unavailable" as const)
+              : recordCiTrust({ github: input.port as never }, exactRecord),
+        },
+        candidate.head,
+      );
+      if (refused !== null) return refused;
       const validated = await validator.validatePublication({
         base: candidate.base,
         head: candidate.head,

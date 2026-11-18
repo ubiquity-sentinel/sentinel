@@ -12,11 +12,14 @@
  *   keeps the pre-publication park.
  * - On Sentinel's own repository every configured protected prefix (its
  *   authority files, `SENTINEL_AUTHORITY_PATHS`: credential minting and
- *   selection, write-token dispatch, the merge gate, promotion, this policy
- *   itself and the `.github/` paths the self-merge CI proof pins) is
- *   published, tested and reviewed, but Sentinel never merges it: its owner
- *   does, and that human merge completes the record through the ordinary
- *   human-merge path.
+ *   selection, write-token dispatch, the merge gate, promotion and this
+ *   policy itself) is published, tested and reviewed, but Sentinel never
+ *   merges it: its owner does, and that human merge completes the record
+ *   through the ordinary human-merge path. Any `.github/` path there stays
+ *   unpublishable, as before the directive: a pushed workflow would run with
+ *   Sentinel's own secrets and a writable token before the owner saw it.
+ * - A changed path no predicate can classify (`unsafeChangedPath`: quoted,
+ *   escaped, absolute or not normalised) is unpublishable everywhere.
  */
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
@@ -25,6 +28,7 @@ import type { WorkWaitCauseV1 } from "../contracts/work-wait-cause.ts";
 import { SENTINEL_AUTHORITY_PATHS } from "../host/hosted-authority-protected-paths.ts";
 import { targetTouchesProtectedV1 } from "../host/target-policy-generic.ts";
 import { normalizePathPrefix, touchesProtected } from "./loop-records.ts";
+import { ciExecutablePath, unsafeChangedPath } from "./workflow-trust.ts";
 
 /** The delivery refusal (launcher actions) of an owner-landing record. */
 export const OWNER_MERGE_REQUIRED = "owner_merge_required";
@@ -49,12 +53,16 @@ const CREDENTIAL_FILES: readonly string[] = Object.freeze([
 ]);
 
 /**
- * A credential or history path, refused on every target: `.git/` anywhere,
- * any `.env*` file, the act/npm credential configuration the backup CI must
- * never read from a target tree, and a target's own `sentinel.protected`
- * list. A workflow or other `.github/` path is not one (2026-11-17).
+ * A credential or history path: `.git/` anywhere, any `.env*` file, the
+ * act/npm credential configuration the backup CI must never read from a
+ * target tree, a target's own `sentinel.protected` list, and any path no
+ * predicate can classify (`unsafeChangedPath`). A workflow or other
+ * `.github/` path is not one (2026-11-17). It refuses a change only where a
+ * configured protected prefix covers it (`ownerLandingTouch`); a key file
+ * relies on the secret-shaped-text detector.
  */
 export function credentialPath(path: string): boolean {
+  if (unsafeChangedPath(path)) return true;
   const normalized = normalizePathPrefix(path);
   const segments = normalized.split("/");
   if (segments.includes(".git")) return true;
@@ -105,6 +113,13 @@ export function ownerLandingTouch(
   changedPaths: readonly string[],
   repository: Pick<RepositoryIdentityV1, "owner" | "name">,
 ): OwnerLandingTouchV1 {
+  // Fail closed on a path no predicate can classify, and keep Sentinel's own
+  // `.github/` unpublishable whatever its configuration lists.
+  if (changedPaths.some(unsafeChangedPath)) return { kind: "unpublishable" };
+  if (
+    ownerMergesProtectedChanges(repository) &&
+    changedPaths.some(ciExecutablePath)
+  ) return { kind: "unpublishable" };
   const hits = changedPaths.filter((path) =>
     targetTouchesProtectedV1(config, path)
   );
@@ -182,9 +197,14 @@ export function publicationProtectedPaths(
 ): string[] {
   const named = record?.ownerLanding?.paths ?? [];
   const owner = ownerMergesProtectedChanges(repository);
-  return protectedPaths.filter((prefix) =>
-    unpublishablePath(prefix) || (owner && !named.includes(prefix))
+  const refused = protectedPaths.filter((prefix) =>
+    unpublishablePath(prefix) ||
+    (owner && (ciExecutablePath(prefix) || !named.includes(prefix)))
   );
+  // Sentinel's own `.github/` is refused whole, configured or not.
+  return owner && !refused.includes(".github/")
+    ? [...refused, ".github/"]
+    : refused;
 }
 
 /**

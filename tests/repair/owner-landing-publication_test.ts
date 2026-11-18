@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { asWorkItemId, type GitSha } from "../../src/contracts/brands.ts";
 import type { GitHubPullRequestV1 } from "../../src/contracts/ports.ts";
 import { candidateBranch } from "../../src/repair/keys.ts";
-import { SHA1, SHA2, SHA3, T0 } from "../state/helpers.ts";
+import { SHA1, SHA2, SHA3, T0, workRecord } from "../state/helpers.ts";
 import {
   issueRecord,
   LOCAL_SENTINEL_REPO,
@@ -81,7 +81,7 @@ const TARGET_REPO = {
 };
 
 Deno.test(
-  "owner landing: Sentinel's own workflow candidate publishes for its owner, never merged",
+  "owner landing: Sentinel's own workflow candidate stays unpublished, as before the directive",
   async () => {
     const rig = await makeRig("ownerlandingworkflow", {
       configOverrides: { repository: REPO_2, ...PROTECTED },
@@ -94,30 +94,56 @@ Deno.test(
       const outcome = await rig.run();
       assert.equal(outcome.status, "idle", JSON.stringify(outcome));
       const work = (await rig.snapshot()).work[0]!;
-      assert.equal(work.blocker, null, JSON.stringify(work.blocker));
-      assert.equal(work.nextStep, "review");
-      assert.deepEqual(work.ownerLanding?.paths, [
-        ".github/workflows/",
-        "src/auth/",
-      ]);
-      assert.equal(rig.github.pushes.length, 1, "the candidate is pushed");
-      assert.ok(rig.github.calls.includes("createPr"));
+      assert.equal(work.nextStep, "blocked");
+      assert.equal(work.blocker?.message, "candidate touches a protected path");
+      assert.equal(work.ownerLanding, undefined);
+      assert.equal(rig.github.pushes.length, 0, "nothing is pushed");
+      assert.ok(!rig.github.calls.includes("createPr"));
     } finally {
       await rig.ctx.cleanup();
     }
   },
 );
 
+/** A record of an issue the owner opened (the source a workflow needs). */
+async function ownerIssueRig(name: string, changedPaths: string[]) {
+  const rig = await makeRig(name, {
+    summaries: false,
+    configOverrides: { repository: TARGET_REPO, ...PROTECTED },
+    model: { changedPaths },
+    github: {
+      candidateLifecycle: positiveLifecycle(),
+      pushedPaths: changedPaths,
+    },
+  });
+  const task = asWorkItemId("issue-41");
+  const seeded = await rig.store.writeRepair(
+    seededSnapshot([workRecord(task, {
+      repository: TARGET_REPO,
+      source: { kind: "issue", id: "41", revision: SHA1 },
+      related: { incidentId: null, issueNumber: 41 },
+      target: {
+        base: SHA1,
+        branch: candidateBranch(task),
+        checkpoint: null,
+        head: null,
+        pr: null,
+      },
+      nextStep: "work",
+    })]),
+    null,
+  );
+  assert.ok(seeded.ok && seeded.value.status === "applied");
+  return rig;
+}
+
 Deno.test(
   "owner landing: a target's workflow candidate is an ordinary pull request that merges after review and CI",
   async () => {
-    const rig = await makeRig("ownerlandingtargetworkflow", {
-      configOverrides: { repository: TARGET_REPO, ...PROTECTED },
-      model: {
-        changedPaths: ["src/auth/session.ts", ".github/workflows/ci.yml"],
-      },
-      github: { candidateLifecycle: positiveLifecycle() },
-    });
+    const rig = await ownerIssueRig("ownerlandingtargetworkflow", [
+      "src/auth/session.ts",
+      ".github/workflows/ci.yml",
+    ]);
     try {
       const first = await rig.run();
       assert.equal(first.status, "idle", JSON.stringify(first));
