@@ -1,34 +1,25 @@
 /**
- * Owner-landing publication and the protected-path classification (owner
- * directive 2026-11-17, "give sentinel full access"): a protected change a
- * target's configuration names is published as an ordinary pull request and
- * merged by Sentinel through the unchanged gates (current-head CI not red,
- * completed native review with no unresolved P0, task acceptance, custody
- * and accounting), with two exceptions:
+ * Owner-landing publication: a candidate that changes a protected path of its
+ * target is published, tested and reviewed like any candidate, but Sentinel
+ * never merges it. The repository owner merges it, and that human merge
+ * completes the record through the ordinary human-merge path.
  *
- * - A credential or history path (`credentialPath`: `.git/`, `.env*`, the
- *   act/npm credential files the backup CI must never read and a target's
- *   own `sentinel.protected` list) is never published on any target and
- *   keeps the pre-publication park.
- * - On Sentinel's own repository every configured protected prefix (its
- *   authority files, `SENTINEL_AUTHORITY_PATHS`: credential minting and
- *   selection, write-token dispatch, the merge gate, promotion and this
- *   policy itself) is published, tested and reviewed, but Sentinel never
- *   merges it: its owner does, and that human merge completes the record
- *   through the ordinary human-merge path. Any `.github/` path there stays
- *   unpublishable, as before the directive: a pushed workflow would run with
- *   Sentinel's own secrets and a writable token before the owner saw it.
- * - A changed path no predicate can classify (`unsafeChangedPath`: quoted,
- *   escaped, absolute or not normalised) is unpublishable everywhere.
+ * Only a change that could run in CI with elevated rights or rewrite the
+ * policy itself stays unpublishable and keeps the pre-publication park:
+ * anything under `.github/` (workflows, composite actions, repository
+ * automation), `.git/`, env files, the act configuration files the backup CI
+ * must never read from the target tree, `.npmrc` and the generic target's own
+ * `sentinel.protected` list. A candidate touching any of those is never
+ * pushed. Sentinel's own authority files (`SENTINEL_AUTHORITY_PATHS`, the
+ * 2026-10-30 credential/dispatch/merge-gate/promotion set) are likewise never
+ * published when a target's configuration protects them.
  */
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
-import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { WorkRecordV1, WorkWaitV1 } from "../contracts/work-record.ts";
 import type { WorkWaitCauseV1 } from "../contracts/work-wait-cause.ts";
 import { SENTINEL_AUTHORITY_PATHS } from "../host/hosted-authority-protected-paths.ts";
 import { targetTouchesProtectedV1 } from "../host/target-policy-generic.ts";
 import { normalizePathPrefix, touchesProtected } from "./loop-records.ts";
-import { ciExecutablePath, unsafeChangedPath } from "./workflow-trust.ts";
 
 /** The delivery refusal (launcher actions) of an owner-landing record. */
 export const OWNER_MERGE_REQUIRED = "owner_merge_required";
@@ -43,7 +34,7 @@ export const OWNER_MERGE_WAIT_CAUSE: WorkWaitCauseV1 = {
 /** How often a record waiting for its owner's merge re-reads its PR. */
 export const OWNER_LANDING_POLL_MS = 15 * 60_000;
 
-const CREDENTIAL_FILES: readonly string[] = Object.freeze([
+const CI_CONFIG_FILES: readonly string[] = Object.freeze([
   ".actrc",
   ".secrets",
   ".vars",
@@ -53,46 +44,33 @@ const CREDENTIAL_FILES: readonly string[] = Object.freeze([
 ]);
 
 /**
- * A credential or history path: `.git/` anywhere, any `.env*` file, the
- * act/npm credential configuration the backup CI must never read from a
- * target tree, a target's own `sentinel.protected` list, and any path no
- * predicate can classify (`unsafeChangedPath`). A workflow or other
- * `.github/` path is not one (2026-11-17). It refuses a change only where a
- * configured protected prefix covers it (`ownerLandingTouch`); a key file
- * relies on the secret-shaped-text detector.
+ * A path whose change could execute in CI with elevated rights or change
+ * what CI or the protected policy reads: never published.
  */
-export function credentialPath(path: string): boolean {
-  if (unsafeChangedPath(path)) return true;
+export function ciExecutablePath(path: string): boolean {
   const normalized = normalizePathPrefix(path);
   const segments = normalized.split("/");
-  if (segments.includes(".git")) return true;
+  if (segments[0] === ".github" || segments.includes(".git")) return true;
   const base = segments[segments.length - 1] ?? "";
-  return base.startsWith(".env") || CREDENTIAL_FILES.includes(base);
+  return base.startsWith(".env") || CI_CONFIG_FILES.includes(base);
 }
 
 /**
- * A Sentinel authority path (or prefix inside one): on Sentinel's own
- * repository a configured protected change to it lands for the owner.
+ * A Sentinel authority path (or prefix inside one): a configured protected
+ * change to it keeps the pre-publication park. Only a target whose
+ * configuration protects the path is affected (the Sentinel self target).
  */
 export function authorityPath(path: string): boolean {
   return touchesProtected(SENTINEL_AUTHORITY_PATHS, normalizePathPrefix(path));
 }
 
 /**
- * A protected path or prefix that is never published on any target. The
- * implementer prompt names the configured prefixes this refuses
- * (`model-port-prompt.ts`), so the prompt and this gate share one predicate.
+ * A protected path or prefix that is never published. The implementer
+ * prompt names the configured prefixes this refuses (`model-port-prompt.ts`),
+ * so the prompt and this gate share one predicate.
  */
 export function unpublishablePath(path: string): boolean {
-  return credentialPath(path);
-}
-
-/** Sentinel's own repository: only its owner merges its protected changes. */
-export function ownerMergesProtectedChanges(
-  repository: Pick<RepositoryIdentityV1, "owner" | "name">,
-): boolean {
-  return repository.owner.toLowerCase() === "ubiquity-sentinel" &&
-    repository.name.toLowerCase() === "sentinel";
+  return ciExecutablePath(path) || authorityPath(path);
 }
 
 /** How one candidate's change set meets its target's protected paths. */
@@ -103,32 +81,21 @@ export type OwnerLandingTouchV1 =
 
 /**
  * `owner` names the configured protected prefixes the change touches
- * (sorted, unique); only Sentinel's own repository has them. A credential
- * path, or (on Sentinel itself) a protected path no configured literal
- * prefix covers, is `unpublishable`. Any other protected change is `none`:
- * an ordinary pull request that Sentinel merges through the normal gates.
+ * (sorted, unique). A protected path no configured literal prefix covers (a
+ * generic target's nested env family) or any CI-executable path is
+ * `unpublishable`.
  */
 export function ownerLandingTouch(
   config: Pick<RepositoryConfigV1, "commands" | "protectedPaths">,
   changedPaths: readonly string[],
-  repository: Pick<RepositoryIdentityV1, "owner" | "name">,
 ): OwnerLandingTouchV1 {
-  // Fail closed on a path no predicate can classify, and keep Sentinel's own
-  // `.github/` unpublishable whatever its configuration lists.
-  if (changedPaths.some(unsafeChangedPath)) return { kind: "unpublishable" };
-  if (
-    ownerMergesProtectedChanges(repository) &&
-    changedPaths.some(ciExecutablePath)
-  ) return { kind: "unpublishable" };
   const hits = changedPaths.filter((path) =>
     targetTouchesProtectedV1(config, path)
   );
-  if (hits.some(unpublishablePath)) return { kind: "unpublishable" };
-  if (hits.length === 0 || !ownerMergesProtectedChanges(repository)) {
-    return { kind: "none" };
-  }
+  if (hits.length === 0) return { kind: "none" };
   const prefixes = new Set<string>();
   for (const path of hits) {
+    if (unpublishablePath(path)) return { kind: "unpublishable" };
     const covering = config.protectedPaths.filter((prefix) =>
       touchesProtected([prefix], path)
     );
@@ -186,38 +153,17 @@ export function withoutOwnerLanding(record: WorkRecordV1): WorkRecordV1 {
 
 /**
  * The protected paths a publication of this record is validated against:
- * every credential prefix, and on Sentinel's own repository the configured
- * prefixes its owner-landing flag does not name. On any other target the
- * remaining configured prefixes publish as ordinary changes.
+ * the configured list minus the prefixes its owner-landing flag names. A
+ * CI-executable or Sentinel authority prefix is never removed.
  */
 export function publicationProtectedPaths(
   protectedPaths: readonly string[],
-  repository: Pick<RepositoryIdentityV1, "owner" | "name">,
   record: Pick<WorkRecordV1, "ownerLanding"> | null,
 ): string[] {
   const named = record?.ownerLanding?.paths ?? [];
-  const owner = ownerMergesProtectedChanges(repository);
-  const refused = protectedPaths.filter((prefix) =>
-    unpublishablePath(prefix) ||
-    (owner && (ciExecutablePath(prefix) || !named.includes(prefix)))
+  return protectedPaths.filter((prefix) =>
+    unpublishablePath(prefix) || !named.includes(prefix)
   );
-  // Sentinel's own `.github/` is refused whole, configured or not.
-  return owner && !refused.includes(".github/")
-    ? [...refused, ".github/"]
-    : refused;
-}
-
-/**
- * A change set Sentinel never merges on its own (the launcher's merge-time
- * gate): a credential path anywhere, or a protected path of Sentinel's own
- * repository, which only its owner merges.
- */
-export function sentinelNeverMerges(
-  config: Pick<RepositoryConfigV1, "commands" | "protectedPaths">,
-  repository: Pick<RepositoryIdentityV1, "owner" | "name">,
-  changedPaths: readonly string[],
-): boolean {
-  return ownerLandingTouch(config, changedPaths, repository).kind !== "none";
 }
 
 /** The bounded wait of a reviewed, CI-green owner-landing record. */
@@ -248,15 +194,15 @@ export function ownerLandingWords(paths: readonly string[]): string {
 
 /**
  * A change set touches a protected path this record may not publish: any
- * credential path, or on Sentinel itself a protected prefix its owner-landing
- * flag does not already name (a conflict-resolution merge never widens it).
+ * CI-executable path, or a protected prefix its owner-landing flag does not
+ * already name (a conflict-resolution merge never widens the flag).
  */
 export function protectedBeyondOwnerLanding(
   config: Pick<RepositoryConfigV1, "commands" | "protectedPaths">,
-  record: Pick<WorkRecordV1, "ownerLanding" | "repository">,
+  record: Pick<WorkRecordV1, "ownerLanding">,
   changedPaths: readonly string[],
 ): boolean {
-  const touch = ownerLandingTouch(config, changedPaths, record.repository);
+  const touch = ownerLandingTouch(config, changedPaths);
   if (touch.kind !== "owner") return touch.kind === "unpublishable";
   const named = record.ownerLanding?.paths ?? [];
   return touch.paths.some((path) => !named.includes(path));

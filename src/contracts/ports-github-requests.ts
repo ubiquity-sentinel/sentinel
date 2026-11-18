@@ -36,17 +36,6 @@ export interface GitHubIssueV1 {
   body: string;
   state: "open" | "closed";
   author: string | null;
-  /**
-   * The author's numeric GitHub user id (`user.id`); absent when the
-   * response carries none. Owner admission binds login and id together.
-   */
-  authorId?: number;
-  /**
-   * The author's relation to the repository as GitHub reports it at read
-   * time (`author_association`: `OWNER`, `MEMBER`, `COLLABORATOR`, ...).
-   * Absent when the response carries no known value, which proves nothing.
-   */
-  authorAssociation?: string;
   labels: string[];
   createdAt: number;
   updatedAt: number;
@@ -77,17 +66,6 @@ export interface GitHubPullRequestV1 {
   /** Merge actor login; absent on older records, null when unavailable. */
   mergedBy?: string | null;
   reviewDecision: GitHubReviewDecisionV1;
-}
-
-/**
- * The head commits of the most recently merged pull requests into one base
- * branch, newest merge first (2026-11-18 CI rule, `ci-success-rule.ts`), from
- * one bounded listing. `complete` is true only when that listing proves no
- * other merged pull request into the branch exists (it was not a full page).
- */
-export interface MergedPullHeadsV1 {
-  heads: GitSha[];
-  complete: boolean;
 }
 
 export type GitHubReviewDecisionV1 =

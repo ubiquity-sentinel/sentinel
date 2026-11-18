@@ -1,4 +1,3 @@
-import { AUTHOR_NOT_ADMITTED_PARK } from "./issue-admission.ts";
 import { causedWait } from "./loop-wait-cause.ts";
 import {
   isNoTestEvidenceTargetV1,
@@ -344,18 +343,6 @@ export async function prepareImplementationStart(
   // never an ambiguous unsent model intent. The value is kept for the model
   // invocation below.
   const observation = await observeIssueForModel(deps, record);
-  if (observation.kind === "not_admitted") {
-    // Owner directive 2026-11-17: an issue whose author Sentinel does not
-    // work for starts nothing: parked before any reservation, uncharged.
-    return persistWork(
-      deps,
-      context,
-      clearIntent(
-        markBlocked(record, "other", AUTHOR_NOT_ADMITTED_PARK, now),
-        now,
-      ),
-    );
-  }
   if (observation.kind === "unavailable") {
     // A source observed closed or absent is terminal: retire it with the
     // existing source-closed blocker BEFORE the conflict-resolution start

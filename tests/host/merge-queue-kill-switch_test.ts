@@ -1,10 +1,3 @@
-import type { HostedAutonomyGitHubV1 } from "../../ops/hosted-autonomy-types.ts";
-import { ownerIssueFacts } from "./hosted-autonomy-rig.ts";
-
-/** The admission gate's source-issue read: the admitted owner (2026-11-17). */
-const ADMITTED_ISSUES = {
-  readIssueFacts: (number: number) => Promise.resolve(ownerIssueFacts(number)),
-} as unknown as HostedAutonomyGitHubV1;
 import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { createHostedQueueCoordinator } from "../../ops/hosted-autonomy-queue-host.ts";
@@ -446,7 +439,7 @@ Deno.test("factory restart with admission off retains actual native custody and 
       ciMinutes: INACTIVE_CI_MINUTES,
       state: rig.state,
       clock: rig.clock,
-      githubFor: () => ADMITTED_ISSUES,
+      githubFor: () => null,
       queue,
     }, rig.clock.now() + 60000);
     assert.equal(result.ready, true, result.actions.join(" "));
@@ -541,7 +534,7 @@ Deno.test("actual coordinator factory switches off after a real HTTP admission a
       ciMinutes: INACTIVE_CI_MINUTES,
       state: rig.state,
       clock: rig.clock,
-      githubFor: () => ADMITTED_ISSUES,
+      githubFor: () => null,
       queue,
     }, rig.clock.now() + 60000);
     assert.equal(result.ready, true, result.actions.join(" "));
@@ -553,7 +546,7 @@ Deno.test("actual coordinator factory switches off after a real HTTP admission a
     ciMinutes: INACTIVE_CI_MINUTES,
     state: rig.state,
     clock: rig.clock,
-    githubFor: () => ADMITTED_ISSUES,
+    githubFor: () => null,
     queue,
   }, rig.clock.now() + 60000);
   assert.equal(rig.enqueues, 1, started.actions.join(" "));
@@ -566,7 +559,7 @@ Deno.test("actual coordinator factory switches off after a real HTTP admission a
       ciMinutes: INACTIVE_CI_MINUTES,
       state: rig.state,
       clock: rig.clock,
-      githubFor: () => ADMITTED_ISSUES,
+      githubFor: () => null,
       queue: restarted,
     }, rig.clock.now() + 60000);
     assert.equal(result.ready, true, result.actions.join(" "));
@@ -583,7 +576,7 @@ function restartable(rig: Awaited<ReturnType<typeof factoryRig>>) {
       ciMinutes: INACTIVE_CI_MINUTES,
       state: rig.state,
       clock: rig.clock,
-      githubFor: () => ADMITTED_ISSUES,
+      githubFor: () => null,
       queue: rig.coordinator(selector, rig.acceptedSource),
     }, rig.clock.now() + 60000);
 }

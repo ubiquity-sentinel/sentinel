@@ -81,9 +81,7 @@ export async function postDrainTaskScenario(
       title: "issue 1",
       body: "",
       state: "open" as const,
-      // The admitted owner (2026-11-17): only the owner's and the App's issues.
-      author: "0x4007",
-      authorId: 4975670,
+      author: null,
       labels: [],
       createdAt: T0,
       updatedAt: T0,

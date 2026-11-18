@@ -15,8 +15,6 @@
  * marker the issue's latest Sentinel progress comment for that record already
  * carries is skipped, so retries and re-runs never duplicate.
  */
-import { UNTRUSTED_WORKFLOW_PARK } from "../repair/workflow-trust.ts";
-import { AUTHOR_NOT_ADMITTED_PARK } from "../repair/issue-admission.ts";
 import type { Clock, GitHubCooldownGateV1 } from "../contracts/ports.ts";
 import type { HttpResponseV1, HttpTransportV1 } from "../github/http.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
@@ -119,21 +117,8 @@ export function progressStage(record: WorkRecordV1): ProgressStageV1 | null {
     // A record retired because its issue closed says nothing on that issue.
     if (message.startsWith(SOURCE_CLOSED_PREFIX)) return null;
     // The protected candidate is complete but is never published or merged
-    // by Sentinel (`loop-implementation-result.ts`): say who lands it. A
-    // workflow change from a source Sentinel may not change CI for, and an
-    // issue whose author Sentinel does not work for, are different refusals
-    // (2026-11-17): say exactly those (`workflow-trust.ts`,
-    // `issue-admission.ts`).
-    const person = message === UNTRUSTED_WORKFLOW_PARK
-      ? " The fix changes CI workflow files, which Sentinel publishes only " +
-        "when the task text comes from its owner or from Sentinel's own " +
-        "base-repair or CI capability issues (a review follow-up counts as " +
-        "its original issue); the repository owner can land this change by " +
-        "hand."
-      : message === AUTHOR_NOT_ADMITTED_PARK
-      ? " Sentinel works only on issues opened by its owner or by Sentinel " +
-        "itself; the owner can re-file this issue to have it worked."
-      : message.startsWith("candidate touches a protected path")
+    // by Sentinel (`loop-implementation-result.ts`): say who lands it.
+    const person = message.startsWith("candidate touches a protected path")
       ? " The fix changes a protected path, which Sentinel never merges; " +
         "the repository owner needs to land this change."
       : "";

@@ -1,4 +1,3 @@
-import { ownerIssueFacts } from "./hosted-autonomy-rig.ts";
 import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { runHostedDeliveryPass } from "../../ops/hosted-autonomy-delivery-pass.ts";
@@ -103,8 +102,6 @@ async function fixture(options: {
   };
   const github = {
     ...authority.github,
-    readIssueFacts: (number: number) =>
-      Promise.resolve(ownerIssueFacts(number)),
     readIssueTask: () =>
       Promise.resolve(
         authority.facts.task === "unavailable" ? null : authority.facts.task,

@@ -7,7 +7,6 @@
  * sequence 37010 (2026-10-16T23:21:07Z), with the read-only GitHub facts of
  * 23:25-23:35Z, in `tests/fixtures/host/spent-delivery-live-2321.json`.
  */
-import { ownerIssueFacts } from "./hosted-autonomy-rig.ts";
 import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { parseWorkRecordV1 } from "../../src/contracts/work-record.ts";
@@ -310,9 +309,6 @@ export function liveSurface(
       ),
     readIssueTask: (number: number) =>
       Promise.resolve(options.tasks?.[number] ?? null),
-    // The launcher admission gate's read: the admitted owner by default.
-    readIssueFacts: (number: number) =>
-      Promise.resolve(ownerIssueFacts(number)),
     readIssueOptedOut: () => Promise.resolve(false as boolean | null),
     baseAdvanced: (base: string, tip: string) => {
       calls.advancedReads.push(`${base}...${tip}`);

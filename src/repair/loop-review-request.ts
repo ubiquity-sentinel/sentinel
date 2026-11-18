@@ -1,4 +1,3 @@
-import { AUTHOR_NOT_ADMITTED_PARK } from "./issue-admission.ts";
 import { guardQueueOperation } from "./loop-queue-guard.ts";
 /** Repair loop internals: review request. */
 import type { ReviewObservationV1 } from "../contracts/ports.ts";
@@ -211,20 +210,6 @@ export async function requestReviewFor(
         record,
         "missing_evidence",
         REVIEW_TASK_SHAPE_DETAIL,
-        deps.clock.now(),
-      ),
-    );
-  }
-  if (task === "not_admitted") {
-    // Owner directive 2026-11-17: no review round is spent on an issue whose
-    // author Sentinel does not work for; parked uncharged.
-    return persistWork(
-      deps,
-      context,
-      markBlocked(
-        record,
-        "other",
-        AUTHOR_NOT_ADMITTED_PARK,
         deps.clock.now(),
       ),
     );

@@ -15,15 +15,6 @@ import {
   selectMergeGateChecksV1,
 } from "./merge-gate-checks.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
-import {
-  actionsSuccessNames,
-  ciExpectationSatisfied,
-  type CiExpectationV1,
-  headCiChange,
-  readCiExpectation,
-  recordBaseRef,
-  runtimeCiReferenceReads,
-} from "./ci-success-rule.ts";
 import { routeFailedDeliveryChecks } from "./loop-ci-correction.ts";
 import { isSelfScopeZero } from "./loop-legacy-loss.ts";
 import { persistWork } from "./loop-state.ts";
@@ -64,22 +55,10 @@ const SELF_AGGREGATE_CHECK = "test-local";
  * check run only once its dependencies finish. The CI-first review gate and
  * the carried delivery steps therefore also require coverage of the base the
  * head is tested against (`absentExpectedChecks`) before a "proceed" counts.
- *
- * `requireSuccess` (2026-11-17, a head that changes a CI-executable path,
- * `ci-success-rule.ts`): such a head waits unless its GitHub Actions success
- * names meet `expectation` (every name the last merged pull request with an
- * Actions success passed, else the base's, else at least one job; an
- * absent or unknown expectation never does). Skipped, neutral, stand-in,
- * status and other-app observations never count. Every caller that omits it
- * decides exactly as before.
  */
 export function decideCiGate(
   checks: GitHubCheckV1[],
   repository?: Pick<RepositoryIdentityV1, "owner" | "name">,
-  options?: {
-    readonly requireSuccess?: boolean;
-    readonly expectation?: CiExpectationV1;
-  },
 ): "proceed" | "wait" | { blocked: string } {
   const gating = selectMergeGateChecksV1(repository, checks).checks;
   if (gating.length === 0) return "wait";
@@ -103,57 +82,7 @@ export function decideCiGate(
   // apps (the gateway's lone skipped `CodeRabbit`, a scanner or a preview,
   // before any `Gateway CI` run) waits exactly like a head with no checks.
   if (!deduped.some(isCiEvidenceCheck)) return "wait";
-  if (
-    options?.requireSuccess === true &&
-    !ciExpectationSatisfied(
-      options.expectation ?? { kind: "unknown" },
-      actionsSuccessNames(gating),
-    )
-  ) return "wait";
   return "proceed";
-}
-
-/**
- * `decideCiGate` for `record`'s own head under the 2026-11-17 success rule
- * (`ci-success-rule.ts`): a head that would proceed and whose change set
- * (the local mirror's diff, else one exact comparison) changes a
- * CI-executable path is judged with `requireSuccess` against the expectation
- * read from the base branch's merged pull requests (unreadable: wait). A
- * head shown unchanged, or not shown at all, gets exactly `decideCiGate`'s
- * verdict; the merge executors hold the unknown case fail closed.
- */
-export async function decideHeadCiGate(
-  deps:
-    & Pick<RepairCycleDepsV1, "github">
-    & Partial<Pick<RepairCycleDepsV1, "configs">>,
-  record: Pick<WorkRecordV1, "target" | "repository">,
-  checks: GitHubCheckV1[],
-  repository?: Pick<RepositoryIdentityV1, "owner" | "name">,
-): Promise<"proceed" | "wait" | { blocked: string }> {
-  const decision = decideCiGate(checks, repository);
-  if (decision !== "proceed") return decision;
-  if (await headCiChange(deps, record) !== "ci") return decision;
-  return decideCiGate(checks, repository, {
-    requireSuccess: true,
-    expectation: await headCiExpectation(deps, record),
-  });
-}
-
-/** The expectation for `record`'s CI-changing head (`ci-success-rule.ts`). */
-export function headCiExpectation(
-  deps:
-    & Pick<RepairCycleDepsV1, "github">
-    & Partial<Pick<RepairCycleDepsV1, "configs">>,
-  record: Pick<WorkRecordV1, "target" | "repository">,
-): Promise<CiExpectationV1> {
-  return readCiExpectation(
-    runtimeCiReferenceReads(
-      deps.github,
-      record.repository,
-      recordBaseRef(deps, record),
-    ),
-    record.target.base,
-  );
 }
 
 /**
@@ -244,12 +173,7 @@ export async function gateDeliveryOnChecks(
     // Transient read failure: defer without a wait so the next turn retries.
     return { kind: "deferred", detail: "CI check observation unavailable" };
   }
-  const decision = await decideHeadCiGate(
-    deps,
-    record,
-    observed.value.checks,
-    record.repository,
-  );
+  const decision = decideCiGate(observed.value.checks, record.repository);
   if (decision === "proceed") {
     // Every selected (deduped) CI check completed green: the CI gate passes
     // and the merge authorization proceeds. Deploy observations stay evidence.

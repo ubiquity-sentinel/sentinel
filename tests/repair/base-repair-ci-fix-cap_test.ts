@@ -23,10 +23,7 @@ const HEADS = ["5", "6", "7", "8", "9", "b", "c", "d"].map((c) =>
   c.repeat(40) as GitSha
 );
 
-/**
- * Issue #1: the App's base-repair issue, or the owner's ordinary one (only
- * the owner's and the App's issues are worked, 2026-11-17).
- */
+/** Issue #1: the App's base-repair issue, or a person's ordinary one. */
 function issue(baseRepair: boolean): GitHubIssueV1 {
   return {
     number: 1,
@@ -35,9 +32,7 @@ function issue(baseRepair: boolean): GitHubIssueV1 {
       ? `<!-- sentinel:base-repair:development@${SHA1} -->\n\nCI is failing.`
       : "The build fails on every pull request.",
     state: "open",
-    ...(baseRepair
-      ? { author: "ubiquity-sentinel[bot]" }
-      : { author: "0x4007", authorId: 4975670 }),
+    author: baseRepair ? "ubiquity-sentinel[bot]" : "someone",
     labels: [],
     createdAt: 0,
     updatedAt: 0,

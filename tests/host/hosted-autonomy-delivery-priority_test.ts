@@ -1,4 +1,3 @@
-import { ownerIssueFacts } from "./hosted-autonomy-rig.ts";
 import assert from "node:assert/strict";
 import { makeRig, repairSnapshot, run } from "./hosted-autonomy-rig.ts";
 import {
@@ -84,8 +83,6 @@ Deno.test("hosted runner: already merged foreign closure bookkeeping precedes un
           ...github,
           readDefaultBranch: () => Promise.resolve("main"),
           readIssueOpen: (issue) => Promise.resolve(issue === 900),
-          readIssueFacts: (number: number) =>
-            Promise.resolve(ownerIssueFacts(number)),
           readIssueTask: (issue) =>
             Promise.resolve(
               tasks.find((task) => task.issueNumber === issue) ?? null,

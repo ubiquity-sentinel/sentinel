@@ -188,9 +188,8 @@ Deno.test("hosted conflict resolution: a failed, unstarted or protected cell sta
         /^implementation start is past the model cutoff/,
       ],
       [
-        // 2026-11-17: only a credential path still refuses on a target.
         "touches a protected path",
-        { extra: { ".env": "MODE=resolved\n" } },
+        { extra: { "src/handler.ts": "export const handled = true;\n" } },
         "submitted",
         /^candidate touches a protected path$/,
       ],
@@ -199,7 +198,6 @@ Deno.test("hosted conflict resolution: a failed, unstarted or protected cell sta
     await t.step(name, async () => {
       const rig = await hostedConflictRig();
       try {
-        rig.hosted.configs[0].protectedPaths.push(".env");
         await resolveHosted(rig, options);
         for (let run = 0; run < 2; run++) {
           rig.hosted.clock.advance(5 * 60_000);

@@ -415,8 +415,7 @@ Deno.test("outage observation: intake never admits the App's notice as a task", 
   github.listed = [
     issueRecord(1),
     issueRecord(2, { body: notice, author: CI_OUTAGE_AUTHOR }),
-    // The marker in the owner's own issue makes no App notice of it.
-    issueRecord(3, { body: notice }),
+    issueRecord(3, { body: notice, author: "someone" }),
   ];
   for (const issue of github.listed) github.latest.set(issue.number, issue);
   const rig = makeMemoryRig(github);

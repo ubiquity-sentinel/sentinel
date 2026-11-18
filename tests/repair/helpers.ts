@@ -1,6 +1,3 @@
-import { pushGuardRefusal } from "../../src/github/push-content-guard.ts";
-import type { PushContentGuardV1 } from "../../src/contracts/ports-github.ts";
-import type { TakeoverEffectAuthorization } from "../../src/contracts/existing-pr-takeover.ts";
 import { inactiveNativeQueueFixture } from "../github/native-queue-fixture.ts";
 import type { NativeQueueGuardV1 } from "../../src/github/native-queue-guard.ts";
 /**
@@ -212,17 +209,6 @@ export interface FakeGithubOptionsV1 {
   reviewUnavailable?: boolean;
   reviewRequestedAt?: number;
   pushOutcome?: "applied" | "ambiguous";
-  /** One-shot definitive refusal detail of the next push (nothing written). */
-  pushRefusal?: string;
-  /** The change set every guarded push carries (2026-11-17 push guard). */
-  pushedPaths?: string[];
-  /** Paths every exact comparison reports (default none; null: not whole). */
-  changedPaths?: string[] | null | "unavailable";
-  /**
-   * The base branch's merged pull request heads (2026-11-18 CI rule's
-   * reference); default none and complete (no merged pull request).
-   */
-  mergedPullHeads?: { heads: GitSha[]; complete: boolean } | "unavailable";
   pushFailNext?: boolean;
   createOutcome?: "applied" | "ambiguous";
   createFailNext?: boolean;
@@ -244,32 +230,12 @@ export interface FakeGithubOptionsV1 {
  */
 export type SuitedCheckV1 = GitHubCheckV1 & { suite?: number };
 
-/** The admitted owner identity every fixture issue carries by default. */
-export const OWNER_AUTHOR = Object.freeze({
-  author: "0x4007",
-  authorId: 4975670,
-});
-
-/** A fixture issue's author: its own fields, else the admitted owner. */
-export function authorOf(
-  issue: Partial<GitHubIssueV1>,
-): { author: string | null; authorId?: number } {
-  if (issue.author === undefined) return { ...OWNER_AUTHOR };
-  return issue.authorId === undefined
-    ? { author: issue.author }
-    : { author: issue.author, authorId: issue.authorId };
-}
-
 /** Recording fake GitHubPort; product logic never lives here. */
 export class FakeGithub implements GitHubPort {
   nativeQueue: NativeQueueGuardV1 | undefined;
   /** Explicit trusted publisher identity; the loop must use this value. */
   readonly reviewerIdentity: string = "chatgpt-codex-connector[bot]";
   readonly calls: string[] = [];
-  /** Exact `base...head` comparisons read (2026-11-17 success rule). */
-  readonly changedPathReads: string[] = [];
-  /** Base branches whose merged pull requests were listed (CI rule). */
-  readonly mergedPullReads: string[] = [];
   readonly drains: ReviewDrainRequestV1[] = [];
   drainResult: PortResultV1<ReviewDrainReportV1> = portOk({
     ok: true,
@@ -369,7 +335,7 @@ export class FakeGithub implements GitHubPort {
           title: `issue ${issueNumber}`,
           body: "",
           state: "open",
-          ...OWNER_AUTHOR,
+          author: null,
           labels: [],
           createdAt: T0,
           updatedAt: T0,
@@ -383,10 +349,7 @@ export class FakeGithub implements GitHubPort {
       title: issue.title ?? `issue ${issueNumber}`,
       body: issue.body ?? "",
       state: "open",
-      ...authorOf(issue),
-      ...(issue.authorAssociation === undefined
-        ? {}
-        : { authorAssociation: issue.authorAssociation }),
+      author: null,
       labels: issue.labels ?? [],
       createdAt: issue.createdAt ?? T0,
       updatedAt: T0,
@@ -402,7 +365,7 @@ export class FakeGithub implements GitHubPort {
         title: issue.title ?? `issue ${issue.number ?? 0}`,
         body: issue.body ?? "",
         state: issue.state ?? "open",
-        ...authorOf(issue),
+        author: issue.author ?? null,
         labels: issue.labels ?? [],
         createdAt: issue.createdAt ?? T0,
         updatedAt: issue.updatedAt ?? T0,
@@ -500,35 +463,6 @@ export class FakeGithub implements GitHubPort {
     }));
   }
 
-  /**
-   * The exact comparison's changed paths (2026-11-17 success rule): the
-   * configured list, none by default, so an existing case decides as before.
-   */
-  readChangedPaths(
-    base: GitSha,
-    head: GitSha,
-  ): Promise<PortResultV1<string[] | null>> {
-    // Kept apart from `calls`, whose exact sequences existing cases assert.
-    this.changedPathReads.push(`${base}...${head}`);
-    const paths = this.options.changedPaths;
-    if (paths === "unavailable") {
-      return Promise.resolve(portError("unavailable", "comparison down"));
-    }
-    return Promise.resolve(portOk(paths === undefined ? [] : paths));
-  }
-
-  /** The configured merged-head listing (none, complete, by default). */
-  readMergedPullHeads(
-    baseRef: string,
-  ): Promise<PortResultV1<{ heads: GitSha[]; complete: boolean }>> {
-    this.mergedPullReads.push(baseRef);
-    const listing = this.options.mergedPullHeads;
-    if (listing === "unavailable") {
-      return Promise.resolve(portError("unavailable", "listing down"));
-    }
-    return Promise.resolve(portOk(listing ?? { heads: [], complete: true }));
-  }
-
   readRef(
     ref: string,
   ): Promise<PortResultV1<{ ref: string; sha: GitSha } | null>> {
@@ -573,33 +507,12 @@ export class FakeGithub implements GitHubPort {
     return Promise.resolve(portOk(null));
   }
 
-  async pushHead(
+  pushHead(
     ref: string,
     sha: GitSha,
     expectedRef: GitSha | null,
-    _takeover?: TakeoverEffectAuthorization,
-    guard?: PushContentGuardV1,
   ): Promise<PortResultV1<"applied" | "ambiguous">> {
     this.calls.push(`push:${ref}:${sha.slice(0, 8)}`);
-    // The production push guard over this fake's pushed change set
-    // (`pushedPaths`, else the comparison's `changedPaths`, else none).
-    if (guard !== undefined) {
-      const pushed = this.options.pushedPaths ??
-        (Array.isArray(this.options.changedPaths)
-          ? this.options.changedPaths
-          : []);
-      const refused = await pushGuardRefusal(
-        () => Promise.resolve(portOk([...pushed])),
-        guard,
-        sha,
-      );
-      if (refused !== null) return refused;
-    }
-    if (this.options.pushRefusal !== undefined) {
-      const detail = this.options.pushRefusal;
-      this.options.pushRefusal = undefined;
-      return Promise.resolve(portError("invalid", detail));
-    }
     if (this.options.pushFailNext) {
       this.options.pushFailNext = false;
       return Promise.resolve(

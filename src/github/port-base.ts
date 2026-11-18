@@ -25,7 +25,6 @@ import type {
   GitHubIssueListOptionsV1,
   GitHubRefV1,
   IssueCloseOutcomeV1,
-  MergedPullHeadsV1,
   MergeOutcomeV1,
   MergeRequestV1,
   PortErrorV1,
@@ -47,7 +46,6 @@ import type {
 } from "../contracts/live-inputs.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import { GitHubApiClient } from "./client.ts";
-import { localFirstChangedPaths } from "./changed-paths-read.ts";
 import type { GitExecutorV1 } from "./git-executor.ts";
 import type {
   HumanResolutionVerifierV1,
@@ -233,25 +231,6 @@ export abstract class GitHubPortBase {
 
   readCommitParents(sha: GitSha): Promise<PortResultV1<GitSha[] | null>> {
     return this.client.readCommitParents(sha);
-  }
-
-  /** The paths `base...head` changes (`changed-paths-read.ts`). */
-  readChangedPaths(
-    base: GitSha,
-    head: GitSha,
-  ): Promise<PortResultV1<string[] | null>> {
-    return localFirstChangedPaths(
-      this.git.changedPaths?.bind(this.git),
-      (from, to) => this.client.readChangedPaths(from, to),
-      base,
-      head,
-    );
-  }
-
-  readMergedPullHeads(
-    baseRef: string,
-  ): Promise<PortResultV1<MergedPullHeadsV1>> {
-    return this.client.readMergedPullHeads(baseRef);
   }
 
   readCommitTree(sha: GitSha): Promise<PortResultV1<GitSha | null>> {

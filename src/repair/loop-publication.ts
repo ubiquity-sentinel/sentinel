@@ -1,5 +1,3 @@
-import { recordPushGuard } from "./push-guard.ts";
-import { PUSH_GUARD_REFUSALS } from "../github/push-content-guard.ts";
 import { guardCiMinuteEffect } from "./loop-types.ts";
 import {
   holdQueueRecord,
@@ -39,12 +37,10 @@ import type {
 import { hasPublishedIdentity } from "./selection.ts";
 import {
   clearIntent,
-  markBlocked,
   markTerminalBlocked,
   setIntent,
   setWait,
 } from "./transitions.ts";
-import { PUSH_WORKFLOWS_PERMISSION_DETAIL } from "../contracts/ports-github.ts";
 
 // ---------------------------------------------------------------------------
 // Publish phase (also reconciles every saved operation by exact remote object).
@@ -278,7 +274,6 @@ export async function executePublishStep(
     head,
     expectedRemoteHead,
     authority.value,
-    recordPushGuard(deps, record, record.target.base),
   );
   if (!push.ok) {
     if (queueEffectRefused(push.error)) {
@@ -287,39 +282,6 @@ export async function executePublishStep(
         context,
         withIntent,
         queueRefusalIsTransient(push.error),
-      );
-    }
-    // The 2026-11-17 push guard refused a CI-executable change its source
-    // may not make (or any on Sentinel itself): nothing was sent, and a
-    // retry repeats the refusal.
-    if (
-      push.error.kind === "invalid" &&
-      PUSH_GUARD_REFUSALS.includes(push.error.detail)
-    ) {
-      return persistWork(
-        deps,
-        context,
-        markBlocked(
-          clearIntent(withIntent, now),
-          "other",
-          push.error.detail,
-          now,
-        ),
-      );
-    }
-    // GitHub refused a workflow change for want of the App's `workflows`
-    // permission: nothing was written and a retry repeats the refusal, so
-    // park for the owner (the charge stays; no retry, no new run).
-    if (push.error.detail === PUSH_WORKFLOWS_PERMISSION_DETAIL) {
-      return persistWork(
-        deps,
-        context,
-        markBlocked(
-          clearIntent(withIntent, now),
-          "other",
-          PUSH_WORKFLOWS_PERMISSION_DETAIL,
-          now,
-        ),
       );
     }
     // The saved push intent must stay durable: the response may have been

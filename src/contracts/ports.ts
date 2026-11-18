@@ -46,10 +46,8 @@ export interface IssueSourceErrorContextV1 {
  * Why issue intake listed an open issue and created no work record for it,
  * although it has none yet: an App-filed CI outage notice, a native parent
  * or an issue with open native blockers, a cooling GitHub installation, an
- * unreadable base, the run deadline before its base read, or an author
- * Sentinel does not work for (`issue-admission.ts`). Every such issue is
- * reported in the intake line (never as a comment), so no non-admission is
- * ever silent.
+ * unreadable base, or the run deadline before its base read. Every such
+ * issue is reported, so no non-admission is ever silent.
  */
 export const ISSUE_NOT_ADMITTED_REASONS = [
   "ci_outage_notice",
@@ -58,8 +56,6 @@ export const ISSUE_NOT_ADMITTED_REASONS = [
   "github_cooldown",
   "base_unavailable",
   "run_deadline",
-  // Owner directive 2026-11-17: only the owner's and the App's issues.
-  "author_not_admitted",
 ] as const;
 
 export type IssueNotAdmittedReasonV1 =
@@ -182,7 +178,6 @@ export type {
   GitHubReviewDecisionV1,
   IssueCloseOutcomeV1,
   LegacyBaseRefreshLossProofV1,
-  MergedPullHeadsV1,
   MergeOutcomeV1,
   MergeRequestV1,
   PrepareBaseRefreshRequestV1,

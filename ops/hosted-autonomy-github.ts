@@ -11,8 +11,6 @@ import {
   missingExpectedChecks,
 } from "../src/repair/ci-coverage.ts";
 import { isGatewayVpsRepository } from "../src/repair/vps-delivery.ts";
-import { actionsSuccessNames } from "./hosted-autonomy-pull-file-gates.ts";
-import { createHostedSourceReads } from "./hosted-autonomy-source-reads.ts";
 import {
   isCiEvidenceConclusion,
   isCiEvidenceSource,
@@ -329,7 +327,6 @@ export function createHostedAutonomyGitHub(
 
   return {
     ...createHostedDeliveryReads(request, scope),
-    ...createHostedSourceReads(request, scope),
     mismatchDisposition: createHostedMismatchDispositionObservations(
       token,
       repository,
@@ -367,14 +364,6 @@ export function createHostedAutonomyGitHub(
         run["status"] === "completed" &&
         run["conclusion"] === "success"
       );
-    },
-    async targetCiSuccessNames(sha: string) {
-      // The commit's own runs only (no backup stand-in is substituted); the
-      // gate reduces them (`actionsSuccessNames`).
-      const complete = await readCompleteCheckRuns(sha, false);
-      return complete === null
-        ? null
-        : actionsSuccessNames(gatingRuns(complete));
     },
     async hasAllChecksGreen(head: string, base?: string) {
       const complete = await readCompleteCheckRuns(head);

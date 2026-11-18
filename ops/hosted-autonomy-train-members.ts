@@ -6,8 +6,7 @@
  * current-head review (the LATEST completed review of exactly that head and
  * base authorizes it against the live task statement), its open pull request
  * on exactly that head by a trusted author into the repository's base branch,
- * its own CI green on its reviewed base, no protected path and no
- * CI-executable path (`hosted-autonomy-pull-file-gates.ts`). The patch
+ * its own CI green on its reviewed base and no protected path. The patch
  * proof against the train is the composer's (`hosted-autonomy-train-compose.ts`).
  * The same gate is re-read before every merge.
  */
@@ -35,7 +34,6 @@ import {
   parkedStep,
   protectedPathRefusal,
 } from "./hosted-autonomy-spent-delivery.ts";
-import { sourceAdmissionRefusal } from "./hosted-autonomy-pull-file-gates.ts";
 import type {
   HostedAutonomyGitHubV1,
   HostedAutonomyPullV1,
@@ -108,9 +106,6 @@ export async function trainMemberGate(
     !HOSTED_AUTONOMY_TRUSTED_AUTHORS.includes(pull.author)
   ) return { refusal: "foreign_author" };
   if (pull.baseRef !== scope.baseBranch) return { refusal: "base_mismatch" };
-  // 2026-11-17 admission, before admission and again before each merge.
-  const admission = await sourceAdmissionRefusal(surface, record);
-  if (admission !== null) return { refusal: admission };
   return { refusal: null, receipt: verdict.receipt, pull };
 }
 
@@ -126,11 +121,7 @@ export async function trainAdmissionRefusal(
   }
   if (surface.readCommitTree === undefined) return "train_unsupported";
   if (!await headIsGreen(surface, false, head, base)) return "checks_pending";
-  // A change to a CI-executable path never trains (2026-11-17): it keeps the
-  // per-record path, whose merge gate requires a job its own CI passed.
-  return await protectedPathRefusal(surface, record.repository, pr, {
-    train: true,
-  });
+  return await protectedPathRefusal(surface, record.repository, pr);
 }
 
 export type TrainCiVerdictV1 =

@@ -8,7 +8,6 @@
  * tip is refused `base_moved` by the existing gate instead of merging onto a
  * commit no CI ran on (never a count-based deferral).
  */
-import { ownerIssueFacts } from "./hosted-autonomy-rig.ts";
 import assert from "node:assert/strict";
 import type { WorkItemId } from "../../src/contracts/brands.ts";
 import type { RepositoryIdentityV1 } from "../../src/contracts/shared.ts";
@@ -159,8 +158,6 @@ function perRepository(
         world.tips.push(`${key}:${tip}`);
         return Promise.resolve(tip);
       },
-      readIssueFacts: (number: number) =>
-        Promise.resolve(ownerIssueFacts(number)),
       readIssueTask: (number: number) =>
         Promise.resolve(
           number === FOREIGN_TASK.issueNumber

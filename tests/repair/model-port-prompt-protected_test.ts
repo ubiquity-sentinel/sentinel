@@ -52,21 +52,21 @@ const SENTENCE =
   ' The trusted repository configuration protects exactly these path prefixes (sorted): ".github/workflows/", "AGENTS.md", "deno.json", "ops/". Fix the issue without changing them when a correct fix outside them exists. When the issue\'s fix genuinely requires changing a protected path, this narrows the rule above: make the real, complete change in place in that file, because a candidate that changes a protected path is parked for the repository owner to land as is, which is the useful outcome. Never substitute tests only, an unapplied .patch or .diff file, a copy of the file elsewhere, or a no-op for that change: such a candidate leaves the real file unchanged and can never be accepted.';
 
 /**
- * The credential sentence for PATHS: none of them is a credential prefix
- * (owner directive 2026-11-17, "give sentinel full access": a workflow
- * change publishes), so the prompt carries no sentence after the list.
+ * The never-published sentence (2026-11-17) for PATHS: of them, only
+ * `.github/workflows/` is never published (`unpublishablePath`).
  */
-const NEVER_PUBLISHED = "";
+const NEVER_PUBLISHED =
+  ' Of those, a change under any of these prefixes is never published (sorted): ".github/workflows/". Never change these incidentally, and prefer a solution that does not touch them. Change one only when the task cannot be solved otherwise: such a candidate is parked unpublished and the repository owner must make that change themselves, so keep the change under these prefixes minimal and complete.';
 
 /**
  * SHA-256 of `buildPrompt(REQUEST, false, undefined, PATHS)` (pinned
  * 2026-10-25; re-pinned 2026-11-05 for the in-place protected-fix guidance;
- * re-pinned twice on 2026-11-17 for the never-published sentence, and back
- * to the 2026-11-05 value the same day: PATHS holds no credential prefix, so
- * that sentence no longer renders).
+ * re-pinned 2026-11-17 because PATHS holds `.github/workflows/`, which now
+ * adds the never-published sentence, and again the same day for its
+ * corrected wording, which keeps the in-place rule).
  */
 const GOLDEN_HOSTED_PROTECTED =
-  "5658b4f877bc9f10f2f8dde79e728a52946a102240e6d0ee35fa246c02c002bf";
+  "e006878fc59e958c87be72f9a4e0598fc17d7fc95a6431fa8e5c5b3614f024b0";
 
 async function sha256(text: string): Promise<string> {
   const digest = await crypto.subtle.digest(

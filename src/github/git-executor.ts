@@ -71,19 +71,7 @@ export type GitPushStatusV1 =
   | "ambiguous"
   | "non_fast_forward"
   | "missing_object"
-  | "rejected"
-  | "workflow_permission";
-
-/**
- * GitHub's definitive refusal of a push that creates or updates a file under
- * `.github/workflows/` when the credential lacks the `workflows` permission
- * (an App installation) or `workflow` scope (an OAuth or personal token).
- * Nothing was written; repeating the push repeats the refusal.
- */
-export function isWorkflowsPermissionRefusal(text: string): boolean {
-  return /refusing to allow an? (GitHub App|OAuth App|Personal Access Token) to create or update workflow/i
-    .test(text);
-}
+  | "rejected";
 
 export interface GitPushResultV1 {
   status: GitPushStatusV1;
@@ -151,8 +139,6 @@ export interface GitExecutorV1 {
     sha: GitSha,
     expectedRef: GitSha | null,
   ): Promise<PortResultV1<GitPushResultV1>>;
-  /** Optional raw (`-z`) paths `base..head` changes, for the push guard. */
-  changedPaths?(base: GitSha, head: GitSha): Promise<PortResultV1<string[]>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -310,15 +296,6 @@ export class DenoGitExecutor implements GitExecutorV1 {
     if (result.ok) return portOk(true);
     if (result.code === 1) return portOk(false);
     return portError("unavailable", "ancestry check failed");
-  }
-
-  async changedPaths(base: GitSha, head: GitSha) {
-    const args = ["diff", "--no-renames", "--name-only", "-z", base, head];
-    const result = await this.runGit(args, null);
-    if (!result.ok || result.timeout === true || result.overflow === true) {
-      return portError("unavailable", "changed path read failed");
-    }
-    return portOk(result.stdout.split("\0").filter((path) => path !== ""));
   }
 
   /**
@@ -486,11 +463,6 @@ export class DenoGitExecutor implements GitExecutorV1 {
             // The exact-ref guard rejected the transaction: a definitive
             // conflict (nothing was written).
             return portOk({ status: "rejected" });
-          }
-          // Before the generic "rejected" family: the remote names this
-          // refusal "[remote rejected]", which is not a fast-forward problem.
-          if (isWorkflowsPermissionRefusal(text)) {
-            return portOk({ status: "workflow_permission" });
           }
           if (
             /non-fast-forward|fetch first|rejected|needs fast-forward/i.test(

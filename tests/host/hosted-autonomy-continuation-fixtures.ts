@@ -6,7 +6,6 @@
  * store with the real snapshot and transition rules (`TransitionState`),
  * recording every write it accepts.
  */
-import { ownerIssueFacts } from "./hosted-autonomy-rig.ts";
 import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 import assert from "node:assert/strict";
@@ -285,8 +284,6 @@ export function surfaces(
       return (number: number) => Promise.resolve(taskFor(number));
     },
     readIssueOpen: () => Promise.resolve(true),
-    readIssueFacts: (number: number) =>
-      Promise.resolve(ownerIssueFacts(number)),
     closeIssue: (number: number) => {
       out.closed.push(number);
       return Promise.resolve(true);
@@ -317,8 +314,6 @@ export function surfaces(
     readPull: () => Promise.resolve(null),
     readIssueOpen: (number: number) => Promise.resolve(number !== 641),
     readIssueTask: () => Promise.resolve(null),
-    readIssueFacts: (number: number) =>
-      Promise.resolve(ownerIssueFacts(number)),
     merge: () => {
       throw new Error("the gateway candidate is never merged here");
     },

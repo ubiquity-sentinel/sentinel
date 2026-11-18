@@ -1,4 +1,3 @@
-import { ownerIssueFacts } from "./hosted-autonomy-rig.ts";
 import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { withHistoricalAutonomy } from "./hosted-autonomy-spent-fixtures.ts";
@@ -93,8 +92,6 @@ async function fixture(
   rig.githubFor = () => ({
     ...github,
     readDefaultBranch: () => Promise.resolve("development"),
-    readIssueFacts: (number: number) =>
-      Promise.resolve(ownerIssueFacts(number)),
     readIssueTask: () =>
       Promise.resolve(facts.task === "unavailable" ? null : facts.task),
     readIssueOptedOut: () => Promise.resolve(false),
@@ -654,8 +651,6 @@ Deno.test("queue bookkeeping remains eligible after the pass performs direct mer
         ...github,
         readDefaultBranch: () => Promise.resolve("main"),
         readBaseTip: () => Promise.resolve(OTHER_BASE),
-        readIssueFacts: (number: number) =>
-          Promise.resolve(ownerIssueFacts(number)),
         readIssueTask: (issue) =>
           Promise.resolve(
             issue === FOREIGN_TASK_2.issueNumber

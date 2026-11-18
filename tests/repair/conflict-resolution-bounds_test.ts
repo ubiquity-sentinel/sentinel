@@ -52,8 +52,6 @@ async function scenario(
     externalImplementations?: boolean;
     extraBase?: Record<string, string>;
     runs?: number;
-    /** Extra configured protected paths (a credential file, 2026-11-17). */
-    protectedPaths?: readonly string[];
   } = {},
 ) {
   const ctx = await makeConflictGit({ extraBase: options.extraBase });
@@ -62,9 +60,6 @@ async function scenario(
   const rig = conflictRig(github, model, {
     externalImplementations: options.externalImplementations,
   });
-  for (const path of options.protectedPaths ?? []) {
-    rig.configs[0].protectedPaths.push(path);
-  }
   await rig.seed([await publishedCandidate(ctx, overrides)]);
   for (let run = 0; run < (options.runs ?? 1); run++) {
     const outcome = await rig.run();
@@ -162,13 +157,10 @@ Deno.test(
 Deno.test(
   "conflict resolution: a resolution touching a protected path is charged and never published",
   async () => {
-    // Owner directive 2026-11-17: on a target only a credential path is
-    // still refused; a configured source path like `src/handler.ts` is an
-    // ordinary change, so the refused resolution writes the target's `.env`.
     const run = await scenario(
-      { extra: { ".env": "MODE=resolved\n" } },
+      { extra: { "src/handler.ts": "export const handled = true;\n" } },
       {},
-      { runs: 2, protectedPaths: [".env"] },
+      { runs: 2 },
     );
     try {
       assert.equal(run.work.nextStep, "blocked");

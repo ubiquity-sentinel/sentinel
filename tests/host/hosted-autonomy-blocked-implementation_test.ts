@@ -26,7 +26,6 @@ Deno.test("historical blocked implementation consumes its exact producer and rej
       rig.original,
     );
     assert.equal(rig.imports(), 1);
-    // A credential-path refusal needs no source read.
     assert.deepEqual(rig.github.calls, []);
     const writes = rig.state.writes;
     assert.equal(await rig.run(), null);

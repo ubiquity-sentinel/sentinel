@@ -233,20 +233,6 @@ Deno.test("mergePullRequest: a published closing link requires the exact bound t
   assert.equal(alignedResult.value.outcome, "merged");
   assert.equal(putCount(aligned.transport), 1);
 
-  // 2026-11-17 admission backstop: the same exact acceptance on an issue
-  // whose author is neither the owner (login and id) nor the App is never
-  // merged by the executor, whatever its caller decided.
-  for (const user of [{ login: "rando", id: 99 }, { login: "0x4007", id: 1 }]) {
-    const outsider = portFor(await completionFor(alignedAcceptance), [
-      httpRespond("GET", "/issues/7", 200, { ...issueWire(), user }),
-    ]);
-    const outsiderResult = await outsider.port.mergePullRequest(mergeRequest({
-      review: completedCleanReceipt({ taskAcceptance: alignedAcceptance }),
-    }));
-    assert.equal(blockedReason(outsiderResult), "protection_required");
-    assert.equal(putCount(outsider.transport), 0);
-  }
-
   // An unreadable issue context fails closed as a retryable port error: no
   // merge is attempted on missing evidence.
   const unreadable = portFor(await completionFor(alignedAcceptance), [

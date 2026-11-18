@@ -49,10 +49,7 @@ function issueReader(r: Rig): Rig["host"]["port"]["readIssue"] {
       state: "open",
       labels: [],
       assignees: [],
-      // The source issue is the admitted owner's (2026-11-17); the adopted
-      // pull request stays a person's.
-      author: "0x4007",
-      authorId: 4975670,
+      author: "human-owner",
       createdAt: r.clock.now(),
       closedAt: null,
       updatedAt: r.clock.now(),

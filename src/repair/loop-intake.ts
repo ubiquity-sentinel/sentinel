@@ -29,10 +29,6 @@ import {
   synchronizeSnapshot,
 } from "./loop-state.ts";
 import { readBase } from "./loop-task-context.ts";
-import {
-  AUTHOR_NOT_ADMITTED_REASON,
-  issueAuthorAdmitted,
-} from "./issue-admission.ts";
 import type {
   LoopContextV1,
   RepairCycleDepsV1,
@@ -369,8 +365,7 @@ export async function pollIntake(
       const issues = await deps.github.listOpenIssues({
         relationsFor: (issue) =>
           issueOnlyIntake && issue.state === "open" &&
-          !isCiOutageNotice(issue) && !recorded(issue.number) &&
-          issueAuthorAdmitted(issue),
+          !isCiOutageNotice(issue) && !recorded(issue.number),
       });
       const repository = `${issueRepository.owner}/${issueRepository.name}`;
       const skippedRows = "skippedIssues" in issues ? issues.skippedIssues : [];
@@ -423,13 +418,6 @@ export async function pollIntake(
           if (seenIssues.has(issueKey)) continue;
           seenIssues.add(issueKey);
           if (recorded(issue.number)) continue;
-          // Owner directive 2026-11-17: only the owner's (login and user id)
-          // and the App's issues become work, from the listing's own author
-          // fields (no extra read, no comment, nothing charged).
-          if (!issueAuthorAdmitted(issue)) {
-            notAdmitted(issue.number, AUTHOR_NOT_ADMITTED_REASON);
-            continue;
-          }
 
           // Issue-only (github adapter) intake checks NATIVE dependency
           // relations when available. An issue that is itself a parent (has

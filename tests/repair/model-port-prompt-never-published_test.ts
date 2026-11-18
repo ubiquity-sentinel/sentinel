@@ -1,14 +1,16 @@
 /**
- * The credential sentence (owner directive 2026-11-17, "give sentinel full
- * access"): the implementer prompt names, from the target's own configured
- * prefixes, exactly those the publication gate never publishes
- * (`unpublishablePath`, the predicate `ownerLandingTouch` parks with:
- * credential and history paths), and says that a change to any other listed
- * prefix is published as an ordinary pull request through the same gates,
- * never incidentally and in place when the task needs it. It never asks for
- * no change or a final-response report (2026-10-25 withdrawal). Prompts whose
- * prefixes include no credential prefix are unchanged, and so is the template
- * digest the repeat-failure bound re-arms parks on.
+ * The never-published sentence (2026-11-17): the implementer prompt names,
+ * from the target's own configured prefixes, exactly those the publication
+ * gate never publishes (`unpublishablePath`, the predicate
+ * `ownerLandingTouch` parks with), and tells the model never to change them
+ * incidentally, to prefer a solution outside them, and to change one only
+ * when the task needs it, minimally and completely, for the owner to make.
+ * It never asks for no change or a final-response report (a compliant
+ * no-change run costs more; 2026-10-25 withdrawal). ai.ubq.fi 1370 attempt 2
+ * spent a 767 s charged run on a candidate that changed
+ * `.github/workflows/deno-deploy.yml` and parked unpublished. Prompts whose
+ * prefixes include none are unchanged, and so is the template digest the
+ * repeat-failure bound re-arms parks on.
  */
 import assert from "node:assert/strict";
 import { asWorkItemId } from "../../src/contracts/brands.ts";
@@ -56,10 +58,10 @@ function policyFor(owner: string, name: string, facts?: TargetTreeFactsV1) {
   return { commands: policy.commands, protectedPaths: policy.protectedPaths };
 }
 
-/** The JSON-quoted prefixes the credential sentence lists. */
+/** The JSON-quoted prefixes the never-published sentence lists. */
 function listed(sentence: string): string[] {
   const match = sentence.match(
-    /never published \(sorted\): (.*?); never change or create/,
+    /never published \(sorted\): (.*?)\. Never change these/,
   );
   assert.ok(match !== null, sentence);
   return JSON.parse(`[${match[1]}]`);
@@ -68,67 +70,106 @@ function listed(sentence: string): string[] {
 /** The configured prefixes the gate itself refuses to publish. */
 function gateRefused(
   config: ReturnType<typeof policyFor>,
-  repository: { owner: string; name: string },
 ): string[] {
   return [...new Set(config.protectedPaths)].filter((prefix) => {
     const probes = prefix.endsWith("/")
       ? [prefix, `${prefix}probe.txt`]
       : [prefix];
-    return probes.map((path) =>
-      ownerLandingTouch(config, [path], repository).kind
-    ).includes("unpublishable");
+    const verdicts = probes.map((path) =>
+      ownerLandingTouch(config, [path]).kind
+    );
+    // Every probe of a configured prefix is protected: owner or refused.
+    assert.ok(verdicts.every((kind) => kind !== "none"), prefix);
+    return verdicts.includes("unpublishable");
   }).sort();
 }
 
-Deno.test("the listed prefixes are exactly those the gate refuses for ai.ubq.fi and a generic target; Sentinel lists none", () => {
-  const gatewayId = { owner: "ubiquity", name: "ai.ubq.fi" };
-  const genericId = { owner: "acme", name: "app" };
-  const gateway = policyFor(gatewayId.owner, gatewayId.name);
-  const generic = policyFor(genericId.owner, genericId.name, GENERIC_FACTS);
+Deno.test("the listed prefixes are exactly those the gate refuses for sentinel, ai.ubq.fi and a generic target", () => {
+  const sentinel = policyFor("ubiquity-sentinel", "sentinel");
+  const gateway = policyFor("ubiquity", "ai.ubq.fi");
+  const generic = policyFor("acme", "app", GENERIC_FACTS);
+  for (const config of [sentinel, gateway, generic]) {
+    const sentence = renderNeverPublishedPaths(config.protectedPaths);
+    assert.deepEqual(listed(sentence), gateRefused(config));
+    assert.ok(!sentence.includes("not listed here"));
+  }
+  // Sentinel protects only its authority set: every prefix is refused.
   assert.deepEqual(
-    listed(renderNeverPublishedPaths(gateway.protectedPaths)),
-    gateRefused(gateway, gatewayId),
+    listed(renderNeverPublishedPaths(sentinel.protectedPaths)),
+    [...new Set(sentinel.protectedPaths)].sort(),
   );
-  assert.deepEqual(
-    listed(renderNeverPublishedPaths(generic.protectedPaths)),
-    gateRefused(generic, genericId),
+  // ai.ubq.fi: the workflows and env are refused; its owner-landing
+  // prefixes are published for the owner to merge and are not listed.
+  const gatewayListed = listed(
+    renderNeverPublishedPaths(gateway.protectedPaths),
   );
-  // ai.ubq.fi: only its env file is refused; the workflows publish.
-  assert.deepEqual(
-    listed(renderNeverPublishedPaths(gateway.protectedPaths)),
-    [".env"],
-  );
-  // The 1370 candidate shape now publishes as an ordinary pull request.
+  for (const refused of [".github/workflows/", ".env"]) {
+    assert.ok(gatewayListed.includes(refused), refused);
+  }
+  for (const owner of ["AGENTS.md", "docs/DECISIONS.md", "src/sentinel/"]) {
+    assert.ok(gateway.protectedPaths.includes(owner), owner);
+    assert.ok(!gatewayListed.includes(owner), owner);
+  }
+  // The 1370 candidate: one workflow among five paths parks it unpublished.
   assert.equal(
     ownerLandingTouch(gateway, [
       "src/app.ts",
       ".github/workflows/deno-deploy.yml",
-    ], gatewayId).kind,
-    "none",
+    ]).kind,
+    "unpublishable",
   );
-  // Generic: the env family, `.git/`, the act/npm files and the list file.
+  // Generic: the fixed boundary, an env file and an authority prefix are
+  // refused; an ordinary `sentinel.protected` prefix is owner-landed.
   const genericListed = listed(
     renderNeverPublishedPaths(generic.protectedPaths),
   );
-  for (
-    const refused of [".env", ".git/", ".npmrc", "config/.env.shared"]
-  ) assert.ok(genericListed.includes(refused), refused);
-  for (const ordinary of [".github/workflows/", "docs", "src/host"]) {
-    assert.ok(!genericListed.includes(ordinary), ordinary);
+  for (const refused of [".github/workflows/", "config/.env.shared"]) {
+    assert.ok(genericListed.includes(refused), refused);
   }
-  // Sentinel's own list holds no credential prefix: no sentence at all.
-  const sentinel = policyFor("ubiquity-sentinel", "sentinel");
-  assert.equal(renderNeverPublishedPaths(sentinel.protectedPaths), "");
+  // `sentinel.protected` entries arrive normalized (no trailing slash).
+  assert.ok(genericListed.includes("src/host"));
+  assert.ok(generic.protectedPaths.includes("docs"));
+  assert.ok(!genericListed.includes("docs"));
 });
 
-/** The exact sentence for a list with one credential prefix. */
-const ENV_SENTENCE =
-  ' Of those, a change under any of these credential prefixes is never published (sorted): ".env"; never change or create a file under them. On this repository a change to any other listed prefix is not parked: it is published as an ordinary pull request and must pass the same CI and review gates as any other change, so never change one incidentally, prefer a solution that does not touch it, and when the task needs it make the minimal, complete change in place.';
-
-Deno.test("the sentence keeps the in-place rule, says other prefixes publish, and asks for no no-change outcome", () => {
-  const paths = [".github/workflows/", "AGENTS.md", ".env"];
+Deno.test("the sentence follows the configured list in every prompt variant and names no untrusted text", () => {
+  const gateway = policyFor("ubiquity", "ai.ubq.fi");
+  const paths = gateway.protectedPaths;
+  const both = renderProtectedPaths(paths) + renderNeverPublishedPaths(paths);
+  const plain = buildPrompt(REQUEST, false);
+  assert.equal(
+    buildPrompt(REQUEST, false, undefined, paths),
+    plain.replace(
+      "to force success. Keep the change",
+      `to force success.${both} Keep the change`,
+    ),
+  );
+  for (
+    const prompt of [
+      buildPrompt(REQUEST, false, "EVIDENCE", paths),
+      buildPrompt(REQUEST, true, undefined, paths),
+      buildPrompt({ ...REQUEST, mergeBase: SHA1 }, false, undefined, paths),
+    ]
+  ) {
+    assert.ok(prompt.includes(both));
+    assert.ok(prompt.endsWith("the checks run."));
+  }
   const sentence = renderNeverPublishedPaths(paths);
-  assert.equal(sentence, ENV_SENTENCE);
+  assert.ok(sentence.startsWith(" Of those, a change under any of these"));
+  assert.ok(sentence.endsWith(" minimal and complete."));
+  assert.ok(!sentence.includes(REQUEST.issue!.title));
+});
+
+/** The exact sentence for the 1370 shape: one never-published prefix. */
+const WORKFLOWS_SENTENCE =
+  ' Of those, a change under any of these prefixes is never published (sorted): ".github/workflows/". Never change these incidentally, and prefer a solution that does not touch them. Change one only when the task cannot be solved otherwise: such a candidate is parked unpublished and the repository owner must make that change themselves, so keep the change under these prefixes minimal and complete.';
+
+Deno.test("the sentence keeps the in-place rule and asks for no no-change outcome or final-response report", () => {
+  const paths = [".github/workflows/", "AGENTS.md"];
+  const sentence = renderNeverPublishedPaths(paths);
+  assert.equal(sentence, WORKFLOWS_SENTENCE);
+  // A compliant no-change run costs more than the park and loses its
+  // protected signal (2026-10-25 withdrawal); nothing reads the response.
   for (
     const banned of [
       "make no change",
@@ -138,30 +179,23 @@ Deno.test("the sentence keeps the in-place rule, says other prefixes publish, an
       "leave them",
       "unchanged",
       "without changing them",
-      "parked unpublished",
-      "owner must make",
+      "does not apply",
+      "OWNER_LANDING_REQUIRED",
     ]
   ) assert.ok(!sentence.includes(banned), banned);
+  // It narrows, never contradicts, the in-place sentence before it.
   const configured = renderProtectedPaths(paths);
   assert.ok(configured.includes("make the real, complete change in place"));
-  assert.ok(sentence.includes("never change one incidentally"));
-  // Every prompt variant carries both sentences after the configured list.
-  const both = configured + sentence;
-  for (
-    const prompt of [
-      buildPrompt(REQUEST, false, undefined, paths),
-      buildPrompt(REQUEST, false, "EVIDENCE", paths),
-      buildPrompt(REQUEST, true, undefined, paths),
-    ]
-  ) assert.ok(prompt.includes(both));
-  assert.ok(!sentence.includes(REQUEST.issue!.title));
+  assert.ok(sentence.includes("minimal and complete"));
+  assert.ok(sentence.includes("only when the task cannot be solved otherwise"));
+  assert.ok(sentence.includes("the repository owner must make that change"));
 });
 
-Deno.test("a prompt with no credential prefix is byte-identical, and the template digest is unchanged", () => {
+Deno.test("a prompt with no never-published prefix is byte-identical, and the template digest is unchanged", () => {
   const plain = buildPrompt(REQUEST, false);
   assert.equal(renderNeverPublishedPaths([]), "");
   assert.equal(buildPrompt(REQUEST, false, undefined, []), plain);
-  const owner = [".github/workflows/", "AGENTS.md", "protected/"];
+  const owner = ["docs/", "AGENTS.md", "protected/"];
   assert.equal(renderNeverPublishedPaths(owner), "");
   assert.equal(
     buildPrompt(REQUEST, false, undefined, owner),
@@ -175,17 +209,17 @@ Deno.test("a prompt with no credential prefix is byte-identical, and the templat
   assert.equal(implementerPromptTemplateDigest(), TEMPLATE_DIGEST);
 });
 
-Deno.test("at most 60 credential prefixes are named and the rest are counted", () => {
+Deno.test("at most 60 never-published prefixes are named and the rest are counted", () => {
   const many = Array.from(
     { length: 75 },
-    (_, index) => `.env.x-${String(index).padStart(2, "0")}`,
+    (_, index) => `.github/x-${String(index).padStart(2, "0")}/`,
   );
   const sentence = renderNeverPublishedPaths([...many, "docs/"].reverse());
-  assert.equal(sentence.match(/"\.env\.x-\d\d"/g)?.length, 60);
+  assert.equal(sentence.match(/"\.github\/x-\d\d\/"/g)?.length, 60);
   assert.ok(!sentence.includes('"docs/"'));
   assert.ok(
     sentence.includes(
-      "(and 15 more never-published prefixes not listed here);",
+      "(and 15 more never-published prefixes not listed here).",
     ),
   );
 });

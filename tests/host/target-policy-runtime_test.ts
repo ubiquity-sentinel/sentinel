@@ -25,7 +25,7 @@ import {
   submittedReservation,
 } from "./actions-candidates-preservation-fixture.ts";
 
-Deno.test("target policy: composed gateway candidate preserver rejects a credential file before publication", async () => {
+Deno.test("target policy: composed gateway candidate preserver rejects deployment authority before publication", async () => {
   const ctx = await makeCandidateCtx();
   try {
     const sourcePath = `${ctx.tmp}/work`;
@@ -68,11 +68,12 @@ Deno.test("target policy: composed gateway candidate preserver rejects a credent
     );
     ctx.base = (await gitRun(sourcePath, ["rev-parse", "HEAD"], ctx.env)).stdout
       .trim() as GitSha;
-    // Owner directive 2026-11-17: the Gateway's `src/sentinel/` is ordinary
-    // work now; only a credential path (its `.env`) is still refused.
-    await Deno.writeTextFile(`${sourcePath}/.env`, "MODE=candidate\n");
+    await Deno.writeTextFile(
+      `${sourcePath}/src/sentinel/deploy.ts`,
+      "export const candidate = 1;\n",
+    );
     assert.equal(
-      (await gitRun(sourcePath, ["add", ".env"], ctx.env)).ok,
+      (await gitRun(sourcePath, ["add", "src/sentinel/deploy.ts"], ctx.env)).ok,
       true,
     );
     assert.equal(

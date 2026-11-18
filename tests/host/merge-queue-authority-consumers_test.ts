@@ -1,4 +1,3 @@
-import { ownerIssueFacts } from "./hosted-autonomy-rig.ts";
 import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { createHostedQueueAuthority } from "../../ops/hosted-autonomy-queue-authority.ts";
@@ -78,16 +77,12 @@ Deno.test("real queue authority permits queued booking after a direct merge in t
     repository.name === queued.repository.name
       ? {
         ...rig.github,
-        readIssueFacts: (number: number) =>
-          Promise.resolve(ownerIssueFacts(number)),
         readIssueTask: () => Promise.resolve(task),
       }
       : {
         ...rig.github,
         readDefaultBranch: () => Promise.resolve("main"),
         readBaseTip: () => Promise.resolve(BASE),
-        readIssueFacts: (number: number) =>
-          Promise.resolve(ownerIssueFacts(number)),
         readIssueTask: (issue) =>
           Promise.resolve(repositoryTask(repository, issue)),
         readPull: () =>

@@ -1,5 +1,4 @@
 /** Repair loop internals: task context. */
-import { issueAuthorAdmitted } from "./issue-admission.ts";
 import {
   waitCauseOfPortError,
   type WorkWaitCauseV1,
@@ -189,8 +188,6 @@ export async function ensureReviewFreshness(
 export type IssueForModelReadV1 =
   | { kind: "issue"; issue: { number: number; title: string; body: string } }
   | { kind: "none" }
-  /** The open issue's author is not one Sentinel works for (2026-11-17). */
-  | { kind: "not_admitted" }
   | {
     kind: "unavailable";
     sourceClosed: boolean;
@@ -218,9 +215,6 @@ export async function observeIssueForModel(
   if (issue === null || issue.state !== "open") {
     return { kind: "unavailable", sourceClosed: true };
   }
-  // Owner directive 2026-11-17: an existing record whose issue is not the
-  // owner's or the App's starts nothing more (`issue-admission.ts`).
-  if (!issueAuthorAdmitted(issue)) return { kind: "not_admitted" };
   // Issue-only github-adapter intake also gates on native dependency
   // relations: unknown relations, a parent issue (sub-issues) or any open
   // native blocker defers admission. Closed blockers are already excluded by
@@ -277,7 +271,6 @@ export async function readIssueForModel(
   const observed = await observeIssueForModel(deps, record);
   if (observed.kind === "none") return null;
   if (observed.kind === "issue") return observed.issue;
-  // A not-admitted author proves nothing to read either: no model input.
   return "unavailable";
 }
 
@@ -291,8 +284,6 @@ export type IssueTaskContextV1 =
   | {
     statement: ReviewTaskStatementV1;
     state: "open" | "closed";
-    /** Whether Sentinel works this issue's author (2026-11-17). */
-    admitted: boolean;
   }
   | null
   | "read_failed"
@@ -325,7 +316,6 @@ export async function readIssueTaskContext(
   return {
     statement: checked.statement,
     state: issue.state === "open" ? "open" : "closed",
-    admitted: issueAuthorAdmitted(issue),
   };
 }
 
@@ -349,27 +339,6 @@ export async function readDeliveryTaskContext(
 }
 
 /**
- * The delivery context of a merge Sentinel itself would make (its one issue
- * read): as `readDeliveryTaskContext`, and `not_admitted` when the issue's
- * author is not one Sentinel works for (owner directive 2026-11-17), so a
- * pull request of such an issue is never merged by Sentinel.
- */
-export async function readMergeTaskContext(
-  deps: RepairCycleDepsV1,
-  record: WorkRecordV1,
-): Promise<ReviewTaskStatementV1 | null | "unavailable" | "not_admitted"> {
-  const context = await readIssueTaskContext(deps, record);
-  if (
-    context === "read_failed" || context === "missing" ||
-    context === "malformed"
-  ) {
-    return "unavailable";
-  }
-  if (context === null) return null;
-  return context.admitted ? context.statement : "not_admitted";
-}
-
-/**
  * Read the exact live source-issue task statement one NEW review must judge.
  *
  * Open-only ADMISSION wrapper over the read-only context: returns the bounded
@@ -386,19 +355,13 @@ export async function readReviewTaskStatement(
   deps: RepairCycleDepsV1,
   record: WorkRecordV1,
 ): Promise<
-  | ReviewTaskStatementV1
-  | null
-  | "read_failed"
-  | "not_open"
-  | "malformed"
-  | "not_admitted"
+  ReviewTaskStatementV1 | null | "read_failed" | "not_open" | "malformed"
 > {
   const context = await readIssueTaskContext(deps, record);
   if (context === "read_failed") return "read_failed";
   if (context === null) return null;
   if (context === "malformed") return "malformed";
   if (context === "missing" || context.state !== "open") return "not_open";
-  if (!context.admitted) return "not_admitted";
   return context.statement;
 }
 

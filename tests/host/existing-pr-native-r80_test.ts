@@ -206,9 +206,7 @@ Deno.test({
           state: "open",
           labels: [],
           assignees: [],
-          // The admitted owner's source issue (2026-11-17).
-          author: "0x4007",
-          authorId: 4975670,
+          author: "human-owner",
           createdAt: r.clock.now(),
           closedAt: null,
           updatedAt: r.clock.now(),

@@ -2,14 +2,8 @@ import assert from "node:assert/strict";
 import { createLocalRepositoryConfig } from "../../src/host/local-config.ts";
 import { HOSTED_AUTHORITY_PROTECTED_PATHS } from "../../src/host/hosted-authority-protected-paths.ts";
 import { touchesProtected } from "../../src/repair/loop-records.ts";
-import { asWorkItemId } from "../../src/contracts/brands.ts";
-import { candidateBranch } from "../../src/repair/keys.ts";
-import { SHA1, workRecord } from "../state/helpers.ts";
 import { positiveLifecycle } from "../repair/loop-candidate-fixtures.ts";
-import {
-  makeRig as makeRepairRig,
-  seededSnapshot,
-} from "../repair/loop-rig.ts";
+import { makeRig as makeRepairRig } from "../repair/loop-rig.ts";
 import {
   exited,
   launch,
@@ -52,28 +46,11 @@ const FORBIDDEN_CANDIDATES = [
   ".github/actions/hosted-runtime-control/action.yml",
 ] as const;
 
-/** Sentinel's own repository (the self installation of the repair rig). */
-const SELF = {
-  owner: "ubiquity-sentinel",
-  name: "sentinel",
-  installationId: 9,
-} as const;
-
-/**
- * Owner directive 2026-11-17 ("give sentinel full access"): a candidate that
- * changes one of Sentinel's own authority files is no longer parked
- * unpublished. It is pushed, CI-gated and reviewed like any candidate and
- * carries the owner-landing flag, so Sentinel never merges it: only the
- * repository owner does. Any `.github/` change of Sentinel's own stays
- * unpublished exactly as before the directive: a pushed workflow would run
- * with Sentinel's own secrets before the owner saw it.
- */
-async function assertOwnerLandingCandidate(path: string) {
+async function assertForbiddenCandidate(path: string) {
   const rig = await makeRepairRig("hosted-authority", {
     model: { changedPaths: [path] },
     github: { candidateLifecycle: positiveLifecycle() },
     configOverrides: {
-      repository: SELF,
       protectedPaths: createLocalRepositoryConfig().protectedPaths,
     },
   });
@@ -81,37 +58,17 @@ async function assertOwnerLandingCandidate(path: string) {
     const outcome = await rig.run();
     assert.equal(outcome.status, "idle", JSON.stringify(outcome));
     const state = await rig.snapshot();
-    assert.equal(rig.model.requests.length, 1);
-    // One charged implementation run, and nothing more is reserved for it.
+    assert.equal(state.work[0].nextStep, "blocked");
     assert.equal(
-      state.reservations.filter((row) => row.purpose !== "review_request")
-        .length,
-      1,
-      path,
+      state.work[0].blocker?.message,
+      "candidate touches a protected path",
     );
+    assert.equal(rig.model.requests.length, 1);
+    assert.equal(state.reservations.length, 1);
     assert.equal(state.reservations[0].outcome, "submitted");
-    assert.equal(rig.github.calls.includes("merge"), false, path);
-    if (path.startsWith(".github/")) {
-      assert.equal(state.reservations.length, 1, path);
-      assert.equal(state.work[0].nextStep, "blocked", path);
-      assert.equal(
-        state.work[0].blocker?.message,
-        "candidate touches a protected path",
-        path,
-      );
-      assert.equal(state.work[0].ownerLanding, undefined, path);
-      assert.equal(rig.github.pushes.length, 0, path);
-      assert.equal(rig.github.preservationRequests.length, 0, path);
-      assert.equal(rig.github.calls.includes("requestReview"), false, path);
-      return;
-    }
-    assert.equal(state.work[0].blocker, null, path);
-    assert.equal(state.work[0].nextStep, "review", path);
-    assert.ok(
-      (state.work[0].ownerLanding?.paths.length ?? 0) > 0,
-      `${path}: ${JSON.stringify(state.work[0].ownerLanding)}`,
-    );
-    assert.equal(rig.github.pushes.length, 1, path);
+    assert.equal(rig.github.pushes.length, 0);
+    assert.equal(rig.github.preservationRequests.length, 0);
+    assert.equal(rig.github.calls.includes("requestReview"), false);
   } finally {
     await rig.ctx.cleanup();
   }
@@ -166,21 +123,15 @@ const ROUND3_AUTHORITY_PATHS = [
   "src/host/actions-supervisor-install-api.ts",
 ] as const;
 
-Deno.test("hosted authority: predicate, auto-follow, credential and promotion files publish for the owner, never merged by Sentinel", async (t) => {
+Deno.test("hosted authority: predicate, auto-follow, credential and promotion files stay forbidden and unpublished", async (t) => {
   for (const path of ROUND3_AUTHORITY_PATHS) {
-    await t.step(path, () => assertOwnerLandingCandidate(path));
+    await t.step(path, () => assertForbiddenCandidate(path));
   }
 });
 
-Deno.test("hosted authority: reduced authority files publish for the owner, never merged by Sentinel", async (t) => {
-  // Four independent rigs at a time (each its own temporary repository and
-  // state): the whole file stays inside the local validation deadline.
-  const CHUNK = 4;
-  for (let at = 0; at < FORBIDDEN_CANDIDATES.length; at += CHUNK) {
-    const chunk = FORBIDDEN_CANDIDATES.slice(at, at + CHUNK);
-    await t.step(chunk.join(", "), async () => {
-      await Promise.all(chunk.map((path) => assertOwnerLandingCandidate(path)));
-    });
+Deno.test("hosted authority: reduced authority files stay forbidden and unpublished", async (t) => {
+  for (const path of FORBIDDEN_CANDIDATES) {
+    await t.step(path, () => assertForbiddenCandidate(path));
   }
 });
 
@@ -194,7 +145,7 @@ Deno.test("hosted authority: the Passport deploy-check selector is protected", (
   );
 });
 
-Deno.test("hosted authority: a protected merge-gate dependency edit lands only for the owner", async (t) => {
+Deno.test("hosted authority: a protected merge-gate dependency edit is refused", async (t) => {
   // `port-merge.ts` imports `loop-checks.ts`, which imports the protected
   // Passport selector and `ci-rejection.ts`; `port-merge-policy.ts` also
   // imports `ci-rejection.ts`. Editing only a dependency must not weaken the
@@ -205,7 +156,7 @@ Deno.test("hosted authority: a protected merge-gate dependency edit lands only f
       "src/repair/ci-rejection.ts",
     ]
   ) {
-    await t.step(path, () => assertOwnerLandingCandidate(path));
+    await t.step(path, () => assertForbiddenCandidate(path));
   }
 });
 
@@ -249,40 +200,18 @@ Deno.test("hosted authority: formerly protected files publish again", async (t) 
 });
 
 Deno.test("hosted authority: unrelated source and action candidates retain publication", async () => {
-  // On a target, from the owner's issue: an ordinary action change is no
-  // authority path (its push still needs a trusted source, 2026-11-17).
-  const changedPaths = [
-    "src/host/ordinary-feature.ts",
-    ".github/actions/ordinary-action/main.js",
-  ];
   const rig = await makeRepairRig("hosted-authority-control", {
-    summaries: false,
-    model: { changedPaths },
-    github: {
-      candidateLifecycle: positiveLifecycle(),
-      pushedPaths: changedPaths,
+    model: {
+      changedPaths: [
+        "src/host/ordinary-feature.ts",
+        ".github/actions/ordinary-action/main.js",
+      ],
     },
+    github: { candidateLifecycle: positiveLifecycle() },
     configOverrides: {
       protectedPaths: createLocalRepositoryConfig().protectedPaths,
     },
   });
-  const task = asWorkItemId("issue-41");
-  const seeded = await rig.store.writeRepair(
-    seededSnapshot([workRecord(task, {
-      source: { kind: "issue", id: "41", revision: SHA1 },
-      related: { incidentId: null, issueNumber: 41 },
-      target: {
-        base: SHA1,
-        branch: candidateBranch(task),
-        checkpoint: null,
-        head: null,
-        pr: null,
-      },
-      nextStep: "work",
-    })]),
-    null,
-  );
-  assert.ok(seeded.ok && seeded.value.status === "applied");
   try {
     await rig.run();
     const state = await rig.snapshot();

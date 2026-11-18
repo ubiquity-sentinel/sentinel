@@ -1,10 +1,3 @@
-import type { HostedAutonomyGitHubV1 } from "../../ops/hosted-autonomy-types.ts";
-import { ownerIssueFacts } from "./hosted-autonomy-rig.ts";
-
-/** The admission gate's source-issue read: the admitted owner (2026-11-17). */
-const ADMITTED_ISSUES = {
-  readIssueFacts: (number: number) => Promise.resolve(ownerIssueFacts(number)),
-} as unknown as HostedAutonomyGitHubV1;
 import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { nativeLifecycleRig } from "../repair/existing-pr-lifecycle-fixtures.ts";
@@ -216,7 +209,7 @@ Deno.test("existing PR final queue effect: real custody/principal after intent, 
           ciMinutes: INACTIVE_CI_MINUTES,
           state: r.state,
           clock: r.clock,
-          githubFor: () => ADMITTED_ISSUES,
+          githubFor: () => null,
           queue,
         };
         const writer = new QueueCustodyWriter(deps, {

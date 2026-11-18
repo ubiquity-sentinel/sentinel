@@ -91,11 +91,7 @@ import {
 } from "./ci-rejection.ts";
 import { ensureBaseRefreshIntent } from "./loop-base-refresh.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
-import {
-  absentExpectedChecks,
-  decideCiGate,
-  decideHeadCiGate,
-} from "./loop-checks.ts";
+import { absentExpectedChecks, decideCiGate } from "./loop-checks.ts";
 import { selectMergeGateChecksV1 } from "./merge-gate-checks.ts";
 import {
   observeHeadFailure,
@@ -109,10 +105,9 @@ import {
 } from "./loop-review-round-cap.ts";
 import { persistWork } from "./loop-state.ts";
 import {
-  readMergeTaskContext,
+  readDeliveryTaskContext,
   semanticRefusalKind,
 } from "./loop-task-context.ts";
-import { AUTHOR_NOT_ADMITTED_PARK } from "./issue-admission.ts";
 import type {
   LoopContextV1,
   RepairCycleDepsV1,
@@ -235,7 +230,7 @@ export async function spentOnMovedBase(
     record.repository,
     observed.value.checks,
   ).checks;
-  const decision = await decideHeadCiGate(deps, record, gating);
+  const decision = decideCiGate(gating);
   if (decision === "wait") {
     return boundedWait(
       deps,
@@ -300,19 +295,6 @@ export async function spentOnMovedBase(
     : carried;
 }
 
-/** Owner directive 2026-11-17: never carried or merged; parked uncharged. */
-function parkNotAdmitted(
-  deps: RepairCycleDepsV1,
-  context: LoopContextV1,
-  record: WorkRecordV1,
-): Promise<StepResultV1> {
-  return persistWork(
-    deps,
-    context,
-    markBlocked(record, "other", AUTHOR_NOT_ADMITTED_PARK, deps.clock.now()),
-  );
-}
-
 /**
  * The one mechanical refresh of a spent reviewed head onto `observedBase`,
  * carrying its review: `unauthorized` (nothing read but the task) unless the
@@ -334,11 +316,10 @@ async function carryReviewedHead(
     receipt.pullRequest.head !== record.target.head ||
     receipt.pullRequest.base !== record.target.base
   ) return "unauthorized";
-  const task = await readMergeTaskContext(deps, record);
+  const task = await readDeliveryTaskContext(deps, record);
   if (task === "unavailable") {
     return { kind: "deferred", detail: "merge task context is unavailable" };
   }
-  if (task === "not_admitted") return parkNotAdmitted(deps, context, record);
   if (!reviewAuthorizesMerge(receipt, record, reviewer, task)) {
     return "unauthorized";
   }
@@ -589,7 +570,7 @@ export async function executeCarriedDelivery(
     record.repository,
     checks.value.checks,
   ).checks;
-  const decision = await decideHeadCiGate(deps, record, gating);
+  const decision = decideCiGate(gating);
   if (decision !== "proceed" && decision !== "wait") {
     const observed = await observeHeadFailure(deps, record);
     if (observed === null) {
@@ -654,11 +635,10 @@ export async function executeCarriedDelivery(
       }`,
     );
   }
-  const task = await readMergeTaskContext(deps, record);
+  const task = await readDeliveryTaskContext(deps, record);
   if (task === "unavailable") {
     return { kind: "deferred", detail: "merge task context is unavailable" };
   }
-  if (task === "not_admitted") return parkNotAdmitted(deps, context, record);
   const reviewed = reviewedIdentity(record, receipt);
   const refusal = taskAcceptanceRefusal(receipt, reviewed, task);
   if (

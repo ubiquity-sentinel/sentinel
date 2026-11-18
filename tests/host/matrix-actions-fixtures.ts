@@ -43,9 +43,7 @@ export function issue(number: number): GitHubIssueV1 {
     title: "issue " + number,
     body: "repair target " + number,
     state: "open",
-    // The admitted owner (2026-11-17): only the owner's and the App's issues.
-    author: "0x4007",
-    authorId: 4975670,
+    author: null,
     labels: [],
     createdAt: T0,
     updatedAt: T0,

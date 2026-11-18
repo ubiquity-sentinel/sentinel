@@ -255,36 +255,15 @@ Deno.test("carried merge (launcher): nothing short of the full proof merges", as
       "carried_proof_unavailable",
     ],
     [
-      // Issue #158 item 2: the exact patch touches a path Sentinel never
-      // merges (2026-11-17: a credential path; the Gateway's other protected
-      // paths are ordinary changes since the owner's "full access").
+      // Issue #158 item 2: the exact patch touches a Gateway protected path.
       "protected path",
       refreshed618(),
       {},
       {
-        reviewed: [{ ...REVIEWED_CHANGES[1], path: ".env" }],
-        refreshed: [{ ...REVIEWED_CHANGES[1], path: ".env" }],
+        reviewed: [{ ...REVIEWED_CHANGES[1], path: "src/sentinel/probe.ts" }],
+        refreshed: [{ ...REVIEWED_CHANGES[1], path: "src/sentinel/probe.ts" }],
       },
       "protected_path",
-    ],
-    [
-      // 2026-11-17: a workflow change needs every base Actions job passing
-      // on its head; this surface proves none (no `targetCiSuccessNames`),
-      // so it fails closed.
-      "workflow change without a passing job",
-      refreshed618(),
-      {},
-      {
-        reviewed: [{
-          ...REVIEWED_CHANGES[1],
-          path: ".github/workflows/deno-deploy.yml",
-        }],
-        refreshed: [{
-          ...REVIEWED_CHANGES[1],
-          path: ".github/workflows/deno-deploy.yml",
-        }],
-      },
-      "ci_success_required",
     ],
     [
       "source issue closed",
