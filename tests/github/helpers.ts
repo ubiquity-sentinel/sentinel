@@ -597,7 +597,8 @@ export function issueWire(
     title: "an issue",
     body: "issue body",
     state: "open",
-    user: { login: "octocat" },
+    // The admitted owner (2026-11-17): login and numeric user id.
+    user: { login: "0x4007", id: 4975670 },
     labels: [{ name: "bug" }],
     created_at: "2026-09-07T00:00:00Z",
     updated_at: "2026-09-07T01:00:00Z",

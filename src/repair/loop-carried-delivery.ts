@@ -109,9 +109,10 @@ import {
 } from "./loop-review-round-cap.ts";
 import { persistWork } from "./loop-state.ts";
 import {
-  readDeliveryTaskContext,
+  readMergeTaskContext,
   semanticRefusalKind,
 } from "./loop-task-context.ts";
+import { AUTHOR_NOT_ADMITTED_PARK } from "./issue-admission.ts";
 import type {
   LoopContextV1,
   RepairCycleDepsV1,
@@ -299,6 +300,19 @@ export async function spentOnMovedBase(
     : carried;
 }
 
+/** Owner directive 2026-11-17: never carried or merged; parked uncharged. */
+function parkNotAdmitted(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  record: WorkRecordV1,
+): Promise<StepResultV1> {
+  return persistWork(
+    deps,
+    context,
+    markBlocked(record, "other", AUTHOR_NOT_ADMITTED_PARK, deps.clock.now()),
+  );
+}
+
 /**
  * The one mechanical refresh of a spent reviewed head onto `observedBase`,
  * carrying its review: `unauthorized` (nothing read but the task) unless the
@@ -320,10 +334,11 @@ async function carryReviewedHead(
     receipt.pullRequest.head !== record.target.head ||
     receipt.pullRequest.base !== record.target.base
   ) return "unauthorized";
-  const task = await readDeliveryTaskContext(deps, record);
+  const task = await readMergeTaskContext(deps, record);
   if (task === "unavailable") {
     return { kind: "deferred", detail: "merge task context is unavailable" };
   }
+  if (task === "not_admitted") return parkNotAdmitted(deps, context, record);
   if (!reviewAuthorizesMerge(receipt, record, reviewer, task)) {
     return "unauthorized";
   }
@@ -639,10 +654,11 @@ export async function executeCarriedDelivery(
       }`,
     );
   }
-  const task = await readDeliveryTaskContext(deps, record);
+  const task = await readMergeTaskContext(deps, record);
   if (task === "unavailable") {
     return { kind: "deferred", detail: "merge task context is unavailable" };
   }
+  if (task === "not_admitted") return parkNotAdmitted(deps, context, record);
   const reviewed = reviewedIdentity(record, receipt);
   const refusal = taskAcceptanceRefusal(receipt, reviewed, task);
   if (

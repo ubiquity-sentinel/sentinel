@@ -46,9 +46,10 @@ import { persistTransition, persistWork } from "./loop-state.ts";
 import {
   deliveryTaskRefusal,
   mergeIntentReceipt,
-  readDeliveryTaskContext,
+  readMergeTaskContext,
   semanticRefusalKind,
 } from "./loop-task-context.ts";
+import { AUTHOR_NOT_ADMITTED_PARK } from "./issue-admission.ts";
 import type {
   LoopContextV1,
   RepairCycleDepsV1,
@@ -268,9 +269,18 @@ export async function executeMerge(
   // adapter re-reads it again immediately before the mutation). A transient
   // read failure defers without a merge intent; different or unreadable
   // context fails the strict authorization below.
-  const mergeTask = await readDeliveryTaskContext(deps, record);
+  const mergeTask = await readMergeTaskContext(deps, record);
   if (mergeTask === "unavailable") {
     return { kind: "deferred", detail: "merge task context is unavailable" };
+  }
+  if (mergeTask === "not_admitted") {
+    // Owner directive 2026-11-17: no merge intent for an issue whose author
+    // Sentinel does not work for; parked uncharged for the owner.
+    return persistWork(
+      deps,
+      context,
+      markBlocked(record, "other", AUTHOR_NOT_ADMITTED_PARK, now),
+    );
   }
   // Surface the exact static semantic refusal (missing acceptance, changed
   // digest, wrong issue, non-fulfilled verdict) instead of the generic

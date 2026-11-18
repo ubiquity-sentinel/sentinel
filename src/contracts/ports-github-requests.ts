@@ -37,6 +37,11 @@ export interface GitHubIssueV1 {
   state: "open" | "closed";
   author: string | null;
   /**
+   * The author's numeric GitHub user id (`user.id`); absent when the
+   * response carries none. Owner admission binds login and id together.
+   */
+  authorId?: number;
+  /**
    * The author's relation to the repository as GitHub reports it at read
    * time (`author_association`: `OWNER`, `MEMBER`, `COLLABORATOR`, ...).
    * Absent when the response carries no known value, which proves nothing.

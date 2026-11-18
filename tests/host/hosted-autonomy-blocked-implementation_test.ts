@@ -26,9 +26,8 @@ Deno.test("historical blocked implementation consumes its exact producer and rej
       rig.original,
     );
     assert.equal(rig.imports(), 1);
-    // The one issue read of the 2026-11-17 workflow-trust gate (the candidate
-    // changes a workflow); an author it cannot prove keeps the same park.
-    assert.deepEqual(rig.github.calls, ["readIssue:1"]);
+    // A credential-path refusal needs no source read.
+    assert.deepEqual(rig.github.calls, []);
     const writes = rig.state.writes;
     assert.equal(await rig.run(), null);
     assert.equal(rig.state.writes, writes);
@@ -78,8 +77,7 @@ Deno.test("historical blocked implementation resumes after durable submitted set
     assert.deepEqual(after.work[0].controller, pending.controller);
     assert.equal(after.work[0].intent, null);
     assert.equal(rig.imports(), 2);
-    // One workflow-trust issue read per ingestion (interrupted, then resumed).
-    assert.deepEqual(rig.github.calls, ["readIssue:1", "readIssue:1"]);
+    assert.deepEqual(rig.github.calls, []);
     const writes = rig.state.writes;
     assert.equal(await rig.run(), null);
     assert.equal(rig.state.writes, writes);

@@ -16,6 +16,11 @@ import {
 import type { RepositoryConfigV1 } from "../../src/contracts/repository-config.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import { REPO, SHA1, SHA2, T0, workRecord } from "../state/helpers.ts";
+import {
+  PROTECTED_PATH_PARK,
+  UNTRUSTED_WORKFLOW_PARK,
+} from "../../src/repair/workflow-trust.ts";
+import { AUTHOR_NOT_ADMITTED_PARK } from "../../src/repair/issue-admission.ts";
 import { FakeGate } from "./actions-ci-fixture.ts";
 import {
   makeTargetHostRig,
@@ -94,6 +99,34 @@ Deno.test("progress: the stage table speaks plain words with short SHAs", () => 
     progressStage(closed),
     null,
     "nothing is said on a closed issue",
+  );
+});
+
+Deno.test("progress: an untrusted workflow park and a non-admitted author each say exactly why (2026-11-17)", () => {
+  const blocked = (message: string) =>
+    progressStage(workRecord("issue-1", {
+      related: { incidentId: null, issueNumber: 1 },
+      nextStep: "blocked",
+      blocker: { kind: "other", message, since: T0 },
+    }))!.words;
+  assert.equal(
+    blocked(UNTRUSTED_WORKFLOW_PARK),
+    "Parked: candidate touches a protected path: workflow change from an " +
+      "untrusted issue author; owner action required. The fix changes CI " +
+      "workflow files, which Sentinel publishes only when the task text " +
+      "comes from its owner or from Sentinel's own base-repair or CI " +
+      "capability issues (a review follow-up counts as its original " +
+      "issue); the repository owner can land this change by hand.",
+  );
+  assert.equal(
+    blocked(AUTHOR_NOT_ADMITTED_PARK),
+    "Parked: issue author is not admitted; owner action required. Sentinel " +
+      "works only on issues opened by its owner or by Sentinel itself; the " +
+      "owner can re-file this issue to have it worked.",
+  );
+  assert.match(
+    blocked(PROTECTED_PATH_PARK),
+    /Sentinel never merges; the repository owner needs to land this change\.$/,
   );
 });
 

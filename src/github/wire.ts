@@ -19,6 +19,7 @@
  */
 
 import { asGitSha } from "../contracts/brands.ts";
+import { issueAuthorFacts } from "./wire-issue-author.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import type {
   GitHubBranchProtectionsV1,
@@ -133,7 +134,6 @@ export function parseIssueWire(
       "close time precedes creation",
     );
   }
-  const association = obj.author_association;
   return {
     kind: "issue",
     issue: {
@@ -142,10 +142,8 @@ export function parseIssueWire(
       body,
       state,
       author,
-      ...(typeof association === "string" &&
-          AUTHOR_ASSOCIATIONS.includes(association)
-        ? { authorAssociation: association }
-        : {}),
+      // The author's id and association (`wire-issue-author.ts`).
+      ...issueAuthorFacts(obj),
       labels,
       createdAt,
       updatedAt,
@@ -153,18 +151,6 @@ export function parseIssueWire(
     },
   };
 }
-
-/** GitHub's closed `author_association` values; any other is dropped. */
-const AUTHOR_ASSOCIATIONS: readonly string[] = Object.freeze([
-  "OWNER",
-  "MEMBER",
-  "COLLABORATOR",
-  "CONTRIBUTOR",
-  "FIRST_TIME_CONTRIBUTOR",
-  "FIRST_TIMER",
-  "MANNEQUIN",
-  "NONE",
-]);
 
 function expectIssueBody(value: unknown, path: string): string {
   if (value === null) return "";
