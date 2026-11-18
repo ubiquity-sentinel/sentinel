@@ -9,13 +9,17 @@
  * - State (`wrapState`): a read returns the snapshot without any row of a
  *   repository the predicate does not accept, in every collection that names
  *   a repository (`REPOSITORY_COLLECTIONS`, enumerated from the repair
- *   snapshot contract). A write through the view gets those rows back
+ *   snapshot contract); an optional collection left without rows is left out
+ *   (`OPTIONAL_COLLECTIONS`), and a view the contract parser refuses is never
+ *   returned (the runner stops before any pass: `checkPrivateTargetViewV1`).
+ *   A write through the view gets those rows back
  *   byte-identical (the exact objects of the snapshot at the expected head),
  *   each after exactly as many visible rows as preceded it, so a pass that
  *   keeps its visible rows in place leaves every hidden row at its index. A
  *   write that names a hidden repository in any row, or that would make the
  *   store compact a ledger holding hidden reservations, is refused with a
- *   closed reason and nothing is written.
+ *   closed reason and nothing is written. A moved head is the store's own
+ *   conflict, and a head the gate already knows costs no extra state read.
  * - GitHub (`githubFor`): a repository whose visibility is not proven public
  *   this run has no surface (null: the documented "unreadable surface, skip
  *   the record, change nothing").
@@ -24,18 +28,23 @@
  * per run, cached for the run, on the launcher's own surface (which shares
  * that answer with its default-branch read). Unknown or unreadable is not
  * public: the repository is hidden for the run. Sentinel's own repository is
- * never read or hidden: it is the public repository the launcher runs in, so
- * a transient read failure can never stop self-follow, self-observation or
- * the owner-merge flow.
+ * never read or hidden (it is the public repository the launcher runs in), so
+ * a failed visibility read hides only the repository it was for and never
+ * stops Sentinel's own delivery or the owner-merge flow; only a view the
+ * contract refuses stops the whole run.
  */
 import {
   portError,
+  portOk,
   type PortResultV1,
   type RepairStateWriter,
   type StateReadView,
 } from "../src/contracts/ports.ts";
 import type { StateReadResultV1 } from "../src/contracts/ports-state.ts";
-import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
+import {
+  parseRepairStateSnapshotV1,
+  type RepairStateSnapshotV1,
+} from "../src/contracts/state-snapshots.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import type { GitSha } from "../src/contracts/brands.ts";
 import { MaxItems } from "../src/contracts/validation.ts";
@@ -176,6 +185,19 @@ export function namedRepositoriesV1(
   return named;
 }
 
+/**
+ * The contract's optional collections: present only with a first record
+ * (`parseRepairStateSnapshotV1` refuses an empty one), so a view whose every
+ * row of one is hidden omits the key, exactly as a snapshot that never had
+ * one. A write restores the key with the hidden rows.
+ */
+export const OPTIONAL_COLLECTIONS: ReadonlySet<string> = new Set([
+  "reservationArchive",
+  "ownerSuccessorReviews",
+  "targetCapabilities",
+  "tierScans",
+]);
+
 /** The snapshot without any row of a hidden repository, and how many went. */
 export function hidePrivateRowsV1(
   snapshot: RepairStateSnapshotV1,
@@ -188,7 +210,10 @@ export function hidePrivateRowsV1(
     if (!Array.isArray(list)) continue;
     const kept = list.filter((row) => !isHidden(collection, row, hidden));
     hiddenRows += list.length - kept.length;
-    if (kept.length !== list.length) view[collection] = kept;
+    if (kept.length === list.length) continue;
+    if (kept.length === 0 && OPTIONAL_COLLECTIONS.has(collection)) {
+      delete view[collection];
+    } else view[collection] = kept;
   }
   return { view: view as unknown as RepairStateSnapshotV1, hiddenRows };
 }
@@ -256,7 +281,16 @@ export interface PrivateTargetsHiddenLineV1 {
   repositories: number;
   rows: number;
   refusedWrites: number;
+  /** Reads whose hidden view did not parse: the run did nothing. */
+  invalidViews: number;
 }
+
+/**
+ * The read error of a hidden view the contract parser refuses (a raw state
+ * that parses whose view would not). The runner stops before any pass on it.
+ */
+export const PRIVATE_TARGET_VIEW_INVALID =
+  `${PRIVATE_TARGET_REASON}: view_invalid`;
 
 export interface PrivateTargetGateV1 {
   /** The state every pass reads and writes through (see the module). */
@@ -309,18 +343,68 @@ export function gateHostedAutonomyDepsV1(
   };
 }
 
+/**
+ * The run's first repair read, through the gated deps, before any pass: a
+ * hidden view the contract refuses stops the run here, before any GitHub read
+ * or write (`invalid`). Otherwise the read is handed to the run's first state
+ * reader (queue custody reads first), so the check costs no state read.
+ */
+export async function checkPrivateTargetViewV1(
+  deps: import("./hosted-autonomy-types.ts").HostedAutonomyDepsV1,
+): Promise<
+  | {
+    invalid: false;
+    deps: import("./hosted-autonomy-types.ts").HostedAutonomyDepsV1;
+  }
+  | { invalid: true }
+> {
+  if (deps.privateTargets === undefined) return { invalid: false, deps };
+  const first = await deps.state.readRepair();
+  if (!first.ok && first.error.detail === PRIVATE_TARGET_VIEW_INVALID) {
+    return { invalid: true };
+  }
+  let primed: typeof first | null = first;
+  const state = new Proxy(deps.state, {
+    get(target, property) {
+      if (property === "readRepair") {
+        return async () => {
+          const read = primed ?? await target.readRepair();
+          primed = null;
+          return read;
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  return { invalid: false, deps: { ...deps, state } };
+}
+
 export function createPrivateTargetGateV1(input: {
   readVisibility(repository: RepositoryIdentityV1): Promise<TargetVisibilityV1>;
+  /**
+   * The contract check a hidden view must pass before any pass sees it.
+   * Production never sets it and uses `parseRepairStateSnapshotV1`.
+   */
+  validateView?: (view: RepairStateSnapshotV1) => unknown;
 }): PrivateTargetGateV1 {
+  const validateView = input.validateView ?? parseRepairStateSnapshotV1;
   const pending = new Map<string, Promise<boolean>>();
   const settled = new Map<string, boolean>();
   const raws = new Map<string, RepairStateSnapshotV1>();
+  // Heads whose state hid nothing: the view was the state itself.
+  const clean = new Set<string>();
   let lastHidden:
     | { snapshot: RepairStateSnapshotV1; hidden: Set<string> }
     | null = null;
   let refusedWrites = 0;
   let hiddenRows = 0;
+  let invalidViews = 0;
   const wrapped = new WeakSet<object>();
+  const refuse = (reason: string) => {
+    refusedWrites++;
+    return portError("unavailable", `${PRIVATE_TARGET_REASON}: ${reason}`);
+  };
 
   const resolveKey = (
     key: string,
@@ -365,9 +449,20 @@ export function createPrivateTargetGateV1(input: {
   ): Promise<PortResultV1<StateReadResultV1<RepairStateSnapshotV1>>> => {
     if (!read.ok || read.value.status !== "found") return read;
     const hidden = await hiddenOf(read.value.snapshot);
-    if (hidden.size === 0) return read;
-    raws.set(read.value.head, read.value.snapshot);
+    if (hidden.size === 0) {
+      clean.add(read.value.head);
+      return read;
+    }
     const hiddenView = hidePrivateRowsV1(read.value.snapshot, hidden);
+    // A view the contract refuses (where the raw state parses) would let a
+    // pass act on GitHub and then lose its write: no pass ever sees it.
+    try {
+      validateView(hiddenView.view);
+    } catch {
+      invalidViews++;
+      return portError("unavailable", PRIVATE_TARGET_VIEW_INVALID);
+    }
+    raws.set(read.value.head, read.value.snapshot);
     lastHidden = { snapshot: read.value.snapshot, hidden };
     hiddenRows = hiddenView.hiddenRows;
     return {
@@ -403,37 +498,57 @@ export function createPrivateTargetGateV1(input: {
               if (expectedHead === null) {
                 return await target.writeRepair(next, expectedHead);
               }
-              let before = raws.get(expectedHead);
+              // A write never names a hidden repository.
+              const named = await hiddenOf(next);
+              if (named.size > 0) {
+                const collection = Object.keys(REPOSITORY_COLLECTIONS).find((
+                  key,
+                ) => rows(next, key).some((row) => isHidden(key, row, named)));
+                return refuse(`private_repository_row:${collection}`);
+              }
+              // A head read through the gate (or written by it) is known: no
+              // extra state read, and the store's own compare-and-swap answers
+              // a head that has since moved.
+              let before = clean.has(expectedHead)
+                ? null
+                : raws.get(expectedHead);
               if (before === undefined) {
+                // A head this gate never saw: read it once. A moved head is
+                // the store's own answer, a conflict, and nothing is written.
                 const read = await target.readRepair();
                 if (!read.ok) return read;
                 if (
                   read.value.status !== "found" ||
                   read.value.head !== expectedHead
                 ) {
-                  return portError(
-                    "unavailable",
-                    "private target gate: state changed",
-                  );
+                  return portOk({
+                    status: "conflict" as const,
+                    currentHead: read.value.status === "found"
+                      ? read.value.head
+                      : read.value.currentHead,
+                  });
                 }
                 before = read.value.snapshot;
               }
-              const hidden = new Set([
-                ...await hiddenOf(before),
-                ...await hiddenOf(next),
-              ]);
-              if (hidden.size === 0) {
-                return await target.writeRepair(next, expectedHead);
-              }
-              const restored = restorePrivateRowsV1(next, before, hidden);
+              const hidden = before === null
+                ? new Set<string>()
+                : await hiddenOf(before);
+              const restored = before === null || hidden.size === 0
+                ? { ok: true as const, snapshot: next }
+                : restorePrivateRowsV1(next, before, hidden);
               if (!restored.ok) {
-                refusedWrites++;
-                return portError(
-                  "unavailable",
-                  `${PRIVATE_TARGET_REASON}: ${restored.reason}:${restored.collection}`,
-                );
+                return refuse(`${restored.reason}:${restored.collection}`);
               }
-              return await target.writeRepair(restored.snapshot, expectedHead);
+              const written = await target.writeRepair(
+                restored.snapshot,
+                expectedHead,
+              );
+              // The next write of the same pass starts from this head.
+              if (written.ok && written.value.status === "applied") {
+                if (hidden.size === 0) clean.add(written.value.head);
+                else raws.set(written.value.head, restored.snapshot);
+              }
+              return written;
             };
           }
           const value = Reflect.get(target, property, target);
@@ -483,13 +598,16 @@ export function createPrivateTargetGateV1(input: {
     line() {
       const repositories = [...settled.values()].filter((works) => !works)
         .length;
-      if (repositories === 0 && refusedWrites === 0) return null;
+      if (repositories === 0 && refusedWrites === 0 && invalidViews === 0) {
+        return null;
+      }
       return {
         kind: "sentinel_private_targets_hidden",
         reason: PRIVATE_TARGET_REASON,
         repositories,
         rows: hiddenRows,
         refusedWrites,
+        invalidViews,
       };
     },
   };

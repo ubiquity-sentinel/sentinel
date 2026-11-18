@@ -10,7 +10,6 @@
 import assert from "node:assert/strict";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
 import {
-  portError,
   portOk,
   type PortResultV1,
   type RepairStateWriter,
@@ -103,13 +102,18 @@ function seeded(): RepairStateSnapshotV1 {
   return snapshot as unknown as RepairStateSnapshotV1;
 }
 
-/** A store that keeps exactly what is written (no parse, no compaction). */
+/**
+ * A store that keeps exactly what is written (no parse, no compaction) and
+ * answers a moved head as the real store does: a conflict, nothing written.
+ */
 class RecordingState implements StateReadView, RepairStateWriter {
   writes = 0;
+  reads = 0;
   constructor(public snapshot: RepairStateSnapshotV1, public head = HEAD0) {}
   readRepair(): Promise<
     PortResultV1<StateReadResultV1<RepairStateSnapshotV1>>
   > {
+    this.reads++;
     return Promise.resolve(portOk({
       status: "found",
       snapshot: this.snapshot,
@@ -122,7 +126,9 @@ class RecordingState implements StateReadView, RepairStateWriter {
   }
   writeRepair(next: RepairStateSnapshotV1, expectedHead: GitSha | null) {
     if (expectedHead !== this.head) {
-      return Promise.resolve(portError("unavailable", "conflict"));
+      return Promise.resolve(
+        portOk({ status: "conflict" as const, currentHead: this.head }),
+      );
     }
     this.writes++;
     this.snapshot = structuredClone(next);
@@ -136,6 +142,9 @@ class RecordingState implements StateReadView, RepairStateWriter {
 function gate(answers: Record<string, TargetVisibilityV1 | Error>) {
   const reads: string[] = [];
   const instance = createPrivateTargetGateV1({
+    // These synthetic rows are not contract rows; the contract parser over
+    // real rows is `private-target-gate-contract_test.ts`.
+    validateView: () => {},
     readVisibility: (repository) => {
       reads.push(repository.name);
       const answer = answers[repository.name];
@@ -287,6 +296,7 @@ Deno.test("private target gate: a write naming a hidden repository or compacting
     repositories: 1,
     rows: Object.keys(REPOSITORY_COLLECTIONS).length * 2,
     refusedWrites: 2,
+    invalidViews: 0,
   });
 });
 
@@ -330,4 +340,64 @@ Deno.test("private target gate: unknown or unreadable visibility hides; surfaces
   assert.ok(read.ok && read.value.status === "found");
   assert.equal(read.value.snapshot, store.snapshot, "the same object");
   assert.equal(open.line(), null);
+});
+
+Deno.test("private target gate: a moved head comes back as the store's own conflict, and a known head costs no extra state read", async () => {
+  const MOVED = "9".repeat(40) as GitSha;
+  for (const hides of [true, false]) {
+    const input = hides ? seeded() : (() => {
+      const only = structuredClone(seeded()) as unknown as Record<
+        string,
+        unknown[]
+      >;
+      for (const collection of Object.keys(REPOSITORY_COLLECTIONS)) {
+        only[collection] = only[collection].filter((entry) =>
+          !canonicalStringify(entry).includes("prospector")
+        );
+      }
+      return only as unknown as RepairStateSnapshotV1;
+    })();
+    const store = new RecordingState(structuredClone(input));
+    const { gate: g } = gate({ "ai.ubq.fi": "public", prospector: "private" });
+    const state = g.wrapState(store);
+    const read = await state.readRepair();
+    assert.ok(read.ok && read.value.status === "found");
+    assert.equal(store.reads, 1);
+    // A write against the head this run read: no extra read; the next write
+    // against the head that write returned: none either.
+    const first = await state.writeRepair(read.value.snapshot, read.value.head);
+    assert.ok(first.ok && first.value.status === "applied");
+    const second = await state.writeRepair(
+      read.value.snapshot,
+      first.value.head,
+    );
+    assert.ok(second.ok && second.value.status === "applied", `${hides}`);
+    assert.equal(store.reads, 1, "no extra state read per write");
+    assert.deepEqual(
+      hiddenRows(store.snapshot),
+      hiddenRows(input),
+      "still byte-identical after two writes",
+    );
+    // Another writer moves the head. A write against the head this run read
+    // gets the store's own answer (conflict), forwarded unchanged.
+    store.head = MOVED;
+    const stale = await state.writeRepair(
+      read.value.snapshot,
+      second.value.head,
+    );
+    assert.deepEqual(stale, portOk({ status: "conflict", currentHead: MOVED }));
+    // A head this run never saw: one read, and its moved head is the same
+    // conflict, nothing written.
+    const unseen = await state.writeRepair(
+      read.value.snapshot,
+      "8".repeat(40) as GitSha,
+    );
+    assert.deepEqual(
+      unseen,
+      portOk({ status: "conflict", currentHead: MOVED }),
+    );
+    assert.equal(store.writes, 2, "neither conflict wrote");
+    assert.equal(store.reads, 2);
+    assert.equal(g.line()?.refusedWrites ?? 0, 0, "a conflict is no refusal");
+  }
 });

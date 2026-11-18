@@ -51,7 +51,10 @@ import { runHostedRetiredPullPass } from "./hosted-autonomy-retired-pulls.ts";
 import { runHostedOutageObservationPass } from "./hosted-autonomy-outage-observation.ts";
 import { runHostedQueueCustody } from "./hosted-autonomy-queue-pass.ts";
 import { protectQueueState } from "./hosted-autonomy-queue-state.ts";
-import { gateHostedAutonomyDepsV1 } from "./hosted-autonomy-private-targets.ts";
+import {
+  checkPrivateTargetViewV1,
+  gateHostedAutonomyDepsV1,
+} from "./hosted-autonomy-private-targets.ts";
 import type {
   HostedQueueCustodyContext,
   QueueCustodyResult,
@@ -128,7 +131,17 @@ export async function runHostedAutonomy(
   // resolves surfaces through the private-target gate, then one text-free
   // line counts what it hid (`hosted-autonomy-private-targets.ts`).
   try {
-    return await runGatedHostedAutonomy(gateHostedAutonomyDepsV1(deps));
+    const checked = await checkPrivateTargetViewV1(
+      gateHostedAutonomyDepsV1(deps),
+    );
+    if (checked.invalid) {
+      // A view the contract refuses: fail closed before any pass runs.
+      await deps.onQueueCustodyReady?.(false);
+      return skipped("snapshot_invalid", null, [
+        "private_targets:view_invalid",
+      ]);
+    }
+    return await runGatedHostedAutonomy(checked.deps);
   } finally {
     try {
       const line = deps.privateTargets?.line() ?? null;
