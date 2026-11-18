@@ -1,0 +1,13 @@
+{
+  "jobs": [
+    {
+      "id": "agy-meter-fidelity-20261118b",
+      "repository": "ubiquity/ai.ubq.fi",
+      "base": "development",
+      "model": "gpt-6.2-sol",
+      "minutes": 32,
+      "pr": false,
+      "prompt": "fix(admin): preserve Antigravity sign-in and reset evidence\n\nComplete the two directly related meter corrections from ubiquity/ai.ubq.fi issues 1374 and 1375 in the Gemini quota feature merged at 70afb98dc1651a7a5851d8ee4f79ace5d4c836d1. Confirm current base ancestry first; preserve concurrent work. One writer owns src/admin/gemini-quota-snapshot.ts, scripts/export-antigravity-quota.ts, tests/admin-gemini-quota.test.ts and a UI line or operator sentence only if genuinely necessary. The operator feeds only local documented Google CLI status-line events (https://antigravity.google/docs/cli/statusline). Trust a valid current event's email as evidence of a signed-in user and its actual quota, including when agent_state is authenticating. Missing email must still clear old quota immediately. Never store/log email or other private CLI fields. Do not infer quota from a prior account. Compare logically equivalent reset instants across documented reset_time vs observed timestamp + reset_in_seconds representations (allow appropriate rounding), preserve genuinely changed resets and amount/fraction/disabled transitions, and keep the periodic 30s freshness write. Add specific regressions for both representation orders and real changes. All current admin/auth/output contracts otherwise stay intact. No changes to the unrelated macOS confinement CI failures, workflows, production, Google sign-in, routing, private protocols, or paid services. No additional jobs or external actions. Read AGENTS.md and applicable decisions. Run smallest relevant tests in the repository Linux network boundary and changed file lint, format, diff check, and strict check if applicable using pinned Bun and frozen deps. Include exact commands, pass counts and failures in the final message itself (runner-local /tmp receipts are inaccessible after exit). First state actual model/effort if exposed. Estimate 8-16 minutes, return unmerged result for controller acceptance."
+    }
+  ]
+}
