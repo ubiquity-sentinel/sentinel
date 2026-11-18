@@ -9,6 +9,8 @@ import {
   LocalCheckoutResolver,
 } from "../../src/repair/model-port.ts";
 import { gitRun, REPO, testGitEnv } from "../state/helpers.ts";
+import { ciExecutablePath } from "../../src/repair/workflow-trust.ts";
+import { ownerLandingTouch } from "../../src/repair/owner-landing.ts";
 import { FakeCodexSession } from "./model-port-helpers.ts";
 
 Deno.test("local candidate committer: command refusals remain false and expose only closed branch codes", async () => {
@@ -261,6 +263,74 @@ Deno.test(
         [...(resolved?.changedPaths ?? [])].sort(),
         ["src/protected.ts", "src/renamed.ts"],
         "protected source removals and destination additions are both visible",
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true }).catch(() => {});
+    }
+  },
+);
+
+Deno.test(
+  "model-port: a changed path git would quote is listed raw, and no predicate misses it (2026-11-17)",
+  async () => {
+    const root = await Deno.makeTempDir({
+      dir: Deno.cwd(),
+      prefix: "sentinel-model-quoted-",
+    });
+    const home = `${root}/home`;
+    await Deno.mkdir(home);
+    const env = testGitEnv(home);
+    const run = (args: string[]) => gitRun(root, args, env);
+    const sha = async (ref: string): Promise<GitSha> => {
+      const result = await run(["rev-parse", ref]);
+      assert.ok(result.ok, result.stderr);
+      return result.stdout.trim() as GitSha;
+    };
+    try {
+      const initialized = await run(["init", "-q"]);
+      assert.ok(initialized.ok, initialized.stderr);
+      await Deno.writeTextFile(`${root}/README.md`, "base\n");
+      let result = await run(["add", "-A"]);
+      assert.ok(result.ok, result.stderr);
+      result = await run(["commit", "-q", "-m", "base"]);
+      assert.ok(result.ok, result.stderr);
+      const base = await sha("HEAD");
+      // Without `-z`, git C-quotes each of these names
+      // (`".github/workflows/d\303\251ploy.yml"`), which no prefix
+      // predicate recognises as a workflow.
+      const named = [
+        ".github/workflows/d\u00e9ploy.yml",
+        'src/a "quoted" name.ts',
+        "src/tab\there.ts",
+      ];
+      await Deno.mkdir(`${root}/.github/workflows`, { recursive: true });
+      await Deno.mkdir(`${root}/src`);
+      for (const path of named) {
+        await Deno.writeTextFile(`${root}/${path}`, "candidate\n");
+      }
+      result = await run(["add", "-A"]);
+      assert.ok(result.ok, result.stderr);
+      result = await run(["commit", "-q", "-m", "candidate"]);
+      assert.ok(result.ok, result.stderr);
+
+      const resolved = await new LocalCheckoutResolver(root, base).resolve();
+      assert.ok(resolved, "the local checkout identity resolves");
+      const paths = [...(resolved?.changedPaths ?? [])].sort();
+      assert.deepEqual(paths, [...named].sort());
+      // The raw workflow path is a workflow; a raw name no predicate can
+      // classify fails closed (CI-executable, and never published).
+      for (const path of paths) {
+        assert.equal(ciExecutablePath(path), true, JSON.stringify(path));
+      }
+      const config = { commands: {}, protectedPaths: [] } as never;
+      assert.deepEqual(
+        ownerLandingTouch(config, paths, { owner: "ubiquity", name: "x" }),
+        { kind: "unpublishable" },
+      );
+      assert.deepEqual(
+        ownerLandingTouch(config, [named[0]], { owner: "ubiquity", name: "x" }),
+        { kind: "none" },
+        "on a target a raw workflow path is an ordinary (trust-gated) change",
       );
     } finally {
       await Deno.remove(root, { recursive: true }).catch(() => {});

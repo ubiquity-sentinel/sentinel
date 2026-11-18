@@ -1,3 +1,5 @@
+import { recordPushGuard } from "./push-guard.ts";
+import { PUSH_GUARD_REFUSALS } from "../github/push-content-guard.ts";
 import { guardCiMinuteEffect } from "./loop-types.ts";
 import {
   holdQueueRecord,
@@ -276,6 +278,7 @@ export async function executePublishStep(
     head,
     expectedRemoteHead,
     authority.value,
+    recordPushGuard(deps, record, record.target.base),
   );
   if (!push.ok) {
     if (queueEffectRefused(push.error)) {
@@ -284,6 +287,24 @@ export async function executePublishStep(
         context,
         withIntent,
         queueRefusalIsTransient(push.error),
+      );
+    }
+    // The 2026-11-17 push guard refused a CI-executable change its source
+    // may not make (or any on Sentinel itself): nothing was sent, and a
+    // retry repeats the refusal.
+    if (
+      push.error.kind === "invalid" &&
+      PUSH_GUARD_REFUSALS.includes(push.error.detail)
+    ) {
+      return persistWork(
+        deps,
+        context,
+        markBlocked(
+          clearIntent(withIntent, now),
+          "other",
+          push.error.detail,
+          now,
+        ),
       );
     }
     // GitHub refused a workflow change for want of the App's `workflows`

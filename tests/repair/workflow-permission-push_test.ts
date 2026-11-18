@@ -5,9 +5,12 @@
  * for the owner: no retry loop and no further charged run.
  */
 import assert from "node:assert/strict";
+import { asWorkItemId } from "../../src/contracts/brands.ts";
 import { PUSH_WORKFLOWS_PERMISSION_DETAIL } from "../../src/contracts/ports-github.ts";
 import { isWorkflowsPermissionRefusal } from "../../src/github/git-executor.ts";
-import { makeRig } from "./loop-rig.ts";
+import { candidateBranch } from "../../src/repair/keys.ts";
+import { REPO, SHA1, workRecord } from "../state/helpers.ts";
+import { makeRig, seededSnapshot } from "./loop-rig.ts";
 import { positiveLifecycle } from "./loop-candidate-fixtures.ts";
 
 const GITHUB_REFUSAL = " ! [remote rejected] 3f2a -> sentinel/repair/issue-1 " +
@@ -33,14 +36,39 @@ Deno.test("workflows permission: GitHub's refusal is recognised, other rejection
 });
 
 Deno.test("workflows permission: a refused workflow push parks for the owner once, with no retry and no new run", async () => {
+  // The owner's issue may change a workflow (2026-11-17), so the push is
+  // sent and GitHub's own permission refusal decides.
+  const paths = ["src/app.ts", ".github/workflows/ci.yml"];
   const rig = await makeRig("workflowpermission", {
-    configOverrides: { protectedPaths: [".github/workflows/"] },
-    model: { changedPaths: ["src/app.ts", ".github/workflows/ci.yml"] },
+    summaries: false,
+    configOverrides: {
+      repository: { ...REPO },
+      protectedPaths: [".github/workflows/"],
+    },
+    model: { changedPaths: paths },
     github: {
       candidateLifecycle: positiveLifecycle(),
       pushRefusal: PUSH_WORKFLOWS_PERMISSION_DETAIL,
+      pushedPaths: paths,
     },
   });
+  const task = asWorkItemId("issue-41");
+  const seeded = await rig.store.writeRepair(
+    seededSnapshot([workRecord(task, {
+      source: { kind: "issue", id: "41", revision: SHA1 },
+      related: { incidentId: null, issueNumber: 41 },
+      target: {
+        base: SHA1,
+        branch: candidateBranch(task),
+        checkpoint: null,
+        head: null,
+        pr: null,
+      },
+      nextStep: "work",
+    })]),
+    null,
+  );
+  assert.ok(seeded.ok && seeded.value.status === "applied");
   try {
     const first = await rig.run();
     assert.equal(first.status, "idle", JSON.stringify(first));

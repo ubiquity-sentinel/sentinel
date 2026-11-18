@@ -1,6 +1,11 @@
 // port publication.
 
+import {
+  type PushContentGuardV1,
+  pushGuardRefusal,
+} from "./push-content-guard.ts";
 import { PUSH_WORKFLOWS_PERMISSION_DETAIL } from "../contracts/ports-github.ts";
+import { ownerMergesProtectedChanges } from "../repair/owner-landing.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import type { TakeoverEffectAuthorization } from "../contracts/existing-pr-takeover.ts";
 import type {
@@ -24,6 +29,7 @@ export abstract class GitHubPortPublication extends GitHubPortEvidence {
     sha: GitSha,
     expectedRef: GitSha | null,
     takeover?: TakeoverEffectAuthorization,
+    guard?: PushContentGuardV1,
   ): Promise<PortResultV1<WriteOutcomeV1>> {
     const queueInput = {
       operation: "publication" as const,
@@ -78,6 +84,22 @@ export abstract class GitHubPortPublication extends GitHubPortEvidence {
       if (!ancestor.value) {
         return portError("conflict", "push would not be a fast-forward");
       }
+    }
+    // 2026-11-17 backstop: the paths this push carries, from the local tree
+    // diff; a CI-executable change its source may not make is never sent.
+    // Whether this is Sentinel's own repository is the port's own fact, not
+    // the caller's.
+    if (guard !== undefined) {
+      const refused = await pushGuardRefusal(
+        this.git.changedPaths?.bind(this.git),
+        {
+          ...guard,
+          ownRepository: guard.ownRepository ||
+            ownerMergesProtectedChanges(this.repository),
+        },
+        sha,
+      );
+      if (refused !== null) return refused;
     }
     // 4. Publish through the trusted executor (never forced). The executor
     // atomically guards the exact advertised ref inside the push transaction;

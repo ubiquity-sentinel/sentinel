@@ -151,6 +151,8 @@ export interface GitExecutorV1 {
     sha: GitSha,
     expectedRef: GitSha | null,
   ): Promise<PortResultV1<GitPushResultV1>>;
+  /** Optional raw (`-z`) paths `base..head` changes, for the push guard. */
+  changedPaths?(base: GitSha, head: GitSha): Promise<PortResultV1<string[]>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -308,6 +310,15 @@ export class DenoGitExecutor implements GitExecutorV1 {
     if (result.ok) return portOk(true);
     if (result.code === 1) return portOk(false);
     return portError("unavailable", "ancestry check failed");
+  }
+
+  async changedPaths(base: GitSha, head: GitSha) {
+    const args = ["diff", "--no-renames", "--name-only", "-z", base, head];
+    const result = await this.runGit(args, null);
+    if (!result.ok || result.timeout === true || result.overflow === true) {
+      return portError("unavailable", "changed path read failed");
+    }
+    return portOk(result.stdout.split("\0").filter((path) => path !== ""));
   }
 
   /**

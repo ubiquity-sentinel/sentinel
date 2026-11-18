@@ -59,6 +59,18 @@ export interface GitHubChecksReadOptionsV1 {
 export const PUSH_WORKFLOWS_PERMISSION_DETAIL =
   "app lacks workflows permission; owner action required";
 
+/**
+ * The 2026-11-17 push guard (`src/github/push-content-guard.ts`): the base
+ * the pushed change set is measured from, whether the push goes to
+ * Sentinel's own repository, and the source's trust, read only when a
+ * CI-executable path is pushed.
+ */
+export interface PushContentGuardV1 {
+  readonly base: GitSha;
+  readonly ownRepository: boolean;
+  trust(): Promise<"trusted" | "untrusted" | "unavailable">;
+}
+
 export interface GitHubIssueListOptionsV1 {
   /**
    * Which listed issues need their native relations read (one GraphQL read
@@ -183,12 +195,18 @@ export interface GitHubPort {
     request: PrepareBaseRefreshRequestV1,
     takeover?: TakeoverEffectAuthorization,
   ): Promise<PortResultV1<GitSha>>;
-  /** Pushes the trusted candidate commit; the model never publishes itself. */
+  /**
+   * Pushes the trusted candidate commit; the model never publishes itself.
+   * `guard` (2026-11-17) re-derives the pushed paths from the local tree
+   * diff and refuses a CI-executable change its source may not make
+   * (`push-content-guard.ts`); every push of model-written content sets it.
+   */
   pushHead(
     ref: string,
     sha: GitSha,
     expectedRef: GitSha | null,
     takeover?: TakeoverEffectAuthorization,
+    guard?: PushContentGuardV1,
   ): Promise<PortResultV1<WriteOutcomeV1>>;
   createPullRequest(
     request: PullRequestCreateV1,

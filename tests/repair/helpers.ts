@@ -1,3 +1,6 @@
+import { pushGuardRefusal } from "../../src/github/push-content-guard.ts";
+import type { PushContentGuardV1 } from "../../src/contracts/ports-github.ts";
+import type { TakeoverEffectAuthorization } from "../../src/contracts/existing-pr-takeover.ts";
 import { inactiveNativeQueueFixture } from "../github/native-queue-fixture.ts";
 import type { NativeQueueGuardV1 } from "../../src/github/native-queue-guard.ts";
 /**
@@ -211,6 +214,8 @@ export interface FakeGithubOptionsV1 {
   pushOutcome?: "applied" | "ambiguous";
   /** One-shot definitive refusal detail of the next push (nothing written). */
   pushRefusal?: string;
+  /** The change set every guarded push carries (2026-11-17 push guard). */
+  pushedPaths?: string[];
   /** Paths every exact comparison reports (default none; null: not whole). */
   changedPaths?: string[] | null | "unavailable";
   pushFailNext?: boolean;
@@ -549,12 +554,28 @@ export class FakeGithub implements GitHubPort {
     return Promise.resolve(portOk(null));
   }
 
-  pushHead(
+  async pushHead(
     ref: string,
     sha: GitSha,
     expectedRef: GitSha | null,
+    _takeover?: TakeoverEffectAuthorization,
+    guard?: PushContentGuardV1,
   ): Promise<PortResultV1<"applied" | "ambiguous">> {
     this.calls.push(`push:${ref}:${sha.slice(0, 8)}`);
+    // The production push guard over this fake's pushed change set
+    // (`pushedPaths`, else the comparison's `changedPaths`, else none).
+    if (guard !== undefined) {
+      const pushed = this.options.pushedPaths ??
+        (Array.isArray(this.options.changedPaths)
+          ? this.options.changedPaths
+          : []);
+      const refused = await pushGuardRefusal(
+        () => Promise.resolve(portOk([...pushed])),
+        guard,
+        sha,
+      );
+      if (refused !== null) return refused;
+    }
     if (this.options.pushRefusal !== undefined) {
       const detail = this.options.pushRefusal;
       this.options.pushRefusal = undefined;

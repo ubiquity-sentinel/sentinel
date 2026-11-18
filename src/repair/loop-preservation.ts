@@ -1,3 +1,4 @@
+import { PUSH_GUARD_REFUSALS } from "../github/push-content-guard.ts";
 import {
   guardQueueOperation,
   holdQueueRecord,
@@ -196,8 +197,9 @@ export async function executeCandidatePreservation(
           // could not be evaluated before the turn (#333); GitHub's refusal
           // of a workflow push for want of the App's `workflows` permission
           // is named as the owner action it needs (2026-11-17).
-          preserved.error.detail === PUSH_WORKFLOWS_PERMISSION_DETAIL
-            ? PUSH_WORKFLOWS_PERMISSION_DETAIL
+          preserved.error.detail === PUSH_WORKFLOWS_PERMISSION_DETAIL ||
+            PUSH_GUARD_REFUSALS.includes(preserved.error.detail)
+            ? preserved.error.detail
             : preservationRefusalMessage(preserved.error.detail),
           at,
         ),
