@@ -73,6 +73,47 @@ export function isBackupCiRunnerExcluded(
   return excluded.all || excluded.runnerIds.includes(runnerId);
 }
 
+/**
+ * v1/<owner>/<repo>/enrolment.json: the repository id an automatically
+ * enrolled target (`id: null` row) was pinned to on first enrolment, after
+ * the target's own read returned exactly the configured full name and a
+ * public repository. Later passes and the supervisor's reader bind every
+ * file of the target to this id without another read. Older readers never
+ * read it.
+ */
+export interface BackupCiEnrolmentV1 {
+  version: 1;
+  kind: "sentinel_backup_ci_enrolment";
+  repository: { owner: string; name: string; id: number };
+  enrolledAt: number;
+}
+
+export function backupCiEnrolmentPath(owner: string, repo: string): string {
+  return `v1/${owner}/${repo}/enrolment.json`;
+}
+
+export function parseBackupCiEnrolment(input: unknown): BackupCiEnrolmentV1 {
+  const o = expectRecord(input, "$");
+  expectExactKeys(o, ["version", "kind", "repository", "enrolledAt"], "$");
+  if (o.version !== 1) bad("$.version", "1");
+  if (o.kind !== "sentinel_backup_ci_enrolment") bad("$.kind", "kind");
+  const r = expectRecord(o.repository, "$.repository");
+  expectExactKeys(r, ["owner", "name", "id"], "$.repository");
+  const owner = expectString(r.owner, "$.repository.owner", 100);
+  const name = expectString(r.name, "$.repository.name", 100);
+  if (!REPO_PART_RE.test(owner) || !REPO_PART_RE.test(name)) {
+    bad("$.repository", "an owner/name");
+  }
+  const id = count(r.id, "$.repository.id");
+  if (id === 0) bad("$.repository.id", "a positive id");
+  return {
+    version: 1,
+    kind: "sentinel_backup_ci_enrolment",
+    repository: { owner, name, id },
+    enrolledAt: count(o.enrolledAt, "$.enrolledAt"),
+  };
+}
+
 /** Store paths whose files feed the exclusion (every target's). */
 export const BACKUP_CI_TRUST_FILE_RE =
   /^v1\/(?:[A-Za-z0-9-]+\/[A-Za-z0-9._-]+\/)?(?:suspended|calibration|checks)\.json$/;

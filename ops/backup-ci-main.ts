@@ -40,6 +40,7 @@ import {
 } from "./backup-ci-materialize.ts";
 import { type BackupCiPassFileV1, runBackupCiPass } from "./backup-ci-pass.ts";
 import {
+  BACKUP_CI_RATE_FLOOR,
   createBackupCiApi,
   createBackupCiTargetReads,
 } from "./backup-ci-plan-reads.ts";
@@ -169,7 +170,11 @@ async function pass(): Promise<number> {
     scratch: `${workDir}/store`,
     remote: BACKUP_CI_STORE_REMOTE,
   });
-  const targetApi = createBackupCiApi(targetToken);
+  const targetApi = createBackupCiApi(targetToken, fetch, {
+    floor: BACKUP_CI_RATE_FLOOR,
+    onCooldown: (reason) =>
+      console.log(`backup-ci:target_api:cooldown:${reason}`),
+  });
   const passFile = await runBackupCiPass({
     runId: Number(env("GITHUB_RUN_ID")),
     launcherSha: env("GITHUB_SHA") as GitSha,
@@ -204,7 +209,7 @@ async function pass(): Promise<number> {
   const bytes = new TextEncoder().encode(canonicalStringify(passFile));
   await Deno.writeFile(`${workDir}/pass.json`, bytes);
   const hasWork = passFile.files.length > 0 || passFile.units.length > 0 ||
-    passFile.comparisons.length > 0;
+    passFile.comparisons.length > 0 || (passFile.enrolments?.length ?? 0) > 0;
   const lines: Record<string, string> = {
     passDigest: backupCiBytesDigest(bytes),
     hasWork: String(hasWork),

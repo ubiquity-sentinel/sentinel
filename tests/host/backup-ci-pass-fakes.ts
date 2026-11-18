@@ -60,6 +60,7 @@ export function passDeps(
           id: repo.id,
           defaultBranch: "main",
           private: repo.private ?? false,
+          fullName: repo.fullName ?? slug,
         });
       },
       branchTip: () => {

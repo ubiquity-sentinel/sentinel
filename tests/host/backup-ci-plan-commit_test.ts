@@ -595,6 +595,8 @@ function readLimitRecords(w: World) {
         installationId: 7,
       },
       nextStep: "work",
+      // Stand-in demand (review MUST 3): each head waits on CI.
+      wait: { reason: "ci_pending", since: T0 + i, until: null },
       target: {
         base: w.base,
         branch: i === 9 ? "sentinel/fix-7" : `b${i}`,
@@ -833,7 +835,7 @@ Deno.test("a planned tuple is rechecked after materialization before packing", a
   }
 });
 
-Deno.test("review regression: ordinary urgent misses age across passes so later heads and fallback progress", async () => {
+Deno.test("review regression: ordinary urgent misses rotate across passes so later heads progress without store writes", async () => {
   const w = await world();
   const files = new Map<string, ReturnType<typeof commitFile>>();
   let now = T0;
@@ -864,16 +866,19 @@ Deno.test("review regression: ordinary urgent misses age across passes so later 
       reviews: [],
       releaseRequests: [],
     } as unknown as RepairStateSnapshotV1;
-    const run = () =>
+    // Production run ids advance every pass; the urgent window rotates with
+    // them (13 waiting heads, 12 reads: two passes reach all of them).
+    const run = (runId: number) =>
       runBackupCiPass(passDeps(w, {
         snapshot,
+        runId,
         now: () => now,
         store: {
           read: (path) => Promise.resolve(files.get(path) ?? null),
           pathsContaining: () => Promise.resolve([]),
         },
       }));
-    const first = await run();
+    const first = await run(13);
     assert.equal(
       w.calls.filter((c) => c.startsWith("checkRuns:latest")).length,
       12,
@@ -882,7 +887,23 @@ Deno.test("review regression: ordinary urgent misses age across passes so later 
       !w.calls.some((c) => c.endsWith(w.head.slice(0, 7))),
       "first pass preserves oldest current demand priority",
     );
-    for (const file of first.files) {
+    // A read miss writes nothing at all (no timestamp-only row).
+    assert.deepEqual(first.files, []);
+    now += 1000;
+    w.calls.length = 0;
+    const second = await run(14);
+    assert(
+      second.files.some((f) => f.commit === w.head && f.coverage.length > 0),
+      "head13 reaches real workflow planning on the next pass",
+    );
+    // A delivery record with no CI wait is no demand: never read.
+    assert(
+      !w.calls.some((c) => c.endsWith(records[13].target.head!.slice(0, 7))),
+    );
+    assert(
+      w.calls.filter((c) => c.startsWith("checkRuns:latest")).length <= 12,
+    );
+    for (const file of second.files) {
       const path = backupCiCommitPath(
         file.repository.owner,
         file.repository.name,
@@ -892,26 +913,7 @@ Deno.test("review regression: ordinary urgent misses age across passes so later 
         path,
         mergeBackupCiFile(files.get(path) ?? null, { ...file, now }).file,
       );
-      assert.equal(
-        file.coverage.length + file.results.length + file.noEvidence.length,
-        0,
-        "a read miss is metadata, never evidence",
-      );
     }
-    now += 1000;
-    w.calls.length = 0;
-    const second = await run();
-    assert(
-      second.files.some((f) => f.commit === w.head && f.coverage.length > 0),
-      "head13 reaches real workflow planning on the next pass",
-    );
-    assert(
-      w.calls.some((c) => c.endsWith(records[13].target.head!.slice(0, 7))),
-      "unseen fallback gets a read too",
-    );
-    assert(
-      w.calls.filter((c) => c.startsWith("checkRuns:latest")).length <= 12,
-    );
   } finally {
     await w.repo.close();
   }

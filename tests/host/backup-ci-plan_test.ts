@@ -323,7 +323,9 @@ Deno.test("candidates come in priority order p0 to p8", () => {
     mode: "on",
     runnerId: RUNNER,
   });
-  assert.deepEqual(calibrated.map((c) => c.purpose), ["stand_in"]);
+  // …and with no record needing it, the live tip is no candidate either
+  // (review MUST 3: no default-branch read without demand).
+  assert.deepEqual(calibrated.map((c) => c.purpose), []);
   // Commits the runner settled or has in flight give way to later ones; a
   // retryable no-evidence commit stays eligible, another runner's entry is
   // not this runner's.

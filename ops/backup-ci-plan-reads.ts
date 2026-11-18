@@ -61,9 +61,28 @@ export interface BackupCiApiV1 {
   ): Promise<Uint8Array | "unserved" | null>;
 }
 
+/**
+ * The target read token is an installation token of the same App the
+ * supervisor uses, so they share one rate limit (review MUST 3: a throttled
+ * supervisor goes red). Every client stops for the rest of the pass once
+ * GitHub throttles it (403/429 with no remaining quota or a
+ * `retry-after`): each later call answers null at once. The target client
+ * also stops while the remaining quota is under this floor, leaving it to
+ * the supervisor. (The workflow token's whole budget is 1000 an hour, so
+ * the floor is never applied to the Sentinel-side clients.)
+ */
+export const BACKUP_CI_RATE_FLOOR = 1_000;
+
+export interface BackupCiApiOptionsV1 {
+  /** Stop while `x-ratelimit-remaining` is below this (target token). */
+  floor?: number;
+  onCooldown?: (reason: "throttled" | "floor") => void;
+}
+
 export function createBackupCiApi(
   token: string,
   fetcher: typeof fetch = fetch,
+  options: BackupCiApiOptionsV1 = {},
 ): BackupCiApiV1 {
   const headers = {
     authorization: `Bearer ${token}`,
@@ -71,7 +90,21 @@ export function createBackupCiApi(
     "x-github-api-version": "2022-11-28",
     "user-agent": "sentinel-backup-ci",
   };
+  let cooled = false;
+  const observe = (response: Response) => {
+    if (cooled) return;
+    const left = response.headers.get("x-ratelimit-remaining");
+    const throttled = (response.status === 403 || response.status === 429) &&
+      (response.headers.get("retry-after") !== null || left === "0");
+    const floor = options.floor !== undefined && left !== null &&
+      Number.isFinite(Number(left)) && Number(left) < options.floor;
+    if (throttled || floor) {
+      cooled = true;
+      options.onCooldown?.(throttled ? "throttled" : "floor");
+    }
+  };
   const timed = async <T>(run: (signal: AbortSignal) => Promise<T>) => {
+    if (cooled) throw new Error("backup CI API cooling down");
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
     try {
@@ -80,9 +113,14 @@ export function createBackupCiApi(
       clearTimeout(timer);
     }
   };
+  const fetchObserved: typeof fetch = async (input, init) => {
+    const response = await fetcher(input, init);
+    observe(response);
+    return response;
+  };
   const redirect = (path: string, maxBytes: number, prefix: boolean) =>
     timed(async (signal) => {
-      const first = await fetcher(`${BACKUP_CI_API}${path}`, {
+      const first = await fetchObserved(`${BACKUP_CI_API}${path}`, {
         headers,
         redirect: "manual",
         signal,
@@ -111,7 +149,7 @@ export function createBackupCiApi(
     redirectedPrefix: (path, maxBytes) => redirect(path, maxBytes, true),
     get: (path, maxBytes = MAX_JSON_BYTES) =>
       timed(async (signal) => {
-        const response = await fetcher(`${BACKUP_CI_API}${path}`, {
+        const response = await fetchObserved(`${BACKUP_CI_API}${path}`, {
           headers,
           signal,
         });
@@ -126,7 +164,7 @@ export function createBackupCiApi(
       }).catch(() => null),
     send: (method, path, body) =>
       timed(async (signal) => {
-        const response = await fetcher(`${BACKUP_CI_API}${path}`, {
+        const response = await fetchObserved(`${BACKUP_CI_API}${path}`, {
           method,
           headers: {
             ...headers,
@@ -253,8 +291,14 @@ function pullSide(value: unknown): BackupCiPullV1["head"] | null {
 
 /** The reads of one target repository (target read token). */
 export interface BackupCiTargetReadsV1 {
+  /** `fullName` is the answered `owner/name` (a rename answers another). */
   repository(): Promise<
-    { id: number; defaultBranch: string; private: boolean } | null
+    {
+      id: number;
+      defaultBranch: string;
+      private: boolean;
+      fullName?: string;
+    } | null
   >;
   branchTip(branch: string): Promise<GitSha | null>;
   checkRuns(sha: GitSha, filter: "latest" | "all"): Promise<Obj[] | null>;
@@ -303,9 +347,15 @@ export function createBackupCiTargetReads(
       if (
         body === null || id === null ||
         typeof body.default_branch !== "string" ||
-        typeof body.private !== "boolean"
+        typeof body.private !== "boolean" ||
+        typeof body.full_name !== "string"
       ) return null;
-      return { id, defaultBranch: body.default_branch, private: body.private };
+      return {
+        id,
+        defaultBranch: body.default_branch,
+        private: body.private,
+        fullName: body.full_name,
+      };
     },
     async branchTip(branch) {
       const body = row(

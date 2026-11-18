@@ -37,9 +37,11 @@ import {
   BACKUP_CI_TRUST_FILE_RE,
   backupCiCheckCalibrationPath,
   type BackupCiCheckCalibrationV1,
+  backupCiEnrolmentPath,
   backupCiExcludedRunners,
   type BackupCiExcludedRunnersV1,
   parseBackupCiCheckCalibration,
+  parseBackupCiEnrolment,
 } from "../contracts/backup-ci-trust.ts";
 import type { Clock } from "../contracts/ports.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
@@ -154,9 +156,10 @@ class BackupCiStoreReader implements BackupCiReaderV1 {
       backupCiSuspensionPath(owner, name),
       backupCiCalibrationPath(owner, name),
       backupCiCheckCalibrationPath(owner, name),
+      backupCiEnrolmentPath(owner, name),
     ]);
     if (!Array.isArray(reads)) return reads;
-    const [file, global, local, calibration, checks] = reads;
+    const [file, global, local, calibration, checks, enrolment] = reads;
     try {
       const parsedFile = file === null ? null : parseBackupCiCommitFile(file);
       const suspensions = [global, local].map((value) =>
@@ -168,10 +171,15 @@ class BackupCiStoreReader implements BackupCiReaderV1 {
       const parsedChecks = checks === null
         ? null
         : parseBackupCiCheckCalibration(checks);
-      // An enrolled row without a committed id binds the id the store's
-      // calibration file pinned. Without that file nothing binds (and no
-      // runner is calibrated), so the commit file reads as absent.
-      const pinned = target.id ?? parsedCalibration?.repository.id ?? null;
+      // An enrolled row without a committed id binds the id its first
+      // enrolment pinned (`enrolment.json`). Without a pin nothing binds
+      // (and nothing was dispatched), so the commit file reads as absent.
+      const pin = enrolment === null ? null : parseBackupCiEnrolment(enrolment);
+      if (
+        pin !== null &&
+        (pin.repository.owner !== owner || pin.repository.name !== name)
+      ) return invalid("backup CI enrolment does not bind its path");
+      const pinned = target.id ?? pin?.repository.id ?? null;
       const binds = (r: { owner: string; name: string; id: number }) =>
         r.owner === owner && r.name === name && r.id === pinned;
       if (
@@ -182,18 +190,21 @@ class BackupCiStoreReader implements BackupCiReaderV1 {
         (suspensions[0] !== null && suspensions[0].scope !== "all") ||
         (suspensions[1] !== null && suspensions[1].scope !== target.repository)
       ) return invalid("backup CI suspension does not bind its path");
-      if (parsedCalibration !== null && !binds(parsedCalibration.repository)) {
-        return invalid("backup CI calibration does not bind its path");
-      }
-      if (parsedChecks !== null && !binds(parsedChecks.repository)) {
-        return invalid("backup CI check calibration does not bind its path");
-      }
+      if (
+        parsedCalibration !== null && pinned !== null &&
+        !binds(parsedCalibration.repository)
+      ) return invalid("backup CI calibration does not bind its path");
+      if (
+        parsedChecks !== null && pinned !== null &&
+        !binds(parsedChecks.repository)
+      ) return invalid("backup CI check calibration does not bind its path");
+      // Unpinned: nothing of the target is usable (files, calibration).
       return {
         kind: "ok",
         file: pinned === null ? null : parsedFile,
         suspensions: suspensions.filter((s) => s !== null),
-        calibration: parsedCalibration,
-        checks: parsedChecks,
+        calibration: pinned === null ? null : parsedCalibration,
+        checks: pinned === null ? null : parsedChecks,
         excluded,
         tip,
       };

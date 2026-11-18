@@ -208,14 +208,20 @@ export function backupCiCandidates(
       ).slice(0, BACKUP_CI_MAX_CALIBRATION_PER_PASS)
     ) out.push(base(1, commit, "calibration"));
   }
-  if (input.baseTip !== null) out.push(base(2, input.baseTip, "stand_in"));
-  const bases = new Set<string>();
-  for (const record of input.records) {
+  // The default-branch tip is no candidate of its own (review MUST 3): only
+  // a record base a backed-up head needs for attribution is, the live tip
+  // first at its own priority.
+  const needed = input.records.filter((record) =>
+    backupCiEngaged(input.files.get(record.target.head!), input.mode)
+  );
+  if (
+    input.baseTip !== null &&
+    needed.some((record) => record.target.base === input.baseTip)
+  ) out.push(base(2, input.baseTip, "stand_in"));
+  const bases = new Set<string>(input.baseTip === null ? [] : [input.baseTip]);
+  for (const record of needed) {
     const b = record.target.base;
-    if (b === input.baseTip || bases.has(b)) continue;
-    if (!backupCiEngaged(input.files.get(record.target.head!), input.mode)) {
-      continue;
-    }
+    if (bases.has(b)) continue;
     bases.add(b);
     out.push(base(3, b, "stand_in"));
   }
@@ -325,9 +331,15 @@ function scanObservationRound<
   runId: number,
   limit: number,
 ): T[] {
-  // Exact-tip demand is already oldest-first within this observation round;
-  // unrelated workflow run IDs only rotate the fallback classes.
-  const urgent = candidates.filter((c) => c.priority < 2 || c.currentHead);
+  // Exact-tip demand is oldest-first within this observation round. No
+  // timestamp-only row ages a visited miss any more (review MUST 3), so when
+  // it exceeds the bound its start rotates with the run id: every waiting
+  // head is read within ceil(n / limit) passes, without a store write.
+  const offset = Number.isSafeInteger(runId) && runId >= 0 ? runId : 0;
+  const ordered = candidates.filter((c) => c.priority < 2 || c.currentHead)
+    .sort((a, b) => a.priority - b.priority);
+  const shift = ordered.length > limit ? offset % ordered.length : 0;
+  const urgent = [...ordered.slice(shift), ...ordered.slice(0, shift)];
   const fallback = candidates.filter((c) => c.priority >= 2 && !c.currentHead);
   const groups = new Map<BackupCiPriorityV1, T[]>();
   for (const candidate of fallback) {
@@ -336,7 +348,6 @@ function scanObservationRound<
     groups.set(candidate.priority, group);
   }
   const priorities = [...groups.keys()].sort((a, b) => a - b);
-  const offset = Number.isSafeInteger(runId) && runId >= 0 ? runId : 0;
   const starts = new Map<BackupCiPriorityV1, number>(
     priorities.map((priority) => [
       priority,
@@ -346,7 +357,7 @@ function scanObservationRound<
   const taken = new Map<BackupCiPriorityV1, number>(
     priorities.map((priority) => [priority, 0]),
   );
-  const out: T[] = urgent.sort((a, b) => a.priority - b.priority);
+  const out: T[] = urgent;
   if (out.length >= limit) return out.slice(0, limit);
   while (out.length < limit) {
     let progressed = false;
@@ -540,11 +551,18 @@ export function backupCiFairSelect<T>(
   runId: number,
   free: number,
   p: number,
+  /** An explicit target order (demand first); default: rotation by run. */
+  ranked?: readonly string[],
 ): T[] {
   const names = [...perTarget.keys()].sort();
   if (names.length === 0 || free <= 0) return [];
   const start = runId % names.length;
-  const order = [...names.slice(start), ...names.slice(0, start)];
+  const order = ranked !== undefined
+    ? [
+      ...ranked.filter((n) => perTarget.has(n)),
+      ...names.filter((n) => !ranked.includes(n)),
+    ]
+    : [...names.slice(start), ...names.slice(0, start)];
   const taken = new Map(order.map((n) => [n, 0]));
   const chosen: T[] = [];
   for (let round = 0; chosen.length < free; round++) {

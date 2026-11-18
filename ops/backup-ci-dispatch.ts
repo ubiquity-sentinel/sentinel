@@ -38,7 +38,9 @@ import {
 import {
   backupCiCheckCalibrationPath,
   type BackupCiCheckCalibrationV1,
+  backupCiEnrolmentPath,
   parseBackupCiCheckCalibration,
+  parseBackupCiEnrolment,
 } from "../src/contracts/backup-ci-trust.ts";
 import { mergeCheckCalibration } from "../src/github/backup-ci-check-store.ts";
 import type { BackupCiPassFileV1 } from "./backup-ci-pass.ts";
@@ -282,6 +284,28 @@ export async function backupCiStoreChanges(
       }`);
     }
     changes.set(suspensionPath, suspension);
+  }
+  // First enrolments pin the id once; an existing pin is never replaced.
+  for (const repository of pass.enrolments ?? []) {
+    const slug = `${repository.owner}/${repository.name}`;
+    const path = backupCiEnrolmentPath(repository.owner, repository.name);
+    const existing = await current(view, path, parseBackupCiEnrolment);
+    if (existing === null) {
+      changes.set(
+        path,
+        parseBackupCiEnrolment({
+          version: 1,
+          kind: "sentinel_backup_ci_enrolment",
+          repository: { ...repository },
+          enrolledAt: now,
+        }),
+      );
+      log(
+        `sentinel_backup_ci_enrolled ${JSON.stringify({ repository: slug })}`,
+      );
+    } else if (existing.repository.id !== repository.id) {
+      log(`backup-ci:${slug}:enrol:pin_conflict`);
+    }
   }
   return changes;
 }

@@ -35,9 +35,15 @@ import {
 import type { BackupCiActionSourceV1 } from "./backup-ci-actions.ts";
 import { sampleBackupCiCalibration } from "./backup-ci-calibrate.ts";
 import {
+  enrolBackupCiTarget,
+  pinnedBackupCiTargets,
   readBackupCiExclusion,
-  resolveBackupCiTargets,
 } from "./backup-ci-enrol.ts";
+import {
+  backupCiDemandOrder,
+  backupCiDemandRecords,
+} from "./backup-ci-demand.ts";
+import { canonicalStringify } from "../src/contracts/canonical.ts";
 import { isBackupCiRunnerExcluded } from "../src/contracts/backup-ci-trust.ts";
 import {
   type BackupCiIngestDepsV1,
@@ -56,7 +62,6 @@ import {
   backupCiEngaged,
   backupCiFairSelect,
   backupCiFreeSlots,
-  backupCiRecords,
   backupCiScanOrder,
 } from "./backup-ci-plan.ts";
 import type { BackupCiTargetReadsV1 } from "./backup-ci-plan-reads.ts";
@@ -94,6 +99,8 @@ export interface BackupCiPassFileV1 {
   files: BackupCiPassFileChangesV1[];
   comparisons: { repository: Repo; comparisons: BackupCiComparisonV1[] }[];
   units: BackupCiPassUnitV1[];
+  /** First enrolments of `id: null` targets; the commit step pins them. */
+  enrolments?: Repo[];
 }
 
 /** What the pass reads the store through (a `BackupCiStoreView`). */
@@ -265,6 +272,8 @@ async function planTarget(
   target: BackupCiTargetV1,
   changes: BackupCiPassChanges,
   want: number,
+  /** The target's live records with stand-in demand (`backup-ci-demand.ts`). */
+  records: RepairStateSnapshotV1["work"],
 ): Promise<BackupCiPlannedUnitV1[]> {
   const repo = repoOf(target);
   const runnerId = deps.runnerId!;
@@ -278,10 +287,8 @@ async function planTarget(
     deps.log(`backup-ci:${target.repository}:unsupported:repository_id`);
     return [];
   }
-  const records = backupCiRecords(deps.snapshot!, target.repository);
   const baseTip = await reads.branchTip(info.defaultBranch);
   const commits = new Set<GitSha>([
-    ...(baseTip === null ? [] : [baseTip]),
     ...records.flatMap((r) => [r.target.head!, r.target.base]),
     ...deps.calibrationCommits(target.repository),
   ]);
@@ -404,11 +411,9 @@ async function planTarget(
           candidate.commit.slice(0, 12)
         }:plan_error`,
       );
-    } finally {
-      // Keep only the existing file's last-observation timestamp for fairness.
-      // Empty rows assert no coverage/result and cannot authorize a wake.
-      changes.of(repo, candidate.commit);
     }
+    // No timestamp-only row is written for a visited commit (review MUST 3):
+    // fairness comes from the run-rotated scan, not from store writes.
   }
   deps.log(
     `sentinel_backup_ci_demand ${
@@ -440,17 +445,59 @@ async function currentPlannedUnit(
     pull.base.ref === unit.pullRequest.baseRef && tip === unit.pullRequest.base;
 }
 
+/**
+ * Planning stops this long after the pass started (the job has 15 minutes;
+ * the uploads and the commit step follow).
+ */
+export const BACKUP_CI_PASS_BUDGET_MS = 8 * 60_000;
+
+/**
+ * The file changes that change a file beyond its timestamps (review MUST 3:
+ * no timestamp-only store commit): a re-observed coverage row with the same
+ * blob and expected names, and `updatedAt`, are not changes.
+ */
+async function materialFiles(
+  deps: BackupCiPassDepsV1,
+  changes: BackupCiPassChanges,
+): Promise<BackupCiPassFileChangesV1[]> {
+  const strip = (file: BackupCiCommitFileV1 | null) =>
+    file === null ? null : canonicalStringify({
+      ...file,
+      updatedAt: 0,
+      workflows: file.workflows.map((w) => ({ ...w, observedAt: 0 })),
+    });
+  const out: BackupCiPassFileChangesV1[] = [];
+  for (const change of changes.files.values()) {
+    const existing = await readFile(
+      deps.store,
+      change.repository,
+      change.commit,
+    )
+      .catch(() => null);
+    const merged = mergeBackupCiFile(existing, { ...change, now: deps.now() })
+      .file;
+    if (strip(merged) !== strip(existing)) out.push(change);
+  }
+  return out;
+}
+
 /** The whole pass; trees[k] is slot k's tar (`<workDir>/trees/<k>.tar`). */
 export async function runBackupCiPass(
   input: BackupCiPassDepsV1,
 ): Promise<BackupCiPassFileV1> {
-  const deps: BackupCiPassDepsV1 = {
-    ...input,
-    targets: await resolveBackupCiTargets(input),
-  };
+  const startedAt = input.now();
+  // Ids from local store reads only (committed or pinned): ingest of
+  // finished legs comes first and never waits on a target read.
+  const { pinned, unpinned } = await pinnedBackupCiTargets(
+    input.store,
+    input.targets,
+    input.log,
+  );
+  const deps: BackupCiPassDepsV1 = { ...input, targets: pinned };
   const changes = new BackupCiPassChanges();
   await ingest(deps, changes);
   const units: BackupCiPassUnitV1[] = [];
+  const enrolments: Repo[] = [];
   // A false green on any target excludes the runner everywhere: it neither
   // calibrates nor stands in until its id changes (backup-ci-trust.ts).
   const excluded = deps.runnerId === null ? false : await readBackupCiExclusion(
@@ -466,8 +513,24 @@ export async function runBackupCiPass(
       }`,
     );
   }
-  if (deps.runnerId === null || deps.snapshot === null || excluded) {
-    deps.log("backup-ci:plan:skipped");
+  // Demand from the repair state alone: a target without it costs no read.
+  const demand = new Map<string, RepairStateSnapshotV1["work"]>();
+  for (const target of input.targets) {
+    const records = deps.snapshot === null
+      ? []
+      : backupCiDemandRecords(deps.snapshot, target.repository);
+    if (records.length > 0) demand.set(target.repository, records);
+  }
+  const order = backupCiDemandOrder(demand);
+  if (
+    deps.runnerId === null || deps.snapshot === null || excluded ||
+    order.length === 0
+  ) {
+    deps.log(
+      deps.runnerId === null || deps.snapshot === null || excluded
+        ? "backup-ci:plan:skipped"
+        : "backup-ci:plan:no_demand",
+    );
   } else {
     const [inflight, cells] = await Promise.all([
       deps.legs.inflight(),
@@ -476,24 +539,52 @@ export async function runBackupCiPass(
     const { p, free } = inflight === null || cells === null
       ? { p: 0, free: 0 }
       : backupCiFreeSlots(inflight, cells);
-    deps.log(`backup-ci:plan:p=${p}:free=${free}`);
+    deps.log(`backup-ci:plan:p=${p}:free=${free}:demand=${order.length}`);
     if (free > 0) {
       const perTarget = new Map<string, BackupCiPlannedUnitV1[]>();
-      for (
-        const target of [...deps.targets].sort((a, b) =>
-          a.repository < b.repository ? -1 : 1
-        )
-      ) {
+      for (const name of order) {
+        if (deps.now() - startedAt > BACKUP_CI_PASS_BUDGET_MS) {
+          deps.log("backup-ci:plan:deadline");
+          break;
+        }
+        let target: BackupCiTargetV1 | null = pinned.find((t) =>
+          t.repository === name
+        ) ?? null;
+        const row = unpinned.find((t) => t.repository === name);
+        if (target === null && row !== undefined) {
+          // First enrolment: only now, with demand and a free leg slot.
+          const [owner, repoName] = name.split("/");
+          target = await enrolBackupCiTarget(
+            row,
+            deps.targetReads(owner, repoName),
+            deps.store,
+            deps.log,
+          );
+          if (target !== null) enrolments.push(repoOf(target));
+        }
+        if (target === null) continue;
         // One target's unreadable store file or read failure plans nothing
         // for that target only.
-        const units = await planTarget(deps, target, changes, 2 * free)
-          .catch(() => {
-            deps.log(`backup-ci:${target.repository}:plan_refused`);
-            return [];
-          });
-        perTarget.set(target.repository, units);
+        const resolved = target;
+        const units = await planTarget(
+          deps,
+          resolved,
+          changes,
+          2 * free,
+          demand.get(name)!,
+        ).catch(() => {
+          deps.log(`backup-ci:${resolved.repository}:plan_refused`);
+          return [];
+        });
+        perTarget.set(name, units);
       }
-      const selected = backupCiFairSelect(perTarget, deps.runId, free, p);
+      const selected = backupCiFairSelect(
+        perTarget,
+        deps.runId,
+        free,
+        p,
+        order,
+      );
       await Deno.mkdir(`${deps.workDir}/trees`, { recursive: true });
       for (const planned of selected) {
         if (!await currentPlannedUnit(deps, planned)) {
@@ -544,8 +635,9 @@ export async function runBackupCiPass(
     mode: deps.mode,
     runnerId: deps.runnerId,
     createdAt: deps.now(),
-    files: [...changes.files.values()],
+    files: await materialFiles(deps, changes),
     comparisons: [...changes.comparisons.values()],
     units,
+    enrolments,
   };
 }

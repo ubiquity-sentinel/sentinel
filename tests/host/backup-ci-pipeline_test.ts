@@ -190,6 +190,8 @@ Deno.test("plan, dispatch, leg, ingest, store: a receipt the stand-in rule accep
       },
       nextStep: "delivery",
       target: { base, branch: "sentinel/fix-7", checkpoint: null, head, pr: 7 },
+      // Stand-in demand (review MUST 3): the head waits on CI.
+      wait: { reason: "ci_pending", since: T0, until: null },
     });
     const snapshot = {
       work: [record],
