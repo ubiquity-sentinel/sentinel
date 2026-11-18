@@ -17,10 +17,13 @@
  * - The run's own job of that name must have started (steps, a runner) and
  *   concluded `success` or `failure`.
  * - `pull_request`: the job's own log binds the merge it tested (its first
- *   step must be the checkout; exactly one `Merge <head> into <base>` and
- *   one `refs/remotes/pull/<n>/merge`), and that base must be an ancestor
- *   of the head, so the leg's merge tree (the head's tree) is the tree the
- *   native job tested. Otherwise the run is skipped (`unbound`).
+ *   step must be `actions/checkout` at a release tag or full SHA, a form the
+ *   leg reproduces; exactly one `Merge <head> into <base>` and one
+ *   `refs/remotes/pull/<n>/merge`), and that base must be an ancestor of the
+ *   head, so the leg's merge tree (the head's tree) is the tree the native
+ *   job tested. Otherwise the run is skipped (`unbound`). The pull request
+ *   must be merged or authored by the owner or the Sentinel App (2026-11-18
+ *   review; `untrusted_pull` otherwise), read at most `pullReads` times.
  * - A commit this runner already has an entry for (settled or in flight)
  *   is skipped; another runner's entries never skip it (P6: a new runner
  *   after a leg revision recalibrates on the same history).
@@ -41,12 +44,17 @@ import {
   isBackupCiCheckCalibrated,
 } from "../src/contracts/backup-ci-trust.ts";
 import { completedJobNeverStarted } from "../src/github/never-started-job.ts";
+import { SENTINEL_APP_SLUG } from "../src/host/hosted-app-grant.ts";
 import { trustedCheckName } from "../src/repair/ci-rejection.ts";
+import { BACKUP_CI_SELF_APP_BOT_ID } from "./backup-ci-ingest-verify.ts";
 import {
   backupCiNativeMergeParents,
   backupCiNativePullNumber,
 } from "./backup-ci-compare.ts";
-import type { BackupCiTargetReadsV1 } from "./backup-ci-plan-reads.ts";
+import type {
+  BackupCiPullV1,
+  BackupCiTargetReadsV1,
+} from "./backup-ci-plan-reads.ts";
 
 export const BACKUP_CI_CALIBRATION_SAMPLING = {
   pages: 3,
@@ -54,8 +62,37 @@ export const BACKUP_CI_CALIBRATION_SAMPLING = {
   jobReads: 6,
   logReads: 4,
   compares: 4,
+  /** Per target and pass: pull request reads (author and merge state). */
+  pullReads: 4,
   quickFailMs: 30_000,
 } as const;
+
+/**
+ * Who may have authored an unmerged pull request a calibration sample comes
+ * from (2026-11-18 review): the owner account and the Sentinel App, each
+ * bound by login AND numeric id (a login can be renamed and re-registered).
+ * Any other same-repository author's run counts only once the pull request
+ * was merged.
+ */
+export const BACKUP_CI_CALIBRATION_AUTHORS = {
+  owner: { login: "0x4007", id: 4975670 },
+  app: { login: `${SENTINEL_APP_SLUG}[bot]`, id: BACKUP_CI_SELF_APP_BOT_ID },
+} as const;
+
+/** Whether a sampled pull request's run may calibrate (merged or trusted). */
+export function backupCiTrustedSamplePull(
+  pull: BackupCiPullV1 | null,
+  repository: string,
+  number: number,
+): boolean {
+  const { owner, app } = BACKUP_CI_CALIBRATION_AUTHORS;
+  const by = (who: { login: string; id: number }) =>
+    pull?.user === who.login && pull.userId === who.id;
+  return pull !== null && pull.number === number &&
+    pull.head.repo.full_name === repository &&
+    pull.base.repo.full_name === repository &&
+    (pull.merged === true || by(owner) || by(app));
+}
 
 /** Closed per-check calibration state of one pass (log only). */
 export type BackupCiCalibrationReasonV1 =
@@ -67,6 +104,7 @@ export type BackupCiCalibrationReasonV1 =
   | "no_native_red"
   | "no_native_green"
   | "unbound"
+  | "untrusted_pull"
   | "budget"
   | "sampling";
 
@@ -196,11 +234,13 @@ export interface BackupCiSamplingBudgetV1 {
   jobReads: number;
   logReads: number;
   compares: number;
+  pullReads: number;
 }
 
 export function backupCiSamplingBudget(): BackupCiSamplingBudgetV1 {
-  const { jobReads, logReads, compares } = BACKUP_CI_CALIBRATION_SAMPLING;
-  return { jobReads, logReads, compares };
+  const { jobReads, logReads, compares, pullReads } =
+    BACKUP_CI_CALIBRATION_SAMPLING;
+  return { jobReads, logReads, compares, pullReads };
 }
 
 export interface BackupCiSampleInputV1 {
@@ -249,7 +289,9 @@ export async function sampleBackupCiCheck(
     BACKUP_CI_CHECK_CALIBRATION.greens;
   const found: BackupCiCalibrationCandidateV1[] = [];
   const seen = new Set<string>();
-  let natives = { green: 0, red: 0, unbound: 0 };
+  /** Pull request reads of this check's sampling, by number. */
+  const pulls = new Map<number, BackupCiPullV1 | null>();
+  let natives = { green: 0, red: 0, unbound: 0, untrusted: 0 };
   let exhausted: BackupCiCalibrationReasonV1 | null = null;
   // A row still missing its red keeps paging (within the read budget) until
   // one is in hand; greens found meanwhile wait behind it.
@@ -337,6 +379,24 @@ export async function sampleBackupCiCheck(
         natives = { ...natives, unbound: natives.unbound + 1 };
         continue;
       }
+      if (!pulls.has(number)) {
+        if (budget.pullReads <= 0) {
+          exhausted = "budget";
+          break pages;
+        }
+        budget.pullReads--;
+        pulls.set(number, await reads.pull(number));
+      }
+      if (
+        !backupCiTrustedSamplePull(
+          pulls.get(number) ?? null,
+          input.repository,
+          number,
+        )
+      ) {
+        natives = { ...natives, untrusted: natives.untrusted + 1 };
+        continue;
+      }
       budget.compares--;
       const compare = await reads.compare(merge.base, merge.head);
       if (
@@ -366,12 +426,19 @@ export async function sampleBackupCiCheck(
   if (exhausted !== null) return done(exhausted);
   const boundRed = found.some((c) => c.red);
   const boundGreen = found.some((c) => !c.red);
+  // Runs that bound but came from an untrusted pull request, when no run was
+  // unbound, are named as such; any unbound run keeps the older code.
+  const refused = natives.unbound === 0 && natives.untrusted > 0
+    ? "untrusted_pull" as const
+    : "unbound" as const;
   if (natives.red + natives.green === 0) return done("no_native_history");
   if (needRed && !boundRed) {
-    return done(natives.red > 0 ? "unbound" : "no_native_red");
+    return done(natives.red > 0 ? refused : "no_native_red");
   }
   if (needGreen && !boundGreen) {
-    return done(natives.green > 0 ? "unbound" : "no_native_green");
+    return done(natives.green > 0 ? refused : "no_native_green");
   }
-  return done(natives.unbound > 0 ? "unbound" : "no_native_history");
+  return done(
+    natives.unbound + natives.untrusted > 0 ? refused : "no_native_history",
+  );
 }

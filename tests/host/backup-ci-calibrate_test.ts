@@ -21,10 +21,15 @@ import type { BackupCiStoreView } from "../../ops/backup-ci-store-writer.ts";
 import {
   backupCiDemandKeys,
   backupCiSamplingBudget,
+  backupCiTrustedSamplePull,
   sampleBackupCiCheck,
 } from "../../ops/backup-ci-calibrate.ts";
+import { backupCiPinnedCheckout } from "../../ops/backup-ci-compare.ts";
 import type { BackupCiNativeRunV1 } from "../../ops/backup-ci-history-reads.ts";
-import type { BackupCiTargetReadsV1 } from "../../ops/backup-ci-plan-reads.ts";
+import type {
+  BackupCiPullV1,
+  BackupCiTargetReadsV1,
+} from "../../ops/backup-ci-plan-reads.ts";
 import {
   CHECK,
   checkCalibration,
@@ -116,7 +121,35 @@ interface Fake {
   jobs: Map<number, Record<string, unknown>[]>;
   logs?: Map<number, string>;
   compare?: { status: string; behindBy: number };
+  /** Pull requests by number (absent: a merged same-repository one). */
+  pulls?: Map<number, BackupCiPullV1 | null>;
   calls: string[];
+}
+
+function pullOf(
+  number: number,
+  over: Partial<BackupCiPullV1> = {},
+): BackupCiPullV1 {
+  const side = (sha: string) => ({
+    sha,
+    ref: "fix",
+    repo: {
+      full_name: REPO,
+      name: REPO.split("/")[1],
+      owner: { login: REPO.split("/")[0] },
+    },
+  });
+  return {
+    number,
+    state: "closed",
+    draft: false,
+    user: "someone",
+    userId: 99,
+    merged: true,
+    head: side(sha(5)),
+    base: side(sha(6)),
+    ...over,
+  };
 }
 
 function fakeReads(f: Fake): BackupCiTargetReadsV1 {
@@ -136,6 +169,12 @@ function fakeReads(f: Fake): BackupCiTargetReadsV1 {
     compare: () => {
       f.calls.push("compare");
       return Promise.resolve(f.compare ?? { status: "ahead", behindBy: 0 });
+    },
+    pull: (number: number) => {
+      f.calls.push(`pull:${number}`);
+      return Promise.resolve(
+        f.pulls === undefined ? pullOf(number) : f.pulls.get(number) ?? null,
+      );
     },
   } as unknown as BackupCiTargetReadsV1;
 }
@@ -295,6 +334,146 @@ Deno.test("a pull_request run counts only when its checkout binds an ancestor ba
     { key: PR },
   );
   assert.deepEqual(fork, { candidates: [], reason: "no_native_history" });
+});
+
+/** One pull_request run of `head` whose checkout log binds `base` and #42. */
+function prFake(checkout: string, over: Partial<Fake> = {}): Fake {
+  const run = nativeRun(5, "failure", {
+    event: "pull_request",
+    headBranch: "fix/5",
+  });
+  const log = [
+    `##[group]Run ${checkout}`,
+    "/usr/bin/git checkout --progress --force refs/remotes/pull/42/merge",
+    `HEAD is now at 1a2b3c4 Merge ${sha(5)} into ${sha(6)}`,
+    "##[group]Run deno test",
+  ].join("\n");
+  return {
+    pages: [[run]],
+    jobs: new Map([[run.id, [startedJob(run.id, sha(5), "failure")]]]),
+    logs: new Map([[run.id + 100_000, log]]),
+    calls: [],
+    ...over,
+  };
+}
+
+Deno.test("2026-11-18: a pull_request sample needs a merged pull request or the owner's or App's own", async () => {
+  const OWNER = { user: "0x4007", userId: 4975670 };
+  const APP = { user: "ubiquity-sentinel[bot]", userId: 319834869 };
+  const open = { state: "open", merged: false };
+  const cases: [string, BackupCiPullV1 | null, string][] = [
+    ["merged, any same-repository author", pullOf(42), "sampling"],
+    [
+      "the owner's open pull request",
+      pullOf(42, { ...open, ...OWNER }),
+      "sampling",
+    ],
+    [
+      "the App's open pull request",
+      pullOf(42, { ...open, ...APP }),
+      "sampling",
+    ],
+    ["another author's open pull request", pullOf(42, open), "untrusted_pull"],
+    [
+      "the owner's login under another id (renamed account)",
+      pullOf(42, { ...open, user: "0x4007", userId: 1 }),
+      "untrusted_pull",
+    ],
+    [
+      "the App's login without an answered id",
+      pullOf(42, { ...open, user: APP.user, userId: null }),
+      "untrusted_pull",
+    ],
+    [
+      "a merged pull request whose head is another repository",
+      {
+        ...pullOf(42),
+        head: {
+          ...pullOf(42).head,
+          repo: { ...pullOf(42).head.repo, full_name: "someone/fork" },
+        },
+      },
+      "untrusted_pull",
+    ],
+    ["an unreadable pull request", null, "untrusted_pull"],
+  ];
+  for (const [name, pull, reason] of cases) {
+    const f = prFake("actions/checkout@v4", { pulls: new Map([[42, pull]]) });
+    const out = await sample(f, { key: PR });
+    assert.equal(out.reason, reason, name);
+    assert.equal(out.candidates.length, reason === "sampling" ? 1 : 0, name);
+    // The pull request is read before the compare, and never twice.
+    assert.equal(f.calls.filter((c) => c === "pull:42").length, 1, name);
+    assert.equal(f.calls.includes("compare"), reason === "sampling", name);
+  }
+  assert.equal(backupCiTrustedSamplePull(pullOf(7), REPO, 8), false);
+});
+
+Deno.test("2026-11-18: the native checkout must be actions/checkout at a release tag or full SHA", async () => {
+  for (
+    const ok of [
+      "actions/checkout@v4",
+      "actions/checkout@v4.2",
+      "actions/checkout@v4.2.2",
+      `actions/checkout@${"ab".repeat(20)}`,
+    ]
+  ) {
+    assert.equal(backupCiPinnedCheckout(ok), true, ok);
+    const out = await sample(prFake(ok), { key: PR });
+    assert.equal(out.reason, "sampling", ok);
+  }
+  for (
+    const refused of [
+      "actions/checkout@main",
+      "actions/checkout@releases/v4",
+      "actions/checkout@v4-beta",
+      `actions/checkout@${"ab".repeat(10)}`,
+      "someone/checkout@v4",
+    ]
+  ) {
+    assert.equal(backupCiPinnedCheckout(refused), false, refused);
+    const f = prFake(refused);
+    const out = await sample(f, { key: PR });
+    assert.deepEqual(out, { candidates: [], reason: "unbound" }, refused);
+    assert(!f.calls.some((c) => c.startsWith("pull:")), refused);
+  }
+});
+
+Deno.test("2026-11-18: pull request reads are bounded per pass", async () => {
+  const runs = [6, 7].map((n) =>
+    nativeRun(n, "failure", { event: "pull_request", headBranch: `fix/${n}` })
+  );
+  const log = (n: number) =>
+    [
+      "##[group]Run actions/checkout@v4",
+      `/usr/bin/git checkout --progress --force refs/remotes/pull/${n}/merge`,
+      `HEAD is now at 1a2b3c4 Merge ${sha(n)} into ${sha(1)}`,
+      "##[group]Run deno test",
+    ].join("\n");
+  const f: Fake = {
+    pages: [runs],
+    jobs: new Map(runs.map((r) => [
+      r.id,
+      [startedJob(r.id, r.headSha, "failure")],
+    ])),
+    logs: new Map(runs.map((r, i) => [r.id + 100_000, log(6 + i)])),
+    pulls: new Map([[6, pullOf(6, { merged: false })], [7, pullOf(7)]]),
+    calls: [],
+  };
+  const budget = { ...backupCiSamplingBudget(), pullReads: 1 };
+  const out = await sampleBackupCiCheck({
+    key: PR,
+    repository: REPO,
+    defaultBranch: "main",
+    runnerId: RUNNER,
+    checks: null,
+    reads: fakeReads(f),
+    file: () => Promise.resolve(null),
+    budget,
+    want: 1,
+  });
+  assert.deepEqual(out, { candidates: [], reason: "budget" });
+  assert.deepEqual(f.calls.filter((c) => c.startsWith("pull:")), ["pull:6"]);
 });
 
 Deno.test("calibrated, unusable and budget-bound checks sample nothing", async () => {

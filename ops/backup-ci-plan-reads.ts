@@ -262,6 +262,10 @@ export interface BackupCiPullV1 {
   state: string;
   draft: boolean;
   user: string;
+  /** The author's numeric id (a login can be renamed), when answered. */
+  userId?: number | null;
+  /** Whether the pull request was merged (`merged_at` set). */
+  merged?: boolean;
   head: {
     sha: string;
     ref: string;
@@ -481,6 +485,8 @@ export function createBackupCiTargetReads(
         state: body.state,
         draft: body.draft === true,
         user,
+        userId: posInt(row(body.user)?.id),
+        merged: typeof body.merged_at === "string" && body.merged_at !== "",
         head,
         base,
       };

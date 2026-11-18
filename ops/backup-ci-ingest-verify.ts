@@ -23,7 +23,7 @@ import { backupCiExcerpt } from "./backup-ci-log-sanitize.ts";
 export const BACKUP_CI_WINDOW_TOLERANCE_MS = 2_000;
 const LEG_ACTOR = "github-actions[bot]";
 // Public /users/ubiquity-sentinel[bot] identity of the existing official App.
-const SELF_APP_BOT_ID = 319834869;
+export const BACKUP_CI_SELF_APP_BOT_ID = 319834869;
 const MARKER_KEYS = "artifactId,kind,resultDigest,unitDigest,unitId";
 
 type Obj = Record<string, unknown>;
@@ -38,7 +38,7 @@ export function backupCiLegActorBinds(actor: unknown): boolean {
   const value = row(actor);
   return value?.login === LEG_ACTOR ||
     (value?.login === `${SENTINEL_APP_SLUG}[bot]` &&
-      value.id === SELF_APP_BOT_ID && value.type === "Bot");
+      value.id === BACKUP_CI_SELF_APP_BOT_ID && value.type === "Bot");
 }
 
 /** Epoch ms of a GitHub timestamp (any fraction), or null. */

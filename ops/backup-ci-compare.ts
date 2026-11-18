@@ -98,6 +98,19 @@ export function backupCiNativeJob(
 const MERGE_LINE =
   /HEAD is now at [0-9a-f]{7,40} Merge ([0-9a-f]{40}) into ([0-9a-f]{40})/;
 const STEP_HEADER = /##\[group\]Run (.*)$/;
+/**
+ * The first step must be the real `actions/checkout` at a ref form the leg
+ * reproduces (its checkout is short-circuited onto the synthetic merge): a
+ * release tag `v<major>[.<minor>[.<patch>]]` or a full commit SHA. A branch
+ * or any other ref names code the leg never ran, so the run stays unbound.
+ */
+const PINNED_CHECKOUT =
+  /^actions\/checkout@(?:v[0-9]{1,3}(?:\.[0-9]{1,4}){0,2}|[0-9a-f]{40})$/i;
+
+/** Whether a native job log's first step header is a pinned checkout. */
+export function backupCiPinnedCheckout(step: string): boolean {
+  return PINNED_CHECKOUT.test(step.trim());
+}
 
 /**
  * The merge parents a native `pull_request` job checked out, from the first
@@ -114,7 +127,7 @@ export function backupCiNativeMergeParents(
     return match === null ? [] : [{ i, step: match[1] }];
   });
   if (headers.length < 2) return "unbound";
-  if (!/^actions\/checkout@/i.test(headers[0].step)) return "unbound";
+  if (!backupCiPinnedCheckout(headers[0].step)) return "unbound";
   const section = lines.slice(headers[0].i + 1, headers[1].i);
   const merges = section.flatMap((line) => {
     const match = MERGE_LINE.exec(line);
@@ -134,7 +147,7 @@ export function backupCiNativePullNumber(log: string): number | null {
   const headers = lines.flatMap((line, i) =>
     STEP_HEADER.test(line) ? [{ i, step: STEP_HEADER.exec(line)![1] }] : []
   );
-  if (headers.length < 2 || !/^actions\/checkout@/i.test(headers[0].step)) {
+  if (headers.length < 2 || !backupCiPinnedCheckout(headers[0].step)) {
     return null;
   }
   const numbers = new Set<number>();
