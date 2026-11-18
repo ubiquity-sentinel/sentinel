@@ -501,7 +501,7 @@ export async function preMergeGate(input: {
     surface,
     record.repository,
     pull.number,
-    { head },
+    { head, base },
   );
   if (protectedRefusal !== null) {
     return { refusal: protectedRefusal, spent: false };
@@ -842,6 +842,7 @@ export async function carriedPatchRefusal(
   }
   const ciRefusal = await ciSuccessRefusal(
     surface,
+    base,
     head,
     reviewed.changes.map((change) => change.path),
   );

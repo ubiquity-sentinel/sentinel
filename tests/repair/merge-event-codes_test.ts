@@ -39,7 +39,7 @@ Deno.test("merge event codes: every self merge code names a detail its adapter s
   const selfCodes = MERGE_DETAIL_CODES.filter(([, code]) =>
     code.startsWith("self_merge_")
   );
-  assert.equal(selfCodes.length, 18);
+  assert.equal(selfCodes.length, 19);
   for (const [detail, code] of selfCodes) {
     assert.ok(
       sources.some((text) => text.includes(`"${detail}"`)),

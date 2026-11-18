@@ -280,13 +280,14 @@ export interface HostedAutonomyGitHubV1 {
    */
   listPullFiles?(number: number): Promise<readonly string[] | null>;
   /**
-   * True when the exact head carries at least one completed check run its
-   * own CI ran to `success` (GitHub Actions or no app; never a backup-CI
-   * stand-in or another app's check), false when the complete listing holds
-   * none, null when it cannot be read. The 2026-11-17 rule for a pull request
-   * that changes a CI-executable path; absent, that rule fails closed.
+   * The job names GitHub Actions ran to `success` on the exact commit (the
+   * latest run of each name; never a commit status, a backup-CI stand-in or
+   * another app's check), sorted; null when the complete listing cannot be
+   * read. The 2026-11-17 rule for a pull request that changes a
+   * CI-executable path compares its head with its base; absent, that rule
+   * fails closed.
    */
-  hasTargetCiSuccess?(head: string): Promise<boolean | null>;
+  targetCiSuccessNames?(sha: string): Promise<readonly string[] | null>;
   /**
    * True when the source issue is open, false when it is closed or missing,
    * null when that cannot be read. Only a definitive false stops a retry.
