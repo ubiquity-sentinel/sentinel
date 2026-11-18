@@ -14,10 +14,45 @@
  */
 import {
   backupCiCalibrationPath,
+  type BackupCiCalibrationV1,
+  type BackupCiSuspensionV1,
   type BackupCiTargetV1,
   parseBackupCiCalibration,
+  parseBackupCiSuspension,
 } from "../src/contracts/backup-ci.ts";
+import {
+  BACKUP_CI_TRUST_FILE_RE,
+  backupCiExcludedRunners,
+  type BackupCiExcludedRunnersV1,
+} from "../src/contracts/backup-ci-trust.ts";
 import type { BackupCiTargetReadsV1 } from "./backup-ci-plan-reads.ts";
+
+/**
+ * The runners a false green excludes everywhere, from every suspension and
+ * calibration file of the store (local reads only). Throws on an unreadable
+ * or invalid file: the caller then plans nothing.
+ */
+export async function readBackupCiExclusion(store: {
+  read(path: string): Promise<unknown | null>;
+  pathsContaining(fixed: string, prefix: string): Promise<string[]>;
+}): Promise<BackupCiExcludedRunnersV1> {
+  const suspensions: BackupCiSuspensionV1[] = [];
+  const calibrations: BackupCiCalibrationV1[] = [];
+  const kinds = [
+    ["sentinel_backup_ci_suspension", suspensions, parseBackupCiSuspension],
+    ["sentinel_backup_ci_calibration", calibrations, parseBackupCiCalibration],
+  ] as const;
+  for (const [kind, out, parse] of kinds) {
+    for (
+      const path of await store.pathsContaining(`"kind":"${kind}"`, "v1/")
+    ) {
+      if (!BACKUP_CI_TRUST_FILE_RE.test(path)) continue;
+      const value = await store.read(path);
+      if (value !== null) (out as unknown[]).push(parse(value as never));
+    }
+  }
+  return backupCiExcludedRunners(suspensions, calibrations);
+}
 
 /** A target whose repository id is known for this pass. */
 export type BackupCiResolvedTargetV1 = BackupCiTargetV1 & { id: number };

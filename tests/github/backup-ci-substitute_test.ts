@@ -82,6 +82,7 @@ function input(
     file: commitFile([result()]),
     suspensions: [],
     calibration: calibration(),
+    excluded: { all: false, runnerIds: [] },
     ...over,
   };
 }

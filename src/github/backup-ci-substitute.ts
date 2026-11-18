@@ -43,6 +43,10 @@ import type {
   GitHubCheckBackupV1,
   GitHubCheckV1,
 } from "../contracts/ports-github-requests.ts";
+import {
+  type BackupCiExcludedRunnersV1,
+  isBackupCiRunnerExcluded,
+} from "../contracts/backup-ci-trust.ts";
 import { trustedCheckName } from "../repair/ci-rejection.ts";
 import { ACTIONS_APP_SLUG } from "./never-started-job.ts";
 import { isBackupCiSuspended } from "./backup-ci-store.ts";
@@ -78,6 +82,8 @@ export interface BackupCiSelectInputV1 {
   file: BackupCiCommitFileV1 | null;
   suspensions: BackupCiSuspensionV1[];
   calibration: BackupCiCalibrationV1 | null;
+  /** Runners a false green on any target excludes (never usable). */
+  excluded: BackupCiExcludedRunnersV1;
 }
 export interface BackupCiStandInV1 {
   checkRunId: number;
@@ -165,6 +171,7 @@ export function selectBackupStandIns(
     ? input.calibration
     : null;
   const usable = (entry: BackupCiEntryV1) =>
+    !isBackupCiRunnerExcluded(input.excluded, entry.runnerId) &&
     isBackupCiCalibrated(calibration, entry.runnerId) &&
     !isBackupCiSuspended(input.suspensions, target.repository, entry.runnerId);
   const suites = new Map(input.suites.map((s) => [s.suiteId, s]));
@@ -271,7 +278,14 @@ export function selectBackupStandIns(
       });
     }
     if (standIns.length !== latest.length) {
-      refuse("unresolved");
+      // Visible cause: receipts exist, but only from runners a false green
+      // excludes everywhere (`backup-ci-trust.ts`).
+      const excludedOnly = file.entries.some((e) =>
+        e.state === "result" && e.key.workflowPath === path &&
+        e.key.checkName === checkName &&
+        isBackupCiRunnerExcluded(input.excluded, e.runnerId)
+      );
+      refuse(excludedOnly ? "runner_excluded" : "unresolved");
       continue;
     }
     for (const standIn of standIns) {

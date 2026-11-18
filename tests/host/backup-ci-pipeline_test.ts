@@ -525,6 +525,7 @@ Deno.test("plan, dispatch, leg, ingest, store: a receipt the stand-in rule accep
         file: read.file,
         suspensions: read.suspensions,
         calibration: read.calibration,
+        excluded: read.excluded,
       });
     };
     assert.equal(

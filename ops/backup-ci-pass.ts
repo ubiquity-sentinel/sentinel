@@ -34,7 +34,11 @@ import {
 } from "../src/github/backup-ci-store.ts";
 import type { BackupCiActionSourceV1 } from "./backup-ci-actions.ts";
 import { sampleBackupCiCalibration } from "./backup-ci-calibrate.ts";
-import { resolveBackupCiTargets } from "./backup-ci-enrol.ts";
+import {
+  readBackupCiExclusion,
+  resolveBackupCiTargets,
+} from "./backup-ci-enrol.ts";
+import { isBackupCiRunnerExcluded } from "../src/contracts/backup-ci-trust.ts";
 import {
   type BackupCiIngestDepsV1,
   type BackupCiIngestItemV1,
@@ -447,7 +451,22 @@ export async function runBackupCiPass(
   const changes = new BackupCiPassChanges();
   await ingest(deps, changes);
   const units: BackupCiPassUnitV1[] = [];
-  if (deps.runnerId === null || deps.snapshot === null) {
+  // A false green on any target excludes the runner everywhere: it neither
+  // calibrates nor stands in until its id changes (backup-ci-trust.ts).
+  const excluded = deps.runnerId === null ? false : await readBackupCiExclusion(
+    deps.store,
+  ).then(
+    (set) => isBackupCiRunnerExcluded(set, deps.runnerId!),
+    () => true,
+  );
+  if (excluded) {
+    deps.log(
+      `sentinel_backup_ci_runner ${
+        JSON.stringify({ runnerId: deps.runnerId, state: "excluded" })
+      }`,
+    );
+  }
+  if (deps.runnerId === null || deps.snapshot === null || excluded) {
     deps.log("backup-ci:plan:skipped");
   } else {
     const [inflight, cells] = await Promise.all([

@@ -117,6 +117,7 @@ export function okRead(
   over: {
     suspensions?: BackupCiSuspensionV1[];
     calibration?: BackupCiCalibrationV1 | null;
+    excluded?: { all: boolean; runnerIds: string[] };
   } = {},
 ): BackupCiReadV1 {
   return {
@@ -126,6 +127,7 @@ export function okRead(
     calibration: over.calibration === undefined
       ? calibration()
       : over.calibration,
+    excluded: over.excluded ?? { all: false, runnerIds: [] },
     tip: "e".repeat(40) as GitSha,
   };
 }

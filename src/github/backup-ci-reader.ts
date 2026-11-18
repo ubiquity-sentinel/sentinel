@@ -32,6 +32,12 @@ import {
   parseBackupCiCommitFile,
   parseBackupCiSuspension,
 } from "../contracts/backup-ci.ts";
+import {
+  BACKUP_CI_NOTHING_EXCLUDED,
+  BACKUP_CI_TRUST_FILE_RE,
+  backupCiExcludedRunners,
+  type BackupCiExcludedRunnersV1,
+} from "../contracts/backup-ci-trust.ts";
 import type { Clock } from "../contracts/ports.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { GitRunnerV1 } from "../state/state-git.ts";
@@ -42,6 +48,8 @@ export type BackupCiReadV1 =
     file: BackupCiCommitFileV1 | null;
     suspensions: BackupCiSuspensionV1[];
     calibration: BackupCiCalibrationV1 | null;
+    /** Runners a false green on any target excludes (`backup-ci-trust.ts`). */
+    excluded: BackupCiExcludedRunnersV1;
     /** The store tip read; null when the branch does not exist. */
     tip: GitSha | null;
   }
@@ -87,6 +95,10 @@ class BackupCiStoreReader implements BackupCiReaderV1 {
   private repository: string | null = null;
   private readonly fetched = new Set<string>();
   private readonly blobs = new Map<string, Blob>();
+  private exclusionMemo: {
+    tip: GitSha;
+    value: BackupCiExcludedRunnersV1;
+  } | null = null;
   private queue: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly input: BackupCiReaderInputV1) {
@@ -121,11 +133,14 @@ class BackupCiStoreReader implements BackupCiReaderV1 {
         file: null,
         suspensions: [],
         calibration: null,
+        excluded: BACKUP_CI_NOTHING_EXCLUDED,
         tip: null,
       };
     }
     const tip = await this.fetch(listed.tip);
     if (typeof tip !== "string") return tip;
+    const excluded = await this.exclusion(tip);
+    if ("kind" in excluded) return excluded;
     const { owner, name } = repo;
     const reads = await this.readAll(tip, [
       backupCiCommitPath(owner, name, sha),
@@ -165,6 +180,7 @@ class BackupCiStoreReader implements BackupCiReaderV1 {
         file: pinned === null ? null : parsedFile,
         suspensions: suspensions.filter((s) => s !== null),
         calibration: parsedCalibration,
+        excluded,
         tip,
       };
     } catch {
@@ -280,6 +296,48 @@ class BackupCiStoreReader implements BackupCiReaderV1 {
     return values;
   }
 
+  /**
+   * The runners a false green excludes (`backup-ci-trust.ts`), from every
+   * target's suspension and calibration file at `tip`: one recursive listing
+   * per tip, blobs through the memo. Any unreadable or invalid file fails the
+   * read (no stand-in), as for the target's own files.
+   */
+  private async exclusion(
+    tip: GitSha,
+  ): Promise<BackupCiExcludedRunnersV1 | Failure> {
+    if (this.exclusionMemo?.tip === tip) return this.exclusionMemo.value;
+    const listed = await this.git(
+      ["ls-tree", "-r", tip, "--", "v1"],
+      this.repository as string,
+    );
+    if (!listed.ok) return unavailable("backup CI store tree is unreadable");
+    const suspensions: BackupCiSuspensionV1[] = [];
+    const calibrations: BackupCiCalibrationV1[] = [];
+    for (const line of listed.stdout.split("\n")) {
+      const match = /^(\d{6}) (\w+) ([0-9a-f]{40})\t(.+)$/.exec(line);
+      if (match === null || !BACKUP_CI_TRUST_FILE_RE.test(match[4])) continue;
+      if (match[1] !== "100644" || match[2] !== "blob") {
+        return invalid("backup CI store entry is not a regular file");
+      }
+      const blob = await this.readOid(match[3]);
+      if (blob.kind !== "ok") {
+        return blob.kind === "absent"
+          ? unavailable("backup CI store blob is unreadable")
+          : blob;
+      }
+      try {
+        if (match[4].endsWith("suspended.json")) {
+          suspensions.push(parseBackupCiSuspension(blob.value));
+        } else calibrations.push(parseBackupCiCalibration(blob.value));
+      } catch {
+        return invalid("backup CI trust file does not parse");
+      }
+    }
+    const value = backupCiExcludedRunners(suspensions, calibrations);
+    this.exclusionMemo = { tip, value };
+    return value;
+  }
+
   private async readJson(tip: GitSha, path: string): Promise<Blob> {
     const repository = this.repository as string;
     const listed = await this.git(["ls-tree", tip, "--", path], repository);
@@ -290,7 +348,11 @@ class BackupCiStoreReader implements BackupCiReaderV1 {
     if (lines.length !== 1 || match === null || match[2] !== path) {
       return invalid("backup CI store entry is not a regular file");
     }
-    const oid = match[1];
+    return await this.readOid(match[1]);
+  }
+
+  private async readOid(oid: string): Promise<Blob> {
+    const repository = this.repository as string;
     const memo = this.blobs.get(oid);
     if (memo !== undefined) return memo;
     const size = await this.git(["cat-file", "-s", oid], repository);

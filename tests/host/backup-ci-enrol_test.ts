@@ -127,6 +127,7 @@ Deno.test("the stand-in rule binds an enrolled row to its calibration's id", () 
     statusContexts: new Set<string>(),
     file: commitFile([result()]),
     suspensions: [],
+    excluded: { all: false, runnerIds: [] },
   };
   const bound = selectBackupStandIns({
     ...base,
