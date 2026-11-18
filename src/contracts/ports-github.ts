@@ -21,6 +21,7 @@ import type {
   GitHubRefV1,
   IssueCloseOutcomeV1,
   LegacyBaseRefreshLossProofV1,
+  MergedPullHeadsV1,
   MergeOutcomeV1,
   MergeRequestV1,
   PrepareBaseRefreshRequestV1,
@@ -161,15 +162,24 @@ export interface GitHubPort {
    */
   readCommitParents?(sha: GitSha): Promise<PortResultV1<GitSha[] | null>>;
   /**
-   * Optional paths one exact `base...head` comparison changes (null: not
-   * listed whole). Read only for a head whose CI ran no job to success, to
-   * apply the 2026-11-17 success rule to one that changes a CI-executable
-   * path (`ci-success-rule.ts`); absent, that rule fails closed.
+   * Optional paths `base...head` changes (null: not listed whole), read from
+   * the port's own object store when it holds both commits, else from one
+   * exact comparison. Read only for a head whose CI would otherwise proceed,
+   * to apply the 2026-11-17 success rule to one that changes a CI-executable
+   * path (`ci-success-rule.ts`).
    */
   readChangedPaths?(
     base: GitSha,
     head: GitSha,
   ): Promise<PortResultV1<string[] | null>>;
+  /**
+   * Optional heads of the most recently merged pull requests into `baseRef`
+   * (one bounded listing): the reference of the 2026-11-18 CI rule for a head
+   * that changes a CI-executable path. Absent, that rule waits.
+   */
+  readMergedPullHeads?(
+    baseRef: string,
+  ): Promise<PortResultV1<MergedPullHeadsV1>>;
   /**
    * Optional exact tree of one commit (null: no such commit). A squash merge
    * (#331) is proven on exactly [reviewed base] by its tree equal to the

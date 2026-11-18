@@ -501,7 +501,7 @@ export async function preMergeGate(input: {
     surface,
     record.repository,
     pull.number,
-    { head, base },
+    { head, base, baseBranch: scope.baseBranch },
   );
   if (protectedRefusal !== null) {
     return { refusal: protectedRefusal, spent: false };

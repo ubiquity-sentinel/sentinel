@@ -25,6 +25,7 @@ import type {
   GitHubIssueListOptionsV1,
   GitHubRefV1,
   IssueCloseOutcomeV1,
+  MergedPullHeadsV1,
   MergeOutcomeV1,
   MergeRequestV1,
   PortErrorV1,
@@ -233,11 +234,29 @@ export abstract class GitHubPortBase {
     return this.client.readCommitParents(sha);
   }
 
-  readChangedPaths(
+  /**
+   * The paths `base...head` changes: the local mirror's own tree diff
+   * (`git diff --no-renames --name-only -z`, never truncated, no API read)
+   * when it holds both commits, as it does for every head Sentinel published
+   * or fetched in this run's full clone; else one exact comparison.
+   */
+  async readChangedPaths(
     base: GitSha,
     head: GitSha,
   ): Promise<PortResultV1<string[] | null>> {
-    return this.client.readChangedPaths(base, head);
+    try {
+      const local = await this.git.changedPaths?.(base, head);
+      if (local !== undefined && local.ok) return portOk(local.value);
+    } catch {
+      // An unreadable mirror proves nothing; the comparison decides.
+    }
+    return await this.client.readChangedPaths(base, head);
+  }
+
+  readMergedPullHeads(
+    baseRef: string,
+  ): Promise<PortResultV1<MergedPullHeadsV1>> {
+    return this.client.readMergedPullHeads(baseRef);
   }
 
   readCommitTree(sha: GitSha): Promise<PortResultV1<GitSha | null>> {

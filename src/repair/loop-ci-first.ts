@@ -74,7 +74,11 @@ import {
   preReviewCiFixRouteOpen,
 } from "./ci-first-policy.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
-import { absentExpectedChecks, decideCiGate } from "./loop-checks.ts";
+import {
+  absentExpectedChecks,
+  decideCiGate,
+  headCiExpectation,
+} from "./loop-checks.ts";
 import { headCiChange, WORKFLOW_CI_SUCCESS_DETAIL } from "./ci-success-rule.ts";
 import { selectMergeGateChecksV1 } from "./merge-gate-checks.ts";
 import {
@@ -280,19 +284,18 @@ export async function gateReviewOnCi(
   const checks = observed.value.checks;
   const gating = selectMergeGateChecksV1(record.repository, checks).checks;
   const decision = decideCiGate(gating);
-  // 2026-11-17: no review round is spent on a head one exact comparison shows
-  // changing a CI-executable path while its own (modified) CI did not run
-  // every job its base passes to success; it waits like running CI and parks
-  // with its own reason after the bound. An unreadable comparison decides as
-  // before (the merge executors hold that case fail closed).
+  // 2026-11-17: no review round is spent on a head whose change set changes
+  // a CI-executable path while its own (modified) CI did not run to success
+  // every job the last merged pull request passed (`ci-success-rule.ts`; an
+  // unreadable reference waits); it waits like running CI and parks with its
+  // own reason after the bound. An unreadable change set decides as before
+  // (the merge executors hold that case fail closed).
   if (
     decision === "proceed" && await headCiChange(deps, record) === "ci"
   ) {
-    const base = await readCiChecks(deps.github, record.target.base);
-    if (!base.ok) return UNAVAILABLE;
     const verdict = decideCiGate(gating, record.repository, {
       requireSuccess: true,
-      baseChecks: base.value.checks,
+      expectation: await headCiExpectation(deps, record),
     });
     if (verdict === "wait") {
       return awaitChecks(

@@ -13,6 +13,10 @@ import {
 import { isGatewayVpsRepository } from "../src/repair/vps-delivery.ts";
 import { actionsSuccessNames } from "./hosted-autonomy-pull-file-gates.ts";
 import {
+  mergedPullsQuery,
+  parseMergedPullHeads,
+} from "../src/github/merged-pull-heads.ts";
+import {
   isCiEvidenceConclusion,
   isCiEvidenceSource,
   isPassportDeployCheck,
@@ -373,6 +377,22 @@ export function createHostedAutonomyGitHub(
       return complete === null
         ? null
         : actionsSuccessNames(gatingRuns(complete));
+    },
+    async mergedPullHeads(baseBranch?: string) {
+      let branch = baseBranch;
+      if (branch === undefined) {
+        const repo = await request("GET", `/repos/${scope}`);
+        const named = repo !== null && typeof repo === "object"
+          ? (repo as Record<string, unknown>)["default_branch"]
+          : undefined;
+        if (typeof named !== "string" || named.length === 0) return null;
+        branch = named;
+      }
+      const query = new URLSearchParams(mergedPullsQuery(branch)).toString();
+      return parseMergedPullHeads(
+        await request("GET", `/repos/${scope}/pulls?${query}`),
+        branch,
+      );
     },
     async hasAllChecksGreen(head: string, base?: string) {
       const complete = await readCompleteCheckRuns(head);
