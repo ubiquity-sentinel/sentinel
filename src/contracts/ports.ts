@@ -182,6 +182,7 @@ export type {
   GitHubReviewDecisionV1,
   IssueCloseOutcomeV1,
   LegacyBaseRefreshLossProofV1,
+  MergedPullHeadsV1,
   MergeOutcomeV1,
   MergeRequestV1,
   PrepareBaseRefreshRequestV1,

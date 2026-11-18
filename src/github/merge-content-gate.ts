@@ -5,25 +5,33 @@
  *   credential path covered by a configured protected prefix on any target,
  *   any protected or `.github/` path of Sentinel's own repository, or a path
  *   no predicate can classify): `protection_required`.
- * - A change to a CI-executable path merges only when every job name GitHub
- *   Actions ran to `success` on the base also ran to `success` on the exact
- *   head (at least one when the base has none; `decideCiGate` with
- *   `requireSuccess`): otherwise `checks_pending`.
- * The change set is one exact `base...head` comparison read at merge time;
- * an unreadable or possibly truncated one refuses `checks_pending` (the
- * merge retries, never lands unproven). Sentinel's own pull requests change
- * at most the publication bound of paths, far below the comparison's limit.
+ * - A change to a CI-executable path merges only when its GitHub Actions
+ *   success names meet the expectation read from the base branch's merged
+ *   pull requests (`ci-success-rule.ts`; unreadable: never): otherwise
+ *   `checks_pending`.
+ * The change set is the port's `readChangedPaths`: the local mirror's tree
+ * diff when it holds both commits (always so for a head Sentinel published
+ * from, or cloned into, this run's mirror: no API read), else one exact
+ * comparison. Only a head neither can list whole is held (`checks_pending`,
+ * the bounded `ci_pending` wait): it may change CI. Sentinel's own pull
+ * requests change at most the publication bound of paths, far below the
+ * comparison's limit.
  */
 import type { GitSha } from "../contracts/brands.ts";
 import type {
   GitHubChecksV1,
   GitHubCheckV1,
+  MergedPullHeadsV1,
   PortResultV1,
 } from "../contracts/ports.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import { createLocalRepositoryConfig } from "../host/local-config.ts";
 import { selectTrustedTargetPolicyV1 } from "../host/target-policy.ts";
 import { decideCiGate } from "../repair/loop-checks.ts";
+import {
+  readCiExpectation,
+  runtimeCiReferenceReads,
+} from "../repair/ci-success-rule.ts";
 import { sentinelNeverMerges } from "../repair/owner-landing.ts";
 import { ciExecutablePath } from "../repair/workflow-trust.ts";
 
@@ -33,6 +41,9 @@ export interface MergeContentReadsV1 {
     head: GitSha,
   ): Promise<PortResultV1<string[] | null>>;
   readChecks(head: GitSha): Promise<PortResultV1<GitHubChecksV1>>;
+  readMergedPullHeads?(
+    baseRef: string,
+  ): Promise<PortResultV1<MergedPullHeadsV1>>;
 }
 
 /**
@@ -55,13 +66,18 @@ export function neverMergedChange(
   }
 }
 
-/** Null when the merge may proceed; otherwise its blocked reason. */
+/**
+ * Null when the merge may proceed; otherwise its blocked reason. `baseRef`
+ * is the pull request's base branch, whose merged pull requests are the CI
+ * rule's reference.
+ */
 export async function mergeContentRefusal(
   reads: MergeContentReadsV1,
   repository: RepositoryIdentityV1,
   base: GitSha,
   head: GitSha,
   headChecks: GitHubCheckV1[],
+  baseRef?: string,
 ): Promise<"protection_required" | "checks_pending" | null> {
   let paths: string[] | null = null;
   try {
@@ -73,11 +89,13 @@ export async function mergeContentRefusal(
   if (paths === null) return "checks_pending";
   if (neverMergedChange(repository, paths)) return "protection_required";
   if (!paths.some(ciExecutablePath)) return null;
-  const baseChecks = await reads.readChecks(base);
-  if (!baseChecks.ok || baseChecks.value.head !== base) return "checks_pending";
+  const expectation = await readCiExpectation(
+    runtimeCiReferenceReads(reads, repository, baseRef),
+    base,
+  );
   return decideCiGate(headChecks, repository, {
       requireSuccess: true,
-      baseChecks: baseChecks.value.checks,
+      expectation,
     }) === "proceed"
     ? null
     : "checks_pending";

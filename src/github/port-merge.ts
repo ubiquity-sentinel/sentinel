@@ -198,11 +198,16 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
     // applies the same never-merge verdict itself, after its pipeline pin.
     if (!conditionalSelf) {
       const content = await mergeContentRefusal(
-        this.client,
+        {
+          readChangedPaths: (base, head) => this.readChangedPaths(base, head),
+          readChecks: (head) => this.client.readChecks(head),
+          readMergedPullHeads: (ref) => this.client.readMergedPullHeads(ref),
+        },
         this.repository,
         merge.expectedBase,
         merge.expectedHead,
         checks.value.checks,
+        pull.value.baseRef,
       );
       if (content !== null) return blocked(content, pull.value.head);
     }

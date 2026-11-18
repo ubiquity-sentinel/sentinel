@@ -15,7 +15,15 @@ import {
   selectMergeGateChecksV1,
 } from "./merge-gate-checks.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
-import { ciChangeSatisfied, headCiChange } from "./ci-success-rule.ts";
+import {
+  actionsSuccessNames,
+  ciExpectationSatisfied,
+  type CiExpectationV1,
+  headCiChange,
+  readCiExpectation,
+  recordBaseRef,
+  runtimeCiReferenceReads,
+} from "./ci-success-rule.ts";
 import { routeFailedDeliveryChecks } from "./loop-ci-correction.ts";
 import { isSelfScopeZero } from "./loop-legacy-loss.ts";
 import { persistWork } from "./loop-state.ts";
@@ -58,19 +66,19 @@ const SELF_AGGREGATE_CHECK = "test-local";
  * head is tested against (`absentExpectedChecks`) before a "proceed" counts.
  *
  * `requireSuccess` (2026-11-17, a head that changes a CI-executable path,
- * `ci-success-rule.ts`): such a head waits unless GitHub Actions ran every
- * job name it ran to success on `baseChecks` (the base's own checks) to
- * success on this head too, or, when the base has none, at least one job
- * (`ciChangeSatisfied`). Skipped, neutral, stand-in, status and other-app
- * observations never count. Every caller that omits it decides exactly as
- * before.
+ * `ci-success-rule.ts`): such a head waits unless its GitHub Actions success
+ * names meet `expectation` (every name the last merged pull request with an
+ * Actions success passed, else the base's, else at least one job; an
+ * absent or unknown expectation never does). Skipped, neutral, stand-in,
+ * status and other-app observations never count. Every caller that omits it
+ * decides exactly as before.
  */
 export function decideCiGate(
   checks: GitHubCheckV1[],
   repository?: Pick<RepositoryIdentityV1, "owner" | "name">,
   options?: {
     readonly requireSuccess?: boolean;
-    readonly baseChecks?: readonly GitHubCheckV1[];
+    readonly expectation?: CiExpectationV1;
   },
 ): "proceed" | "wait" | { blocked: string } {
   const gating = selectMergeGateChecksV1(repository, checks).checks;
@@ -97,9 +105,9 @@ export function decideCiGate(
   if (!deduped.some(isCiEvidenceCheck)) return "wait";
   if (
     options?.requireSuccess === true &&
-    !ciChangeSatisfied(
-      gating,
-      selectMergeGateChecksV1(repository, options.baseChecks ?? []).checks,
+    !ciExpectationSatisfied(
+      options.expectation ?? { kind: "unknown" },
+      actionsSuccessNames(gating),
     )
   ) return "wait";
   return "proceed";
@@ -107,28 +115,45 @@ export function decideCiGate(
 
 /**
  * `decideCiGate` for `record`'s own head under the 2026-11-17 success rule
- * (`ci-success-rule.ts`): a head that would proceed and that one exact
- * comparison shows changing a CI-executable path is judged with
- * `requireSuccess` against its base's own checks (an unreadable base listing
- * waits). A head the comparison shows unchanged, or cannot show at all,
- * gets exactly `decideCiGate`'s verdict; the merge executors hold the
- * unknown case fail closed.
+ * (`ci-success-rule.ts`): a head that would proceed and whose change set
+ * (the local mirror's diff, else one exact comparison) changes a
+ * CI-executable path is judged with `requireSuccess` against the expectation
+ * read from the base branch's merged pull requests (unreadable: wait). A
+ * head shown unchanged, or not shown at all, gets exactly `decideCiGate`'s
+ * verdict; the merge executors hold the unknown case fail closed.
  */
 export async function decideHeadCiGate(
-  deps: Pick<RepairCycleDepsV1, "github">,
-  record: Pick<WorkRecordV1, "target">,
+  deps:
+    & Pick<RepairCycleDepsV1, "github">
+    & Partial<Pick<RepairCycleDepsV1, "configs">>,
+  record: Pick<WorkRecordV1, "target" | "repository">,
   checks: GitHubCheckV1[],
   repository?: Pick<RepositoryIdentityV1, "owner" | "name">,
 ): Promise<"proceed" | "wait" | { blocked: string }> {
   const decision = decideCiGate(checks, repository);
   if (decision !== "proceed") return decision;
   if (await headCiChange(deps, record) !== "ci") return decision;
-  const base = await readCiChecks(deps.github, record.target.base);
-  if (!base.ok) return "wait";
   return decideCiGate(checks, repository, {
     requireSuccess: true,
-    baseChecks: base.value.checks,
+    expectation: await headCiExpectation(deps, record),
   });
+}
+
+/** The expectation for `record`'s CI-changing head (`ci-success-rule.ts`). */
+export function headCiExpectation(
+  deps:
+    & Pick<RepairCycleDepsV1, "github">
+    & Partial<Pick<RepairCycleDepsV1, "configs">>,
+  record: Pick<WorkRecordV1, "target" | "repository">,
+): Promise<CiExpectationV1> {
+  return readCiExpectation(
+    runtimeCiReferenceReads(
+      deps.github,
+      record.repository,
+      recordBaseRef(deps, record),
+    ),
+    record.target.base,
+  );
 }
 
 /**

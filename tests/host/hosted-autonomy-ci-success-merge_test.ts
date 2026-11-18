@@ -1,9 +1,11 @@
 /**
- * The launcher half of the 2026-11-17 CI integrity rule: a pull request that
- * changes a CI-executable path merges only when every job name GitHub
- * Actions ran to `success` on its base also ran to `success` on its exact
- * head (at least one when the base has none; `targetCiSuccessNames`: never
- * a skipped or neutral job, a commit status, a backup-CI stand-in or another
+ * The launcher half of the CI integrity rule (2026-11-17, redesigned
+ * 2026-11-18): a pull request that changes a CI-executable path merges only
+ * when every job name GitHub Actions ran to `success` on the head of the last
+ * merged pull request into its base branch (walked back for one with an
+ * Actions success; then the base's; a first CI workflow needs at least one)
+ * also ran to `success` on its exact head (`targetCiSuccessNames`: never a
+ * skipped or neutral job, a commit status, a backup-CI stand-in or another
  * app's check). An unreadable read, or a head without its base, refuses; a
  * pull request that changes no such path merges as before; a delivery train
  * never carries such a change. This gate alone holds such a head, so it
@@ -67,27 +69,72 @@ async function deliverable() {
 
 type Names = readonly string[] | null;
 
-Deno.test("CI success rule: a workflow pull request merges only when every base job passed on its head", async (t) => {
-  const cases: Array<[string, Names, Names | "unread", number]> = [
-    ["every base job passed", ["lint", "test"], ["lint", "test"], 1],
-    ["the base's tests replaced by a trivial job", ["trivial"], ["test"], 0],
-    ["a base job skipped on the head", ["lint"], ["lint", "test"], 0],
-    ["the first CI workflow with a passing job", ["ci"], [], 1],
-    ["no job passed at all", [], [], 0],
-    ["an unreadable head listing", null, "unread", 0],
-    ["an unreadable base listing", ["test"], null, 0],
+const MERGED = "d".repeat(40);
+
+Deno.test("CI success rule: a workflow pull request merges only when every job of the last merged pull request passed on its head", async (t) => {
+  // [name, head names, reference names, base names, merges, reads]
+  const cases: Array<[string, Names, Names, Names, number, string[]]> = [
+    [
+      "every reference job passed",
+      ["lint", "test"],
+      ["lint", "test"],
+      [
+        "test",
+      ],
+      1,
+      [HEAD, MERGED],
+    ],
+    // Review probe A: the base's push-only deploy job is never expected.
+    [
+      "a push-only base job is not expected",
+      ["test"],
+      ["test"],
+      [
+        "deploy",
+        "test",
+      ],
+      1,
+      [HEAD, MERGED],
+    ],
+    [
+      "the reference's tests replaced by a trivial job",
+      ["trivial"],
+      [
+        "test",
+      ],
+      [],
+      0,
+      [HEAD, MERGED],
+    ],
+    ["a reference job skipped on the head", ["lint"], ["lint", "test"], [], 0, [
+      HEAD,
+      MERGED,
+    ]],
+    ["the first CI workflow with a passing job", ["ci"], [], [], 1, [
+      HEAD,
+      MERGED,
+      BASE,
+    ]],
+    ["no job passed at all", [], [], [], 0, [HEAD, MERGED, BASE]],
+    ["an unreadable head listing", null, ["test"], [], 0, [HEAD]],
+    ["an unreadable reference listing", ["test"], null, [], 0, [HEAD, MERGED]],
   ];
-  for (const [name, head, base, merges] of cases) {
+  for (const [name, head, reference, base, merges, expected] of cases) {
     await t.step(name, async () => {
       const { rig, github } = await deliverable();
       try {
         const reads: string[] = [];
+        const branches: (string | undefined)[] = [];
         github.listPullFiles = () =>
           Promise.resolve(["src/app.ts", ".github/workflows/ci.yml"]);
+        github.mergedPullHeads = (branch) => {
+          branches.push(branch);
+          return Promise.resolve({ heads: [MERGED], complete: true });
+        };
         github.targetCiSuccessNames = (sha) => {
           reads.push(sha);
           return Promise.resolve(
-            sha === HEAD ? head : base === "unread" ? ["test"] : base,
+            sha === HEAD ? head : sha === MERGED ? reference : base,
           );
         };
         const result = await run(rig, github);
@@ -102,7 +149,8 @@ Deno.test("CI success rule: a workflow pull request merges only when every base 
         } else {
           assert.equal(result.status, "applied");
         }
-        assert.deepEqual(reads, head === null ? [HEAD] : [HEAD, BASE]);
+        assert.deepEqual(reads, expected);
+        assert.deepEqual(branches, head === null ? [] : ["development"]);
       } finally {
         await Deno.remove(rig.tmp, { recursive: true });
       }
@@ -148,6 +196,7 @@ Deno.test("CI success rule: a delivery train never carries a CI-executable chang
   const surface = {
     listPullFiles: () => Promise.resolve([".github/actions/x/action.yml"]),
     targetCiSuccessNames: () => Promise.resolve(["test"]),
+    mergedPullHeads: () => Promise.resolve({ heads: [], complete: true }),
   } as unknown as Parameters<typeof protectedPathRefusal>[0];
   assert.equal(
     await protectedPathRefusal(surface, TARGET, 51, { train: true }),

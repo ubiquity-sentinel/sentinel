@@ -289,6 +289,16 @@ export interface HostedAutonomyGitHubV1 {
    */
   targetCiSuccessNames?(sha: string): Promise<readonly string[] | null>;
   /**
+   * The heads of the most recently merged pull requests into `baseBranch`
+   * (the repository's default branch when absent), newest merge first: the
+   * reference of the 2026-11-18 CI rule (`src/github/merged-pull-heads.ts`,
+   * the runtime's exact query and parse); null when unreadable. Absent, the
+   * rule refuses.
+   */
+  mergedPullHeads?(
+    baseBranch?: string,
+  ): Promise<{ heads: readonly string[]; complete: boolean } | null>;
+  /**
    * True when the source issue is open, false when it is closed or missing,
    * null when that cannot be read. Only a definitive false stops a retry.
    */

@@ -1,12 +1,14 @@
 /**
  * The CI integrity rule for a head that changes a CI-executable path (owner
- * directive 2026-11-17): every job name GitHub Actions ran to success on the
- * base must also run to success on the exact head (at least one when the
- * base has none) before a review round is spent or a merge happens. Only
- * GitHub Actions check runs count: never a commit status or app-less
+ * directive 2026-11-17, redesigned 2026-11-18): the job names GitHub Actions
+ * ran to success on the head of the most recently merged pull request into
+ * the same base branch (walked back up to five merged pull requests for one
+ * with an Actions success; then the base's own; then, for a first CI
+ * workflow, at least one job) must all run to success on the exact head.
+ * Only GitHub Actions check runs count: never a commit status or app-less
  * observation, another app's check, a skipped or neutral job, or a backup-CI
- * stand-in. The rule applies on positive knowledge from the exact
- * comparison; an unreadable comparison decides exactly as before.
+ * stand-in. The rule applies on positive knowledge of the change set; an
+ * unreadable change set decides exactly as before.
  */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -17,7 +19,10 @@ import {
   decideHeadCiGate,
 } from "../../src/repair/loop-checks.ts";
 import {
-  ciChangeSatisfied,
+  actionsSuccessNames,
+  ciExpectationSatisfied,
+  type CiExpectationV1,
+  readCiExpectation,
   WORKFLOW_CI_SUCCESS_DETAIL,
 } from "../../src/repair/ci-success-rule.ts";
 import { PRE_REVIEW_CI_BOUND_MS } from "../../src/repair/ci-first-policy.ts";
@@ -59,10 +64,18 @@ const SKIPPED = [
   actions("lint", SHA3, "neutral"),
 ];
 
-Deno.test("success rule: only GitHub Actions jobs count, and the base's passing jobs must pass on the head", () => {
-  const wait = (checks: GitHubCheckV1[], base: GitHubCheckV1[] = []) =>
+/** The expectation a reference merged pull request's names give. */
+function reference(...names: string[]): CiExpectationV1 {
+  return { kind: "reference", head: SHA1, names };
+}
+
+Deno.test("success rule: only GitHub Actions jobs count, and every reference job must pass on the head", () => {
+  const wait = (
+    checks: GitHubCheckV1[],
+    expectation: CiExpectationV1 = { kind: "first_ci" },
+  ) =>
     assert.equal(
-      decideCiGate(checks, REPO, { requireSuccess: true, baseChecks: base }),
+      decideCiGate(checks, REPO, { requireSuccess: true, expectation }),
       "wait",
       JSON.stringify(checks),
     );
@@ -77,40 +90,45 @@ Deno.test("success rule: only GitHub Actions jobs count, and the base's passing 
     ...check("CodeRabbit", SHA3, "success"),
     app: "coderabbitai",
   }]);
-  // A workflow edit that drops the base's real tests for a trivial job.
+  // A workflow edit that drops the reference's real tests for a trivial job.
   wait(
     [actions("trivial", SHA3, "success"), actions("test", SHA3, "skipped")],
-    [actions("test", SHA1, "success"), actions("lint", SHA1, "success")],
+    reference("lint", "test"),
   );
-  // Every base success name passes on the head: proceed.
+  // A renamed job is no exemption: "tests" is not "test".
+  wait([actions("tests", SHA3, "success")], reference("test"));
+  // An earlier failure then a later success of the same name passes (latest).
+  assert.deepEqual(
+    actionsSuccessNames([
+      { ...actions("test", SHA3, "failure"), startedAt: 1 },
+      { ...actions("test", SHA3, "success"), startedAt: 2 },
+    ]),
+    ["test"],
+  );
+  // An unknown expectation never proceeds; neither does an absent one.
+  wait([actions("test", SHA3, "success")], { kind: "unknown" });
+  assert.equal(
+    decideCiGate([actions("test", SHA3, "success")], REPO, {
+      requireSuccess: true,
+    }),
+    "wait",
+  );
+  // Every reference name passes on the head: proceed.
   assert.equal(
     decideCiGate(
       [actions("test", SHA3, "success"), actions("lint", SHA3, "success")],
       REPO,
-      {
-        requireSuccess: true,
-        baseChecks: [
-          actions("test", SHA1, "success"),
-          actions("lint", SHA1, "success"),
-        ],
-      },
+      { requireSuccess: true, expectation: reference("lint", "test") },
     ),
     "proceed",
   );
-  // The first CI workflow: no base job, one Actions success on the head.
+  // The first CI workflow: no reference anywhere, one Actions success.
   assert.equal(
     decideCiGate([actions("ci", SHA3, "success")], REPO, {
       requireSuccess: true,
-      baseChecks: [],
+      expectation: { kind: "first_ci" },
     }),
     "proceed",
-  );
-  assert.equal(
-    ciChangeSatisfied([actions("ci", SHA3, "success")], [
-      check("status-only", SHA1, "success"),
-    ]),
-    true,
-    "a base commit status is not an expected Actions job",
   );
   // Without the option every head decides exactly as before.
   assert.equal(decideCiGate(SKIPPED), "proceed");
@@ -121,6 +139,142 @@ Deno.test("success rule: only GitHub Actions jobs count, and the base's passing 
       requireSuccess: true,
     }),
     { blocked: "CI checks failed: ci(failure)" },
+  );
+});
+
+const M1 = "1".repeat(40) as GitSha;
+const M2 = "2".repeat(40) as GitSha;
+const M3 = "3".repeat(40) as GitSha;
+const M4 = "4".repeat(40) as GitSha;
+const M5 = "5".repeat(40) as GitSha;
+const M6 = "6".repeat(40) as GitSha;
+
+/** Reads over fixed per-commit success names and one merged listing. */
+function reads(
+  listing: { heads: string[]; complete: boolean } | null,
+  names: Record<string, readonly string[] | null>,
+  seen: string[] = [],
+) {
+  return {
+    mergedPullHeads: () => Promise.resolve(listing),
+    successNames: (sha: string) => {
+      seen.push(sha);
+      return Promise.resolve(sha in names ? names[sha] : []);
+    },
+  };
+}
+
+Deno.test("success rule (review probe A/A2): a push-only deploy job the base passes is not expected on a pull request head", async () => {
+  // Base (push): test + deploy; the last merged pull request head: test.
+  const expectation = await readCiExpectation(
+    reads({ heads: [M1], complete: false }, {
+      [M1]: ["test"],
+      [SHA1]: ["deploy", "test"],
+    }),
+    SHA1,
+  );
+  assert.deepEqual(expectation, {
+    kind: "reference",
+    head: M1,
+    names: ["test"],
+  });
+  for (
+    const head of [
+      [actions("test", SHA3, "success"), actions("deploy", SHA3, "skipped")],
+      [actions("test", SHA3, "success")],
+    ]
+  ) {
+    assert.equal(
+      decideCiGate(head, REPO, { requireSuccess: true, expectation }),
+      "proceed",
+    );
+  }
+});
+
+Deno.test("success rule (review probe B/B2): pull-request-only CI or a skipped/status-only base still expects the real jobs", async () => {
+  // The base has no Actions success ([skip ci], pull_request-only CI, or a
+  // commit status only); the merged pull requests' heads have the tests.
+  for (const base of [[], null] as const) {
+    const expectation = await readCiExpectation(
+      reads({ heads: [M1, M2], complete: false }, {
+        [M1]: [],
+        [M2]: ["lint", "test"],
+        ...(base === null ? {} : { [SHA1]: base }),
+      }),
+      SHA1,
+    );
+    assert.deepEqual(expectation, {
+      kind: "reference",
+      head: M2,
+      names: ["lint", "test"],
+    });
+    assert.equal(
+      ciExpectationSatisfied(expectation, ["noop"]),
+      false,
+      "one trivial job no longer satisfies the rule",
+    );
+    assert.equal(ciExpectationSatisfied(expectation, ["lint", "test"]), true);
+  }
+});
+
+Deno.test("success rule: the walk back is bounded and fails closed", async () => {
+  // Five merged heads without an Actions success, base has none: first CI.
+  const seen: string[] = [];
+  assert.deepEqual(
+    await readCiExpectation(
+      reads({ heads: [M1, M2, M3, M4, M5, M6], complete: false }, {
+        [M6]: ["test"],
+      }, seen),
+      SHA1,
+    ),
+    { kind: "first_ci" },
+  );
+  assert.deepEqual(seen, [M1, M2, M3, M4, M5, SHA1], "the sixth is never read");
+  // ... and with base successes, the base's names are expected.
+  assert.deepEqual(
+    await readCiExpectation(
+      reads({ heads: [M1, M2, M3, M4, M5], complete: false }, {
+        [SHA1]: ["build"],
+      }),
+      SHA1,
+    ),
+    { kind: "base", names: ["build"] },
+  );
+  // Fewer merged heads than the bound on a full page proves nothing: unknown.
+  assert.deepEqual(
+    await readCiExpectation(reads({ heads: [M1], complete: false }, {}), SHA1),
+    { kind: "unknown" },
+  );
+  // Every merged pull request there is (a short page): no prior CI.
+  assert.deepEqual(
+    await readCiExpectation(reads({ heads: [], complete: true }, {}), SHA1),
+    { kind: "first_ci" },
+  );
+  // An unreadable listing, reference or base read is unknown.
+  assert.deepEqual(
+    await readCiExpectation(reads(null, {}), SHA1),
+    { kind: "unknown" },
+  );
+  assert.deepEqual(
+    await readCiExpectation(
+      reads({ heads: [M1], complete: true }, { [M1]: null }),
+      SHA1,
+    ),
+    { kind: "unknown" },
+  );
+  assert.deepEqual(
+    await readCiExpectation(
+      reads({ heads: [], complete: true }, { [SHA1]: null }),
+      SHA1,
+    ),
+    { kind: "unknown" },
+  );
+  assert.deepEqual(
+    await readCiExpectation({
+      mergedPullHeads: () => Promise.reject(new Error("x")),
+      successNames: () => Promise.resolve([]),
+    }, SHA1),
+    { kind: "unknown" },
   );
 });
 

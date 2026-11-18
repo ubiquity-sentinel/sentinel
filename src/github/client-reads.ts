@@ -6,6 +6,7 @@ import type {
   GitHubPullRequestV1,
   GitHubRefV1,
   GitHubReviewDecisionV1,
+  MergedPullHeadsV1,
   PortResultV1,
 } from "../contracts/ports.ts";
 import {
@@ -39,6 +40,7 @@ import { GitHubClientChecks } from "./client-checks.ts";
 import { parseWire, parseWith, repoPath } from "./client-response.ts";
 import { REVIEW_DECISION_QUERY } from "./client-issue-wire.ts";
 import { readPassportBaseReviewChecks } from "./base-review-ci.ts";
+import { mergedPullsQuery, parseMergedPullHeads } from "./merged-pull-heads.ts";
 export {
   MAX_WORKFLOW_EVENT_READS,
   PENDING_STATUS_GRACE_MS,
@@ -267,6 +269,33 @@ export abstract class GitHubClientReads extends GitHubClientChecks {
       );
       return paths.length >= COMPARE_FILES_MAX ? null : paths.flat();
     });
+  }
+
+  /**
+   * The heads of the most recently merged pull requests into `baseRef`,
+   * newest merge first (`merged-pull-heads.ts`: one request, the launcher's
+   * exact query and parse).
+   */
+  async readMergedPullHeads(
+    baseRef: string,
+  ): Promise<PortResultV1<MergedPullHeadsV1>> {
+    const response = await this.request(
+      "GET",
+      `/repos/${repoPath(this.repository)}/pulls`,
+      mergedPullsQuery(baseRef),
+    );
+    if (!response.ok) return response;
+    if (response.value.status === 404) {
+      return portError("unavailable", "merged pull requests unavailable");
+    }
+    const parsed = parseWire(
+      response.value,
+      (value) => parseMergedPullHeads(value, baseRef),
+    );
+    if (!parsed.ok) return parsed;
+    return parsed.value === null
+      ? portError("invalid", "merged pull request listing is malformed")
+      : portOk(parsed.value);
   }
 
   /** The exact parents of one commit, in order; null when it does not exist. */

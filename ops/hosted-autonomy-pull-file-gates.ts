@@ -6,14 +6,16 @@
  *   credential path on any target, or a protected path of Sentinel's own
  *   repository) refuses `protected_path`;
  * - a change to a CI-executable path (`ciExecutablePath`: anything under
- *   `.github/`, and any path it cannot classify) is judged by its own
- *   modified workflow, whose jobs may all be skipped or neutral and still
- *   read as green, or which may drop the real tests for a trivial job, so it
- *   merges only when every job name GitHub Actions ran to `success` on the
- *   base also ran to `success` on the exact head (at least one job when the
- *   base has none; `targetCiSuccessNames`: never a status, a backup-CI
- *   stand-in or another app's check), else `ci_success_required`. This gate
- *   alone holds such a head: it survives a runtime rollback;
+ *   `.github/` in any letter case, and any path it cannot classify) is judged
+ *   by its own modified workflow, whose jobs may all be skipped or neutral and
+ *   still read as green, or which may drop the real tests for a trivial job,
+ *   so it merges only when its GitHub Actions success names meet the
+ *   expectation read from the base branch's merged pull requests
+ *   (`src/repair/ci-success-rule.ts`, shared with the runtime: every job the
+ *   last merged pull request with an Actions success passed, else the base's,
+ *   else at least one; never a status, a backup-CI stand-in or another app's
+ *   check), else `ci_success_required`. This gate alone holds such a head: it
+ *   survives a runtime rollback;
  * - a delivery train never carries such a change (`train_ci_executable`): the
  *   member keeps the per-record path, which applies the rule above.
  *
@@ -22,10 +24,12 @@
  */
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import { neverMergedChange } from "../src/github/merge-content-gate.ts";
+import type { GitHubCheckV1 } from "../src/contracts/ports.ts";
 import {
-  GITHUB_ACTIONS_APP_SLUG,
-  isCiEvidenceSource,
-} from "../src/repair/merge-gate-checks.ts";
+  actionsSuccessNames as checkSuccessNames,
+  ciExpectationSatisfied,
+  readCiExpectation,
+} from "../src/repair/ci-success-rule.ts";
 import { ciExecutablePath } from "../src/repair/workflow-trust.ts";
 import { SENTINEL_BACKUP_FIELD } from "./hosted-autonomy-backup-ci-read.ts";
 import type { HostedTreeChangeV1 } from "./hosted-autonomy-github-trees.ts";
@@ -41,67 +45,70 @@ export function touchesTargetProtected(
 
 /**
  * The job names GitHub Actions ran to `success` among one commit's complete
- * gating check runs (`targetCiSuccessNames`), exactly as the runtime reads
- * them (`ci-success-rule.ts`): the latest run of each name (by start, else
- * completion, time; the first listed on a tie), counted only when it is a
- * GitHub Actions run completed `success`, never a backup-CI stand-in, a
- * commit status, a review bot or another app's check; sorted. The adapter
- * only lists the runs; this verdict lives with the gate that reads it.
+ * gating check runs (`targetCiSuccessNames`): each raw run read as the
+ * runtime's check shape and reduced by the runtime's own function
+ * (`ci-success-rule.ts`: the latest run of each name by start, else
+ * completion, time, the first listed on a tie; only a GitHub Actions run
+ * completed `success`, never a backup-CI stand-in, a commit status, a review
+ * bot or another app's check); sorted.
  */
 export function actionsSuccessNames(
   runs: readonly Record<string, unknown>[],
 ): string[] {
-  const time = (run: Record<string, unknown>) => {
-    const at = Date.parse(String(run["started_at"] ?? run["completed_at"]));
-    return Number.isFinite(at) ? at : -1;
+  const time = (value: unknown) => {
+    const at = Date.parse(String(value));
+    return Number.isFinite(at) ? at : null;
   };
-  const latest = new Map<string, Record<string, unknown>>();
-  for (const run of runs) {
-    const name = String(run["name"]);
-    const prior = latest.get(name);
-    if (prior === undefined || time(run) > time(prior)) latest.set(name, run);
-  }
-  return [...latest.values()].filter((run) => {
+  return checkSuccessNames(runs.map((run) => {
     const app = run["app"];
     const slug = app !== null && typeof app === "object" && !Array.isArray(app)
       ? (app as Record<string, unknown>)["slug"]
       : undefined;
-    return slug === GITHUB_ACTIONS_APP_SLUG &&
-      run[SENTINEL_BACKUP_FIELD] === undefined &&
-      isCiEvidenceSource(slug, String(run["name"])) &&
-      run["status"] === "completed" && run["conclusion"] === "success";
-  }).map((run) => String(run["name"])).sort();
+    return {
+      name: String(run["name"]),
+      status: run["status"],
+      conclusion: run["conclusion"],
+      head: run["head_sha"],
+      startedAt: time(run["started_at"]),
+      completedAt: time(run["completed_at"]),
+      ...(typeof slug === "string" ? { app: slug } : {}),
+      ...(run[SENTINEL_BACKUP_FIELD] === undefined ? {} : { backup: {} }),
+    } as unknown as GitHubCheckV1;
+  }));
 }
 
 /**
- * `ci_success_required` unless every job name GitHub Actions ran to success
- * on `base` also ran to success on `head` (at least one when `base` has
- * none), when `paths` change a CI-executable path; null otherwise. An
- * unreadable listing, or no base to compare with, refuses.
+ * `ci_success_required` unless `head`'s Actions success names meet the
+ * expectation read from `baseBranch`'s merged pull requests (the default
+ * branch when absent; `readCiExpectation`, shared with the runtime), when
+ * `paths` change a CI-executable path; null otherwise. An unreadable read, or
+ * no base, refuses.
  */
 export async function ciSuccessRefusal(
   surface: HostedAutonomyGitHubV1,
   base: string | null,
   head: string,
   paths: readonly string[],
+  baseBranch?: string | null,
 ): Promise<"ci_success_required" | null> {
   if (!paths.some(ciExecutablePath)) return null;
   if (base === null) return "ci_success_required";
-  let passed: readonly string[] | null = null;
-  let expected: readonly string[] | null = null;
+  const names = async (sha: string) =>
+    await surface.targetCiSuccessNames?.(sha) ?? null;
   try {
-    passed = await surface.targetCiSuccessNames?.(head) ?? null;
-    expected = passed === null
+    const passed = await names(head);
+    if (passed === null) return "ci_success_required";
+    const expectation = await readCiExpectation({
+      mergedPullHeads: async () =>
+        await surface.mergedPullHeads?.(baseBranch ?? undefined) ?? null,
+      successNames: names,
+    }, base);
+    return ciExpectationSatisfied(expectation, passed)
       ? null
-      : await surface.targetCiSuccessNames?.(base) ?? null;
+      : "ci_success_required";
   } catch {
-    passed = null;
+    return "ci_success_required";
   }
-  if (passed === null || expected === null) return "ci_success_required";
-  const satisfied = expected.length === 0
-    ? passed.length > 0
-    : expected.every((name) => passed!.includes(name));
-  return satisfied ? null : "ci_success_required";
 }
 
 export type PullFileRefusalV1 =
@@ -122,6 +129,7 @@ export async function protectedPathRefusal(
   gate: {
     readonly head?: string;
     readonly base?: string;
+    readonly baseBranch?: string | null;
     readonly train?: boolean;
   } = {},
 ): Promise<PullFileRefusalV1 | null> {
@@ -140,7 +148,11 @@ export async function protectedPathRefusal(
     return "train_ci_executable";
   }
   // A head without its base cannot be compared: a CI change refuses.
-  return gate.head === undefined
-    ? null
-    : await ciSuccessRefusal(surface, gate.base ?? null, gate.head, paths);
+  return gate.head === undefined ? null : await ciSuccessRefusal(
+    surface,
+    gate.base ?? null,
+    gate.head,
+    paths,
+    gate.baseBranch,
+  );
 }

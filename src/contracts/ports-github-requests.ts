@@ -79,6 +79,17 @@ export interface GitHubPullRequestV1 {
   reviewDecision: GitHubReviewDecisionV1;
 }
 
+/**
+ * The head commits of the most recently merged pull requests into one base
+ * branch, newest merge first (2026-11-18 CI rule, `ci-success-rule.ts`), from
+ * one bounded listing. `complete` is true only when that listing proves no
+ * other merged pull request into the branch exists (it was not a full page).
+ */
+export interface MergedPullHeadsV1 {
+  heads: GitSha[];
+  complete: boolean;
+}
+
 export type GitHubReviewDecisionV1 =
   | "approved"
   | "changes_requested"

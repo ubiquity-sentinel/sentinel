@@ -218,6 +218,11 @@ export interface FakeGithubOptionsV1 {
   pushedPaths?: string[];
   /** Paths every exact comparison reports (default none; null: not whole). */
   changedPaths?: string[] | null | "unavailable";
+  /**
+   * The base branch's merged pull request heads (2026-11-18 CI rule's
+   * reference); default none and complete (no merged pull request).
+   */
+  mergedPullHeads?: { heads: GitSha[]; complete: boolean } | "unavailable";
   pushFailNext?: boolean;
   createOutcome?: "applied" | "ambiguous";
   createFailNext?: boolean;
@@ -263,6 +268,8 @@ export class FakeGithub implements GitHubPort {
   readonly calls: string[] = [];
   /** Exact `base...head` comparisons read (2026-11-17 success rule). */
   readonly changedPathReads: string[] = [];
+  /** Base branches whose merged pull requests were listed (CI rule). */
+  readonly mergedPullReads: string[] = [];
   readonly drains: ReviewDrainRequestV1[] = [];
   drainResult: PortResultV1<ReviewDrainReportV1> = portOk({
     ok: true,
@@ -508,6 +515,18 @@ export class FakeGithub implements GitHubPort {
       return Promise.resolve(portError("unavailable", "comparison down"));
     }
     return Promise.resolve(portOk(paths === undefined ? [] : paths));
+  }
+
+  /** The configured merged-head listing (none, complete, by default). */
+  readMergedPullHeads(
+    baseRef: string,
+  ): Promise<PortResultV1<{ heads: GitSha[]; complete: boolean }>> {
+    this.mergedPullReads.push(baseRef);
+    const listing = this.options.mergedPullHeads;
+    if (listing === "unavailable") {
+      return Promise.resolve(portError("unavailable", "listing down"));
+    }
+    return Promise.resolve(portOk(listing ?? { heads: [], complete: true }));
   }
 
   readRef(
