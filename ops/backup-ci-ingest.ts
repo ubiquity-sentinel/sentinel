@@ -24,6 +24,7 @@
  * calibration. Each entry is ingested in its own try/catch, oldest first, at
  * most 32 per pass and 60 s per target.
  */
+import { backupCiJobDefinition } from "../src/contracts/backup-ci-trust.ts";
 import type { GitSha } from "../src/contracts/brands.ts";
 import {
   BACKUP_CI_LEG_MISSING_MS,
@@ -317,6 +318,11 @@ function backupCiComparison(
       base: entry.key.base,
     },
     class: cls,
+    definition: backupCiJobDefinition({
+      workflowBlob: entry.unit.workflow.blob,
+      jobKey: entry.unit.job.key,
+      matrix: entry.unit.job.matrix,
+    }),
   };
 }
 

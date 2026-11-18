@@ -323,6 +323,12 @@ export interface BackupCiComparisonV1 {
     base: GitSha | null;
   };
   class?: "green" | "red" | "false_green" | "false_red";
+  /**
+   * The leg's job definition (`backupCiJobDefinition`, 2026-11-18). Absent
+   * in a pass file of an older launcher: such an agreement counts for no
+   * definition.
+   */
+  definition?: string;
 }
 
 /** A comparison that requires a suspension of its runner. */

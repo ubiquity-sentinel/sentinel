@@ -7,11 +7,13 @@
  * stands in for any target until its id changes (a leg revision or act pin
  * bump makes a new runner id, which starts uncalibrated).
  */
+import { createHash } from "node:crypto";
 import type { GitSha } from "./brands.ts";
 import {
   BACKUP_CI_CALIBRATION,
   type BackupCiCalibrationV1,
   type BackupCiContextV1,
+  type BackupCiMatrixV1,
   type BackupCiSuspensionV1,
 } from "./backup-ci.ts";
 import { canonicalStringify } from "./canonical.ts";
@@ -346,6 +348,158 @@ export function parseBackupCiCheckCalibration(
   return {
     version: 1,
     kind: "sentinel_backup_ci_check_calibration",
+    repository: { owner, name, id },
+    rows,
+    updatedAt: count(o.updatedAt, "$.updatedAt"),
+  };
+}
+
+/**
+ * The job definition a leg ran (2026-11-18 review): hex64 of the workflow
+ * file's blob, the job key and the matrix combination, all bound in every
+ * unit and result entry. Any change of the workflow file is a new
+ * definition, run text included (planned steps carry no run text).
+ */
+export function backupCiJobDefinition(binding: {
+  workflowBlob: string;
+  jobKey: string;
+  matrix: BackupCiMatrixV1;
+}): string {
+  return createHash("sha256").update(
+    canonicalStringify({
+      workflowBlob: binding.workflowBlob,
+      jobKey: binding.jobKey,
+      matrix: binding.matrix,
+    }),
+    "utf8",
+  ).digest("hex");
+}
+
+/**
+ * Agreements per job definition (2026-11-18 review): a runner may stand in
+ * for a check only with `commits` agreements, a green and a red among them,
+ * made under the very definition the stand-in ran, so an older or different
+ * definition of the job never calibrates the current one and a workflow
+ * change recalibrates that check. Disagreements stay in `checks.json`
+ * (definition-agnostic, monotonic), which the stand-in rule still requires.
+ */
+export interface BackupCiCheckDefinitionRowV1 {
+  runnerId: string;
+  context: BackupCiContextV1;
+  workflowPath: string;
+  checkName: string;
+  definition: string;
+  greens: GitSha[];
+  reds: GitSha[];
+}
+
+/** v1/<owner>/<repo>/check-defs.json (2026-11-18; older code never reads it). */
+export interface BackupCiCheckDefinitionsV1 {
+  version: 1;
+  kind: "sentinel_backup_ci_check_definitions";
+  repository: { owner: string; name: string; id: number };
+  rows: BackupCiCheckDefinitionRowV1[];
+  updatedAt: number;
+}
+
+export function backupCiCheckDefinitionsPath(
+  owner: string,
+  repo: string,
+): string {
+  return `v1/${owner}/${repo}/check-defs.json`;
+}
+
+/** Whether `runnerId` agreed often enough under exactly `definition`. */
+export function isBackupCiDefinitionCalibrated(
+  defs: BackupCiCheckDefinitionsV1 | null,
+  runnerId: string,
+  key: { context: BackupCiContextV1; workflowPath: string; checkName: string },
+  definition: string,
+): boolean {
+  const row = defs?.rows.find((r) =>
+    r.runnerId === runnerId && r.context === key.context &&
+    r.workflowPath === key.workflowPath && r.checkName === key.checkName &&
+    r.definition === definition
+  );
+  const rule = BACKUP_CI_CHECK_CALIBRATION;
+  return row !== undefined &&
+    new Set([...row.greens, ...row.reds]).size >= rule.commits &&
+    row.greens.length >= rule.greens && row.reds.length >= rule.reds;
+}
+
+/** Strict parse of a `check-defs.json` file. */
+export function parseBackupCiCheckDefinitions(
+  input: unknown,
+): BackupCiCheckDefinitionsV1 {
+  const o = expectRecord(input, "$");
+  expectExactKeys(
+    o,
+    ["version", "kind", "repository", "rows", "updatedAt"],
+    "$",
+  );
+  if (o.version !== 1) bad("$.version", "1");
+  if (o.kind !== "sentinel_backup_ci_check_definitions") bad("$.kind", "kind");
+  const r = expectRecord(o.repository, "$.repository");
+  expectExactKeys(r, ["owner", "name", "id"], "$.repository");
+  const owner = expectString(r.owner, "$.repository.owner", 100);
+  const name = expectString(r.name, "$.repository.name", 100);
+  if (!REPO_PART_RE.test(owner) || !REPO_PART_RE.test(name)) {
+    bad("$.repository", "an owner/name");
+  }
+  const id = count(r.id, "$.repository.id");
+  if (id === 0) bad("$.repository.id", "a positive id");
+  const rows = expectArray(
+    o.rows,
+    "$.rows",
+    BACKUP_CI_CHECK_CALIBRATION.maxRows,
+    (v, at) => {
+      const row = expectRecord(v, at);
+      expectExactKeys(row, [
+        "runnerId",
+        "context",
+        "workflowPath",
+        "checkName",
+        "definition",
+        "greens",
+        "reds",
+      ], at);
+      const runnerId = expectString(row.runnerId, `${at}.runnerId`, 16);
+      const workflowPath = expectString(row.workflowPath, `${at}.path`, 140);
+      const checkName = expectString(row.checkName, `${at}.checkName`, 64);
+      const definition = expectString(row.definition, `${at}.definition`, 64);
+      if (
+        !RUNNER_RE.test(runnerId) || !PATH_RE.test(workflowPath) ||
+        !NAME_RE.test(checkName) || !/^[0-9a-f]{64}$/.test(definition)
+      ) bad(at, "a runner, workflow path, check name and definition");
+      const greens = commits(row.greens, `${at}.greens`);
+      const reds = commits(row.reds, `${at}.reds`);
+      if (greens.some((c) => reds.includes(c))) {
+        bad(at, "one class per commit");
+      }
+      return {
+        runnerId,
+        context: expectEnum(row.context, ["push", "pull_request"], at),
+        workflowPath,
+        checkName,
+        definition,
+        greens,
+        reds,
+      } as BackupCiCheckDefinitionRowV1;
+    },
+  );
+  const ids = rows.map((row) =>
+    canonicalStringify([
+      row.runnerId,
+      row.context,
+      row.workflowPath,
+      row.checkName,
+      row.definition,
+    ])
+  );
+  if (new Set(ids).size !== ids.length) bad("$.rows", "unique rows");
+  return {
+    version: 1,
+    kind: "sentinel_backup_ci_check_definitions",
     repository: { owner, name, id },
     rows,
     updatedAt: count(o.updatedAt, "$.updatedAt"),

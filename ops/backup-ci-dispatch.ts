@@ -40,12 +40,18 @@ import {
   BACKUP_CI_CALIBRATION_LEGS_PATH,
   backupCiCheckCalibrationPath,
   type BackupCiCheckCalibrationV1,
+  backupCiCheckDefinitionsPath,
+  type BackupCiCheckDefinitionsV1,
   backupCiEnrolmentPath,
   parseBackupCiCalibrationLegs,
   parseBackupCiCheckCalibration,
+  parseBackupCiCheckDefinitions,
   parseBackupCiEnrolment,
 } from "../src/contracts/backup-ci-trust.ts";
-import { mergeCheckCalibration } from "../src/github/backup-ci-check-store.ts";
+import {
+  mergeCheckCalibration,
+  mergeCheckDefinitions,
+} from "../src/github/backup-ci-check-store.ts";
 import type { BackupCiPassFileV1 } from "./backup-ci-pass.ts";
 import {
   backupCiProbePath,
@@ -247,6 +253,29 @@ export async function backupCiStoreChanges(
       now,
     );
     if (checks !== null) changes.set(checksPath, checks.checks);
+    // Agreements per job definition (2026-11-18): the stand-in rule needs
+    // them under the very definition a stand-in ran.
+    const defsPath = backupCiCheckDefinitionsPath(
+      repository.owner,
+      repository.name,
+    );
+    const defs = mergeCheckDefinitions(
+      await current(
+        view,
+        defsPath,
+        parseBackupCiCheckDefinitions,
+      ) as BackupCiCheckDefinitionsV1 | null,
+      repository,
+      comparisons,
+      now,
+      checks?.checks ??
+        (await current(
+          view,
+          checksPath,
+          parseBackupCiCheckCalibration,
+        ) as BackupCiCheckCalibrationV1 | null),
+    );
+    if (defs !== null) changes.set(defsPath, defs);
     const disagreements = [
       ...merged.disagreements,
       ...(checks?.disagreements ?? []),

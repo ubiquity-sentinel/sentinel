@@ -20,6 +20,7 @@ import {
   type BackupCiUnitV1,
 } from "../../src/contracts/backup-ci.ts";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
+import { backupCiJobDefinition } from "../../src/contracts/backup-ci-trust.ts";
 import { backupCiStoreChanges } from "../../ops/backup-ci-dispatch.ts";
 import {
   type BackupCiIngestDepsV1,
@@ -560,6 +561,15 @@ Deno.test("a final conclusion is compared with a native started run", async () =
     backup: "success",
   });
   assert.equal(out.entry.native?.checkRunId, 801);
+  // 2026-11-18: the comparison names the job definition the leg ran.
+  assert.equal(
+    out.comparison.definition,
+    backupCiJobDefinition({
+      workflowBlob: out.entry.binding.workflowBlob,
+      jobKey: out.entry.binding.jobKey,
+      matrix: out.entry.binding.matrix,
+    }),
+  );
   const notStarted = await scenario();
   notStarted.native = native("failure", false);
   const skip = await outcome(notStarted);

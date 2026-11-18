@@ -10,8 +10,11 @@
 import {
   BACKUP_CI_CHECK_CALIBRATION,
   type BackupCiCheckCalibrationV1,
+  type BackupCiCheckDefinitionRowV1,
+  type BackupCiCheckDefinitionsV1,
   type BackupCiCheckRowV1,
   parseBackupCiCheckCalibration,
+  parseBackupCiCheckDefinitions,
 } from "../contracts/backup-ci-trust.ts";
 import type {
   BackupCiComparisonV1,
@@ -115,4 +118,91 @@ export function mergeCheckCalibration(
     }),
     disagreements,
   };
+}
+
+/**
+ * The merged `check-defs.json` (2026-11-18), or null when no comparison
+ * carries a key, class and definition. An agreement counts once per commit
+ * under its own definition; a disagreement on a commit revokes that commit's
+ * agreements under every definition (the count itself stays in
+ * `checks.json`). Throws when the current file names another repository.
+ */
+export function mergeCheckDefinitions(
+  current: BackupCiCheckDefinitionsV1 | null,
+  repository: Repository,
+  comparisons: readonly BackupCiComparisonV1[],
+  now: number,
+  /** The merged `checks.json`: a commit disputed there never counts here. */
+  checks: BackupCiCheckCalibrationV1 | null,
+): BackupCiCheckDefinitionsV1 | null {
+  const keyed = comparisons.filter((c) =>
+    c.key !== undefined && c.class !== undefined &&
+    c.definition !== undefined
+  );
+  if (keyed.length === 0) return null;
+  if (
+    current !== null &&
+    (current.repository.owner !== repository.owner ||
+      current.repository.name !== repository.name ||
+      current.repository.id !== repository.id)
+  ) throw new Error("backup CI check definitions name another repository");
+  const rule = BACKUP_CI_CHECK_CALIBRATION;
+  let rows: BackupCiCheckDefinitionRowV1[] = (current?.rows ?? []).map((
+    row,
+  ) => ({ ...row, greens: [...row.greens], reds: [...row.reds] }));
+  const keep = (list: string[]) => list.slice(-rule.maxCommits);
+  for (const comparison of keyed) {
+    const key = comparison.key!;
+    const commit = comparison.sample.commit;
+    const sameCheck = (r: BackupCiCheckDefinitionRowV1) =>
+      r.runnerId === comparison.runnerId && r.context === key.context &&
+      r.workflowPath === key.workflowPath && r.checkName === key.checkName;
+    const cls = comparison.class!;
+    if (cls !== "green" && cls !== "red") {
+      for (const r of rows.filter(sameCheck)) {
+        r.greens = r.greens.filter((c) => c !== commit) as typeof r.greens;
+        r.reds = r.reds.filter((c) => c !== commit) as typeof r.reds;
+      }
+      continue;
+    }
+    let row = rows.find((r) =>
+      sameCheck(r) && r.definition === comparison.definition
+    );
+    if (row === undefined) {
+      row = {
+        runnerId: comparison.runnerId,
+        context: key.context,
+        workflowPath: key.workflowPath,
+        checkName: key.checkName,
+        definition: comparison.definition!,
+        greens: [],
+        reds: [],
+      };
+      rows.push(row);
+    }
+    const disputed = checks?.rows.some((r) =>
+      r.runnerId === comparison.runnerId && r.context === key.context &&
+      r.workflowPath === key.workflowPath && r.checkName === key.checkName &&
+      r.disputed.includes(commit)
+    );
+    if (
+      disputed || row.greens.includes(commit) || row.reds.includes(commit)
+    ) continue;
+    if (cls === "green") {
+      row.greens = keep([...row.greens, commit]) as typeof row.greens;
+    } else row.reds = keep([...row.reds, commit]) as typeof row.reds;
+  }
+  // Bound: rows of runners this pass did not compare go first, oldest first.
+  const active = new Set(keyed.map((c) => c.runnerId));
+  while (rows.length > rule.maxRows) {
+    const index = rows.findIndex((r) => !active.has(r.runnerId));
+    rows = rows.filter((_, i) => i !== (index < 0 ? 0 : index));
+  }
+  return parseBackupCiCheckDefinitions({
+    version: 1,
+    kind: "sentinel_backup_ci_check_definitions",
+    repository: { ...repository },
+    rows,
+    updatedAt: now,
+  });
 }
