@@ -5734,12 +5734,20 @@ the same day, about the 1370 fix: "Verified just keep moving forward."
   predicate. This supersedes the "park unpublished" half of the 2026-11-05
   owner-landing entry, the 2026-11-05 ai.ubq.fi owner-landing list and the
   2026-11-17 never-published prompt entry.
-- Kept, never published on any target (`credentialPath`): `.git/`, every
-  `.env*` file, `.npmrc`, the act files the backup CI must never read
-  (`.secrets`, `.actrc`, `.vars`, `.input`) and `sentinel.protected`; the
-  secret-shaped-text detector and the publication bounds are unchanged.
-  Key files are refused only by that detector (no basename rule existed
-  before or was added).
+- Kept, never published (`credentialPath`: `.git/`, `.env*`, `.npmrc`, the
+  act files `.secrets`, `.actrc`, `.vars`, `.input`, and
+  `sentinel.protected`), but only where the target's own configured
+  protected list covers the path, exactly as before this entry (corrected
+  2026-11-18; the earlier text said "on any target"): Sentinel's own
+  repository lists none of them, so this rule refuses nothing there; on
+  ai.ubq.fi it covers only `.env`; on Passport `.env`, `.git/`, `.npmrc` and
+  the act files, so `.env.local`, `config/.env.prod` and
+  `sentinel.protected` publish there; a generic target covers its fixed
+  list (`.env` and four named variants, `.git/`, `.npmrc`, the act files,
+  `sentinel.protected`), the whole `.env*` family and its own
+  `sentinel.protected` entries. The secret-shaped-text detector and the
+  publication bounds are unchanged; key and certificate files are refused
+  only by that detector (no basename rule existed before or was added).
 - Kept on Sentinel's own repository: every configured protected prefix
   (`SENTINEL_AUTHORITY_PATHS`: credential minting and selection, write-token
   dispatch, the merge gate, promotion, the protected-path policy itself and
@@ -5809,12 +5817,10 @@ the same day, about the 1370 fix: "Verified just keep moving forward."
   Runtime ([src/repair/ci-success-rule.ts](../src/repair/ci-success-rule.ts),
   `decideCiGate(..., { requireSuccess })`): the CI-first review gate spends
   no review round on such a head; it waits `ci_pending` and parks after the
-  6-hour bound with "CI-first: the head changes a CI-executable path and no
-  CI job ran to success on it; owner action required"; the delivery and
-  carried gates wait. The changed paths are read (one exact `base...head`
-  comparison, the optional port read `readChangedPaths`) only when the head
-  has no passing job; an unreadable, possibly truncated (300 files) or absent
-  read fails closed. Launcher
+  6-hour bound with the CI-first success park; the delivery and carried
+  gates wait. (Superseded: the changed paths are read whenever such a gate
+  would proceed, and how is in the 2026-11-18 entry below; the earlier text
+  here said they were read only for a head with no passing job.) Launcher
   ([ops/hosted-autonomy-pull-file-gates.ts](../ops/hosted-autonomy-pull-file-gates.ts)):
   `preMergeGate` and the carried proof refuse `ci_success_required` unless
   `hasTargetCiSuccess` proves such a job; an unreadable read refuses. A head
@@ -5839,9 +5845,10 @@ the same day, about the 1370 fix: "Verified just keep moving forward."
   a retry would re-run the same untrusted task).
 - Residual risk, stated plainly: a model-written pull request, on a trusted
   issue, can now change a target's CI workflow and merge once that changed
-  CI runs at least one job to success on its head and native review finds
-  no P0 (P1 and lower never block). A workflow change that keeps one job
-  green while weakening the rest still passes. Code an existing workflow
+  CI passes the CI integrity rule on its head and native review finds no P0
+  (P1 and lower never block). The rule's 2026-11-18 form and its residuals
+  are in the 2026-11-18 entry below; this entry's "at least one job" was
+  superseded twice. Code an existing workflow
   step runs with secrets (tests, scripts) was already ordinary candidate
   work before this entry.
 - Open, not changed here: the 11 records parked "candidate touches a
@@ -5887,7 +5894,11 @@ written.
   `skippedIssues` with the closed reason `author_not_admitted`. An existing
   record of such an issue parks uncharged with "issue author is not
   admitted; owner action required" at its next model start (implementation,
-  retry, CI fix, continuation: the pre-start issue read), review request
+  retry, CI fix: the pre-start issue read; corrected 2026-11-18: the
+  existing-head continuation and closed-publication recovery,
+  `loop-existing-head-continuation.ts`, read no issue, so such a record may
+  have its replacement pull request re-opened, uncharged and with no model
+  run, and then parks at its review request), review request
   (the task-statement read) or Sentinel merge decision (the delivery task
   read, before any merge intent); nothing is pushed or reserved. Its blocked
   progress comment says why once: "Sentinel works only on issues opened by
@@ -5997,17 +6008,21 @@ written.
   (`ops/hosted-autonomy-pull-file-gates.ts`,
   `ops/hosted-autonomy-train-members.ts`). The repair-loop files that call
   them, the target policy lists and the launcher's GitHub adapter stay
-  ordinary work under the 2026-10-30 decision (existing tests pin that);
-  each call is backed by an executor gate above. Residual: a weakening of
-  one of those ordinary callers is a natively reviewed Sentinel pull
-  request that Sentinel may merge.
+  ordinary work under the 2026-10-30 decision (existing tests pin that).
+  Corrected 2026-11-18: the earlier text said each call is backed by an
+  executor gate above; that was false for admission until the 2026-11-18
+  merge-executor check, and remains false for the launcher (see that
+  entry's residuals). Residual: a weakening of one of those ordinary
+  callers is a natively reviewed Sentinel pull request that Sentinel may
+  merge.
 - CI integrity rule, corrected (this supersedes the previous entry's "at
   least one job"): only GitHub Actions check runs count, never a commit
   status or app-less run, another app's check, a skipped or neutral job, or
-  a backup-CI stand-in. Every job name GitHub Actions ran to `success` on
-  the base (the latest run of each name) must also run to `success` on the
-  exact head; when the base has none (a first CI workflow) at least one
-  must. Runtime ([src/repair/ci-success-rule.ts](../src/repair/ci-success-rule.ts)):
+  a backup-CI stand-in. (Superseded 2026-11-18, below: the expected names
+  no longer come from the base commit, whose push-only jobs no pull
+  request head runs, and "the base has none" was not a first CI workflow on
+  a repository with pull_request-only CI or a skipped or status-only base.)
+  Runtime ([src/repair/ci-success-rule.ts](../src/repair/ci-success-rule.ts)):
   the CI-first review gate and the delivery and carried gates apply it only
   on positive knowledge, when the exact comparison lists a CI-executable
   path; any other head, including one whose comparison is unreadable or
@@ -6020,10 +6035,12 @@ written.
   Residual: a runtime rolled back to before this entry merges the pull
   requests it merges itself through its own port without the rule.
 - Correction (credential paths): `credentialPath` refuses a change only where
-  a configured protected prefix covers it; every shipped target lists
-  `.git/`, `.env`, `.npmrc`, the act files and `sentinel.protected`. A key or
-  certificate file is refused only by the secret-shaped-text detector, as
-  before.
+  a configured protected prefix covers it. (Corrected again 2026-11-18: the
+  earlier text here said every shipped target lists `.git/`, `.env`,
+  `.npmrc`, the act files and `sentinel.protected`; it does not. What is
+  refused where is stated in the previous entry's corrected "Kept" item.) A
+  key or certificate file is refused only by the secret-shaped-text
+  detector, as before.
 
 Rollback: revert these commits in reverse order. No persisted field or state
 format changes (`authorId` is an optional in-memory wire field). An older
@@ -6031,3 +6048,133 @@ launcher skips an intake summary line that carries the new
 `author_not_admitted` reason and does not know the new merge-event code
 `self_merge_protected_path`; the runtime and launcher may roll back
 separately, with the residuals above.
+
+## 2026-11-18: the CI rule compares like with like; admission and trust edges
+
+A second independent review of the two 2026-11-17 entries found no way to
+push or merge an untrusted `.github/` change and no secret exposure, and
+named these fixes; each reproduced case is now a test that failed before
+its fix. The two entries above are corrected in place where they were
+false (marked "corrected 2026-11-18").
+
+- CI integrity rule, redesigned
+  ([src/repair/ci-success-rule.ts](../src/repair/ci-success-rule.ts)). For
+  a head that changes a CI-executable path, the expected jobs are the names
+  GitHub Actions ran to `success` (latest run of each name) on the head of
+  the most recently merged pull request into the same base branch: the same
+  pull-request context, where a push-only or conditional job (a deploy
+  skipped on pull request heads) never runs. If that pull request has no
+  Actions success, up to five merged pull requests are walked back, newest
+  merge first; only after those five, or every merged pull request there is
+  when the one listing page is not full, is there "no prior CI": then the
+  base commit's own Actions successes are expected, and only when the base
+  has none either is it a first CI workflow, which needs at least one
+  Actions job to succeed on the head. Every expected name must conclude
+  `success` on the candidate head. No name is exempt, absent, skipped,
+  neutral or renamed: anything a workflow-changing head controls could
+  produce that state, so an exemption would be the head's own choice.
+  Anything unreadable, or a full listing page with fewer than five merged
+  pull requests and no reference, is `unknown` and waits (runtime: the
+  6-hour CI-first park, now "CI-first: the head changes a CI-executable path
+  and its own CI did not run to success every job the last merged pull
+  request passed; owner action required"; launcher: `ci_success_required`).
+  Only GitHub Actions check runs count, as before (never a status, another
+  app's check or a backup-CI stand-in). This fixes the two review findings:
+  a base whose push-only deploy job passed made every workflow pull request
+  wait for ever (probably the motivating ai.ubq.fi #1370, which edits
+  `deno-deploy.yml`), and a base without an Actions success
+  (pull_request-only CI, a `[skip ci]` or status-only base) let one trivial
+  job pass on a repository that does have CI.
+- Reads: one extra listing, `GET /pulls?state=closed&base=<branch>&sort=
+  updated&direction=desc&per_page=50` (a merged pull request's update time
+  is never before its merge), parsed identically by the runtime client and
+  the launcher adapter
+  ([src/github/merged-pull-heads.ts](../src/github/merged-pull-heads.ts)),
+  then one check-run listing per walked head (usually one) and the base's
+  only in the no-prior-CI case. Read only for a head known to change a
+  CI-executable path, at the CI-first, delivery and carried gates and at the
+  merge executors. The runtime gates, the runtime merge executor
+  (`merge-content-gate.ts`) and the launcher (`ciSuccessRefusal`) share the
+  walker (`readCiExpectation`), the verdict (`ciExpectationSatisfied`) and
+  the success-name reduction (the launcher reads each raw run as the
+  runtime's check shape and calls the runtime's `actionsSuccessNames`), so
+  they cannot disagree. Ordinary heads decide exactly as before.
+- How "changes a CI-executable path" is known
+  ([src/github/changed-paths-read.ts](../src/github/changed-paths-read.ts)):
+  the port's change-set read diffs its own local mirror first (`git diff
+  --no-renames --name-only -z base head`, raw, never truncated, no API
+  read). The mirror holds both commits for every Sentinel head on a target:
+  each cycle's foreign-target mirror is a full clone (every branch, so every
+  published task-branch head and the base branch history), Sentinel's own
+  checkout fetches with full depth, and a head published in the same cycle
+  was built in it. Only a head the mirror lacks pays the one exact
+  comparison. The extra compare read the reviewer measured on every
+  proceeding CI gate and every merge attempt is gone for those heads, and an
+  ordinary head is no longer held when the comparison fails or 404s. A head
+  neither read lists whole is unknown: the CI gates decide as before and the
+  merge executor holds it (`checks_pending`, the bounded `ci_pending` wait),
+  because it may change CI. The publication-time paths of the push backstop
+  are not persisted (no state format change); they are recomputed this way.
+- Admission backstop: the runtime merge executor (`port-merge.ts`, already
+  owner-merged) reads the issue the pull request's closing link (or its
+  acceptance) names immediately before the merge, as before; it now refuses
+  `protection_required` when that issue's author is neither the owner
+  account (login and id) nor the Sentinel App, whatever its caller decided.
+  The native self merge passes the same check. No extra read. The many
+  callers (`loop-intake.ts`, `loop-task-context.ts`, `loop-implementation.ts`,
+  `loop-review-request.ts`, `loop-merge.ts`, `loop-carried-delivery.ts`,
+  `client-issues.ts`, `client-reads.ts`, `client-checks.ts`,
+  `ops/hosted-autonomy-github.ts`) stay ordinary work.
+- Owner-merged on Sentinel's own repository from this entry (in addition to
+  the 2026-11-17 list): `src/repair/trust-markers.ts` (the capability
+  notice's two marker lines, split out of `target-capability.ts`, which
+  re-exports them and stays ordinary), `src/github/merged-pull-heads.ts` and
+  `src/github/changed-paths-read.ts` (extracted from `client-reads.ts` and
+  `port-base.ts`, which stay ordinary). The rules and their defining inputs
+  were already owner-merged: `issue-admission.ts` (the owner login and id),
+  `wire-issue-author.ts` (the author id parse), `workflow-trust.ts`,
+  `base-repair.ts`, `ci-success-rule.ts`, `merge-content-gate.ts`,
+  `port-merge.ts`, `push-content-guard.ts`, `push-guard.ts`, the launcher's
+  `ops/hosted-autonomy-pull-file-gates.ts`. Making every caller owner-merged
+  would make most Sentinel self-work owner-merged; it was weighed and not
+  done.
+- Residuals, stated plainly. A workflow change that keeps a job's name but
+  hollows it out (an `echo`), or marks the real step `continue-on-error`,
+  still passes the CI rule: native review (P0) and the source rule (only the
+  owner's and the App's structured issues may steer a `.github/` change)
+  are the remaining barriers. A path-filtered or event-conditional job the
+  last merged pull request ran but this head does not trigger makes the
+  rule wait and park (fail closed; the owner lands it). A repository whose
+  real CI reports only commit statuses or another app's checks is a first
+  CI workflow to this rule (statuses never count); its statuses still gate
+  through the ordinary rule (red blocks, pending waits) but are not
+  required by name. If 50 closed pull requests were updated since the last
+  merge the listing cannot prove the walk and the rule waits. When the
+  target's own Actions cannot start jobs (billing), a workflow-changing
+  head cannot merge (stand-ins never count). An ordinary Sentinel pull
+  request can still weaken an ordinary caller: skip an admission park in
+  the repair loop (the merge executor still refuses the merge; an ordinary
+  change for a non-admitted issue may be pushed and reviewed, and a
+  `.github/` change still needs owner or App provenance at the push), make
+  `client-reads.ts` or `port-base.ts` stop delegating to the owner-merged
+  reader or listing (the reads are then wrong but the verdicts are not
+  changed), or change the launcher: its merges (`preMergeGate`, carried
+  delivery) apply the CI rule through the owner-merged gate module but do
+  not check admission (the runtime parks a not-admitted record at its next
+  start, review request or merge decision, and the launcher's spent rule
+  admits only its own park reasons).
+- Smaller fixes: a `.github/` path in any letter case is CI-executable
+  (`ciExecutablePath`; a case-insensitive checkout runs `.GitHub/`). The
+  missing-acceptance review recovery (`loop-review-result.ts`) parks a
+  not-admitted issue uncharged instead of deferring with an issue read every
+  cycle. A source number GitHub answers with another issue (a transfer) is
+  untrusted, not unavailable: a workflow change on it parks with the
+  untrusted-source text instead of deferring for ever (the text names an
+  untrusted author; the owner re-files the issue in this repository).
+
+Rollback: revert these commits in reverse order. No persisted field or state
+format changes. The runtime (src/) and launcher (ops/) may roll back
+separately: an older launcher compares a workflow pull request with its base
+commit again (the push-only-job wait and the trivial-job pass return there),
+an older runtime does the same and reads the comparison again for every
+proceeding gate.
