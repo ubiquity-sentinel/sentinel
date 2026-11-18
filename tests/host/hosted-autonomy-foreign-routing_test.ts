@@ -34,6 +34,7 @@ import {
   isSelfRepository,
   jsonResponse,
   MERGE,
+  OWNER_ISSUE_USER,
   pullFacts,
   SELF_REPO,
   SELF_TASK_120,
@@ -209,6 +210,8 @@ Deno.test(
           number: SHARED_ISSUE_NUMBER,
           title: FOREIGN_TASK_TITLE,
           body: FOREIGN_TASK_BODY,
+          // The owner opened it: the launcher's admission read admits it.
+          user: OWNER_ISSUE_USER,
         }
         : {
           default_branch: FOREIGN_BRANCH,

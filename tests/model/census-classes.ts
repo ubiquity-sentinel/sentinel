@@ -239,9 +239,12 @@ export const PARK_CLASSES: ParkClassV1[] = [
     id: "impl.protected_path",
     message: CONFLICT_PROTECTED_DETAIL,
     kind: "other",
+    // Since 2026-11-17 only an unpublishable touch writes this exact text;
+    // an untrusted CI-executable change parks `UNTRUSTED_WORKFLOW_PARK`.
     writer: W(
       IMPL,
-      `"candidate touches a protected path",`,
+      `const protectedPark = touch.kind === "unpublishable"
+    ? PROTECTED_PATH_PARK`,
       "w.impl.protected_path",
     ),
     trigger: "pipeline",

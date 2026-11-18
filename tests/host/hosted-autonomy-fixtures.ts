@@ -50,6 +50,12 @@ export const SELF_TASK: ReviewTaskStatementV1 = {
     body: SELF_TASK_BODY,
   }),
 };
+/**
+ * The REST `user` of an issue the owner opened (login and numeric id): the
+ * author the launcher admission gate reads live before every merge
+ * (owner directive 2026-11-17, `src/repair/issue-admission.ts`).
+ */
+export const OWNER_ISSUE_USER = { login: "0x4007", id: 4975670 } as const;
 /** The exact trusted foreign issue statement its own receipt must bind. */
 export const FOREIGN_TASK_TITLE = "Deliver the reviewed foreign candidate";
 export const FOREIGN_TASK_BODY =

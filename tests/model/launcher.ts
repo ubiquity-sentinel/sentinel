@@ -26,7 +26,7 @@ import type {
   HostedAutonomyPullV1,
   HostedAutonomyResultV1,
 } from "../../ops/hosted-autonomy-types.ts";
-import { MemoryState } from "../repair/helpers.ts";
+import { MemoryState, OWNER_AUTHOR } from "../repair/helpers.ts";
 import {
   darkQueueCoordinatorFixture,
   darkQueueFixture,
@@ -172,6 +172,16 @@ export function worldSurface(
     readIssueOpen: () => Promise.resolve(world.issueOpen),
     readIssueTask: (number: number) =>
       Promise.resolve(tasks.get(number) ?? null),
+    // Every modeled record is the owner's issue work, so the launcher
+    // admission gate's live author read (2026-11-17) admits it, as on live.
+    readIssueFacts: (number: number) =>
+      Promise.resolve({
+        number,
+        title: tasks.get(number)?.title ?? `issue ${number}`,
+        body: tasks.get(number)?.body ?? "",
+        state: world.issueOpen ? "open" as const : "closed" as const,
+        ...OWNER_AUTHOR,
+      }),
     readIssueOptedOut: () => Promise.resolve(false as boolean | null),
     baseAdvanced: () => Promise.resolve(true),
     merge: (number: number) => {
