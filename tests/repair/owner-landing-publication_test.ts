@@ -1,14 +1,16 @@
 /**
- * Owner-landing publication: a candidate that changes a protected path (not a
- * workflow or other CI-executable path) is published, tested and reviewed
- * like any candidate, and Sentinel never merges it; the owner's merge
- * completes the record. A workflow change keeps the pre-publication park.
+ * Owner-landing publication (owner directive 2026-11-17, "give sentinel full
+ * access"): on Sentinel's own repository a candidate that changes a protected
+ * path is published, tested and reviewed like any candidate, and Sentinel
+ * never merges it; the owner's merge completes the record. On any other
+ * target such a change, a workflow included, is an ordinary pull request.
+ * A credential path keeps the pre-publication park everywhere.
  */
 import assert from "node:assert/strict";
 import { asWorkItemId, type GitSha } from "../../src/contracts/brands.ts";
 import type { GitHubPullRequestV1 } from "../../src/contracts/ports.ts";
 import { candidateBranch } from "../../src/repair/keys.ts";
-import { SHA1, SHA2, SHA3, T0 } from "../state/helpers.ts";
+import { SHA1, SHA2, SHA3, T0, workRecord } from "../state/helpers.ts";
 import {
   issueRecord,
   LOCAL_SENTINEL_REPO,
@@ -71,14 +73,111 @@ Deno.test(
   },
 );
 
+/** A non-Sentinel target (owner directive 2026-11-17, "full access"). */
+const TARGET_REPO = {
+  owner: "ubiquity",
+  name: "pay.ubq.fi",
+  installationId: 9,
+};
+
 Deno.test(
-  "owner landing: a workflow candidate still parks unpublished",
+  "owner landing: Sentinel's own workflow candidate stays unpublished, as before the directive",
   async () => {
     const rig = await makeRig("ownerlandingworkflow", {
       configOverrides: { repository: REPO_2, ...PROTECTED },
       model: {
         changedPaths: ["src/auth/session.ts", ".github/workflows/ci.yml"],
       },
+      github: { candidateLifecycle: positiveLifecycle() },
+    });
+    try {
+      const outcome = await rig.run();
+      assert.equal(outcome.status, "idle", JSON.stringify(outcome));
+      const work = (await rig.snapshot()).work[0]!;
+      assert.equal(work.nextStep, "blocked");
+      assert.equal(work.blocker?.message, "candidate touches a protected path");
+      assert.equal(work.ownerLanding, undefined);
+      assert.equal(rig.github.pushes.length, 0, "nothing is pushed");
+      assert.ok(!rig.github.calls.includes("createPr"));
+    } finally {
+      await rig.ctx.cleanup();
+    }
+  },
+);
+
+/** A record of an issue the owner opened (the source a workflow needs). */
+async function ownerIssueRig(name: string, changedPaths: string[]) {
+  const rig = await makeRig(name, {
+    summaries: false,
+    configOverrides: { repository: TARGET_REPO, ...PROTECTED },
+    model: { changedPaths },
+    github: {
+      candidateLifecycle: positiveLifecycle(),
+      pushedPaths: changedPaths,
+    },
+  });
+  const task = asWorkItemId("issue-41");
+  const seeded = await rig.store.writeRepair(
+    seededSnapshot([workRecord(task, {
+      repository: TARGET_REPO,
+      source: { kind: "issue", id: "41", revision: SHA1 },
+      related: { incidentId: null, issueNumber: 41 },
+      target: {
+        base: SHA1,
+        branch: candidateBranch(task),
+        checkpoint: null,
+        head: null,
+        pr: null,
+      },
+      nextStep: "work",
+    })]),
+    null,
+  );
+  assert.ok(seeded.ok && seeded.value.status === "applied");
+  return rig;
+}
+
+Deno.test(
+  "owner landing: a target's workflow candidate is an ordinary pull request that merges after review and CI",
+  async () => {
+    const rig = await ownerIssueRig("ownerlandingtargetworkflow", [
+      "src/auth/session.ts",
+      ".github/workflows/ci.yml",
+    ]);
+    try {
+      const first = await rig.run();
+      assert.equal(first.status, "idle", JSON.stringify(first));
+      let work = (await rig.snapshot()).work[0]!;
+      assert.equal(work.blocker, null, JSON.stringify(work.blocker));
+      assert.equal(work.nextStep, "review");
+      assert.equal(work.ownerLanding, undefined, "no owner-landing flag");
+      assert.equal(rig.github.pushes.length, 1, "the candidate is pushed");
+      assert.ok(rig.github.calls.includes("createPr"));
+      rig.clock.advance(100_000_000 + 1);
+      rig.github.completeReview([], rig.clock.now());
+      await rig.run();
+      work = (await rig.snapshot()).work[0]!;
+      assert.notEqual(work.wait?.reason, "manual", "no owner wait");
+      assert.equal(
+        rig.github.calls.filter((c) => c === "merge").length,
+        1,
+        "ordinary delivery merges the workflow candidate",
+      );
+    } finally {
+      await rig.ctx.cleanup();
+    }
+  },
+);
+
+Deno.test(
+  "owner landing: a target's credential-file candidate still parks unpublished",
+  async () => {
+    const rig = await makeRig("ownerlandingcredential", {
+      configOverrides: {
+        repository: TARGET_REPO,
+        protectedPaths: [...PROTECTED.protectedPaths, ".env"],
+      },
+      model: { changedPaths: [".github/workflows/ci.yml", ".env"] },
       github: { candidateLifecycle: positiveLifecycle() },
     });
     try {
@@ -221,21 +320,21 @@ const SELF_PROTECTED = [
 ];
 
 for (
-  const [name, path, published] of [
+  const [name, path, prefix] of [
     [
-      "an authority file parks unpublished",
+      "an authority file publishes for the owner",
       "src/repair/owner-landing.ts",
-      false,
+      "src/repair/owner-landing.ts",
     ],
     [
       "a non-authority protected path publishes for the owner",
       "docs/private/notes.md",
-      true,
+      "docs/private/",
     ],
   ] as const
 ) {
   Deno.test(`owner landing: a Sentinel self-candidate touching ${name}`, async () => {
-    const rig = await makeRig(`ownerlandingself${published ? "p" : "a"}`, {
+    const rig = await makeRig(`ownerlandingself${prefix.length}`, {
       configOverrides: {
         repository: {
           ...LOCAL_SENTINEL_REPO,
@@ -250,22 +349,10 @@ for (
       const outcome = await rig.run();
       assert.equal(outcome.status, "idle", JSON.stringify(outcome));
       const work = (await rig.snapshot()).work[0]!;
-      if (published) {
-        assert.equal(work.blocker, null, JSON.stringify(work.blocker));
-        assert.equal(work.nextStep, "review");
-        assert.deepEqual(work.ownerLanding?.paths, ["docs/private/"]);
-        assert.equal(rig.github.pushes.length, 1);
-      } else {
-        assert.equal(work.nextStep, "blocked");
-        assert.equal(
-          work.blocker?.message,
-          "candidate touches a protected path",
-        );
-        assert.equal(work.target.pr, null);
-        assert.equal(work.ownerLanding, undefined);
-        assert.equal(rig.github.pushes.length, 0, "nothing is pushed");
-        assert.ok(!rig.github.calls.includes("createPr"));
-      }
+      assert.equal(work.blocker, null, JSON.stringify(work.blocker));
+      assert.equal(work.nextStep, "review");
+      assert.deepEqual(work.ownerLanding?.paths, [prefix]);
+      assert.equal(rig.github.pushes.length, 1);
     } finally {
       await rig.ctx.cleanup();
     }

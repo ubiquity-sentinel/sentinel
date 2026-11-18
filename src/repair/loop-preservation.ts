@@ -1,3 +1,4 @@
+import { PUSH_GUARD_REFUSALS } from "../github/push-content-guard.ts";
 import {
   guardQueueOperation,
   holdQueueRecord,
@@ -16,6 +17,7 @@ import { hasTakeoverCustody } from "../github/existing-pr-takeover-provenance.ts
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
 import { persistWork } from "./loop-state.ts";
 import { preservationRefusalMessage } from "./pre-reservation-checks.ts";
+import { PUSH_WORKFLOWS_PERMISSION_DETAIL } from "../contracts/ports-github.ts";
 import type {
   LoopContextV1,
   RepairCycleDepsV1,
@@ -192,8 +194,13 @@ export async function executeCandidatePreservation(
           clearIntent(record, at),
           "other",
           // The unchanged refusal prefix plus the post-inference check that
-          // could not be evaluated before the turn (#333).
-          preservationRefusalMessage(preserved.error.detail),
+          // could not be evaluated before the turn (#333); GitHub's refusal
+          // of a workflow push for want of the App's `workflows` permission
+          // is named as the owner action it needs (2026-11-17).
+          preserved.error.detail === PUSH_WORKFLOWS_PERMISSION_DETAIL ||
+            PUSH_GUARD_REFUSALS.includes(preserved.error.detail)
+            ? preserved.error.detail
+            : preservationRefusalMessage(preserved.error.detail),
           at,
         ),
       );

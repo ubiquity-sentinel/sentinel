@@ -1,3 +1,5 @@
+import { recordPushGuard } from "./push-guard.ts";
+import { PUSH_GUARD_REFUSALS } from "../github/push-content-guard.ts";
 import { guardCiMinuteEffect } from "./loop-types.ts";
 import {
   holdQueueRecord,
@@ -51,6 +53,7 @@ import type {
 } from "./loop-types.ts";
 import {
   clearIntent,
+  markBlocked,
   markTerminalBlocked,
   setIntent,
   setWait,
@@ -487,7 +490,24 @@ export async function executeBaseRefreshIntent(
       preparedHead,
       record.target.head,
       authority.value,
+      recordPushGuard(deps, record, expectedBase),
     );
+    if (
+      !pushed.ok && pushed.error.kind === "invalid" &&
+      PUSH_GUARD_REFUSALS.includes(pushed.error.detail)
+    ) {
+      // The 2026-11-17 push guard: nothing was sent, a retry repeats it.
+      return persistWork(
+        deps,
+        context,
+        markBlocked(
+          clearIntent(durable, deps.clock.now()),
+          "other",
+          pushed.error.detail,
+          deps.clock.now(),
+        ),
+      );
+    }
     if (!pushed.ok && queueEffectRefused(pushed.error)) {
       return holdQueueRecord(
         deps,

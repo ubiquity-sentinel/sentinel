@@ -35,6 +35,12 @@ import { ensureBaseRefreshIntent } from "./loop-base-refresh.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
 import { gateDeliveryOnChecks } from "./loop-checks.ts";
 import { waitSince } from "./loop-ci-correction.ts";
+import { PRE_REVIEW_CI_BOUND_MS } from "./ci-first-policy.ts";
+import {
+  CHANGE_SET_UNREADABLE_PARK,
+  CHANGE_SET_WAIT_CAUSE,
+  headCiChange,
+} from "./ci-success-rule.ts";
 import { configFor, sameRepositoryIdentity } from "./loop-records.ts";
 import { waitRelease } from "./loop-release.ts";
 import { standingReviewAttempt } from "./loop-review-records.ts";
@@ -46,9 +52,10 @@ import { persistTransition, persistWork } from "./loop-state.ts";
 import {
   deliveryTaskRefusal,
   mergeIntentReceipt,
-  readDeliveryTaskContext,
+  readMergeTaskContext,
   semanticRefusalKind,
 } from "./loop-task-context.ts";
+import { AUTHOR_NOT_ADMITTED_PARK } from "./issue-admission.ts";
 import type {
   LoopContextV1,
   RepairCycleDepsV1,
@@ -268,9 +275,18 @@ export async function executeMerge(
   // adapter re-reads it again immediately before the mutation). A transient
   // read failure defers without a merge intent; different or unreadable
   // context fails the strict authorization below.
-  const mergeTask = await readDeliveryTaskContext(deps, record);
+  const mergeTask = await readMergeTaskContext(deps, record);
   if (mergeTask === "unavailable") {
     return { kind: "deferred", detail: "merge task context is unavailable" };
+  }
+  if (mergeTask === "not_admitted") {
+    // Owner directive 2026-11-17: no merge intent for an issue whose author
+    // Sentinel does not work for; parked uncharged for the owner.
+    return persistWork(
+      deps,
+      context,
+      markBlocked(record, "other", AUTHOR_NOT_ADMITTED_PARK, now),
+    );
   }
   // Surface the exact static semantic refusal (missing acceptance, changed
   // digest, wrong issue, non-fulfilled verdict) instead of the generic
@@ -581,6 +597,40 @@ export async function handleMergeOutcome(
     reason === "checks_pending" && record.intent?.kind === "merge" &&
     record.intent.selfMerge === undefined
   ) {
+    // 2026-11-18: the merge executor also holds `checks_pending` a head whose
+    // change set neither the mirror nor the comparison can list; the CI gate
+    // proceeds on such a head, so nothing else would end the wait. Its own
+    // 6-hour clock starts at the first such observation (the wait's existing
+    // `cause` marks it; an earlier ordinary CI wait's `since` never counts),
+    // and then it parks with that truthful reason.
+    if (await headCiChange(deps, record) === "unknown") {
+      const since = record.wait?.reason === "ci_pending" &&
+          record.wait.cause?.code === CHANGE_SET_WAIT_CAUSE.code &&
+          record.wait.since < now
+        ? record.wait.since
+        : now;
+      return persistWork(
+        deps,
+        context,
+        now - since >= PRE_REVIEW_CI_BOUND_MS
+          ? markBlocked(
+            clearIntent(record, now),
+            "other",
+            CHANGE_SET_UNREADABLE_PARK,
+            now,
+          )
+          : setWait(
+            clearIntent(record, now),
+            {
+              reason: "ci_pending",
+              since,
+              until: now + CHECK_POLL_MS,
+              cause: CHANGE_SET_WAIT_CAUSE,
+            },
+            now,
+          ),
+      );
+    }
     // Issue #189: the port refuses `checks_pending` only for an open,
     // unmerged pull request, so the intent binds no write. Clearing it into a
     // bounded `ci_pending` wait lets the pre-merge CI dispatcher (which

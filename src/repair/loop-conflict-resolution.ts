@@ -42,6 +42,10 @@ import { reconcileRefreshPublication } from "./loop-base-refresh.ts";
 import { MATRIX_IMPLEMENTATION_DEFERRED } from "./loop-bounds.ts";
 import { configFor } from "./loop-records.ts";
 import { protectedBeyondOwnerLanding } from "./owner-landing.ts";
+import {
+  UNTRUSTED_WORKFLOW_PARK,
+  workflowChangeTrust,
+} from "./workflow-trust.ts";
 import { legacyCutoff } from "./loop-review-round-cap.ts";
 import { persistWork, replaceWorkMutation } from "./loop-state.ts";
 import type {
@@ -211,7 +215,11 @@ export async function preserveConflictMerge(
   if (
     intent === null || mergeBase === null || head === null || pr === null ||
     publishedHead !== head || merged.head === head ||
-    protectedBeyondOwnerLanding(config, record, merged.changedPaths)
+    protectedBeyondOwnerLanding(config, record, merged.changedPaths) ||
+    // 2026-11-17: a resolution is model-written too; an untrusted source's
+    // CI-executable change is never preserved (the receipt parks it).
+    await workflowChangeTrust(deps, record, merged.changedPaths) ===
+      "untrusted"
   ) return null;
   const operationKey = baseRefreshIntentKey(pr, head, mergeBase);
   let preserved;
@@ -293,6 +301,20 @@ export async function handleConflictResolutionReceipt(
       context.bounds,
       replaceWorkMutation(
         markBlocked(record, "other", CONFLICT_PROTECTED_DETAIL, now),
+      ),
+    );
+  }
+  // 2026-11-17: the workflow-trust gate applies to a resolution exactly as
+  // to an implementation (an unreadable source waits at the push guard).
+  if (
+    await workflowChangeTrust(deps, record, merged.changedPaths) ===
+      "untrusted"
+  ) {
+    return persistAfterSettlement(
+      deps,
+      context.bounds,
+      replaceWorkMutation(
+        markBlocked(record, "other", UNTRUSTED_WORKFLOW_PARK, now),
       ),
     );
   }

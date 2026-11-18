@@ -291,6 +291,16 @@ export class FakeGitExecutor implements GitExecutorV1 {
   ambiguousAppliesEffect = false;
   /** When set, isAncestor always returns this value. */
   ancestryEvery: boolean | null = null;
+  /** The local base..head change set (2026-11-17 gates); none by default. */
+  changed: string[] | null = [];
+
+  changedPaths(_base: GitSha, _head: GitSha) {
+    return Promise.resolve(
+      this.changed === null
+        ? portError("unavailable", "changed path read failed")
+        : portOk([...this.changed]),
+    );
+  }
 
   readRemoteRef(ref: string): Promise<PortResultV1<GitSha | null>> {
     this.remoteReads.push({ ref });
@@ -597,7 +607,8 @@ export function issueWire(
     title: "an issue",
     body: "issue body",
     state: "open",
-    user: { login: "octocat" },
+    // The admitted owner (2026-11-17): login and numeric user id.
+    user: { login: "0x4007", id: 4975670 },
     labels: [{ name: "bug" }],
     created_at: "2026-09-07T00:00:00Z",
     updated_at: "2026-09-07T01:00:00Z",
@@ -896,6 +907,21 @@ export function makePort(
       ),
       repeat: true,
     },
+    // The merge executor's 2026-11-17 content gate reads the exact
+    // comparison: an ordinary fixture changes no protected or CI path.
+    ...[SHA1, SHA2, SHA3, SHA4].flatMap((base) =>
+      [SHA1, SHA2, SHA3, SHA4].filter((head) => head !== base).map((
+        head,
+      ) => ({
+        ...httpRespond(
+          "GET",
+          `/repos/${repository.owner}/${repository.name}/compare/${base}...${head}?per_page=1`,
+          200,
+          { files: [{ filename: "src/app.ts" }] },
+        ),
+        repeat: true,
+      }))
+    ),
   ]);
   const portOptions: GitHubPortOptionsV1 = {
     nativeQueue: options.nativeQueue === null

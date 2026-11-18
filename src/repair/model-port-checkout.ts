@@ -235,15 +235,19 @@ export class LocalCheckoutResolver implements CheckoutResolverV1 {
       "--untracked-files=all",
     ]);
     if (status === null || status.length !== 0) return null;
+    // NUL-separated raw paths (2026-11-17): without `-z` git C-quotes any
+    // path with a quote, backslash, control or non-ASCII byte
+    // (`".github/workflows/d\303\251ploy.yml"`), which no path predicate
+    // recognises. An unreadable listing is no candidate.
     const files = await this.git([
       "diff",
       "--no-renames",
       "--name-only",
+      "-z",
       `${this.baseSha}..${headSha}`,
     ]);
-    const changedPaths = files === null
-      ? []
-      : files.split("\n").filter((line) => line.trim().length > 0);
+    if (files === null) return null;
+    const changedPaths = files.split("\0").filter((path) => path.length > 0);
     const checkpoint = await this.git([
       "rev-parse",
       "--verify",

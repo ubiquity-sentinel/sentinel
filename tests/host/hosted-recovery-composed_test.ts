@@ -178,6 +178,7 @@ Deno.test("composed recovery: exact historical producer refusal restores its ori
       await runHostedOriginalCandidateRecoveryPass(f.context()),
       null,
     );
+    // A credential-path refusal needs no source read.
     assert.deepEqual(f.rig.github.calls, []);
   } finally {
     await f.rig.cleanup();

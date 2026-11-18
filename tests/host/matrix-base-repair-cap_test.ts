@@ -144,7 +144,8 @@ async function markedRig(
       body: `${baseRepairMarker("development", rig.base)}\n\nCI is failing.`,
       author: BASE_REPAIR_AUTHOR,
     }
-    : { ...issueRow(401), author: "someone" };
+    // An ordinary task: the admitted owner's issue (2026-11-17).
+    : { ...issueRow(401) };
   rig.github.latest.set(401, issue);
   return rig;
 }

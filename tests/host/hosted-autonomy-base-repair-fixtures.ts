@@ -11,6 +11,7 @@
  * the runtime gate's source reads (by default this checkout's own files, so
  * the installed runtime carries the base-repair CI-fix cap).
  */
+import { ownerIssueFacts } from "./hosted-autonomy-rig.ts";
 import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
@@ -296,6 +297,8 @@ export function fakeTarget(
     readIssueOpen: () => Promise.resolve(true),
     readIssueTask: () => Promise.resolve(null),
     readIssueOptedOut: () => Promise.resolve(false),
+    readIssueFacts: (number: number) =>
+      Promise.resolve(ownerIssueFacts(number)),
     merge: () => Promise.reject(new Error("nothing merges in these passes")),
     closeIssue: () => Promise.resolve(false),
     listParkedRuns: () => Promise.resolve([]),

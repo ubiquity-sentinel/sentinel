@@ -280,6 +280,25 @@ export interface HostedAutonomyGitHubV1 {
    */
   listPullFiles?(number: number): Promise<readonly string[] | null>;
   /**
+   * The job names GitHub Actions ran to `success` on the exact commit (the
+   * latest run of each name; never a commit status, a backup-CI stand-in or
+   * another app's check), sorted; null when the complete listing cannot be
+   * read. The 2026-11-17 rule for a pull request that changes a
+   * CI-executable path compares its head with its base; absent, that rule
+   * fails closed.
+   */
+  targetCiSuccessNames?(sha: string): Promise<readonly string[] | null>;
+  /**
+   * The heads of the most recently merged pull requests into `baseBranch`
+   * (the repository's default branch when absent), newest merge first: the
+   * reference of the 2026-11-18 CI rule (`src/github/merged-pull-heads.ts`,
+   * the runtime's exact query and parse); null when unreadable. Absent, the
+   * rule refuses.
+   */
+  mergedPullHeads?(
+    baseBranch?: string,
+  ): Promise<{ heads: readonly string[]; complete: boolean } | null>;
+  /**
    * True when the source issue is open, false when it is closed or missing,
    * null when that cannot be read. Only a definitive false stops a retry.
    */
@@ -294,6 +313,16 @@ export interface HostedAutonomyGitHubV1 {
    * also fails closed for issue-backed records.
    */
   readIssueTask?(number: number): Promise<ReviewTaskStatementV1 | null>;
+  /**
+   * The issue's number, text, state and author (login and numeric id), as the
+   * runtime's issue read parses them; null when unreadable or absent. Read by
+   * the launcher's admission gate (`hosted-autonomy-pull-file-gates.ts`).
+   */
+  readIssueFacts?(
+    number: number,
+  ): Promise<
+    import("./hosted-autonomy-issue-facts.ts").HostedIssueFactsV1 | null
+  >;
   /** Exact current source opt-out projection; null/absent cannot authorize gateway closure. */
   readIssueOptedOut?(number: number): Promise<boolean | null>;
   /**

@@ -321,13 +321,15 @@ Deno.test({
         ["advanced", {}],
         ["incomplete session", { failed: true }],
         ["never started", { notStarted: true }],
-        ["protected path", {
-          extra: { "src/handler.ts": "export const handled = true;\n" },
-        }],
+        // 2026-11-17: on a target only a credential path is still refused.
+        ["protected path", { extra: { ".env": "MODE=resolved\n" } }],
       ];
       for (const [name, options] of cases) {
         await t.step(name, async () => {
           const rig = await hostedConflictRig();
+          if (name === "protected path") {
+            rig.hosted.configs[0].protectedPaths.push(".env");
+          }
           try {
             await resolveHosted(rig, options);
             rig.hosted.clock.advance(60_000);

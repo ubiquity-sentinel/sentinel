@@ -92,7 +92,13 @@ export async function commitIn(
   return rev.stdout.trim() as GitSha;
 }
 
-export async function makeCandidateCtx(): Promise<CandidateCtxV1> {
+/**
+ * The fixture: `base` on `development`, and a candidate commit adding
+ * `candidate.txt`, or exactly `files` when given.
+ */
+export async function makeCandidateCtx(
+  options: { files?: Record<string, string> } = {},
+): Promise<CandidateCtxV1> {
   const tmp = await Deno.makeTempDir({
     prefix: "sentinel-candidates-",
     dir: ROOT,
@@ -114,7 +120,21 @@ export async function makeCandidateCtx(): Promise<CandidateCtxV1> {
       (await gitRun(work, ["push", "-q", "origin", "development"], env)).ok,
     );
     assert.ok((await gitRun(work, ["checkout", "-q", "-b", BRANCH], env)).ok);
-    const head = await commitIn(work, env, "candidate");
+    if (options.files !== undefined) {
+      for (const [path, text] of Object.entries(options.files)) {
+        const dir = path.slice(0, Math.max(0, path.lastIndexOf("/")));
+        if (dir !== "") await Deno.mkdir(`${work}/${dir}`, { recursive: true });
+        await Deno.writeTextFile(`${work}/${path}`, text);
+      }
+      assert.ok((await gitRun(work, ["add", "-A"], env)).ok);
+      assert.ok(
+        (await gitRun(work, ["commit", "-q", "-m", "candidate"], env)).ok,
+      );
+    }
+    const head = options.files === undefined
+      ? await commitIn(work, env, "candidate")
+      : (await gitRun(work, ["rev-parse", "HEAD"], env)).stdout
+        .trim() as GitSha;
     assert.ok(
       (await gitRun(
         work,

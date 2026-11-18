@@ -63,39 +63,39 @@ export function renderProtectedPaths(paths: readonly string[]): string {
 }
 
 /**
- * The never-published sentence (2026-11-17): of the configured prefixes, the
- * ones the publication gate refuses outright (`unpublishablePath`, the same
- * predicate `ownerLandingTouch` parks with: CI-executable paths and
- * Sentinel's authority files). A candidate changing one is parked
- * `candidate touches a protected path` without being pushed (ai.ubq.fi 1370
- * attempt 2 changed `.github/workflows/deno-deploy.yml`; sentinel #177
- * re-parked the same way after its owner retry), and the sentence above
- * invited that in-place change for these prefixes too. This one keeps the
- * in-place rule: no incidental change, a solution outside them where one
- * exists, and otherwise the minimal, complete change, parked for the
- * repository owner to make. It never asks for no change, for a candidate
- * without the needed protected part, or for a final-response report: a
- * compliant no-change run costs more charges and loses the park's protected
- * signal (2026-10-25 withdrawal; 2026-11-17 review). Same bounds as the
- * configured list; empty when no configured prefix is never published, so
- * such a prompt is byte-identical to the earlier one.
+ * The credential sentence (owner directive 2026-11-17, "give sentinel full
+ * access"): of the configured prefixes, the ones the publication gate still
+ * refuses outright (`unpublishablePath`, the same predicate
+ * `ownerLandingTouch` parks with: credential and history paths), then the
+ * truthful rule for every other listed prefix, which the sentence above
+ * describes as parked for the owner. On a target that is no longer so: such a
+ * change is published as an ordinary pull request through the same CI and
+ * native review gates (on Sentinel's own repository, which configures no
+ * credential prefix and so never renders this sentence, its owner still
+ * merges it). It keeps the in-place rule and "never incidentally", and never
+ * asks for no change, for a candidate without the needed protected part, or
+ * for a final-response report (2026-10-25 withdrawal; 2026-11-17 review).
+ * Same bounds as the configured list; empty when no configured prefix is a
+ * credential prefix, so the template digest (whose placeholder prefix is
+ * `protected/`) and such a prompt are byte-identical to the earlier ones.
  */
 export function renderNeverPublishedPaths(paths: readonly string[]): string {
   const unique = [...new Set(paths)].filter(unpublishablePath).sort();
   if (unique.length === 0) return "";
   const { named, rest } = boundedPrefixes(unique);
-  return " Of those, a change under any of these prefixes is never " +
-    `published (sorted): ${named}` +
+  return " Of those, a change under any of these credential prefixes is " +
+    `never published (sorted): ${named}` +
     (rest === 0
       ? ""
       : ` (and ${rest} more never-published prefix${
         rest === 1 ? "" : "es"
       } not listed here)`) +
-    ". Never change these incidentally, and prefer a solution that does not " +
-    "touch them. Change one only when the task cannot be solved otherwise: " +
-    "such a candidate is parked unpublished and the repository owner must " +
-    "make that change themselves, so keep the change under these prefixes " +
-    "minimal and complete.";
+    "; never change or create a file under them. On this repository a " +
+    "change to any other listed prefix is not parked: it is published as " +
+    "an ordinary pull request and must pass the same CI and review gates as " +
+    "any other change, so never change one incidentally, prefer a solution " +
+    "that does not touch it, and when the task needs it make the minimal, " +
+    "complete change in place.";
 }
 
 /** Sorted prefixes JSON-quoted within the prompt bounds, and the rest. */

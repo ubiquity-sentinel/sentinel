@@ -19,6 +19,7 @@
  */
 
 import { asGitSha } from "../contracts/brands.ts";
+import { issueAuthorFacts } from "./wire-issue-author.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import type {
   GitHubBranchProtectionsV1,
@@ -141,6 +142,8 @@ export function parseIssueWire(
       body,
       state,
       author,
+      // The author's id and association (`wire-issue-author.ts`).
+      ...issueAuthorFacts(obj),
       labels,
       createdAt,
       updatedAt,

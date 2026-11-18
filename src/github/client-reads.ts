@@ -6,6 +6,7 @@ import type {
   GitHubPullRequestV1,
   GitHubRefV1,
   GitHubReviewDecisionV1,
+  MergedPullHeadsV1,
   PortResultV1,
 } from "../contracts/ports.ts";
 import {
@@ -39,6 +40,11 @@ import { GitHubClientChecks } from "./client-checks.ts";
 import { parseWire, parseWith, repoPath } from "./client-response.ts";
 import { REVIEW_DECISION_QUERY } from "./client-issue-wire.ts";
 import { readPassportBaseReviewChecks } from "./base-review-ci.ts";
+import {
+  collectMergedPullHeads,
+  mergedPullsQuery,
+} from "./merged-pull-heads.ts";
+import { comparedPaths } from "./changed-paths-read.ts";
 export {
   MAX_WORKFLOW_EVENT_READS,
   PENDING_STATUS_GRACE_MS,
@@ -219,6 +225,54 @@ export abstract class GitHubClientReads extends GitHubClientChecks {
       return portError("invalid", "GitHub API response is malformed");
     }
     return portOk(parsed.value);
+  }
+
+  /**
+   * The paths one exact `base...head` comparison changes (a rename's previous
+   * path included); null when either commit is unknown or GitHub may not have
+   * listed every file (a comparison lists at most `COMPARE_FILES_MAX`). One
+   * request: `per_page=1` bounds the commit list, never the file list.
+   */
+  async readChangedPaths(
+    base: GitSha,
+    head: GitSha,
+  ): Promise<PortResultV1<string[] | null>> {
+    if (!isGitSha(base) || !isGitSha(head)) {
+      return portError("invalid", "commit SHA is invalid");
+    }
+    const response = await this.request(
+      "GET",
+      `/repos/${
+        repoPath(this.repository)
+      }/compare/${base}...${head}?per_page=1`,
+    );
+    if (!response.ok) return response;
+    if (response.value.status === 404) return portOk(null);
+    return parseWire(response.value, comparedPaths);
+  }
+
+  /**
+   * The heads of the (up to five) most recently merged pull requests into
+   * `baseRef`, newest merge first, proven from the update-sorted listing
+   * (`merged-pull-heads.ts`: the launcher's exact query and proof); an
+   * unreadable or unproven listing is `unavailable`.
+   */
+  async readMergedPullHeads(
+    baseRef: string,
+  ): Promise<PortResultV1<MergedPullHeadsV1>> {
+    const proven = await collectMergedPullHeads(async (page) => {
+      const response = await this.request(
+        "GET",
+        `/repos/${repoPath(this.repository)}/pulls`,
+        mergedPullsQuery(baseRef, page),
+      );
+      if (!response.ok || response.value.status !== 200) return null;
+      const parsed = parseWire(response.value, (value) => value);
+      return parsed.ok ? parsed.value : null;
+    }, baseRef);
+    return proven === null
+      ? portError("unavailable", "merged pull requests unproven")
+      : portOk(proven);
   }
 
   /** The exact parents of one commit, in order; null when it does not exist. */

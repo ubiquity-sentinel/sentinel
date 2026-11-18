@@ -34,12 +34,13 @@ import {
   type TargetTreeFactsV1,
 } from "../host/target-policy-generic.ts";
 
-/** The first body line every owner-action issue carries (intake skips it). */
-export const SENTINEL_SKIP_MARKER = "<!-- sentinel:skip -->";
+import {
+  SENTINEL_SKIP_MARKER,
+  TARGET_CAPABILITY_ISSUE_MARKER,
+} from "./trust-markers.ts";
 
-/** Second body line: identifies Sentinel's capability issue. */
-export const TARGET_CAPABILITY_ISSUE_MARKER =
-  "<!-- sentinel:target-capability -->";
+// The markers live in the owner-merged `trust-markers.ts` (2026-11-18).
+export { SENTINEL_SKIP_MARKER, TARGET_CAPABILITY_ISSUE_MARKER };
 
 /** Launcher-only owner-action issue reads/writes in ONE target repository. */
 export interface TargetCapabilityIssuesV1 {
