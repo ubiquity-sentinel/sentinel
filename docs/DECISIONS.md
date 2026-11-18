@@ -5609,7 +5609,7 @@ changes. Store: commit files, `calibration.json` and suspensions keep their
 shapes; new files (`checks.json`, `enrolment.json`, `calibration-legs.json`) are
 never read by older code, so a reverted runtime ignores them.
 
-## 2026-11-18: the backup CI false green was a comparison defect; a new runner revision
+## 2026-11-18: the backup CI false green is not yet explained; a held runner revision
 
 Owner, 2026-11-18 (verbatim): "actions minutes restore next month so stop
 asking about it" and "should be falling back to the other org to run the ci as
@@ -5629,25 +5629,35 @@ source of CI evidence for `ubiquity/*` targets (22 Prospector PRs, job
   exclusion stops planning before enrolment, so no target (Prospector
   included) was enrolled, shape-checked or sampled, and the store holds no
   `v1/ubiquity/prospector/` file.
-- Verdict: a proven Sentinel-side comparison defect, not a real disagreement.
-  The suspension's native check run 125012919402 belongs to a `push` suite;
-  the leg was a `pull_request` unit on the synthetic merge of `1cfa6ad6` into
-  `7003bfe6` (store commit file: parents `7003bfe6`, `1cfa6ad6`, tree
-  `e5506a13`). The 2026-11-17 rule (MUST 2) counts a comparison only for the
-  unit's own event and counts a false green unless the event or base provably
-  differs; the event provably differs. Native step 9 is the job's eighth step,
-  "Validate all retained and native runtimes", which leg job 125021026580 ran
-  and passed. Not provable from Sentinel's data: whether `7003bfe6` is an
-  ancestor of `1cfa6ad6` (then the trees were equal and only the event
-  differed) and how the native `pull_request` run of `deno` on that head
-  concluded (neither is stored; both need the target token).
-- Remedy, the last commit of this change: `BACKUP_CI_LEG_REVISION` 2 to 3, so
-  the runner id becomes `ea2aacfd1f033045`. The new runner starts
-  uncalibrated and calibrates per check under the current rules (five
-  commits, a green and a red genuine agreement, same event and bound base).
-  The old runner stays excluded by its suspension and its `falseGreens: 1`
-  row; no suspension or row is edited, and one false green of the new runner
-  excludes it everywhere again.
+- Verdict (corrected in review): not yet explained. The suspension's native
+  check run 125012919402 belongs to a `push` suite and the leg was a
+  `pull_request` unit (store commit file: parents `7003bfe6`, `1cfa6ad6`), but
+  the leg's synthetic merge carries the head's own tree
+  (`syntheticMerge` in `ops/backup-ci-materialize.ts`), so both tested the
+  same tree of `1cfa6ad6`. Native step 9, the job's eighth step "Validate all
+  retained and native runtimes", failed on push; the leg ran it and it passed
+  (leg job 125021026580). Event dependence, a flake and an environment
+  difference are not yet separated. Decision rule, from the native
+  `pull_request` run of `deno` on `1cfa6ad6` that probe version 2 reports:
+  it passed step 9, or never started, then the bump is justified; it failed at
+  step 9, then do not bump (the leg missed a genuine failure on that tree).
+- Remedy, prepared and held: `BACKUP_CI_LEG_REVISION` 2 to 3 (runner id
+  `ea2aacfd1f033045`) is a separate commit that is not installed with this
+  change. Installed only under the rule above, the new runner starts
+  uncalibrated and calibrates per check under the current rules; the old
+  runner stays excluded by its suspension and its `falseGreens: 1` row; no
+  suspension or row is edited, and one false green of a runner excludes it
+  everywhere again.
+- Probe version 2: while the runner is excluded the probe also reports, as
+  closed facts, the native `pull_request`-event runs of the same check on the
+  evidence commit (at most three: started, conclusion, failing step number,
+  the merge base their checkout logged; the workflow blob of those runs is in
+  no listing the probe reads). `probe.json` becomes version 2; a stored
+  version 1 answer is read once more and replaced, then replayed.
+- Only this launcher's runner may stand in: the supervisor derives the
+  current runner as the trusted pass does (committed pins and leg revision),
+  the store reader puts it on every read, and the stand-in rule refuses a
+  receipt of any other runner with the closed code `runner_retired`.
 - Fixed with it: 90917aaad6 (visibility re-read every pass) refused every
   private answer, so Passport, private by the 2026-10-23 acceptance recorded
   as its committed id, would get no leg; seven plan-commit and pipeline cases
@@ -5680,6 +5690,10 @@ source of CI evidence for `ubiquity/*` targets (22 Prospector PRs, job
   calibration. Which input is not stored; the plan of a new head logs
   `checkout_input=<code>`. No stand-in until the leg can reproduce that input
   or the workflow drops it.
+- Supervisor cost once store files exist for Prospector heads: each CI read
+  of such a head takes three listings (the `filter=all` check runs and the
+  workflow runs, both reused for 60 s per process, and the commit statuses,
+  always fresh), about 66 for 22 heads on a cold cycle. No code change.
 - Prospector `validation`: the row has `id: null`; first enrolment happens on
   the first pass with demand and a free leg slot, once the runner is not
   excluded. Its workflow shape, visibility and native history are not yet
@@ -5688,8 +5702,11 @@ source of CI evidence for `ubiquity/*` targets (22 Prospector PRs, job
   stand-in, from native runs within three pages that started; the never
   started runs of the outage are skipped without a read.
 
-Rollback: revert the commits in reverse order; reverting the last commit
-returns the excluded runner, which plans nothing. Store: no file changes
+Rollback: revert the commits in reverse order. Once the current-runner gate
+is installed, reverting a revision or pin bump leaves the newer runner's
+receipts inert by code (`runner_retired`); reverting below that gate needs an
+operator suspension of the newer runner, because older readers check neither
+the current runner nor the definition. Store: no file changes
 shape; `v1/<owner>/<repo>/probe.json` and `v1/<owner>/<repo>/check-defs.json`
 are new and older code never reads them (a reverted reader ignores the
 definitions and keeps its per-check gate).
