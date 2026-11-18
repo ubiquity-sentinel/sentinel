@@ -1,3 +1,6 @@
+import type { HostedIssueFactsV1 } from "../../ops/hosted-autonomy-issue-facts.ts";
+import type { HostedAutonomyGitHubV1 } from "../../ops/hosted-autonomy-types.ts";
+import { ownerIssueFacts } from "./hosted-autonomy-rig.ts";
 import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import { parseRepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import type {
@@ -34,6 +37,9 @@ export function nativeEntry(): QueueEntry {
   };
 }
 export async function orchestrationRig() {
+  let issueFacts:
+    | ((number: number) => Partial<HostedIssueFactsV1> | null)
+    | undefined;
   const proof = await queueProofFacts();
   const state = new MemoryState();
   state.repairHead = SHA1;
@@ -146,7 +152,13 @@ export async function orchestrationRig() {
     state,
     queue,
     clock: { now: () => now },
-    githubFor: () => null,
+    // The admission gate's source-issue read (2026-11-17): the owner by
+    // default; `issueFacts` overrides it.
+    githubFor: () =>
+      ({
+        readIssueFacts: (number: number) =>
+          Promise.resolve(ownerIssueFacts(number, issueFacts)),
+      }) as unknown as HostedAutonomyGitHubV1,
   };
   // The runner's release gate sees a terminal, immutable healthy-runtime fixture.
   state.setRelease({
@@ -170,6 +182,12 @@ export async function orchestrationRig() {
     now: () => now,
     advance: (ms: number) => {
       now += ms;
+    },
+    /** Override the source issue's facts the admission gate reads. */
+    setIssueFacts: (
+      facts: (number: number) => Partial<HostedIssueFactsV1> | null,
+    ) => {
+      issueFacts = facts;
     },
     member: (value: typeof member) => {
       member = value;

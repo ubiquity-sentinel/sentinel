@@ -658,3 +658,41 @@ Deno.test("queue dequeue: a competing head after marker readback revokes mutatio
   );
   assert.equal(f.state.repair!.work[0].wait?.until, null);
 });
+
+Deno.test("queue admission (2026-11-17): another author's, a wrong-id or an unreadable issue is never enqueued, nothing written", async (t) => {
+  for (
+    const [name, facts, enqueued] of [
+      [
+        "the owner's issue enqueues",
+        { author: "0x4007", authorId: 4975670 },
+        1,
+      ],
+      ["the App's issue enqueues", { author: "ubiquity-sentinel[bot]" }, 1],
+      ["another author's issue", { author: "someone-else", authorId: 9 }, 0],
+      [
+        "the owner's login with another id",
+        { author: "0x4007", authorId: 1 },
+        0,
+      ],
+      ["an unreadable author", null, 0],
+    ] as const
+  ) {
+    await t.step(name, async () => {
+      const f = await orchestrationRig();
+      f.queue.config.mode = "on";
+      f.rules({ status: "complete", value: true });
+      f.setIssueFacts(() => facts);
+      f.onEnqueue(() => f.join());
+      const before = structuredClone(f.state.repair);
+      await runHostedQueueCustody(f.deps, f.now() + 60000);
+      assert.equal(
+        f.calls.filter((call) => call === "enqueue").length,
+        enqueued,
+        name,
+      );
+      if (enqueued === 0) {
+        assert.deepEqual(f.state.repair, before, `${name}: nothing written`);
+      }
+    });
+  }
+});
