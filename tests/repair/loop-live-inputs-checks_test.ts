@@ -36,7 +36,10 @@ function network(clock: FakeClock) {
     try {
       await new Promise<void>((resolve) => {
         if (pending.length === 0) {
-          queueMicrotask(() => {
+          queueMicrotask(async () => {
+            // Let ready port/HTTP continuations settle before advancing time;
+            // additional promise wrappers are not extra network round trips.
+            for (let i = 0; i < 100; i++) await Promise.resolve();
             clock.advance(3_000);
             for (const resume of pending.splice(0)) resume();
           });

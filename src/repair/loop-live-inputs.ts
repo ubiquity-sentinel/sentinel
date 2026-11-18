@@ -26,6 +26,8 @@ import type { RepairCycleDepsV1, RunBoundsV1 } from "./loop-types.ts";
 
 /** Read-only repository batches or fallback records in flight; effects stay serial. */
 const LIVE_INPUT_READ_CONCURRENCY = 4;
+/** Keep the existing eight-read bound, but do not tie slots to whole records. */
+const FALLBACK_READ_CONCURRENCY = 2 * LIVE_INPUT_READ_CONCURRENCY;
 
 /** One record's normalized live inputs. */
 export interface RecordLiveInputsV1 {
@@ -79,6 +81,8 @@ export class PassLiveInputs {
     string,
     Promise<GitSha | null | "failed">
   >();
+  private fallbackReads = 0;
+  private readonly fallbackWaiters: (() => void)[] = [];
   readonly metrics: LiveInputMetricsV1 = {
     batchReads: 0,
     batchUnavailable: 0,
@@ -144,6 +148,11 @@ export class PassLiveInputs {
 
   /** A failed batch must not turn a hot tier into serial network round trips. */
   private async primeFallback(records: readonly WorkRecordV1[]): Promise<void> {
+    // PR/check chains need more records to fill the same request budget;
+    // issue-only repositories retain their existing four-read width.
+    const concurrency = records.some((record) => pullNumber(record) !== null)
+      ? FALLBACK_READ_CONCURRENCY
+      : LIVE_INPUT_READ_CONCURRENCY;
     let next = 0;
     const worker = async () => {
       while (
@@ -155,10 +164,29 @@ export class PassLiveInputs {
     };
     await Promise.all(
       Array.from(
-        { length: Math.min(LIVE_INPUT_READ_CONCURRENCY, records.length) },
+        { length: Math.min(concurrency, records.length) },
         worker,
       ),
     );
+  }
+
+  /** Transfer a slot only after its read settles, including throws. */
+  private async readFallback<T>(read: () => Promise<T>): Promise<T> {
+    if (this.fallbackReads < FALLBACK_READ_CONCURRENCY) {
+      this.fallbackReads++;
+    } else {
+      await new Promise<void>((resolve) => this.fallbackWaiters.push(resolve));
+    }
+    try {
+      if (this.deps.clock.now() >= this.bounds.runDeadline) {
+        throw new Error("live input read deadline elapsed");
+      }
+      return await read();
+    } finally {
+      const next = this.fallbackWaiters.shift();
+      if (next === undefined) this.fallbackReads--;
+      else next();
+    }
   }
 
   private async readRepository(
@@ -270,29 +298,33 @@ export class PassLiveInputs {
     try {
       const baseTip = await this.fallbackTip(record, config.baseBranch);
       if (baseTip === "failed") return null;
-      // Issue state and the PR/check chain are independent. Overlap them
-      // inside each of the four record slots (at most eight API reads), but
-      // drain both even after a throw so a failed read cannot leak a slot.
+      // Issue state and the PR/check chain are independent. Bound individual
+      // reads, not whole records: a finished issue read frees capacity for
+      // another chain. Drain both even after a throw; no read may leak a slot.
       const [issue, pull] = await Promise.allSettled([
         (async (): Promise<RecordLiveInputsV1["issue"] | undefined> => {
           if (record.related.issueNumber === null) return "none";
-          const read = await this.deps.github.readIssue(
-            record.related.issueNumber,
+          const number = record.related.issueNumber;
+          const read = await this.readFallback(() =>
+            this.deps.github.readIssue(number)
           );
           return read.ok ? read.value?.state ?? null : undefined;
         })(),
         (async (): Promise<RecordLiveInputsV1["pull"] | undefined> => {
           const number = pullNumber(record);
           if (number === null) return "none";
-          const read = await this.deps.github.readPullRequest(number);
+          const read = await this.readFallback(() =>
+            this.deps.github.readPullRequest(number)
+          );
           if (!read.ok) return undefined;
           if (read.value === null) return null;
           // Advisory fingerprint only; the step's CI gate reads its own full
           // evidence. Do not fan out into Actions jobs or backup-CI artifacts.
-          const checks = await this.deps.github.readChecks(
-            read.value.head,
-            undefined,
-            { liveInputsOnly: true },
+          const head = read.value.head;
+          const checks = await this.readFallback(() =>
+            this.deps.github.readChecks(head, undefined, {
+              liveInputsOnly: true,
+            })
           );
           if (!checks.ok) return undefined;
           return {
@@ -330,7 +362,9 @@ export class PassLiveInputs {
     // Cache the in-flight read too: concurrent fallback records share the
     // same repository/branch observation, including a failed observation.
     const tip = (async () => {
-      const read = await this.deps.github.readRef(`refs/heads/${branch}`);
+      const read = await this.readFallback(() =>
+        this.deps.github.readRef(`refs/heads/${branch}`)
+      );
       return read.ok ? read.value?.sha ?? null : "failed" as const;
     })();
     this.fallbackTips.set(key, tip);
