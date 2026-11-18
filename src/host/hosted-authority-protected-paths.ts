@@ -67,6 +67,15 @@ export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
     "src/github/git-executor.ts",
     "src/host/actions-candidates-preserve.ts",
     "src/repair/ci-success-rule.ts",
+    // 2026-11-18: the small modules that define the rules' remaining inputs
+    // (the capability notice's trust markers, the CI rule's merged-head
+    // listing and the change-set reader). The large files that call them
+    // (`target-capability.ts`, `client-reads.ts`, `port-base.ts`) and the
+    // admission callers in the repair loop stay ordinary: the merge executor
+    // (`port-merge.ts`) re-checks admission on its own issue read.
+    "src/repair/trust-markers.ts",
+    "src/github/merged-pull-heads.ts",
+    "src/github/changed-paths-read.ts",
     "src/github/merge-content-gate.ts",
     "src/github/port-self-merge.ts",
     "ops/hosted-autonomy-pull-file-gates.ts",

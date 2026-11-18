@@ -41,6 +41,7 @@ import { parseWire, parseWith, repoPath } from "./client-response.ts";
 import { REVIEW_DECISION_QUERY } from "./client-issue-wire.ts";
 import { readPassportBaseReviewChecks } from "./base-review-ci.ts";
 import { mergedPullsQuery, parseMergedPullHeads } from "./merged-pull-heads.ts";
+import { comparedPaths } from "./changed-paths-read.ts";
 export {
   MAX_WORKFLOW_EVENT_READS,
   PENDING_STATUS_GRACE_MS,
@@ -48,9 +49,6 @@ export {
 
 /** Parents one commit may list (a merge has two; octopus merges more). */
 const COMMIT_PARENTS_MAX = 64;
-
-/** Files one comparison lists at most; a full list may be truncated. */
-const COMPARE_FILES_MAX = 300;
 
 export abstract class GitHubClientReads extends GitHubClientChecks {
   /** Host-authored base-review jobs; unrelated supervisor jobs are not task CI. */
@@ -247,28 +245,7 @@ export abstract class GitHubClientReads extends GitHubClientChecks {
     );
     if (!response.ok) return response;
     if (response.value.status === 404) return portOk(null);
-    return parseWire(response.value, (value) => {
-      const files = expectRecord(value, "$").files;
-      if (files === undefined) return [];
-      const paths = expectArray(
-        files,
-        "$.files",
-        COMPARE_FILES_MAX,
-        (item, path) => {
-          const file = expectRecord(item, path);
-          const named = [file.filename, file.previous_filename].filter((
-            name,
-          ) => name !== undefined && name !== null);
-          for (const name of named) {
-            if (typeof name !== "string" || name.length === 0) {
-              fail(`${path}.filename`, "wrong_type", "expected a file path");
-            }
-          }
-          return named as string[];
-        },
-      );
-      return paths.length >= COMPARE_FILES_MAX ? null : paths.flat();
-    });
+    return parseWire(response.value, comparedPaths);
   }
 
   /**
