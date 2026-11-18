@@ -63,6 +63,18 @@ export const WORKFLOW_CI_SUCCESS_DETAIL =
 export const CHANGE_SET_UNREADABLE_PARK =
   "change set unreadable; owner action required";
 
+/**
+ * The existing wait `cause` that marks such a hold, so its own 6-hour clock
+ * starts at the first unreadable observation, never at an earlier CI wait.
+ */
+export const CHANGE_SET_WAIT_CAUSE = Object.freeze(
+  {
+    port: "github",
+    status: "unknown",
+    code: "change_set",
+  } as const,
+);
+
 /** Merged pull requests whose successes the reference unites (the listing's). */
 export const CI_REFERENCE_PULLS_MAX = MERGED_PULLS_WANTED;
 

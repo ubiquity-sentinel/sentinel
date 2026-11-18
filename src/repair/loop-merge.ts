@@ -36,7 +36,11 @@ import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
 import { gateDeliveryOnChecks } from "./loop-checks.ts";
 import { waitSince } from "./loop-ci-correction.ts";
 import { PRE_REVIEW_CI_BOUND_MS } from "./ci-first-policy.ts";
-import { CHANGE_SET_UNREADABLE_PARK, headCiChange } from "./ci-success-rule.ts";
+import {
+  CHANGE_SET_UNREADABLE_PARK,
+  CHANGE_SET_WAIT_CAUSE,
+  headCiChange,
+} from "./ci-success-rule.ts";
 import { configFor, sameRepositoryIdentity } from "./loop-records.ts";
 import { waitRelease } from "./loop-release.ts";
 import { standingReviewAttempt } from "./loop-review-records.ts";
@@ -595,21 +599,36 @@ export async function handleMergeOutcome(
   ) {
     // 2026-11-18: the merge executor also holds `checks_pending` a head whose
     // change set neither the mirror nor the comparison can list; the CI gate
-    // proceeds on such a head, so nothing else would end the wait. After the
-    // 6-hour CI bound it parks with that truthful reason, read once more.
-    if (
-      now - waitSince(record, "ci_pending", now) >= PRE_REVIEW_CI_BOUND_MS &&
-      await headCiChange(deps, record) === "unknown"
-    ) {
+    // proceeds on such a head, so nothing else would end the wait. Its own
+    // 6-hour clock starts at the first such observation (the wait's existing
+    // `cause` marks it; an earlier ordinary CI wait's `since` never counts),
+    // and then it parks with that truthful reason.
+    if (await headCiChange(deps, record) === "unknown") {
+      const since = record.wait?.reason === "ci_pending" &&
+          record.wait.cause?.code === CHANGE_SET_WAIT_CAUSE.code &&
+          record.wait.since < now
+        ? record.wait.since
+        : now;
       return persistWork(
         deps,
         context,
-        markBlocked(
-          clearIntent(record, now),
-          "other",
-          CHANGE_SET_UNREADABLE_PARK,
-          now,
-        ),
+        now - since >= PRE_REVIEW_CI_BOUND_MS
+          ? markBlocked(
+            clearIntent(record, now),
+            "other",
+            CHANGE_SET_UNREADABLE_PARK,
+            now,
+          )
+          : setWait(
+            clearIntent(record, now),
+            {
+              reason: "ci_pending",
+              since,
+              until: now + CHECK_POLL_MS,
+              cause: CHANGE_SET_WAIT_CAUSE,
+            },
+            now,
+          ),
       );
     }
     // Issue #189: the port refuses `checks_pending` only for an open,

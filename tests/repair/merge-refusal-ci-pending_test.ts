@@ -17,7 +17,10 @@ import { CHECK_POLL_MS } from "../../src/repair/loop-bounds.ts";
 import { DurableGitHubCooldownGate } from "../../src/repair/github-cooldown.ts";
 import { handleMergeOutcome } from "../../src/repair/loop-merge.ts";
 import { PRE_REVIEW_CI_BOUND_MS } from "../../src/repair/ci-first-policy.ts";
-import { CHANGE_SET_UNREADABLE_PARK } from "../../src/repair/ci-success-rule.ts";
+import {
+  CHANGE_SET_UNREADABLE_PARK,
+  CHANGE_SET_WAIT_CAUSE,
+} from "../../src/repair/ci-success-rule.ts";
 import { pendingPremergeRecords } from "../../src/host/actions-premerge-ci.ts";
 import { REPO, SHA1, SHA2, T0, workRecord } from "../state/helpers.ts";
 import { FakeClock, FakeGithub, MemoryState } from "./helpers.ts";
@@ -120,34 +123,45 @@ Deno.test("merge refusal: a conflict refusal keeps the merge intent and backoff"
   assert.equal(row.wait?.reason, "backoff");
 });
 
-Deno.test("merge refusal (third review D3): a held head whose change set stays unreadable parks after the 6-hour bound, truthfully", async () => {
-  const late = T0 + PRE_REVIEW_CI_BOUND_MS + 1;
-  const waiting = merging({
+Deno.test("merge refusal (third review D3): a held head whose change set stays unreadable parks 6 hours after the FIRST unreadable observation", async () => {
+  // The head already waited 7 hours for its CI (an ordinary ci_pending wait).
+  const late = T0 + 7 * 60 * 60 * 1000;
+  const waitedForCi = merging({
     wait: { reason: "ci_pending", since: T0, until: T0 + 1 },
   });
-  const parked = await refuse(
-    waiting,
+  const unreadable = () => new FakeGithub({ changedPaths: "unavailable" });
+  const first = await refuse(waitedForCi, "checks_pending", unreadable(), late);
+  assert.equal(first.nextStep, "delivery", "the first observation waits");
+  assert.equal(first.wait?.since, late, "its own clock starts now");
+  assert.equal(first.wait?.cause?.code, CHANGE_SET_WAIT_CAUSE.code);
+  // Still unreadable within the bound: keeps its own since and waits.
+  const again = await refuse(
+    merging({ wait: first.wait }),
     "checks_pending",
-    new FakeGithub({ changedPaths: "unavailable" }),
-    late,
+    unreadable(),
+    late + PRE_REVIEW_CI_BOUND_MS - 1,
+  );
+  assert.equal(again.wait?.since, late);
+  assert.equal(again.blocker, null);
+  // Six hours after the first unreadable observation: parks, truthfully.
+  const parked = await refuse(
+    merging({ wait: again.wait }),
+    "checks_pending",
+    unreadable(),
+    late + PRE_REVIEW_CI_BOUND_MS,
   );
   assert.equal(parked.nextStep, "blocked");
   assert.equal(parked.intent, null);
   assert.equal(parked.blocker?.message, CHANGE_SET_UNREADABLE_PARK);
-  // A readable change set (the hold was for something else) keeps waiting.
+  // A readable change set (the hold was for something else) keeps the
+  // ordinary wait and its earlier since.
   const readable = await refuse(
-    waiting,
+    waitedForCi,
     "checks_pending",
     new FakeGithub({ changedPaths: ["src/app.ts"] }),
     late,
   );
   assert.equal(readable.wait?.reason, "ci_pending");
+  assert.equal(readable.wait?.since, T0);
   assert.equal(readable.blocker, null);
-  // Within the bound an unreadable change set keeps waiting too.
-  const early = await refuse(
-    waiting,
-    "checks_pending",
-    new FakeGithub({ changedPaths: "unavailable" }),
-  );
-  assert.equal(early.wait?.reason, "ci_pending");
 });

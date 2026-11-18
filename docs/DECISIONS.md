@@ -6121,7 +6121,7 @@ false (marked "corrected 2026-11-18").
   ordinary head is no longer held when the comparison fails or 404s. A head
   neither read lists whole is unknown: the CI gates decide as before and the
   merge executor holds it (`checks_pending`), because it may change CI;
-  that hold parks after 6 hours (below). The publication-time paths of the push backstop
+  that hold parks 6 hours after its first unreadable observation (below). The publication-time paths of the push backstop
   are not persisted (no state format change); they are recomputed this way.
 - Admission backstop: the runtime merge executor (`port-merge.ts`, already
   owner-merged) reads the issue the pull request's closing link (or its
@@ -6201,13 +6201,29 @@ false (marked "corrected 2026-11-18").
   gate, admission included, passed in an earlier attempt (not a one-line
   change; a proof written by a runtime before admission existed settles a
   merge that runtime had already authorised).
-- Unreadable change set, bounded (third review): the merge executor holds
-  `checks_pending` a head whose change set neither the mirror nor the
-  comparison can list, and the delivery CI gate proceeds on such a head, so
-  nothing else ended the wait. After the 6-hour CI bound the delivery step
-  reads the change set once more and parks "change set unreadable; owner
-  action required" when it is still unreadable (`loop-merge.ts`); the
-  CI-path text is never used for it.
+- Unreadable change set, bounded (third review; clock corrected in the
+  fourth): the merge executor holds `checks_pending` a head whose change set
+  neither the mirror nor the comparison can list, and the delivery CI gate
+  proceeds on such a head, so nothing else ended the wait. On each such
+  refusal the delivery step reads the change set; while it stays
+  unreadable the record waits `ci_pending` marked by the wait's existing
+  `cause` (`github`/`unknown`/`change_set`, no new field), and that hold's
+  own 6-hour clock starts at the FIRST unreadable observation (an earlier
+  ordinary CI wait's `since` never counts; a CI wait in between drops the
+  mark and restarts the clock, which only delays the park). Six hours after
+  that first observation it parks "change set unreadable; owner action
+  required" (`loop-merge.ts`); the CI-path text is never used for it.
+- Native merge queue (fourth review): the queue submission
+  (`ops/hosted-autonomy-queue-submit.ts`, `PUT /pulls/{n}/merge-async`;
+  dormant behind `SENTINEL_MERGE_QUEUE`, ai.ubq.fi only, owner-switchable)
+  applies the same `sourceAdmissionRefusal` before its intent write: a
+  not-admitted or unverified source is not enqueued, nothing is written or
+  charged (`pre_effect_issue_not_admitted`,
+  `pre_effect_issue_author_unverified`).
+- Accepted residual (fourth review): the launcher's approval pass (approving
+  parked fork or first-time workflow runs) and its CI re-run pass still act
+  for a not-admitted record's head; they spend CI minutes only and never
+  merge (every merge path above refuses it).
 - Smaller fixes: a `.github/` path in any letter case is CI-executable
   (`ciExecutablePath`; a case-insensitive checkout runs `.GitHub/`). The
   missing-acceptance review recovery (`loop-review-result.ts`) parks a
