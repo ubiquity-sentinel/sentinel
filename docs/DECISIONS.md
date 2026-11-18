@@ -6371,10 +6371,17 @@ provenance trust landed. Integrated onto them (2026-11-18):
   25, demo.ubq.fi 23, arbitrage-bot 7 and notifications.ubq.fi 13: their
   authors are not in state and no other repository was read, so each is
   decided by the live read at release time and released only when it is the
-  owner's (or a structured App issue). Risk named, not decided: Sentinel 270
-  ("finalize always chains supervisor-dispatch", `.github/workflows/`) may
-  need a Sentinel `.github/` change, which never publishes; its release may
-  spend one charge and park again.
+  owner's (or a structured App issue).
+- Sentinel 270 is removed from the release (third review): its issue,
+  "finalize always chains supervisor-dispatch", needs Sentinel's own
+  `.github/workflows/`, which never publishes, so a release would only
+  spend a charged run that parks again; it stays parked for the owner. Ten
+  records are released. Sentinel 383 and 406 (the App's self-observation
+  issues for the supervisor's `finalize` and `repair_cell` jobs) are kept:
+  the code those jobs run lives mostly in Sentinel's `src/host/` authority
+  files, which now publish for the owner's merge, and nothing in state says
+  their parked candidates touched `.github/`; if one did, the cost is one
+  charge and the ordinary park, bounded.
 
 Rollback: revert this commit; the release then gates on the earlier shapes,
 which the final source does not carry, so it holds every release
