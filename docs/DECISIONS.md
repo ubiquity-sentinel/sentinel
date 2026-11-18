@@ -5608,3 +5608,88 @@ Rollback: revert the commits in reverse order. No `sentinel-state` field
 changes. Store: commit files, `calibration.json` and suspensions keep their
 shapes; new files (`checks.json`, `enrolment.json`, `calibration-legs.json`) are
 never read by older code, so a reverted runtime ignores them.
+
+## 2026-11-18: the backup CI false green was a comparison defect; a new runner revision
+
+Owner, 2026-11-18 (verbatim): "actions minutes restore next month so stop
+asking about it" and "should be falling back to the other org to run the ci as
+we discussed". Until then backup CI in the ubiquity-sentinel org is the only
+source of CI evidence for `ubiquity/*` targets (22 Prospector PRs, job
+`validation`, and a Passport PR, job `deno`, never started).
+
+- Evidence: `backup-ci.yml` runs only at `refs/heads/sentinel-supervisor`
+  (first attempt) and checks out `github.sha`; that ref equals `development`
+  (`afe9c309bd`). Its runs 44216009869 and 44217483301 (01:28 and 01:40 UTC)
+  logged `sentinel_backup_ci_runner {"runnerId":"916ad9eaff49fe9d","state":
+  "excluded"}`, then `sentinel_backup_ci_false_green_probe
+  {"receipt":"bci1:ubiquity/passport.ubq.fi@1cfa6ad61ccf:.github/workflows/ci.yml#deno:pull_request:7003bfe6aa76:a1",
+  "legContext":"pull_request","nativeEvent":"push","nativeStarted":true,
+  "nativeConclusion":"failure","nativeFailingStep":9,"legBase12":"7003bfe6aa76",
+  "nativeBase12":null,"sameBase":null}`, then `backup-ci:plan:skipped`: the
+  exclusion stops planning before enrolment, so no target (Prospector
+  included) was enrolled, shape-checked or sampled, and the store holds no
+  `v1/ubiquity/prospector/` file.
+- Verdict: a proven Sentinel-side comparison defect, not a real disagreement.
+  The suspension's native check run 125012919402 belongs to a `push` suite;
+  the leg was a `pull_request` unit on the synthetic merge of `1cfa6ad6` into
+  `7003bfe6` (store commit file: parents `7003bfe6`, `1cfa6ad6`, tree
+  `e5506a13`). The 2026-11-17 rule (MUST 2) counts a comparison only for the
+  unit's own event and counts a false green unless the event or base provably
+  differs; the event provably differs. Native step 9 is the job's eighth step,
+  "Validate all retained and native runtimes", which leg job 125021026580 ran
+  and passed. Not provable from Sentinel's data: whether `7003bfe6` is an
+  ancestor of `1cfa6ad6` (then the trees were equal and only the event
+  differed) and how the native `pull_request` run of `deno` on that head
+  concluded (neither is stored; both need the target token).
+- Remedy, the last commit of this change: `BACKUP_CI_LEG_REVISION` 2 to 3, so
+  the runner id becomes `ea2aacfd1f033045`. The new runner starts
+  uncalibrated and calibrates per check under the current rules (five
+  commits, a green and a red genuine agreement, same event and bound base).
+  The old runner stays excluded by its suspension and its `falseGreens: 1`
+  row; no suspension or row is edited, and one false green of the new runner
+  excludes it everywhere again.
+- Fixed with it: 90917aaad6 (visibility re-read every pass) refused every
+  private answer, so Passport, private by the 2026-10-23 acceptance recorded
+  as its committed id, would get no leg; seven plan-commit and pipeline cases
+  failed. Now only an automatically enrolled target (an `id: null` row pinned
+  in `enrolment.json`, admitted as public) that turns private is refused.
+- Pull request calibration samples (2026-11-18 review): only a merged pull
+  request, or one authored by the owner (`0x4007`, id 4975670) or the Sentinel
+  App (`ubiquity-sentinel[bot]`, id 319834869), login and id both bound; at
+  most four pull reads per target and pass; refusals log `untrusted_pull`. The
+  native first step must be `actions/checkout` at a release tag or a full SHA,
+  otherwise the run is unbound (calibration, comparison and probe alike).
+- Calibration bound to the job definition (2026-11-18 review): a definition
+  is hex64 of the workflow file's blob, the job key and the matrix, all bound
+  in every unit and result entry (planned steps carry no run text, so the
+  blob also catches script changes). Agreements are also kept per definition
+  in the new file `v1/<owner>/<repo>/check-defs.json`; disagreements stay in
+  `checks.json`. A stand-in needs both the per-check gate and agreements
+  under its own receipt's definition, so an older or different definition
+  never calibrates the current one and a workflow change recalibrates that
+  check. The trusted pass treats a check as calibrated only under every
+  definition its demand heads planned, and seeks the green or red the first
+  uncalibrated definition still lacks. Residual: a sampled native commit's
+  definition is unknown until its leg is planned, so a leg on another
+  definition is spent and counts only for that definition; a local action's
+  own file (`uses: ./...`) is outside the definition.
+- Passport `deno` stays blocked after the bump: its PR head `fe7f6b75` (PR
+  215) carries a final `no_evidence` `unsupported:checkout_inputs` (workflow
+  blob `f2c61d69`; since 2026-11-05 its `actions/checkout` has a `with:` input
+  outside the v1 shape), so the head is never planned and demands no
+  calibration. Which input is not stored; the plan of a new head logs
+  `checkout_input=<code>`. No stand-in until the leg can reproduce that input
+  or the workflow drops it.
+- Prospector `validation`: the row has `id: null`; first enrolment happens on
+  the first pass with demand and a free leg slot, once the runner is not
+  excluded. Its workflow shape, visibility and native history are not yet
+  known to Sentinel (never read). Then the demanded check needs five
+  calibration legs at one per target and pass (six a day) before any
+  stand-in, from native runs within three pages that started; the never
+  started runs of the outage are skipped without a read.
+
+Rollback: revert the commits in reverse order; reverting the last commit
+returns the excluded runner, which plans nothing. Store: no file changes
+shape; `v1/<owner>/<repo>/probe.json` and `v1/<owner>/<repo>/check-defs.json`
+are new and older code never reads them (a reverted reader ignores the
+definitions and keeps its per-check gate).
