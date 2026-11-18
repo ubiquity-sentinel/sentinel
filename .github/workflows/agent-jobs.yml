@@ -147,6 +147,26 @@ jobs:
           artifact-ids: ${{ needs.plan.outputs.artifact-id }}
           path: .agent-jobs
           merge-multiple: true
+      # Progress probe: the API serves neither the log nor the annotations of a
+      # running job, so the cell uploads a small text artifact per job every 15
+      # minutes (liveness lines and commit subjects). The runtime token reaches
+      # this run's artifacts only, and the cell withholds it from the agents.
+      # Both steps are best effort: without them the cell just skips the probe.
+      - name: Expose the artifact endpoint to the progress probe
+        continue-on-error: true
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            core.exportVariable("ACTIONS_RUNTIME_TOKEN", process.env.ACTIONS_RUNTIME_TOKEN);
+            core.exportVariable("ACTIONS_RESULTS_URL", process.env.ACTIONS_RESULTS_URL);
+      - name: Install the progress probe
+        continue-on-error: true
+        run: |
+          probe="$RUNNER_TEMP/agent-jobs-progress-probe"
+          mkdir -p "$probe"
+          cp ops/agent-jobs-progress.mjs "$probe/"
+          npm install --prefix "$probe" --no-audit --no-fund @actions/artifact@6.3.1
+          echo "AGENT_JOBS_PROGRESS_SCRIPT=$probe/agent-jobs-progress.mjs" >> "$GITHUB_ENV"
       - name: Run the cell's agents
         env:
           AGENT_JOBS_PLAN: .agent-jobs/plan.json

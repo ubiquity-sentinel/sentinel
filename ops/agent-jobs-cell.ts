@@ -60,6 +60,8 @@ export const HEARTBEAT_SECONDS = 300;
  * full 350 minute job.
  */
 export const HEARTBEAT_NOTICE_EVERY = 7;
+/** Every Nth liveness line also publishes the job's progress text. */
+export const HEARTBEAT_PROGRESS_EVERY = 3;
 /** A liveness line as a workflow command that raises a notice annotation. */
 export function heartbeatNotice(id: string, line: string): string {
   const data = line.replace(/%/g, "%25").replace(/\r/g, "%0D")
@@ -234,6 +236,16 @@ export interface AgentJobsCellPorts {
   agentEnv: () => Record<string, string>;
   sleep: (seconds: number) => Promise<void>;
   log: (line: string) => void;
+  /**
+   * Publish a job's progress text where it can be read while the cell runs.
+   * `sequence` starts at 1 and makes each publication distinct. Optional;
+   * failures are ignored.
+   */
+  publishProgress?: (
+    jobId: string,
+    sequence: number,
+    text: string,
+  ) => Promise<void>;
 }
 
 export interface AgentJobsCellInput {
@@ -433,6 +445,36 @@ async function runJob(
             ) {
               ports.log(heartbeatNotice(job.id, line));
             }
+            const beats = telemetry.heartbeats.length;
+            if (
+              ports.publishProgress !== undefined &&
+              (beats - 1) % HEARTBEAT_PROGRESS_EVERY === 0
+            ) {
+              const commits = await new Deno.Command("git", {
+                args: ["log", "--format=%h %cI %s", `${base.sha}..HEAD`],
+                cwd: checkout,
+                stdout: "piped",
+                stderr: "null",
+              }).output().catch(() => null);
+              const log = commits === null || commits.code !== 0
+                ? "(unavailable)"
+                : new TextDecoder().decode(commits.stdout)
+                  .replace(/[A-Za-z0-9_\-]{32,}/g, "<redacted>");
+              await ports.publishProgress(
+                job.id,
+                Math.floor((beats - 1) / HEARTBEAT_PROGRESS_EVERY) + 1,
+                [
+                  `job ${job.id}`,
+                  "",
+                  "liveness lines so far:",
+                  ...telemetry.heartbeats,
+                  "",
+                  "commits since the base, newest first:",
+                  log.trim().length === 0 ? "(none)" : log.trim(),
+                  "",
+                ].join("\n"),
+              ).catch(() => {});
+            }
           },
         },
       });
@@ -583,7 +625,13 @@ export async function runAgentJobsCell(
 }
 
 /** Credentials of the cell process that no agent or setup command inherits. */
-const WITHHELD_ENV = ["UOS_AI_TOKEN", "AGENT_JOBS_READ_TOKEN"];
+const WITHHELD_ENV = [
+  "UOS_AI_TOKEN",
+  "AGENT_JOBS_READ_TOKEN",
+  "ACTIONS_RUNTIME_TOKEN",
+  "ACTIONS_RESULTS_URL",
+  "AGENT_JOBS_PROGRESS_SCRIPT",
+];
 
 /** CLI for `.github/workflows/agent-jobs.yml`. */
 if (import.meta.main) {
@@ -592,6 +640,7 @@ if (import.meta.main) {
   const modelToken = env("UOS_AI_TOKEN");
   if (modelToken.length === 0) throw new Error("UOS_AI_TOKEN is not set");
   const workspace = env("GITHUB_WORKSPACE") || Deno.cwd();
+  const progressScript = env("AGENT_JOBS_PROGRESS_SCRIPT");
   const baseUrl = env("SENTINEL_MODEL_BASE_URL") || "https://ai.ubq.fi/v1";
   const plan = JSON.parse(
     await Deno.readTextFile(env("AGENT_JOBS_PLAN")),
@@ -651,6 +700,34 @@ if (import.meta.main) {
       sleep: (seconds) =>
         new Promise((resolve) => setTimeout(resolve, seconds * 1000)),
       log: (line) => console.log(line),
+      publishProgress: progressScript.length === 0 ||
+          env("ACTIONS_RUNTIME_TOKEN").length === 0
+        ? undefined
+        : async (jobId, sequence, text) => {
+          const dir = `${env("RUNNER_TEMP") || "/tmp"}/agent-jobs-progress`;
+          await Deno.mkdir(dir, { recursive: true });
+          const file = `${dir}/${jobId}.progress.txt`;
+          await Deno.writeTextFile(file, text);
+          const name = `agent-jobs-progress-${env("GITHUB_RUN_ID")}-` +
+            `${env("GITHUB_RUN_ATTEMPT")}-${jobId}-` +
+            String(sequence).padStart(3, "0");
+          const done = await new Deno.Command("timeout", {
+            args: ["60", "node", progressScript, name, file],
+            stdout: "null",
+            stderr: "piped",
+          }).output();
+          if (done.code !== 0) {
+            const reason = new TextDecoder().decode(done.stderr).trim()
+              .split("\n").pop() ?? "";
+            console.log(
+              `${jobId}: progress publication ${sequence} failed: ` +
+                reason.replace(/[A-Za-z0-9_\-]{32,}/g, "<redacted>").slice(
+                  0,
+                  200,
+                ),
+            );
+          }
+        },
     },
   });
   const summary = env("GITHUB_STEP_SUMMARY");

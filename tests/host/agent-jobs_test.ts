@@ -184,6 +184,7 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
     };
     const delays: number[] = [];
     const lines: string[] = [];
+    const published: { jobId: string; sequence: number; text: string }[] = [];
     const ports: AgentJobsCellPorts = {
       remoteUrl: () => remote,
       agentCommand: (start) => ["bash", agent, start.lastMessageFile],
@@ -195,6 +196,10 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
         return Promise.resolve();
       },
       log: (line) => lines.push(line),
+      publishProgress: (jobId, sequence, text) => {
+        published.push({ jobId, sequence, text });
+        return Promise.resolve();
+      },
     };
     const outDir = `${root}/out`;
     const cell = await runAgentJobsCell({
@@ -280,6 +285,10 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
       "ERROR: unexpected status 400: flagged token <redacted> end",
     );
     assert.ok((await telemetryOf("hangs")).heartbeats.length > 0);
+    const hangs = published.filter((row) => row.jobId === "hangs");
+    assert.equal(hangs[0].sequence, 1);
+    assert.ok(hangs[0].text.includes("hangs: alive "));
+    assert.ok(hangs[0].text.includes("commits since the base"));
     assert.ok(
       lines.some((line) =>
         line.startsWith("::notice title=agent hangs::hangs: alive ")
