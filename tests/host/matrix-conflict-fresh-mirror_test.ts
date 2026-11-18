@@ -387,6 +387,10 @@ Deno.test("hosted conflict resolution: a refused preservation, or a transient on
 
 Deno.test("hosted conflict resolution: a protected-path merge is never preserved and blocks charged as before", async () => {
   const rig = await hostedConflictRig();
+  // Owner directive 2026-11-17: on a target only a credential path is still
+  // refused (a configured source path is an ordinary change), so the refused
+  // resolution writes the target's configured `.env`.
+  rig.hosted.configs[0].protectedPaths.push(".env");
   try {
     const ingestJob = await jobMirror(rig, "mirror-ingest");
     const calls = composeMirrorPreservation(rig, {
@@ -396,7 +400,7 @@ Deno.test("hosted conflict resolution: a protected-path merge is never preserved
     assert.notEqual(first.status, "state_error");
     const planned = await rig.plan();
     const { result } = await rig.runCell(planned.plan, planned.plan.cells[0], {
-      extra: { "src/handler.ts": "export const handled = true;\n" },
+      extra: { ".env": "MODE=resolved\n" },
     });
     const report = await ingestIn(rig, ingestJob, {
       plan: planned.plan,
