@@ -280,5 +280,5 @@ Deno.test("the official self App dispatch token is scoped to the trusted commit 
     JSON.parse(await Deno.readTextFile("ops/backup-ci-pins.json")),
   );
   assert(pins !== null);
-  assert.equal(backupCiRunnerId(pins), "916ad9eaff49fe9d");
+  assert.equal(backupCiRunnerId(pins), "ea2aacfd1f033045");
 });

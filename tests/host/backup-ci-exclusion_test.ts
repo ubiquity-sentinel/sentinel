@@ -21,6 +21,10 @@ import { selectBackupStandIns } from "../../src/github/backup-ci-substitute.ts";
 import { DenoGitRunner } from "../../src/state/state-git.ts";
 import { readBackupCiExclusion } from "../../ops/backup-ci-enrol.ts";
 import {
+  backupCiRunnerId,
+  parseBackupCiPins,
+} from "../../ops/backup-ci-act.ts";
+import {
   calibration,
   CHECK,
   checkCalibration,
@@ -254,4 +258,24 @@ Deno.test("an excluded runner's pass ingests but plans nothing on any target", a
   );
   assert(world.lines.includes("backup-ci:plan:skipped"));
   assert.equal(targetReadCount(world), 0);
+});
+
+Deno.test("2026-11-18: the leg revision gives a new runner; the false green keeps the old one excluded", async () => {
+  const pins = parseBackupCiPins(
+    JSON.parse(await Deno.readTextFile("ops/backup-ci-pins.json")),
+  );
+  assert(pins !== null);
+  const current = backupCiRunnerId(pins);
+  // Passport's stored suspension and pooled row, as they are in the store.
+  const excluded = backupCiExcludedRunners(
+    [suspension({
+      scope: "ubiquity/passport.ubq.fi",
+      runnerIds: ["916ad9eaff49fe9d"],
+      reason: "false_green",
+    })],
+    [calibration([{ runnerId: "916ad9eaff49fe9d", falseGreens: 1 }])],
+  );
+  assert.equal(isBackupCiRunnerExcluded(excluded, "916ad9eaff49fe9d"), true);
+  assert.notEqual(current, "916ad9eaff49fe9d");
+  assert.equal(isBackupCiRunnerExcluded(excluded, current), false);
 });

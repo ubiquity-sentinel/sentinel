@@ -31,8 +31,13 @@ export const BACKUP_CI_LEG_STEPS = [
   "Upload the backup result",
   "Report the backup result",
 ] as const;
-/** Bump when leg semantics change: a new revision is a new runner id. */
-export const BACKUP_CI_LEG_REVISION = 2;
+/**
+ * Bump when leg semantics change, or to reset trust after a proven
+ * comparison defect: a new revision is a new, uncalibrated runner id.
+ * 3 (2026-11-18): runner `916ad9eaff49fe9d` (revision 2) stays excluded for
+ * Passport's false green, which compared a pull_request leg with a push run.
+ */
+export const BACKUP_CI_LEG_REVISION = 3;
 export const BACKUP_CI_MAX_PARALLEL = 2;
 export const BACKUP_CI_MAX_JOB_MINUTES = 60;
 export const BACKUP_CI_LEG_SETUP_MINUTES = 10;
