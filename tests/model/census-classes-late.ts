@@ -54,6 +54,13 @@ import {
 } from "../../ops/hosted-autonomy-repeat-failure.ts";
 import { DEFAULT_SHAPE, taskStatement } from "./world.ts";
 import { TASK_ACCEPTANCE_OWNER_GATE_DETAIL } from "../../src/repair/acceptance-correction.ts";
+import { AUTHOR_NOT_ADMITTED_PARK } from "../../src/repair/issue-admission.ts";
+import { UNTRUSTED_WORKFLOW_PARK } from "../../src/repair/workflow-trust.ts";
+import {
+  CHANGE_SET_UNREADABLE_PARK,
+  WORKFLOW_CI_SUCCESS_DETAIL,
+} from "../../src/repair/ci-success-rule.ts";
+import { PUSH_WORKFLOWS_PERMISSION_DETAIL } from "../../src/contracts/ports-github.ts";
 
 export const LATE_CLASSES: ParkClassV1[] = [
   {
@@ -463,6 +470,74 @@ export const LATE_CLASSES: ParkClassV1[] = [
       candidate: "fresh",
       intent: "none",
     }],
+  },
+  // ------------------------------------ 2026-11-17 admission and CI trust
+  // The owner-action parks of the 2026-11-17 rules (`issue-admission.ts`,
+  // `workflow-trust.ts`, `ci-success-rule.ts`): an issue whose author
+  // Sentinel does not work for (an existing record; intake admits no such
+  // issue), a CI-executable change on an untrusted source's authority, a
+  // workflow push GitHub refuses for want of the App's `workflows`
+  // permission, a CI change whose own CI never met the success rule, and a
+  // held head whose change set stays unreadable past the CI bound.
+  {
+    id: "adm.not_admitted",
+    message: AUTHOR_NOT_ADMITTED_PARK,
+    kind: "other",
+    writer: W(
+      "src/repair/loop-implementation.ts",
+      'markBlocked(record, "other", AUTHOR_NOT_ADMITTED_PARK, now),',
+      "w.adm.not_admitted",
+    ),
+    trigger: "pipeline",
+    variants: [NO_INTENT, pub("round1", 1, "clean")],
+  },
+  {
+    id: "impl.untrusted_workflow",
+    message: UNTRUSTED_WORKFLOW_PARK,
+    kind: "other",
+    writer: W(
+      "src/repair/loop-implementation-result.ts",
+      "    ? PROTECTED_PATH_PARK\n    : UNTRUSTED_WORKFLOW_PARK;",
+      "w.impl.untrusted_workflow",
+    ),
+    trigger: "pipeline",
+    variants: [{ tag: "noted", candidate: "noted", intent: "none" }],
+  },
+  {
+    id: "pub.workflows_permission",
+    message: PUSH_WORKFLOWS_PERMISSION_DETAIL,
+    kind: "other",
+    writer: W(
+      "src/repair/loop-publication.ts",
+      "          PUSH_WORKFLOWS_PERMISSION_DETAIL,\n          now,",
+      "w.pub.workflows_permission",
+    ),
+    trigger: "pipeline",
+    variants: [{ tag: "noted", candidate: "noted", intent: "none" }],
+  },
+  {
+    id: "ci.workflow_success",
+    message: WORKFLOW_CI_SUCCESS_DETAIL,
+    kind: "other",
+    writer: W(
+      "src/repair/loop-ci-first.ts",
+      "() => WORKFLOW_CI_SUCCESS_DETAIL,",
+      "w.ci.workflow_success",
+    ),
+    trigger: "pipeline",
+    variants: [pub("round0", 0, "none")],
+  },
+  {
+    id: "merge.change_set_unreadable",
+    message: CHANGE_SET_UNREADABLE_PARK,
+    kind: "other",
+    writer: W(
+      "src/repair/loop-merge.ts",
+      '"other",\n            CHANGE_SET_UNREADABLE_PARK,',
+      "w.merge.change_set_unreadable",
+    ),
+    trigger: "pipeline",
+    variants: [pub("round1", 1, "clean")],
   },
   // Human merges complete delivery; they no longer write a terminal park.
   // -------------------------------------------------------------------- misc
