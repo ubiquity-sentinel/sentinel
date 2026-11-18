@@ -35,6 +35,8 @@ import { ensureBaseRefreshIntent } from "./loop-base-refresh.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
 import { gateDeliveryOnChecks } from "./loop-checks.ts";
 import { waitSince } from "./loop-ci-correction.ts";
+import { PRE_REVIEW_CI_BOUND_MS } from "./ci-first-policy.ts";
+import { CHANGE_SET_UNREADABLE_PARK, headCiChange } from "./ci-success-rule.ts";
 import { configFor, sameRepositoryIdentity } from "./loop-records.ts";
 import { waitRelease } from "./loop-release.ts";
 import { standingReviewAttempt } from "./loop-review-records.ts";
@@ -591,6 +593,25 @@ export async function handleMergeOutcome(
     reason === "checks_pending" && record.intent?.kind === "merge" &&
     record.intent.selfMerge === undefined
   ) {
+    // 2026-11-18: the merge executor also holds `checks_pending` a head whose
+    // change set neither the mirror nor the comparison can list; the CI gate
+    // proceeds on such a head, so nothing else would end the wait. After the
+    // 6-hour CI bound it parks with that truthful reason, read once more.
+    if (
+      now - waitSince(record, "ci_pending", now) >= PRE_REVIEW_CI_BOUND_MS &&
+      await headCiChange(deps, record) === "unknown"
+    ) {
+      return persistWork(
+        deps,
+        context,
+        markBlocked(
+          clearIntent(record, now),
+          "other",
+          CHANGE_SET_UNREADABLE_PARK,
+          now,
+        ),
+      );
+    }
     // Issue #189: the port refuses `checks_pending` only for an open,
     // unmerged pull request, so the intent binds no write. Clearing it into a
     // bounded `ci_pending` wait lets the pre-merge CI dispatcher (which
