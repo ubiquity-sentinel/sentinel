@@ -146,7 +146,8 @@ function nativeRepository(): string | undefined {
   }
 }
 
-const SELECTED = selectHostedControllerDeploymentV1(nativeRepository());
+const SELECTED: HostedControllerSelectionV1 =
+  selectHostedControllerDeploymentV1(nativeRepository());
 if (!SELECTED.ok) {
   throw new Error(
     `hosted controller binding refused: ${SELECTED.reason} ${SELECTED.repository}`,
