@@ -11,8 +11,8 @@
  *   still read as green, or which may drop the real tests for a trivial job,
  *   so it merges only when its GitHub Actions success names meet the
  *   expectation read from the base branch's merged pull requests
- *   (`src/repair/ci-success-rule.ts`, shared with the runtime: every job the
- *   last merged pull request with an Actions success passed, else the base's,
+ *   (`src/repair/ci-success-rule.ts`, shared with the runtime: every job any
+ *   of the five most recently merged pull requests passed, else the base's,
  *   else at least one; never a status, a backup-CI stand-in or another app's
  *   check), else `ci_success_required`. This gate alone holds such a head: it
  *   survives a runtime rollback;

@@ -53,8 +53,8 @@ import { ciExecutablePath } from "./workflow-trust.ts";
 /** The pre-review park of such a head once its bounded wait ends. */
 export const WORKFLOW_CI_SUCCESS_DETAIL =
   "CI-first: the head changes a CI-executable path and its own CI did not " +
-  "run to success every job the last merged pull request passed; owner " +
-  "action required";
+  "run to success every job the last five merged pull requests passed; " +
+  "owner action required";
 
 /**
  * The park of a head the merge executor held because neither the mirror nor
