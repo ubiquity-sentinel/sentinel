@@ -47,6 +47,7 @@ import type {
 } from "../contracts/live-inputs.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import { GitHubApiClient } from "./client.ts";
+import { localFirstChangedPaths } from "./changed-paths-read.ts";
 import type { GitExecutorV1 } from "./git-executor.ts";
 import type {
   HumanResolutionVerifierV1,
@@ -234,23 +235,17 @@ export abstract class GitHubPortBase {
     return this.client.readCommitParents(sha);
   }
 
-  /**
-   * The paths `base...head` changes: the local mirror's own tree diff
-   * (`git diff --no-renames --name-only -z`, never truncated, no API read)
-   * when it holds both commits, as it does for every head Sentinel published
-   * or fetched in this run's full clone; else one exact comparison.
-   */
-  async readChangedPaths(
+  /** The paths `base...head` changes (`changed-paths-read.ts`). */
+  readChangedPaths(
     base: GitSha,
     head: GitSha,
   ): Promise<PortResultV1<string[] | null>> {
-    try {
-      const local = await this.git.changedPaths?.(base, head);
-      if (local !== undefined && local.ok) return portOk(local.value);
-    } catch {
-      // An unreadable mirror proves nothing; the comparison decides.
-    }
-    return await this.client.readChangedPaths(base, head);
+    return localFirstChangedPaths(
+      this.git.changedPaths?.bind(this.git),
+      (from, to) => this.client.readChangedPaths(from, to),
+      base,
+      head,
+    );
   }
 
   readMergedPullHeads(

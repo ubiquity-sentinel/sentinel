@@ -12,6 +12,7 @@ import type { GitHubEffectiveProtectionsV1 } from "./port-contracts.ts";
 import type { TakeoverEffectAuthorization } from "../contracts/existing-pr-takeover.ts";
 import { executeSelfMerge } from "./port-self-merge.ts";
 import { mergeContentRefusal } from "./merge-content-gate.ts";
+import { issueAuthorAdmitted } from "../repair/issue-admission.ts";
 import { decideCiGate } from "../repair/loop-checks.ts";
 import { tryParse } from "../contracts/validation.ts";
 import {
@@ -251,6 +252,13 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
       if (!issue.ok) return issue;
       if (issue.value === null || issue.value.number !== contextIssueNumber) {
         return blocked("review_required", pull.value.head);
+      }
+      // 2026-11-17 admission backstop, on this same read: Sentinel never
+      // merges the work of an issue whose author is neither the owner
+      // account (login and id) nor the Sentinel App, whatever its caller
+      // decided (`issue-admission.ts`). The self merge passes here too.
+      if (!issueAuthorAdmitted(issue.value)) {
+        return blocked("protection_required", pull.value.head);
       }
       const text = {
         issueNumber: contextIssueNumber,

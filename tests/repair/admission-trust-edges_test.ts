@@ -208,3 +208,36 @@ Deno.test("issue admission: missing-acceptance review recovery parks a not-admit
   assert.equal(github.reviewRequestIdentities.length, 0);
   assert.equal(model.requests.length, 0);
 });
+
+Deno.test("authority: the modules that define admission, trust and the CI rule are owner-merged; their large callers stay ordinary", async () => {
+  const { createLocalRepositoryConfig } = await import(
+    "../../src/host/local-config.ts"
+  );
+  const { touchesProtected } = await import("../../src/repair/loop-records.ts");
+  const protectedPaths = createLocalRepositoryConfig().protectedPaths;
+  for (
+    const path of [
+      "src/repair/trust-markers.ts",
+      "src/repair/issue-admission.ts",
+      "src/repair/workflow-trust.ts",
+      "src/github/wire-issue-author.ts",
+      "src/repair/ci-success-rule.ts",
+      "src/github/merged-pull-heads.ts",
+      "src/github/changed-paths-read.ts",
+      "src/github/merge-content-gate.ts",
+      "src/github/port-merge.ts",
+    ]
+  ) assert.equal(touchesProtected(protectedPaths, path), true, path);
+  for (
+    const path of [
+      "src/repair/target-capability.ts",
+      "src/github/client-reads.ts",
+      "src/github/client-checks.ts",
+      "src/github/client-issues.ts",
+      "src/github/port-base.ts",
+      "src/repair/loop-intake.ts",
+      "src/repair/loop-merge.ts",
+      "ops/hosted-autonomy-github.ts",
+    ]
+  ) assert.equal(touchesProtected(protectedPaths, path), false, path);
+});

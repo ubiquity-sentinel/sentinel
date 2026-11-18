@@ -36,7 +36,7 @@ import { isBaseRepairBody } from "./base-repair.ts";
 import {
   SENTINEL_SKIP_MARKER,
   TARGET_CAPABILITY_ISSUE_MARKER,
-} from "./target-capability.ts";
+} from "./trust-markers.ts";
 import { issueAuthorKind } from "./issue-admission.ts";
 import { normalizePathPrefix } from "./loop-records.ts";
 import type { RepairCycleDepsV1 } from "./loop-types.ts";
