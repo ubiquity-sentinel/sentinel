@@ -6669,3 +6669,67 @@ entry above.
 
 Rollback: revert the commit; the public deployment is unaffected either way,
 and the private one again cannot select itself.
+
+## 2026-11-18: the private role turns Sentinel-only paths off; each deployment mints its own self token
+
+- Follows the entry above (two committed controller deployments). On the
+  private role every path that works Sentinel itself, or a service only the
+  public deployment runs, reports the closed reason `private_deployment` or
+  refuses before any read, instead of being re-pointed at the private
+  repository. This deployment's own infrastructure (state, maintenance index,
+  runs and logs, install API, writer quiescence, native principal, runtime
+  policy sources read at the active revision) keeps reading the selected
+  entry, which is its own repository. The public role takes every former
+  branch unchanged.
+  - Self-observation and CI-outage notices: the launcher pass that wrote
+    nothing records `self-observation:skipped:private_deployment` and
+    resolves no Sentinel surface.
+  - Finalize: no throughput-watchdog issues (the step summary names the
+    reason); the upkeep-deferral notice is its log line, never an issue.
+  - Backup CI: the committed targets file lists nothing on the private role,
+    so no store reader is composed (no fetch of the public backup branch)
+    and the launcher demands nothing; the backup pass already refuses any
+    repository but the public one before any request.
+  - Owner development install: its repository is the public one literally
+    (public history), so a private host refuses its identity before any
+    read; its remote was already the public literal.
+  - Target load: a host proven private never reads or works a committed
+    Sentinel deployment (public or private); it is listed in
+    `publicTargets`, left to the public deployment.
+  - App principal: the self controller port follows the selected entry
+    (`isHostedControllerRepository`), not the public literal.
+  - Self installation: a deployment that commits one (the private entry,
+    183425201) refuses any other `SENTINEL_SELF_INSTALLATION_ID`, so a self
+    token minted for another organization never reaches its state.
+  - Auto-follow (`deno task follow:run`) may read `GITHUB_REPOSITORY`, so it
+    selects its own deployment.
+- Proof through real consumers (`tests/host/private-deployment-role_test.ts`):
+  a copy of this tree with the private entry bound (test ids) and wired runs
+  as the private deployment and passes seven cases: its own identity and
+  remotes; the committed self installation only; no backup CI and no git
+  operation; owner install refused; the hosted runtime (real Git state,
+  release custody and native identity) configures only its private target
+  and sends no request naming `ubiquity-sentinel/sentinel`; the launcher
+  merges a reviewed target pull request through that target's surface only;
+  a quiet launcher pass reports the closed reason and never resolves
+  Sentinel. The issue-to-pull-request half (intake, implementation,
+  publication, review request) has no private-role proof yet, so the
+  committed `PRIVATE_ROLE_WIRED` stays `false` and the private deployment
+  still refuses to start, with or without its workflow ids.
+- Workflows (own commit): every self-token mint in `supervisor.yml` (seven
+  jobs) names `owner: ${{ github.repository_owner }}` and
+  `repositories: ${{ github.event.repository.name }}` instead of the public
+  literals, so each deployment mints its own repository's token (on the
+  public repository these are `ubiquity-sentinel` and `sentinel`; the
+  supervisor runs only on `workflow_dispatch`, whose payload carries the
+  repository, and a test pins that trigger). The dispatcher's dispatch step
+  may read `GITHUB_REPOSITORY`. This changes the `.github/workflows` tree, so
+  auto-follow will not advance `sentinel-supervisor` to it: one manual
+  advance is needed. Not changed (listed for the operator): `backup-ci.yml`
+  self mint (public-only; inert with `SENTINEL_BACKUP_CI=off`), `repair.yml`
+  literal dispatch path (manual), `queue-canary.yml` (guarded to the public
+  repository).
+
+Rollback: revert the commits; the private role then re-points the Sentinel
+paths at its own repository again (it cannot start either way), and the
+workflow mints the public repository's self token again.
