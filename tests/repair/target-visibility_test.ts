@@ -129,12 +129,18 @@ Deno.test("target visibility: the skip line re-parses strictly and stays text-fr
   );
 });
 
-Deno.test("target visibility: the predicate's file is a Sentinel authority path", () => {
-  assert.equal(
-    touchesProtected(
-      createLocalRepositoryConfig().protectedPaths,
+Deno.test("target visibility: the predicate, the launcher gate and its repository read are Sentinel authority paths", () => {
+  for (
+    const path of [
       "src/repair/target-visibility.ts",
-    ),
-    true,
-  );
+      "ops/hosted-autonomy-private-targets.ts",
+      "ops/hosted-autonomy-github-repository.ts",
+    ]
+  ) {
+    assert.equal(
+      touchesProtected(createLocalRepositoryConfig().protectedPaths, path),
+      true,
+      path,
+    );
+  }
 });

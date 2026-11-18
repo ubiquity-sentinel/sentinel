@@ -59,8 +59,12 @@ export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
     "src/repair/issue-admission.ts",
     "src/repair/workflow-trust.ts",
     // 2026-11-18 ("no private repos"): the one predicate that decides which
-    // target repositories Sentinel works, and how GitHub's answer is read.
+    // target repositories Sentinel works, and how GitHub's answer is read;
+    // the launcher's gate that applies it to every maintenance pass, and the
+    // launcher surface's repository read that answers it.
     "src/repair/target-visibility.ts",
+    "ops/hosted-autonomy-private-targets.ts",
+    "ops/hosted-autonomy-github-repository.ts",
     "src/repair/base-repair.ts",
     "src/github/wire.ts",
     "src/github/wire-issue-author.ts",

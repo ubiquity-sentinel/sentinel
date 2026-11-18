@@ -26,6 +26,34 @@ import {
   REPOSITORY_COLLECTIONS,
   SNAPSHOT_FIELDS,
 } from "../../ops/hosted-autonomy-private-targets.ts";
+import { createHostedRepositoryReads } from "../../ops/hosted-autonomy-github-repository.ts";
+
+Deno.test("private target gate: the launcher surface answers visibility and the default branch from one repository read", async () => {
+  const requests: string[] = [];
+  let answer: unknown = null;
+  const reads = createHostedRepositoryReads((method, path) => {
+    requests.push(`${method} ${path}`);
+    return Promise.resolve(answer);
+  }, "ubiquity/prospector");
+  // A failed read is not kept: unknown now, read again next time.
+  assert.equal(await reads.readVisibility(), "unknown");
+  assert.equal(await reads.readDefaultBranch(), null);
+  answer = { default_branch: "main", private: true, visibility: "private" };
+  assert.equal(await reads.readVisibility(), "private");
+  assert.equal(await reads.readDefaultBranch(), "main");
+  assert.equal(await reads.readVisibility(), "private");
+  assert.deepEqual(requests, [
+    "GET /repos/ubiquity/prospector",
+    "GET /repos/ubiquity/prospector",
+    "GET /repos/ubiquity/prospector",
+  ]);
+  // A public answer is public only when GitHub says so.
+  const open = createHostedRepositoryReads(
+    () => Promise.resolve({ default_branch: "main", private: false }),
+    "ubiquity/ai.ubq.fi",
+  );
+  assert.equal(await open.readVisibility(), "public");
+});
 
 const PUBLIC = { owner: "ubiquity", name: "ai.ubq.fi", installationId: 7 };
 const PRIVATE = { owner: "ubiquity", name: "prospector", installationId: 7 };
