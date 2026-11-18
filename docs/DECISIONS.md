@@ -6077,8 +6077,8 @@ false (marked "corrected 2026-11-18").
   Anything unreadable, or a listing that cannot be proven (below), is
   `unknown` and waits (runtime: the
   6-hour CI-first park, now "CI-first: the head changes a CI-executable path
-  and its own CI did not run to success every job the last merged pull
-  request passed; owner action required"; launcher: `ci_success_required`).
+  and its own CI did not run to success every job the last five merged pull
+  requests passed; owner action required"; launcher: `ci_success_required`).
   Only GitHub Actions check runs count, as before (never a status, another
   app's check or a backup-CI stand-in). This fixes the two review findings:
   a base whose push-only deploy job passed made every workflow pull request
