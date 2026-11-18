@@ -24,6 +24,7 @@ import {
   type BackupCiReaderV1,
   createBackupCiReader,
 } from "../../src/github/backup-ci-reader.ts";
+import { BACKUP_CI_CURRENT_RUNNER_ID } from "../../src/github/backup-ci-runner.ts";
 import { DenoGitRunner, type GitRunnerV1 } from "../../src/state/state-git.ts";
 import {
   calibration,
@@ -154,6 +155,7 @@ Deno.test("an absent branch, or an absent file, reads as nothing", async () => {
       calibration: null,
       checks: null,
       definitions: null,
+      runnerId: BACKUP_CI_CURRENT_RUNNER_ID,
       excluded: { all: false, runnerIds: [] },
       tip: null,
     });
@@ -166,6 +168,7 @@ Deno.test("an absent branch, or an absent file, reads as nothing", async () => {
       calibration: null,
       checks: null,
       definitions: null,
+      runnerId: BACKUP_CI_CURRENT_RUNNER_ID,
       excluded: { all: false, runnerIds: [] },
       tip,
     });
@@ -196,6 +199,7 @@ Deno.test("the reader returns the commit file, suspensions and calibration", asy
       calibration: calibration(),
       checks: checkCalibration(),
       definitions: checkDefinitions(),
+      runnerId: BACKUP_CI_CURRENT_RUNNER_ID,
       // Both suspensions are false greens: their runners are excluded on
       // every target (review MUST 1), whatever the suspension's scope.
       excluded: { all: false, runnerIds: [RUNNER, RUNNER2].sort() },

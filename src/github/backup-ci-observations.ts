@@ -375,6 +375,7 @@ export async function selectBackupCiForCommit(
       calibration: input.store.calibration,
       checks: input.store.checks,
       definitions: input.store.definitions ?? null,
+      currentRunnerId: input.store.runnerId,
       excluded: input.store.excluded,
     }),
   };

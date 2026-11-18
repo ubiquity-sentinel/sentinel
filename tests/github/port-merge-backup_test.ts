@@ -214,6 +214,8 @@ Deno.test("merge port backup: a suspension written after a gate read refuses the
       clock,
       targets: [TARGET],
       remoteUrl: store.url,
+      // The fixture receipts' runner is this launcher's (2026-11-18 gate).
+      runnerId: RUNNER,
     });
     const { port, transport } = makePort({
       clock,

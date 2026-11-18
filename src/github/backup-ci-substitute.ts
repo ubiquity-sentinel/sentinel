@@ -94,6 +94,13 @@ export interface BackupCiSelectInputV1 {
    * definition calibrated. Absent or null: nothing is (no stand-in).
    */
   definitions?: BackupCiCheckDefinitionsV1 | null;
+  /**
+   * The runner whose receipts may stand in: this launcher's (2026-11-18), so
+   * a reverted leg revision leaves a newer runner's receipts inert. Null:
+   * none may. Absent: no restriction (older test inputs only; the store
+   * reader always sets it).
+   */
+  currentRunnerId?: string | null;
   /** Runners a false green on any target excludes (never usable). */
   excluded: BackupCiExcludedRunnersV1;
 }
@@ -198,7 +205,11 @@ export function selectBackupStandIns(
     );
   // The pooled gate stays (older meaning, false reds across checks); the
   // per-check gate binds calibration to exactly what the entry stands in for.
+  const current = (entry: BackupCiEntryV1) =>
+    input.currentRunnerId === undefined ||
+    entry.runnerId === input.currentRunnerId;
   const usable = (entry: BackupCiEntryV1) =>
+    current(entry) &&
     !isBackupCiRunnerExcluded(input.excluded, entry.runnerId) &&
     isBackupCiCalibrated(calibration, entry.runnerId) &&
     isBackupCiCheckCalibrated(checks, entry.runnerId, entry.key) &&
@@ -318,7 +329,12 @@ export function selectBackupStandIns(
         receipts.every((e) =>
           isBackupCiRunnerExcluded(input.excluded, e.runnerId)
         );
+      const retiredOnly = receipts.length > 0 && !excludedOnly &&
+        receipts.every((e) =>
+          isBackupCiRunnerExcluded(input.excluded, e.runnerId) || !current(e)
+        );
       const uncalibrated = receipts.length > 0 && !excludedOnly &&
+        !retiredOnly &&
         receipts.every((e) =>
           isBackupCiRunnerExcluded(input.excluded, e.runnerId) ||
           !isBackupCiCheckCalibrated(checks, e.runnerId, e.key) ||
@@ -328,6 +344,8 @@ export function selectBackupStandIns(
       refuse(
         excludedOnly
           ? "runner_excluded"
+          : retiredOnly
+          ? "runner_retired"
           : uncalibrated
           ? "uncalibrated"
           : "unresolved",

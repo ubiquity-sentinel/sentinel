@@ -47,6 +47,7 @@ import {
   parseBackupCiEnrolment,
 } from "../contracts/backup-ci-trust.ts";
 import type { Clock } from "../contracts/ports.ts";
+import { BACKUP_CI_CURRENT_RUNNER_ID } from "./backup-ci-runner.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { GitRunnerV1 } from "../state/state-git.ts";
 
@@ -60,6 +61,11 @@ export type BackupCiReadV1 =
     checks: BackupCiCheckCalibrationV1 | null;
     /** Agreements per job definition (`check-defs.json`), or null. */
     definitions?: BackupCiCheckDefinitionsV1 | null;
+    /**
+     * The runner whose receipts may stand in: this launcher's (2026-11-18).
+     * The store reader always sets it; absent only in older test doubles.
+     */
+    runnerId?: string | null;
     /** Runners a false green on any target excludes (`backup-ci-trust.ts`). */
     excluded: BackupCiExcludedRunnersV1;
     /** The store tip read; null when the branch does not exist. */
@@ -80,6 +86,8 @@ export interface BackupCiReaderInputV1 {
   clock: Clock;
   targets: readonly BackupCiTargetV1[];
   remoteUrl?: string;
+  /** The current runner (default: this launcher's, `backup-ci-runner.ts`). */
+  runnerId?: string | null;
 }
 
 /** Parsed blobs one reader keeps (a blob id never changes content). */
@@ -113,9 +121,14 @@ class BackupCiStoreReader implements BackupCiReaderV1 {
   } | null = null;
   private queue: Promise<unknown> = Promise.resolve();
 
+  private readonly runnerId: string | null;
+
   constructor(private readonly input: BackupCiReaderInputV1) {
     this.targets = input.targets.map((target) => ({ ...target }));
     this.remote = input.remoteUrl ?? BACKUP_CI_STORE_REMOTE;
+    this.runnerId = input.runnerId === undefined
+      ? BACKUP_CI_CURRENT_RUNNER_ID
+      : input.runnerId;
   }
 
   target(repo: RepositoryIdentityV1): BackupCiTargetV1 | null {
@@ -147,6 +160,7 @@ class BackupCiStoreReader implements BackupCiReaderV1 {
         calibration: null,
         checks: null,
         definitions: null,
+        runnerId: this.runnerId,
         excluded: BACKUP_CI_NOTHING_EXCLUDED,
         tip: null,
       };
@@ -220,6 +234,7 @@ class BackupCiStoreReader implements BackupCiReaderV1 {
         calibration: pinned === null ? null : parsedCalibration,
         checks: pinned === null ? null : parsedChecks,
         definitions: pinned === null ? null : parsedDefs,
+        runnerId: this.runnerId,
         excluded,
         tip,
       };
