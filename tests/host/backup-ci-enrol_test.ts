@@ -22,6 +22,7 @@ import {
   calibration,
   CHECK,
   checkCalibration,
+  checkDefinitions,
   commitFile,
   H,
   NAME,
@@ -189,6 +190,7 @@ Deno.test("the stand-in rule binds an enrolled row to its calibration's id", () 
     file: commitFile([result()]),
     suspensions: [],
     checks: checkCalibration(),
+    definitions: checkDefinitions(),
     excluded: { all: false, runnerIds: [] },
   };
   const bound = selectBackupStandIns({

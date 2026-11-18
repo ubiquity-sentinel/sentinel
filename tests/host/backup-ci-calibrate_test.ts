@@ -19,6 +19,7 @@ import { backupCiStoreChanges } from "../../ops/backup-ci-dispatch.ts";
 import type { BackupCiPassFileV1 } from "../../ops/backup-ci-pass.ts";
 import type { BackupCiStoreView } from "../../ops/backup-ci-store-writer.ts";
 import {
+  backupCiDemandDefinitions,
   backupCiDemandKeys,
   backupCiSamplingBudget,
   backupCiTrustedSamplePull,
@@ -33,7 +34,9 @@ import type {
 import {
   CHECK,
   checkCalibration,
+  checkDefinitions,
   commitFile,
+  definitionOf,
   dispatched,
   key,
   noEvidence,
@@ -592,4 +595,56 @@ Deno.test("the commit step records every admitted calibration leg in the ledger"
     unitId: calibrating.unitId,
     at: T0,
   }]);
+});
+
+Deno.test("2026-11-18: a check calibrated only under an older definition keeps sampling", async () => {
+  // The demand head plans a stand-in of the current definition (BLOB).
+  const head = commitFile([dispatched(unit(key()))]);
+  const demanded = backupCiDemandDefinitions([head], "on", PUSH);
+  assert.deepEqual(demanded, [definitionOf()]);
+  const runs = [nativeRun(1, "failure"), nativeRun(2, "success")];
+  const fake = (): Fake => ({
+    pages: [runs],
+    jobs: new Map(runs.map((r) => [
+      r.id,
+      [startedJob(r.id, r.headSha, r.conclusion)],
+    ])),
+    calls: [],
+  });
+  const run = (file: ReturnType<typeof checkDefinitions> | null) =>
+    sampleBackupCiCheck({
+      key: PUSH,
+      repository: REPO,
+      defaultBranch: "main",
+      runnerId: RUNNER,
+      // Five agreements with a red on the check, whatever the definition.
+      checks: checkCalibration([{ context: "push" }]),
+      definitions: { file, demanded },
+      reads: fakeReads(fake()),
+      file: () => Promise.resolve(null),
+      budget: backupCiSamplingBudget(),
+      want: 1,
+    });
+  // All agreements were made under another workflow blob: sample again,
+  // and the current definition still needs its red first.
+  const older = await run(checkDefinitions([{
+    context: "push",
+    definition: definitionOf(sha(0xdead)),
+  }]));
+  assert.equal(older.reason, "sampling");
+  assert.deepEqual(older.candidates.map((c) => [c.commit, c.red]), [[
+    sha(1),
+    true,
+  ]]);
+  assert.equal((await run(null)).reason, "sampling");
+  // Calibrated under the demanded definition: nothing to sample.
+  assert.deepEqual(await run(checkDefinitions([{ context: "push" }])), {
+    candidates: [],
+    reason: "calibrated",
+  });
+  // A result names its binding's definition, as a planned unit does.
+  assert.deepEqual(
+    backupCiDemandDefinitions([commitFile([result(key())])], "on", PUSH),
+    [definitionOf()],
+  );
 });

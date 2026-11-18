@@ -23,7 +23,11 @@ import {
   type BackupCiUnitV1,
   type BackupCiWorkflowCoverageV1,
 } from "../../src/contracts/backup-ci.ts";
-import type { BackupCiCheckCalibrationV1 } from "../../src/contracts/backup-ci-trust.ts";
+import {
+  type BackupCiCheckCalibrationV1,
+  type BackupCiCheckDefinitionsV1,
+  backupCiJobDefinition,
+} from "../../src/contracts/backup-ci-trust.ts";
 
 export const OWNER = "ubiquity";
 export const NAME = "passport.ubq.fi";
@@ -353,6 +357,48 @@ export function checkCalibration(
       falseGreens: r.falseGreens ?? 0,
       falseReds: 0,
       disputed: [],
+    })),
+    updatedAt: T0,
+  };
+}
+
+/** The job definition of `result()` entries (`blob` defaults to BLOB). */
+export function definitionOf(blob: GitSha = BLOB, jobKey = "deno"): string {
+  return backupCiJobDefinition({ workflowBlob: blob, jobKey, matrix: null });
+}
+
+/**
+ * `check-defs.json` rows matching `checkCalibration` (2026-11-18): the same
+ * agreements, under the definition of the fixture's result entries.
+ */
+export function checkDefinitions(
+  rows: {
+    runnerId?: string;
+    context?: "push" | "pull_request";
+    checkName?: string;
+    workflowPath?: string;
+    definition?: string;
+    greens?: number;
+    reds?: number;
+  }[] = [{ context: "push" }, { context: "pull_request" }],
+  repository = { ...REPOSITORY },
+): BackupCiCheckDefinitionsV1 {
+  const commit = (n: number) => n.toString(16).padStart(40, "0") as GitSha;
+  return {
+    version: 1,
+    kind: "sentinel_backup_ci_check_definitions",
+    repository,
+    rows: rows.map((r) => ({
+      runnerId: r.runnerId ?? RUNNER,
+      context: r.context ?? "push",
+      workflowPath: r.workflowPath ?? WORKFLOW,
+      checkName: r.checkName ?? CHECK,
+      definition: r.definition ?? definitionOf(),
+      greens: Array.from(
+        { length: r.greens ?? 4 },
+        (_, i) => commit(0x100 + i),
+      ),
+      reds: Array.from({ length: r.reds ?? 1 }, (_, i) => commit(0x200 + i)),
     })),
     updatedAt: T0,
   };

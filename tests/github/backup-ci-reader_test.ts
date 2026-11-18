@@ -15,7 +15,10 @@ import {
   backupCiCommitPath,
   backupCiSuspensionPath,
 } from "../../src/contracts/backup-ci.ts";
-import { backupCiCheckCalibrationPath } from "../../src/contracts/backup-ci-trust.ts";
+import {
+  backupCiCheckCalibrationPath,
+  backupCiCheckDefinitionsPath,
+} from "../../src/contracts/backup-ci-trust.ts";
 import type { RepositoryIdentityV1 } from "../../src/contracts/shared.ts";
 import {
   type BackupCiReaderV1,
@@ -25,6 +28,7 @@ import { DenoGitRunner, type GitRunnerV1 } from "../../src/state/state-git.ts";
 import {
   calibration,
   checkCalibration,
+  checkDefinitions,
   commitFile,
   H,
   NAME,
@@ -149,6 +153,7 @@ Deno.test("an absent branch, or an absent file, reads as nothing", async () => {
       suspensions: [],
       calibration: null,
       checks: null,
+      definitions: null,
       excluded: { all: false, runnerIds: [] },
       tip: null,
     });
@@ -160,6 +165,7 @@ Deno.test("an absent branch, or an absent file, reads as nothing", async () => {
       suspensions: [],
       calibration: null,
       checks: null,
+      definitions: null,
       excluded: { all: false, runnerIds: [] },
       tip,
     });
@@ -180,6 +186,7 @@ Deno.test("the reader returns the commit file, suspensions and calibration", asy
       [backupCiSuspensionPath(OWNER, NAME)]: local,
       [backupCiCalibrationPath(OWNER, NAME)]: calibration(),
       [backupCiCheckCalibrationPath(OWNER, NAME)]: checkCalibration(),
+      [backupCiCheckDefinitionsPath(OWNER, NAME)]: checkDefinitions(),
     });
     const read = await reader(s, { t: T0 }).read(REPOSITORY, H);
     assert.deepEqual(read, {
@@ -188,6 +195,7 @@ Deno.test("the reader returns the commit file, suspensions and calibration", asy
       suspensions: [global, local],
       calibration: calibration(),
       checks: checkCalibration(),
+      definitions: checkDefinitions(),
       // Both suspensions are false greens: their runners are excluded on
       // every target (review MUST 1), whatever the suspension's scope.
       excluded: { all: false, runnerIds: [RUNNER, RUNNER2].sort() },

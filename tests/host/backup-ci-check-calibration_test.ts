@@ -32,6 +32,7 @@ import type { BackupCiStoreView } from "../../ops/backup-ci-store-writer.ts";
 import {
   CHECK,
   checkCalibration,
+  checkDefinitions,
   commitFile,
   H,
   key,
@@ -102,6 +103,9 @@ function standIn(checks: ReturnType<typeof checkCalibration> | null) {
       T0,
     ).calibration,
     checks,
+    // The receipt's own job definition is calibrated (2026-11-18): this
+    // file tests the per-check gate alone.
+    definitions: checkDefinitions([{ context: "push" }]),
     excluded: { all: false, runnerIds: [] },
   });
 }

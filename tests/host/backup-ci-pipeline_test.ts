@@ -22,8 +22,15 @@ import {
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import { createBackupCiReader } from "../../src/github/backup-ci-reader.ts";
 import { mergeCalibration } from "../../src/github/backup-ci-store.ts";
-import { mergeCheckCalibration } from "../../src/github/backup-ci-check-store.ts";
-import { backupCiCheckCalibrationPath } from "../../src/contracts/backup-ci-trust.ts";
+import {
+  mergeCheckCalibration,
+  mergeCheckDefinitions,
+} from "../../src/github/backup-ci-check-store.ts";
+import {
+  backupCiCheckCalibrationPath,
+  backupCiCheckDefinitionsPath,
+  backupCiJobDefinition,
+} from "../../src/contracts/backup-ci-trust.ts";
 import { selectBackupStandIns } from "../../src/github/backup-ci-substitute.ts";
 import { DenoGitRunner } from "../../src/state/state-git.ts";
 import {
@@ -530,6 +537,7 @@ Deno.test("plan, dispatch, leg, ingest, store: a receipt the stand-in rule accep
         suspensions: read.suspensions,
         calibration: read.calibration,
         checks: read.checks,
+        definitions: read.definitions,
         excluded: read.excluded,
       });
     };
@@ -593,18 +601,35 @@ Deno.test("plan, dispatch, leg, ingest, store: a receipt the stand-in rule accep
             base: unit.key.base,
           },
           class: (i === 0 ? "red" : "green") as "red" | "green",
+          definition: backupCiJobDefinition({
+            workflowBlob: unit.workflow.blob,
+            jobKey: unit.job.key,
+            matrix: unit.job.matrix,
+          }),
         }));
-        const merged = mergeCheckCalibration(
-          null,
-          { owner: "ubiquity", name: "passport.ubq.fi", id: ID },
-          keyed,
-          now,
-        );
+        const repository = {
+          owner: "ubiquity",
+          name: "passport.ubq.fi",
+          id: ID,
+        };
+        const merged = mergeCheckCalibration(null, repository, keyed, now);
         return Promise.resolve(
-          new Map([[
-            backupCiCheckCalibrationPath("ubiquity", "passport.ubq.fi"),
-            merged!.checks,
-          ]]),
+          new Map<string, unknown>([
+            [
+              backupCiCheckCalibrationPath("ubiquity", "passport.ubq.fi"),
+              merged!.checks,
+            ],
+            [
+              backupCiCheckDefinitionsPath("ubiquity", "passport.ubq.fi"),
+              mergeCheckDefinitions(
+                null,
+                repository,
+                keyed,
+                now,
+                merged!.checks,
+              ),
+            ],
+          ]),
         );
       },
     });

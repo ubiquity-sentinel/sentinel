@@ -37,10 +37,13 @@ import {
   BACKUP_CI_TRUST_FILE_RE,
   backupCiCheckCalibrationPath,
   type BackupCiCheckCalibrationV1,
+  backupCiCheckDefinitionsPath,
+  type BackupCiCheckDefinitionsV1,
   backupCiEnrolmentPath,
   backupCiExcludedRunners,
   type BackupCiExcludedRunnersV1,
   parseBackupCiCheckCalibration,
+  parseBackupCiCheckDefinitions,
   parseBackupCiEnrolment,
 } from "../contracts/backup-ci-trust.ts";
 import type { Clock } from "../contracts/ports.ts";
@@ -55,6 +58,8 @@ export type BackupCiReadV1 =
     calibration: BackupCiCalibrationV1 | null;
     /** The target's per-check calibration (`checks.json`), or null. */
     checks: BackupCiCheckCalibrationV1 | null;
+    /** Agreements per job definition (`check-defs.json`), or null. */
+    definitions?: BackupCiCheckDefinitionsV1 | null;
     /** Runners a false green on any target excludes (`backup-ci-trust.ts`). */
     excluded: BackupCiExcludedRunnersV1;
     /** The store tip read; null when the branch does not exist. */
@@ -141,6 +146,7 @@ class BackupCiStoreReader implements BackupCiReaderV1 {
         suspensions: [],
         calibration: null,
         checks: null,
+        definitions: null,
         excluded: BACKUP_CI_NOTHING_EXCLUDED,
         tip: null,
       };
@@ -157,9 +163,10 @@ class BackupCiStoreReader implements BackupCiReaderV1 {
       backupCiCalibrationPath(owner, name),
       backupCiCheckCalibrationPath(owner, name),
       backupCiEnrolmentPath(owner, name),
+      backupCiCheckDefinitionsPath(owner, name),
     ]);
     if (!Array.isArray(reads)) return reads;
-    const [file, global, local, calibration, checks, enrolment] = reads;
+    const [file, global, local, calibration, checks, enrolment, defs] = reads;
     try {
       const parsedFile = file === null ? null : parseBackupCiCommitFile(file);
       const suspensions = [global, local].map((value) =>
@@ -171,6 +178,9 @@ class BackupCiStoreReader implements BackupCiReaderV1 {
       const parsedChecks = checks === null
         ? null
         : parseBackupCiCheckCalibration(checks);
+      const parsedDefs = defs === null
+        ? null
+        : parseBackupCiCheckDefinitions(defs);
       // An enrolled row without a committed id binds the id its first
       // enrolment pinned (`enrolment.json`). Without a pin nothing binds
       // (and nothing was dispatched), so the commit file reads as absent.
@@ -198,6 +208,10 @@ class BackupCiStoreReader implements BackupCiReaderV1 {
         parsedChecks !== null && pinned !== null &&
         !binds(parsedChecks.repository)
       ) return invalid("backup CI check calibration does not bind its path");
+      if (
+        parsedDefs !== null && pinned !== null &&
+        !binds(parsedDefs.repository)
+      ) return invalid("backup CI check definitions do not bind their path");
       // Unpinned: nothing of the target is usable (files, calibration).
       return {
         kind: "ok",
@@ -205,6 +219,7 @@ class BackupCiStoreReader implements BackupCiReaderV1 {
         suspensions: suspensions.filter((s) => s !== null),
         calibration: pinned === null ? null : parsedCalibration,
         checks: pinned === null ? null : parsedChecks,
+        definitions: pinned === null ? null : parsedDefs,
         excluded,
         tip,
       };

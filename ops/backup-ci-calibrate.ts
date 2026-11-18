@@ -41,7 +41,10 @@ import {
 import {
   BACKUP_CI_CHECK_CALIBRATION,
   type BackupCiCheckCalibrationV1,
+  type BackupCiCheckDefinitionsV1,
+  backupCiJobDefinition,
   isBackupCiCheckCalibrated,
+  isBackupCiDefinitionCalibrated,
 } from "../src/contracts/backup-ci-trust.ts";
 import { completedJobNeverStarted } from "../src/github/never-started-job.ts";
 import { SENTINEL_APP_SLUG } from "../src/host/hosted-app-grant.ts";
@@ -167,6 +170,55 @@ export function backupCiDemandKeys(
 }
 
 /**
+ * The job definitions (`backupCiJobDefinition`) demanded for `key` on the
+ * demand heads: of planned units and results; a leg without evidence names
+ * none (2026-11-18).
+ */
+export function backupCiDemandDefinitions(
+  heads: readonly (BackupCiCommitFileV1 | null)[],
+  mode: "shadow" | "on",
+  key: BackupCiCheckKeyV1,
+): string[] {
+  const cls = backupCiModeClass(mode);
+  const out = new Set<string>();
+  for (const e of heads.flatMap((f) => f?.entries ?? [])) {
+    if (backupCiModeClass(e.mode) !== cls || !same(e.key, key)) continue;
+    if (e.state === "dispatched") {
+      out.add(backupCiJobDefinition({
+        workflowBlob: e.unit.workflow.blob,
+        jobKey: e.unit.job.key,
+        matrix: e.unit.job.matrix,
+      }));
+    } else if (e.state === "result") out.add(backupCiJobDefinition(e.binding));
+  }
+  return [...out].sort();
+}
+
+/**
+ * Whether `runnerId` may stand in for `key` under every demanded definition:
+ * the per-check gate and, for each demanded definition, its own agreements.
+ * No demanded definition (only legs without evidence) is not calibrated.
+ */
+export function backupCiDemandCalibrated(input: {
+  checks: BackupCiCheckCalibrationV1 | null;
+  definitions: BackupCiCheckDefinitionsV1 | null;
+  demanded: readonly string[];
+  runnerId: string;
+  key: BackupCiCheckKeyV1;
+}): boolean {
+  return isBackupCiCheckCalibrated(input.checks, input.runnerId, input.key) &&
+    input.demanded.length > 0 &&
+    input.demanded.every((d) =>
+      isBackupCiDefinitionCalibrated(
+        input.definitions,
+        input.runnerId,
+        input.key,
+        d,
+      )
+    );
+}
+
+/**
  * The sampled calibration of one target for this pass, within `legsLeft`
  * (the per-pass and daily caps the caller computed from the leg ledger),
  * logging one closed line per demanded check.
@@ -179,6 +231,8 @@ export async function planBackupCiCalibration(input: {
   /** Store files of the target's demand heads. */
   heads: readonly (BackupCiCommitFileV1 | null)[];
   checks: BackupCiCheckCalibrationV1 | null;
+  /** The target's `check-defs.json` (2026-11-18), or null. */
+  definitions?: BackupCiCheckDefinitionsV1 | null;
   reads: BackupCiTargetReadsV1;
   file(commit: GitSha): Promise<BackupCiCommitFileV1 | null>;
   legsLeft: number;
@@ -188,10 +242,20 @@ export async function planBackupCiCalibration(input: {
   const budget = backupCiSamplingBudget();
   for (const key of backupCiDemandKeys(input.heads, input.mode)) {
     const left = input.legsLeft - out.length;
+    const definitions = {
+      file: input.definitions ?? null,
+      demanded: backupCiDemandDefinitions(input.heads, input.mode, key),
+    };
     const sampled = left <= 0
       ? {
         candidates: [],
-        reason: isBackupCiCheckCalibrated(input.checks, input.runnerId, key)
+        reason: backupCiDemandCalibrated({
+            checks: input.checks,
+            definitions: definitions.file,
+            demanded: definitions.demanded,
+            runnerId: input.runnerId,
+            key,
+          })
           ? "calibrated" as const
           : "daily_cap" as const,
       }
@@ -201,6 +265,7 @@ export async function planBackupCiCalibration(input: {
         defaultBranch: input.defaultBranch,
         runnerId: input.runnerId,
         checks: input.checks,
+        definitions,
         reads: input.reads,
         file: input.file,
         budget,
@@ -250,6 +315,16 @@ export interface BackupCiSampleInputV1 {
   defaultBranch: string;
   runnerId: string;
   checks: BackupCiCheckCalibrationV1 | null;
+  /**
+   * The definitions file and the demanded definitions (2026-11-18): given,
+   * the check counts as calibrated only under every demanded definition,
+   * and the green and red still needed are those of the first definition
+   * not yet calibrated. Absent: the per-check row alone (older callers).
+   */
+  definitions?: {
+    file: BackupCiCheckDefinitionsV1 | null;
+    demanded: readonly string[];
+  };
   reads: BackupCiTargetReadsV1;
   /** The store file of a commit (pending changes merged), or null. */
   file(commit: GitSha): Promise<BackupCiCommitFileV1 | null>;
@@ -270,12 +345,30 @@ export async function sampleBackupCiCheck(
     candidates: [] as BackupCiCalibrationCandidateV1[],
     reason,
   });
-  if (isBackupCiCheckCalibrated(input.checks, input.runnerId, key)) {
-    return done("calibrated");
-  }
+  const defs = input.definitions;
+  if (
+    defs === undefined
+      ? isBackupCiCheckCalibrated(input.checks, input.runnerId, key)
+      : backupCiDemandCalibrated({
+        checks: input.checks,
+        definitions: defs.file,
+        demanded: defs.demanded,
+        runnerId: input.runnerId,
+        key,
+      })
+  ) return done("calibrated");
   const row = input.checks?.rows.find((r) =>
     r.runnerId === input.runnerId && same(r, key)
   );
+  // What the first demanded definition not yet calibrated still needs.
+  const open = defs?.demanded.find((d) =>
+    !isBackupCiDefinitionCalibrated(defs.file, input.runnerId, key, d)
+  );
+  const counted = open === undefined
+    ? row
+    : defs?.file?.rows.find((r) =>
+      r.runnerId === input.runnerId && same(r, key) && r.definition === open
+    );
   if (
     row !== undefined &&
     (row.falseGreens > 0 ||
@@ -284,8 +377,9 @@ export async function sampleBackupCiCheck(
   if (reads.workflowRuns === undefined || reads.runJobs === undefined) {
     return done("unreadable");
   }
-  const needRed = (row?.reds.length ?? 0) < BACKUP_CI_CHECK_CALIBRATION.reds;
-  const needGreen = (row?.greens.length ?? 0) <
+  const needRed = (counted?.reds.length ?? 0) <
+    BACKUP_CI_CHECK_CALIBRATION.reds;
+  const needGreen = (counted?.greens.length ?? 0) <
     BACKUP_CI_CHECK_CALIBRATION.greens;
   const found: BackupCiCalibrationCandidateV1[] = [];
   const seen = new Set<string>();

@@ -45,8 +45,11 @@ import type {
 } from "../contracts/ports-github-requests.ts";
 import {
   type BackupCiCheckCalibrationV1,
+  type BackupCiCheckDefinitionsV1,
   type BackupCiExcludedRunnersV1,
+  backupCiJobDefinition,
   isBackupCiCheckCalibrated,
+  isBackupCiDefinitionCalibrated,
   isBackupCiRunnerExcluded,
 } from "../contracts/backup-ci-trust.ts";
 import { trustedCheckName } from "../repair/ci-rejection.ts";
@@ -86,6 +89,11 @@ export interface BackupCiSelectInputV1 {
   calibration: BackupCiCalibrationV1 | null;
   /** Per-check calibration: an entry needs its own (context, path, name). */
   checks: BackupCiCheckCalibrationV1 | null;
+  /**
+   * Agreements per job definition (2026-11-18): an entry needs its own
+   * definition calibrated. Absent or null: nothing is (no stand-in).
+   */
+  definitions?: BackupCiCheckDefinitionsV1 | null;
   /** Runners a false green on any target excludes (never usable). */
   excluded: BackupCiExcludedRunnersV1;
 }
@@ -175,12 +183,26 @@ export function selectBackupStandIns(
     ? input.calibration
     : null;
   const checks = input.checks?.repository.id === pinned ? input.checks : null;
+  const definitions = input.definitions?.repository.id === pinned
+    ? input.definitions
+    : null;
+  // The entry's own job definition (workflow blob, job key, matrix) must be
+  // calibrated: agreements under an older definition never count for it.
+  const defined = (entry: BackupCiEntryV1) =>
+    entry.state === "result" &&
+    isBackupCiDefinitionCalibrated(
+      definitions,
+      entry.runnerId,
+      entry.key,
+      backupCiJobDefinition(entry.binding),
+    );
   // The pooled gate stays (older meaning, false reds across checks); the
   // per-check gate binds calibration to exactly what the entry stands in for.
   const usable = (entry: BackupCiEntryV1) =>
     !isBackupCiRunnerExcluded(input.excluded, entry.runnerId) &&
     isBackupCiCalibrated(calibration, entry.runnerId) &&
     isBackupCiCheckCalibrated(checks, entry.runnerId, entry.key) &&
+    defined(entry) &&
     !isBackupCiSuspended(input.suspensions, target.repository, entry.runnerId);
   const suites = new Map(input.suites.map((s) => [s.suiteId, s]));
   const allIds = new Set(input.all.map((o) => o.checkRunId));
@@ -300,6 +322,7 @@ export function selectBackupStandIns(
         receipts.every((e) =>
           isBackupCiRunnerExcluded(input.excluded, e.runnerId) ||
           !isBackupCiCheckCalibrated(checks, e.runnerId, e.key) ||
+          !defined(e) ||
           !isBackupCiCalibrated(calibration, e.runnerId)
         );
       refuse(

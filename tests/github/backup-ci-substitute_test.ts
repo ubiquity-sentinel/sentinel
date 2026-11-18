@@ -18,11 +18,14 @@ import {
   standInRawRun,
 } from "../../src/github/backup-ci-substitute.ts";
 import {
+  B,
   calibration,
   CHECK,
   checkCalibration,
+  checkDefinitions,
   commitFile,
   coverage,
+  definitionOf,
   H,
   key,
   OTHER,
@@ -84,6 +87,7 @@ function input(
     suspensions: [],
     calibration: calibration(),
     checks: checkCalibration(),
+    definitions: checkDefinitions(),
     excluded: { all: false, runnerIds: [] },
     ...over,
   };
@@ -333,6 +337,19 @@ Deno.test("an uncalibrated or suspended runner, or a wrong binding, gives none",
     conclusions(input({ checks: checkCalibration([{ checkName: "lint" }]) })),
     [],
   );
+  // 2026-11-18: calibrated for this check, but only under an older job
+  // definition (another workflow blob), or with no definitions file at all.
+  assert.deepEqual(
+    conclusions(input({
+      definitions: checkDefinitions([
+        { context: "push", definition: definitionOf(B) },
+        { context: "pull_request", definition: definitionOf(B) },
+      ]),
+    })),
+    [],
+  );
+  assert.deepEqual(conclusions(input({ definitions: null })), []);
+  assert.deepEqual(conclusions(input({ definitions: undefined })), []);
   // A file of another repository id, even with that id's calibration.
   const otherId = input({
     target: { repository: REPO, id: 7 },

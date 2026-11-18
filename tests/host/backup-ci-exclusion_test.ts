@@ -24,6 +24,7 @@ import {
   calibration,
   CHECK,
   checkCalibration,
+  checkDefinitions,
   commitFile,
   H,
   key,
@@ -94,6 +95,7 @@ Deno.test("an excluded runner calibrated on another target stands in for nothing
     suspensions: [],
     calibration: otherCalibration,
     checks: checkCalibration(undefined, { ...OTHER }),
+    definitions: checkDefinitions(undefined, { ...OTHER }),
   };
   // Without the rule this runner stood in on Prospector despite Passport's
   // false green (the reviewer's MUST 1).

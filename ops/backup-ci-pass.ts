@@ -52,9 +52,11 @@ import {
   BACKUP_CI_CALIBRATION_LEGS_PATH,
   backupCiCalibrationLegsToday,
   backupCiCheckCalibrationPath,
+  backupCiCheckDefinitionsPath,
   isBackupCiRunnerExcluded,
   parseBackupCiCalibrationLegs,
   parseBackupCiCheckCalibration,
+  parseBackupCiCheckDefinitions,
 } from "../src/contracts/backup-ci-trust.ts";
 import {
   type BackupCiIngestDepsV1,
@@ -343,6 +345,9 @@ async function planTarget(
   const checksValue = await deps.store.read(
     backupCiCheckCalibrationPath(repo.owner, repo.name),
   );
+  const defsValue = await deps.store.read(
+    backupCiCheckDefinitionsPath(repo.owner, repo.name),
+  );
   const sampled = await planBackupCiCalibration({
     repository: target.repository,
     defaultBranch: info.defaultBranch,
@@ -352,6 +357,9 @@ async function planTarget(
     checks: checksValue === null
       ? null
       : parseBackupCiCheckCalibration(checksValue),
+    definitions: defsValue === null
+      ? null
+      : parseBackupCiCheckDefinitions(defsValue),
     reads,
     file: load,
     legsLeft,
