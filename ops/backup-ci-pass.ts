@@ -288,6 +288,12 @@ async function planTarget(
   records: RepairStateSnapshotV1["work"],
   /** Calibration legs this target may still start (ledger caps). */
   legsLeft: number,
+  /**
+   * Whether the target's visibility is an owner decision (a committed id,
+   * Passport's 2026-10-23 private acceptance) rather than the public answer
+   * an automatic enrolment pinned.
+   */
+  visibilityDecided: boolean,
 ): Promise<BackupCiPlannedUnitV1[]> {
   const repo = repoOf(target);
   const runnerId = deps.runnerId!;
@@ -302,8 +308,10 @@ async function planTarget(
     return [];
   }
   // Visibility is re-read every pass, not only at enrolment: a leg publishes
-  // the target tree and logs in the public sentinel repository.
-  if (info.private) {
+  // the target tree and logs in the public sentinel repository. An enrolment
+  // pin was admitted only as public; a committed id records the owner's
+  // visibility decision (Passport is private by that decision).
+  if (info.private && !visibilityDecided) {
     deps.log(`backup-ci:${target.repository}:private_repository`);
     return [];
   }
@@ -510,6 +518,9 @@ export async function runBackupCiPass(
     input.log,
   );
   const deps: BackupCiPassDepsV1 = { ...input, targets: pinned };
+  const decided = new Set<string>(
+    input.targets.filter((t) => t.id !== null).map((t) => t.repository),
+  );
   const changes = new BackupCiPassChanges();
   await ingest(deps, changes);
   const units: BackupCiPassUnitV1[] = [];
@@ -627,6 +638,7 @@ export async function runBackupCiPass(
           2 * free,
           demand.get(name)!,
           legsLeft,
+          decided.has(name),
         ).catch(() => {
           deps.log(`backup-ci:${resolved.repository}:plan_refused`);
           return [];
