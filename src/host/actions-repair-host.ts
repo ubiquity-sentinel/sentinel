@@ -49,6 +49,7 @@ import type { ActionsCandidateRestorerV1 } from "./actions-candidates.ts";
 import type { ReleaseRequestV1 } from "../contracts/release.ts";
 import {
   createGitHubTargetResolvers,
+  createHostVisibilityReader,
   loadTargetConfigsV1,
   privateTargetsLineV1,
   STATIC_TARGETS_EMPTY,
@@ -378,6 +379,17 @@ export async function runActionsRepairHost(
     template: templateConfig,
     // The setting lives in this run's own checkout, exactly as before.
     root: sourceDir,
+    // The deployment rule (`target-visibility.ts`): the run's own repository,
+    // already bound to the committed controller by `parseHostedEnvironment`,
+    // is read on the self credential only when the setting does not list it.
+    host: {
+      repository: readEnv("GITHUB_REPOSITORY"),
+      readVisibility: createHostVisibilityReader({
+        http,
+        token: selfWriteToken,
+        repository: readEnv("GITHUB_REPOSITORY"),
+      }),
+    },
     // Private targets need the App token; reads share the cooldown gate.
     ...createGitHubTargetResolvers({
       ...deps,

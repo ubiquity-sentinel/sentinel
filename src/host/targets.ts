@@ -32,7 +32,10 @@ import {
 } from "./target-tree-facts.ts";
 import type { TargetReadObserverV1 } from "./target-read-observer.ts";
 import {
+  PUBLIC_TARGET_REASON,
   repositoryVisibilityV1,
+  resolveSentinelHostV1,
+  sentinelHostIsPrivateV1,
   sentinelWorksRepositoryV1,
   type TargetVisibilityV1,
 } from "../repair/target-visibility.ts";
@@ -344,6 +347,43 @@ export interface LoadTargetConfigsResultV1 {
   readonly privateTargets: readonly string[];
   /** Slug of every target skipped because its tree facts were unavailable. */
   readonly factsUnavailable: readonly string[];
+  /**
+   * Present only on a host proven private (`target-visibility.ts`): slug of
+   * every target GitHub answered is public, which the public deployment
+   * works. Never configured here, and never counted as a read failure.
+   */
+  readonly publicTargets?: readonly string[];
+}
+
+/**
+ * The repository a load runs in (the native `GITHUB_REPOSITORY`) and the one
+ * read of its own visibility. Read only when the setting does not list it.
+ */
+export interface TargetLoadHostV1 {
+  readonly repository: string | null | undefined;
+  readonly readVisibility: () => Promise<TargetVisibilityV1>;
+}
+
+/**
+ * The host's visibility from one `GET /repos/{owner}/{name}` of the host's
+ * own repository on the given (self) credential; unknown on any failure.
+ */
+export function createHostVisibilityReader(options: {
+  readonly http: HttpTransportV1;
+  readonly token: string;
+  readonly repository: string | null | undefined;
+  readonly apiBaseUrl?: string;
+}): () => Promise<TargetVisibilityV1> {
+  return async () => {
+    let slug: TargetSlugV1;
+    try {
+      [slug] = parseTargetSlugsV1([options.repository]);
+    } catch {
+      return "unknown";
+    }
+    const read = await createTargetRepositoryResolver(options)(slug);
+    return read?.visibility ?? "unknown";
+  };
 }
 
 /** Counts of a load whose setting listed targets and configured none. */
@@ -363,6 +403,13 @@ export interface UnavailableTargetCountsV1 {
 export function privateTargetsLineV1(
   result: LoadTargetConfigsResultV1,
 ): PrivateTargetsLineV1 | null {
+  if (result.publicTargets !== undefined) {
+    return privateTargetsCountsLineV1({
+      skipped: result.publicTargets.length,
+      listed: result.targets.length,
+      configured: result.configs.length,
+    }, PUBLIC_TARGET_REASON);
+  }
   return privateTargetsCountsLineV1({
     skipped: result.privateTargets.length,
     listed: result.targets.length,
@@ -383,7 +430,10 @@ export function unavailableTargetCountsV1(
   result: LoadTargetConfigsResultV1,
   observer?: Pick<TargetReadObserverV1, "transient">,
 ): UnavailableTargetCountsV1 | null {
-  const excluded = new Set(result.privateTargets);
+  const excluded = new Set([
+    ...result.privateTargets,
+    ...(result.publicTargets ?? []),
+  ]);
   const considered = result.targets.filter((target) =>
     !excluded.has(target.slug)
   );
@@ -405,7 +455,9 @@ export function unavailableTargetCountsV1(
  * or invalid setting yields no configs at all. A target is configured only
  * when `sentinelWorksRepositoryV1` accepts the visibility of that same read:
  * a private repository is listed in `privateTargets`, and a visibility
- * GitHub did not state skips the target like an unreadable branch.
+ * GitHub did not state skips the target like an unreadable branch. On a host
+ * proven private (`host`), private targets are configured instead and every
+ * public one is listed in `publicTargets`.
  *
  * Tree facts are resolved only for generic targets. A caller without a
  * contents read (a restricted facade or maintenance publication) omits the
@@ -428,14 +480,29 @@ export async function loadTargetConfigsV1(options: {
   ) => Promise<TargetTreeFactsV1 | null>;
   readonly root?: string;
   readonly readFile?: (path: string) => Promise<string>;
+  /**
+   * The run's own repository (`target-visibility.ts` deployment rule).
+   * Omitted, or listed in the setting, or not proven private: exactly the
+   * public-only load, with no extra read.
+   */
+  readonly host?: TargetLoadHostV1;
 }): Promise<LoadTargetConfigsResultV1> {
   const targets = await readTargetSlugsV1({
     root: options.root,
     readFile: options.readFile,
   });
+  const host = options.host === undefined || targets.length === 0
+    ? undefined
+    : await resolveSentinelHostV1({
+      repository: options.host.repository,
+      listed: targets.map((target) => target.slug),
+      readVisibility: options.host.readVisibility,
+    });
+  const privateHost = sentinelHostIsPrivateV1(host);
   const configs: RepositoryConfigV1[] = [];
   const skipped: string[] = [];
   const privateTargets: string[] = [];
+  const publicTargets: string[] = [];
   const factsUnavailable: string[] = [];
   for (const target of targets) {
     const read = await options.resolveRepository(target);
@@ -443,10 +510,11 @@ export async function loadTargetConfigsV1(options: {
       skipped.push(target.slug);
       continue;
     }
-    if (!sentinelWorksRepositoryV1(read.visibility)) {
-      (read.visibility === "private" ? privateTargets : skipped).push(
-        target.slug,
-      );
+    if (!sentinelWorksRepositoryV1(read.visibility, host)) {
+      const excluded = privateHost
+        ? (read.visibility === "public" ? publicTargets : skipped)
+        : (read.visibility === "private" ? privateTargets : skipped);
+      excluded.push(target.slug);
       continue;
     }
     const branch = read.defaultBranch;
@@ -484,5 +552,12 @@ export async function loadTargetConfigsV1(options: {
       createTargetConfigV1(options.template, target, branch, facts),
     );
   }
-  return { targets, configs, skipped, privateTargets, factsUnavailable };
+  return {
+    targets,
+    configs,
+    skipped,
+    privateTargets,
+    factsUnavailable,
+    ...(privateHost ? { publicTargets } : {}),
+  };
 }

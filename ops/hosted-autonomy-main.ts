@@ -85,10 +85,13 @@ import {
 import { repeatFailureRouteIdentity } from "./hosted-autonomy-repeat-failure.ts";
 import {
   CURRENT_MATRIX_HISTORY_DEADLINE_MESSAGE,
+  HOSTED_AUTONOMY_SELF_SCOPE,
   hostedRepositoryKey,
   isDeferredCurrentMatrixHistoryBudget,
   isHostedSelf,
 } from "./hosted-autonomy-policy.ts";
+import { readTargetSlugsV1 } from "../src/host/targets.ts";
+import { resolveSentinelHostV1 } from "../src/repair/target-visibility.ts";
 import type {
   HostedAutonomyDepsV1,
   HostedAutonomyGitHubV1,
@@ -492,6 +495,20 @@ async function runHostedAutonomyMainResult(
       const privateTargets = createPrivateTargetGateV1({
         readVisibility: async (repository) =>
           await githubFor(repository).readVisibility?.() ?? "unknown",
+        // The deployment rule (`target-visibility.ts`): `GITHUB_REPOSITORY`
+        // is the self scope (`isHostedControllerMaintenanceIdentity` above).
+        // A checkout whose setting lists it never reads it; otherwise the
+        // self surface reads it once, shared with its default-branch read.
+        host: async () =>
+          await resolveSentinelHostV1({
+            repository: env("GITHUB_REPOSITORY"),
+            listed: (await readTargetSlugsV1({ root: Deno.cwd() })).map((
+              target,
+            ) => target.slug),
+            readVisibility: async () =>
+              await githubFor(HOSTED_AUTONOMY_SELF_SCOPE).readVisibility?.() ??
+                "unknown",
+          }),
       });
       const gatedState = privateTargets.wrapState(state);
       const gatedGithubFor = privateTargets.githubFor(githubFor);

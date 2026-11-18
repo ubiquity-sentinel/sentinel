@@ -32,6 +32,11 @@
  * a failed visibility read hides only the repository it was for and never
  * stops Sentinel's own delivery or the owner-merge flow; only a view the
  * contract refuses stops the whole run.
+ *
+ * The host (`target-visibility.ts` deployment rule) is decided once, before
+ * the first repository: a launcher whose committed setting lists its own
+ * repository never reads it and is the public-only gate above. Only a host
+ * proven private shows private repositories and hides public ones instead.
  */
 import {
   portError,
@@ -50,7 +55,10 @@ import type { GitSha } from "../src/contracts/brands.ts";
 import { MaxItems } from "../src/contracts/validation.ts";
 import {
   PRIVATE_TARGET_REASON,
+  type SentinelHostV1,
   sentinelWorksRepositoryV1,
+  type TargetExclusionReasonV1,
+  targetExclusionReasonV1,
   type TargetVisibilityV1,
 } from "../src/repair/target-visibility.ts";
 import { HOSTED_AUTONOMY_SELF_SCOPE } from "./hosted-autonomy-policy.ts";
@@ -277,7 +285,8 @@ export function restorePrivateRowsV1(
 /** The gate's one text-free line: the closed reason and counts. */
 export interface PrivateTargetsHiddenLineV1 {
   kind: "sentinel_private_targets_hidden";
-  reason: typeof PRIVATE_TARGET_REASON;
+  /** `public_repository` only on a host proven private. */
+  reason: TargetExclusionReasonV1;
   repositories: number;
   rows: number;
   refusedWrites: number;
@@ -387,10 +396,27 @@ export function createPrivateTargetGateV1(input: {
    * Production never sets it and uses `parseRepairStateSnapshotV1`.
    */
   validateView?: (view: RepairStateSnapshotV1) => unknown;
+  /**
+   * The run's own repository, decided once on the first repository the gate
+   * decides (`resolveSentinelHostV1`). Omitted or failed: not private, so
+   * exactly the public-only gate.
+   */
+  host?: () => Promise<SentinelHostV1>;
 }): PrivateTargetGateV1 {
   const validateView = input.validateView ?? parseRepairStateSnapshotV1;
   const pending = new Map<string, Promise<boolean>>();
   const settled = new Map<string, boolean>();
+  let decidedHost: SentinelHostV1 | undefined;
+  let hostOnce: Promise<SentinelHostV1 | undefined> | null = null;
+  const host = (): Promise<SentinelHostV1 | undefined> =>
+    hostOnce ??= (async () => {
+      try {
+        decidedHost = await input.host?.();
+      } catch {
+        decidedHost = undefined;
+      }
+      return decidedHost;
+    })();
   const raws = new Map<string, RepairStateSnapshotV1>();
   // Heads whose state hid nothing: the view was the state itself.
   const clean = new Set<string>();
@@ -414,6 +440,7 @@ export function createPrivateTargetGateV1(input: {
     let known = pending.get(key);
     if (known === undefined) {
       known = (async () => {
+        const decided = await host();
         let visibility: TargetVisibilityV1 = "unknown";
         try {
           if (repository !== null) {
@@ -422,7 +449,7 @@ export function createPrivateTargetGateV1(input: {
         } catch {
           visibility = "unknown";
         }
-        const works = sentinelWorksRepositoryV1(visibility);
+        const works = sentinelWorksRepositoryV1(visibility, decided);
         settled.set(key, works);
         return works;
       })();
@@ -603,7 +630,7 @@ export function createPrivateTargetGateV1(input: {
       }
       return {
         kind: "sentinel_private_targets_hidden",
-        reason: PRIVATE_TARGET_REASON,
+        reason: targetExclusionReasonV1(decidedHost),
         repositories,
         rows: hiddenRows,
         refusedWrites,

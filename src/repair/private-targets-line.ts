@@ -9,8 +9,15 @@
  * child-status scan reads any line with its own `status` as a child record).
  * The launcher re-emits it into the job log (`scanStepLines`) only after this
  * strict re-parse. Advisory only.
+ *
+ * On a host proven private (`target-visibility.ts`) the same line counts the
+ * public targets it skipped, with the closed reason `public_repository`.
  */
-import { PRIVATE_TARGET_REASON } from "./target-visibility.ts";
+import {
+  PRIVATE_TARGET_REASON,
+  PUBLIC_TARGET_REASON,
+  type TargetExclusionReasonV1,
+} from "./target-visibility.ts";
 
 export const PRIVATE_TARGETS_KIND = "sentinel_private_targets";
 
@@ -19,7 +26,7 @@ const MAX_LISTED = 64;
 
 export interface PrivateTargetsLineV1 {
   kind: typeof PRIVATE_TARGETS_KIND;
-  reason: typeof PRIVATE_TARGET_REASON;
+  reason: TargetExclusionReasonV1;
   skipped: number;
   listed: number;
   configured: number;
@@ -40,15 +47,18 @@ export function privateTargetsLineV1(counts: {
   skipped: number;
   listed: number;
   configured: number;
-}): PrivateTargetsLineV1 | null {
+}, reason: TargetExclusionReasonV1 = PRIVATE_TARGET_REASON):
+  | PrivateTargetsLineV1
+  | null {
   const { skipped, listed, configured } = counts;
   if (
     !count(skipped) || skipped === 0 || !count(listed) || !count(configured) ||
-    skipped + configured > listed
+    skipped + configured > listed ||
+    (reason !== PRIVATE_TARGET_REASON && reason !== PUBLIC_TARGET_REASON)
   ) return null;
   return {
     kind: PRIVATE_TARGETS_KIND,
-    reason: PRIVATE_TARGET_REASON,
+    reason,
     skipped,
     listed,
     configured,
@@ -65,11 +75,13 @@ export function parsePrivateTargetsLine(
   const line = value as Record<string, unknown>;
   if (
     Object.keys(line).sort().join() !== KEYS ||
-    line.kind !== PRIVATE_TARGETS_KIND || line.reason !== PRIVATE_TARGET_REASON
+    line.kind !== PRIVATE_TARGETS_KIND ||
+    (line.reason !== PRIVATE_TARGET_REASON &&
+      line.reason !== PUBLIC_TARGET_REASON)
   ) return null;
   return privateTargetsLineV1({
     skipped: line.skipped as number,
     listed: line.listed as number,
     configured: line.configured as number,
-  });
+  }, line.reason);
 }

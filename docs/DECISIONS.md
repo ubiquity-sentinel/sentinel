@@ -6576,3 +6576,49 @@ receipts stand in again, which this decision forbids.
 Rollback: revert the commits; private targets are then configured, planned
 and run again, and the launcher steps their records again, which this
 decision forbids.
+
+## 2026-11-18: private targets follow the host repository's own visibility
+
+- Owner, 2026-11-18, on a second, private deployment of the same code
+  (`ubiquity-sentinel-private/sentinel`, kept in sync by fast-forwarding from
+  this repository's `development`): "can you please just handle all that".
+  Both deployments run identical code, so the public-only rule above now
+  depends on the deployment, never on a code difference or a setting.
+- Rule, in the same authority file
+  ([src/repair/target-visibility.ts](../src/repair/target-visibility.ts)):
+  `sentinelWorksRepositoryV1(visibility, host)`. A host is private only when
+  GitHub's answer on a read of the run's own repository (`GITHUB_REPOSITORY`,
+  already bound to the committed controller by the native identity check)
+  says private, and the committed setting does not list that repository
+  (`resolveSentinelHostV1`). A host proven private works private and internal
+  targets and ONLY those; every other host (public, unreadable, unstated, or
+  one that lists itself) is exactly the public-only rule. Unknown target
+  visibility is skipped on every host. There is no variable: no env, file or
+  fixture can make a public host work a private target, and no opt-in is
+  added on a private host (it would need a workflow edit, which stops
+  runtime auto-follow, and adds no safety beyond the host's own visibility).
+- Public host (this deployment): it lists `ubiquity-sentinel/sentinel`, so
+  the host is never read. Loads, reads, log lines, skips and state are
+  unchanged; no extra GitHub read.
+- Private host: the runtime (`runActionsRepairHost`) reads the host once per
+  job on the self credential (`SENTINEL_SELF_TOKEN`, else `GITHUB_TOKEN`),
+  configures private targets, lists public ones in `publicTargets` (never a
+  read failure) and prints the same text-free line with reason
+  `public_repository`. The launcher gate decides the host once per run
+  (local read of the checkout's setting; the self surface's cached repository
+  read only when it does not list itself), shows rows and surfaces of
+  repositories proven private and hides public and unknown ones (line
+  reason `public_repository`). Public targets, Sentinel's own repository
+  included, stay with the public deployment, so no target is double-worked;
+  the private mirror is not in the setting and is never a target.
+- Unchanged: backup CI still refuses private repositories
+  (`private_repository`). Closed-matrix recovery and the maintenance
+  publication load targets without a host, so on a private host they stay
+  public-only (fail closed). A private deployment cannot run yet: the
+  controller binding (`hosted-controller-deployment.ts`,
+  `hosted-supervisor.ts`) and many self references are fixed to
+  `ubiquity-sentinel/sentinel`, so its launcher and runtime refuse their
+  identity first.
+
+Rollback: revert the commit; every host is then public-only again, as in the
+entry above.
