@@ -11,9 +11,15 @@ import {
   backupCiReceiptId,
   backupCiSuspensionPath,
 } from "../../src/contracts/backup-ci.ts";
+import { backupCiStoreChanges } from "../../ops/backup-ci-dispatch.ts";
 import { runBackupCiPass } from "../../ops/backup-ci-pass.ts";
-import { probeBackupCiFalseGreen } from "../../ops/backup-ci-probe.ts";
+import {
+  backupCiProbePath,
+  parseBackupCiProbeRecord,
+  probeBackupCiFalseGreen,
+} from "../../ops/backup-ci-probe.ts";
 import type { BackupCiTargetReadsV1 } from "../../ops/backup-ci-plan-reads.ts";
+import type { BackupCiStoreView } from "../../ops/backup-ci-store-writer.ts";
 import {
   B,
   CHECK,
@@ -27,6 +33,7 @@ import {
   result,
   RUNNER,
   suspension,
+  T0,
 } from "../github/backup-ci-fixtures.ts";
 import { passDeps, passWorld } from "./backup-ci-pass-fakes.ts";
 
@@ -145,5 +152,91 @@ Deno.test("an excluded runner's pass probes its false green once", async () => {
         JSON.stringify({ runnerId: RUNNER, state: "excluded" })
       }`,
     ),
+  );
+});
+
+function storeView(store: Map<string, unknown>): BackupCiStoreView {
+  return {
+    read: (path: string) => Promise.resolve(store.get(path) ?? null),
+  } as unknown as BackupCiStoreView;
+}
+
+Deno.test("a complete probe answer is remembered and never re-read", async () => {
+  const world = passWorld();
+  world.store.set(backupCiSuspensionPath(OWNER, NAME), evidence());
+  world.store.set(
+    backupCiCommitPath(OWNER, NAME, H),
+    commitFile([result(PR_KEY)]),
+  );
+  let targetReads = 0;
+  const first = await runBackupCiPass(
+    passDeps(world, [{ repository: REPO, id: REPO_ID }], {
+      targetReads: () => {
+        targetReads++;
+        return reads(LOG);
+      },
+    }),
+  );
+  assert.equal(targetReads, 1);
+  assert.equal(first.probes?.length, 1);
+  const record = first.probes![0].record;
+  assert.equal(record.nativeCheckRunId, 501);
+  assert.equal(record.facts.receipt, RECEIPT);
+  assert.equal(record.facts.sameBase, false);
+  // The commit step keeps it (a new file, once per evidence receipt).
+  const path = backupCiProbePath(OWNER, NAME);
+  const changes = await backupCiStoreChanges(
+    first,
+    [],
+    [],
+    storeView(world.store),
+    T0,
+    () => {},
+  );
+  assert.deepEqual(parseBackupCiProbeRecord(changes.get(path)), record);
+  world.store.set(path, changes.get(path));
+  const again = await backupCiStoreChanges(
+    first,
+    [],
+    [],
+    storeView(world.store),
+    T0,
+    () => {},
+  );
+  assert.equal(again.has(path), false, "an unchanged answer is not rewritten");
+  // Every later pass logs the same line from the store, no target read.
+  const before = world.lines.length;
+  const second = await runBackupCiPass(
+    passDeps(world, [{ repository: REPO, id: REPO_ID }], {
+      targetReads: () => {
+        throw new Error("a remembered probe reads no target");
+      },
+    }),
+  );
+  assert.deepEqual(second.probes, []);
+  const probe = (lines: string[]) =>
+    lines.filter((l) => l.startsWith("sentinel_backup_ci_false_green_probe "));
+  const later = world.lines.slice(before);
+  assert.equal(probe(later).length, 1);
+  assert.equal(probe(later)[0], probe(world.lines)[0]);
+  assert(later.includes("backup-ci:probe:remembered"));
+});
+
+Deno.test("an incomplete probe answer is logged but not remembered", async () => {
+  const world = passWorld();
+  world.store.set(backupCiSuspensionPath(OWNER, NAME), evidence());
+  const pass = await runBackupCiPass(
+    passDeps(world, [{ repository: REPO, id: REPO_ID }], {
+      targetReads: () =>
+        ({
+          ...reads(LOG),
+          job: () => Promise.resolve(null),
+        }) as unknown as BackupCiTargetReadsV1,
+    }),
+  );
+  assert.deepEqual(pass.probes, []);
+  assert(
+    world.lines.some((l) => l.includes('"nativeStarted":null')),
+    world.lines.join("\n"),
   );
 });

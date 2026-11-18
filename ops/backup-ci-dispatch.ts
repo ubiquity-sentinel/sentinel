@@ -48,6 +48,10 @@ import {
 import { mergeCheckCalibration } from "../src/github/backup-ci-check-store.ts";
 import type { BackupCiPassFileV1 } from "./backup-ci-pass.ts";
 import {
+  backupCiProbePath,
+  parseBackupCiProbeRecord,
+} from "./backup-ci-probe.ts";
+import {
   type BackupCiApiV1,
   createBackupCiApi,
 } from "./backup-ci-plan-reads.ts";
@@ -338,6 +342,15 @@ export async function backupCiStoreChanges(
     } else if (existing.repository.id !== repository.id) {
       log(`backup-ci:${slug}:enrol:pin_conflict`);
     }
+  }
+  // A false-green probe answer is kept once per evidence receipt
+  // (backup-ci-probe.ts); later passes log it without a target read.
+  for (const { repository, record } of pass.probes ?? []) {
+    const path = backupCiProbePath(repository.owner, repository.name);
+    const existing = await current(view, path, parseBackupCiProbeRecord)
+      .catch(() => null);
+    if (existing?.facts.receipt === record.facts.receipt) continue;
+    changes.set(path, parseBackupCiProbeRecord(record));
   }
   return changes;
 }

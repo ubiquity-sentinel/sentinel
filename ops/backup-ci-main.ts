@@ -209,7 +209,8 @@ async function pass(): Promise<number> {
   const bytes = new TextEncoder().encode(canonicalStringify(passFile));
   await Deno.writeFile(`${workDir}/pass.json`, bytes);
   const hasWork = passFile.files.length > 0 || passFile.units.length > 0 ||
-    passFile.comparisons.length > 0 || (passFile.enrolments?.length ?? 0) > 0;
+    passFile.comparisons.length > 0 || (passFile.enrolments?.length ?? 0) > 0 ||
+    (passFile.probes?.length ?? 0) > 0;
   const lines: Record<string, string> = {
     passDigest: backupCiBytesDigest(bytes),
     hasWork: String(hasWork),
