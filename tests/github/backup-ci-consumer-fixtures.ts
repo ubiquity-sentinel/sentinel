@@ -93,7 +93,11 @@ export function startedJob(id: number, head: GitSha = H) {
   };
 }
 
-/** The workflow run of one check suite (the suite → path/event map). */
+/**
+ * The workflow run of one check suite (the suite → path/event map), with
+ * GitHub's `repository` object: public unless `over` replaces it (a stand-in
+ * needs the target shown public, owner decision 2026-11-18).
+ */
 export function workflowRun(
   suiteId: number,
   event: string,
@@ -109,6 +113,7 @@ export function workflowRun(
     run_attempt: 2,
     status: "completed",
     conclusion: "failure",
+    repository: { full_name: `${OWNER}/${NAME}`, private: false },
     ...over,
   };
 }
