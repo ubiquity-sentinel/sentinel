@@ -30,6 +30,7 @@ import {
   PUBLICATION_POLICY_SOURCES,
   publicationPolicyRuntimeHold,
   type PublicationPolicySourcesV1,
+  releaseSourceRefusal,
   runtimeSourceCarriesPublicationPolicy,
 } from "../../ops/hosted-autonomy-protected-release.ts";
 import type {
@@ -102,6 +103,8 @@ async function checkout(): Promise<PublicationPolicySourcesV1> {
     park: await read(PUBLICATION_POLICY_SOURCES.park),
     trust: await read(PUBLICATION_POLICY_SOURCES.trust),
     push: await read(PUBLICATION_POLICY_SOURCES.push),
+    admission: await read(PUBLICATION_POLICY_SOURCES.admission),
+    start: await read(PUBLICATION_POLICY_SOURCES.start),
   };
 }
 
@@ -115,7 +118,7 @@ async function oldRule(): Promise<PublicationPolicySourcesV1> {
       "  return ciExecutablePath(path) || authorityPath(path);\n}",
     ),
     park: sources.park.replace(
-      ' || trust !== "trusted";',
+      ' || trust === "untrusted";',
       ";",
     ),
   };
@@ -139,10 +142,19 @@ function pullOf(number: number, headSha?: string): HostedAutonomyPullV1 {
   };
 }
 
+/** The live issue facts each released record's source is read as. */
+type IssueFacts = NonNullable<
+  Awaited<ReturnType<NonNullable<HostedAutonomyGitHubV1["readIssueFacts"]>>>
+>;
+const OWNER_ISSUE = { author: "0x4007", authorId: 4975670 };
+
 async function rigWith(
   work: WorkRecordV1[],
   sources: PublicationPolicySourcesV1 | null,
-  options: { moved?: number } = {},
+  options: {
+    moved?: number;
+    issue?: (number: number) => Partial<IssueFacts> | null;
+  } = {},
 ) {
   const { rig, github } = await makeRig("protected-release", {
     repair: snapshotOf(work),
@@ -157,6 +169,22 @@ async function rigWith(
       Promise.resolve(
         pullOf(number, number === options.moved ? "a".repeat(40) : undefined),
       ),
+    // Every source issue is the owner's unless a case says otherwise.
+    readIssueFacts: (number: number) => {
+      const facts = options.issue === undefined
+        ? OWNER_ISSUE
+        : options.issue(number);
+      return Promise.resolve(
+        facts === null ? null : {
+          number,
+          title: `issue ${number}`,
+          body: "",
+          state: "open" as const,
+          author: null,
+          ...facts,
+        },
+      );
+    },
     ...(sources === null ? {} : {
       readFileAt: (path: string, revision: string) => {
         reads.push(`${path}@${revision}`);
@@ -203,10 +231,15 @@ Deno.test("protected release: this checkout's own source carries the 2026-11-17 
   const drops: [keyof PublicationPolicySourcesV1, string, string][] = [
     ["policy", "return credentialPath(path);", "return false;"],
     ["policy", "export function sentinelNeverMerges(", "function never("],
-    ["park", ' || trust !== "trusted";', ";"],
+    ["park", ' || trust === "untrusted";', ";"],
     ["park", "await workflowChangeTrust(", "await Promise.resolve("],
-    ["trust", "BASE_REPAIR_AUTHOR) return", "null) return"],
+    ["trust", 'if (kind === "owner") return', "if (false) return"],
+    ["trust", 'if (kind === "other") return "untrusted"', "if (false) return"],
+    ["trust", "isBaseRepairBody(issue.body) ||", "true ||"],
     ["push", "if (push.error.detail === PUSH_", "if (false && PUSH_"],
+    ["admission", 'login: "0x4007", id: 4975670', 'login: "0x4007", id: 1'],
+    ["admission", 'issueAuthorKind(issue) !== "other"', "true"],
+    ["start", 'observation.kind === "not_admitted"', "false"],
   ];
   for (const [key, from, to] of drops) {
     assert.ok(sources[key].includes(from), `${key}: ${from}`);
@@ -341,7 +374,7 @@ Deno.test("protected release: the maintenance pass releases each exact park once
         `${id}: ${JSON.stringify(first.actions)}`,
       );
     }
-    assert.equal(reads.length, 4, "one read of each installed source");
+    assert.equal(reads.length, 6, "one read of each installed source");
     assert.ok(reads.every((read) => read.endsWith(`@${RUNTIME}`)));
     const after = await readState(rig);
     for (const id of IDS) {
@@ -408,7 +441,7 @@ Deno.test("protected release: the maintenance pass releases each exact park once
       false,
       JSON.stringify(second.actions),
     );
-    assert.equal(reads.length, 4);
+    assert.equal(reads.length, 6);
     assert.equal(rig.writes, writes);
 
     // A later park of a released record (its own later `since`) stays.
@@ -475,4 +508,94 @@ Deno.test("protected release: a pull request that no longer binds its published 
   } finally {
     await Deno.remove(rig.tmp, { recursive: true });
   }
+});
+
+Deno.test("protected release: a record whose source is not admitted, or not trusted on a target, or unreadable, is skipped uncharged", async () => {
+  // sentinel 177: another author; ai.ubq.fi 1370: an App issue that is no
+  // base-repair issue (untrusted); deno-deploy-workflow 25: unreadable.
+  const { rig } = await rigWith([...LIVE.work], await checkout(), {
+    issue: (number) =>
+      number === 177
+        ? { author: "someone-else", authorId: 9 }
+        : number === 1370
+        ? { author: "ubiquity-sentinel[bot]", body: "Sentinel watchdog" }
+        : number === 25
+        ? null
+        : OWNER_ISSUE,
+  });
+  try {
+    const before = await readState(rig);
+    const result = await maintenance(rig, NOW);
+    const skipped = (number: number, reason: string) => {
+      const id = IDS.find((entry) =>
+        live(entry).related.issueNumber === number
+      )!;
+      assert.ok(
+        result.actions.includes(`retry:${id}:skipped:${reason}`),
+        `${id}: ${JSON.stringify(result.actions)}`,
+      );
+      return id;
+    };
+    const held = [
+      skipped(177, "owner_release_not_admitted"),
+      skipped(1370, "owner_release_untrusted"),
+      skipped(25, "owner_release_source_unreadable"),
+    ];
+    const after = await readState(rig);
+    for (const id of held) {
+      assert.deepEqual(
+        after.snapshot.work.find((row) => row.id === id),
+        live(id),
+        `${id} stays parked`,
+      );
+    }
+    for (const id of IDS.filter((entry) => !held.includes(entry))) {
+      assert.ok(
+        result.actions.includes(
+          `retry:${id}:grant=0:${PROTECTED_RELEASE_DETAIL}`,
+        ),
+        id,
+      );
+    }
+    assert.deepEqual(after.snapshot.reservations, before.snapshot.reservations);
+  } finally {
+    await Deno.remove(rig.tmp, { recursive: true });
+  }
+});
+
+Deno.test("protected release: ai.ubq.fi 1370, an App base-repair issue, is admitted and trusted by provenance", async () => {
+  const record = live(
+    IDS.find((entry) => live(entry).related.issueNumber === 1370)!,
+  );
+  const surface = {
+    readIssueFacts: (number: number) =>
+      Promise.resolve({
+        number,
+        title: "Base CI is red",
+        body:
+          "<!-- sentinel:base-repair:ubiquity/ai.ubq.fi -->\nThe base is red.",
+        state: "open" as const,
+        author: "ubiquity-sentinel[bot]",
+      }),
+  } as unknown as HostedAutonomyGitHubV1;
+  assert.equal(await releaseSourceRefusal(record, surface), null);
+  // Without the marker the same App issue is untrusted on a target.
+  const plain = {
+    readIssueFacts: (number: number) =>
+      Promise.resolve({
+        number,
+        title: "t",
+        body: "text",
+        state: "open" as const,
+        author: "ubiquity-sentinel[bot]",
+      }),
+  } as unknown as HostedAutonomyGitHubV1;
+  assert.equal(
+    await releaseSourceRefusal(record, plain),
+    "owner_release_untrusted",
+  );
+  assert.equal(
+    await releaseSourceRefusal(record, null),
+    "owner_release_source_unreadable",
+  );
 });
