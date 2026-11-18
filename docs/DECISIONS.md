@@ -5494,58 +5494,117 @@ persisted field changes.
 
 ## 2026-11-17: backup CI enrols every ubiquity target and calibrates itself
 
-Owner, 2026-11-17 (verbatim), on 22 Prospector PRs and a Passport PR waiting
-on CI because the `ubiquity` org has no Actions minutes: "regarding actions
-minutes it should be able to fallback to its own org i thought".
+Owner, 2026-11-17 (verbatim), on 22 Prospector PRs and a Passport PR waiting on
+CI because the `ubiquity` org has no Actions minutes: "regarding actions minutes
+it should be able to fallback to its own org i thought".
 
 - Finding: enrolment was manual. Each target needed an owner-edited row in
   `sentinel.backup-ci-targets.json` with its numeric repository id (it binds
-  every store file to one repository, so a reused slug cannot inherit
-  receipts) and owner-picked calibration commits in
-  `ops/backup-ci-calibration.json` (commits where the job ran natively,
-  including a red, which the leg re-runs and compares). Only Passport was
-  listed, so Prospector's `validation(not_started)` parks had no backup path.
-  `backup-ci.yml` already scopes the target read token to exactly the rows of
-  that file (owner `ubiquity`), so listing a target there needs no workflow
-  change; the supervisor already mints the same App for all 30 committed
-  targets.
-- Change: every `ubiquity/*` target of `sentinel.targets.json` is listed (a
-  test pins the equality). A row may carry `id: null`: the trusted pass
-  resolves the id from the target's own repository read and binds it to the
-  store's calibration file (another id refuses the target); the supervisor's
-  reader and stand-in rule bind an id-less row to that file's id, and without
-  it nothing binds. For an uncalibrated runner on a target one of whose
-  records already needed a stand-in, the pass samples calibration commits
-  from the target's newest completed push runs on its default branch (newest
-  red first; visited commits without a settled native group and settled ones
-  are skipped). Bar unchanged: five agreements, one red, zero false greens.
-  Bounds: one listing read per target per pass, two calibration candidates
-  per pass, two legs in flight overall, eight calibration legs per runner per
-  target per day; idle without stand-in demand; nothing for a runner already
-  excluded by a false green. Closed log `sentinel_backup_ci_calibration`
-  (`calibrated`, `unusable`, `idle`, `daily_cap`, `unreadable`,
-  `no_native_history`, `no_native_red`, `sampling`, with agreements of 5).
-  A refused `actions/checkout` input is logged as a closed code
-  (`checkout_input=<code>`); the stored reason stays `checkout_inputs`.
+  every store file to one repository, so a reused slug cannot inherit receipts)
+  and owner-picked calibration commits in `ops/backup-ci-calibration.json`
+  (commits where the job ran natively, including a red, which the leg re-runs
+  and compares). Only Passport was listed, so Prospector's
+  `validation(not_started)` parks had no backup path. `backup-ci.yml` already
+  scopes the target read token to exactly the rows of that file (owner
+  `ubiquity`), so listing a target there needs no workflow change; the
+  supervisor already mints the same App for all 30 committed targets.
+- Enrolment: every `ubiquity/*` target of `sentinel.targets.json` is listed (a
+  test pins the equality). A row may carry `id: null`; its id is resolved ONCE,
+  on the first pass with stand-in demand and a free leg slot, from the target's
+  own read, only when that read answers exactly the configured full name and a
+  public repository (closed `enrol:` reasons `renamed`, `private_repository`,
+  `unverified_name`, `repository_unavailable`; a calibration or check file of
+  another id refuses with `unsupported:repository_id`). Backup legs publish the
+  target tree and logs in a public repository, and only Passport carries a
+  recorded visibility decision (its committed id). The commit step pins the id
+  in `v1/<owner>/<repo>/enrolment.json`; ingest and the supervisor's reader bind
+  every file of the row to the pin without another read.
+
+Independent review of the first three commits (2026-11-17) found the automatic
+path could produce wrong stand-ins and heavy always-on load. Its named fixes are
+part of this change:
+
+- MUST 1, one false green excludes everywhere: runner `916ad9eaff49fe9d`
+  (falseGreens 1, a Passport-scoped `false_green` suspension) comes from the
+  global leg pins, so the same runner would have calibrated and stood in on 28
+  more targets, where no native run is left to catch a repeat. A `false_green`
+  suspension of any scope, or `falseGreens > 0` in any calibration or check
+  file, now excludes the runner from calibrating and standing in on every target
+  until its id changes (leg revision or act pin). The trusted pass then ingests
+  but plans nothing (`sentinel_backup_ci_runner` `excluded`); the stand-in rule
+  refuses `runner_excluded:<check>`. Consequence: backup CI stands in for
+  NOTHING until this false green is diagnosed and the leg is revised.
+- MUST 2, calibration bound to what is stood in for: a stand-in for (context,
+  workflow path, check name) needs that runner's agreements on exactly that
+  check and context in `v1/<owner>/<repo>/checks.json`: at least five distinct
+  commits, at least one green and one red, no false green, at most one false
+  red. A comparison counts only when the native run is of the unit's event and,
+  for `pull_request`, merged against the unit's base (read from the native job's
+  own first-step checkout log); a red agreement needs a genuine failure at the
+  same workflow step on both sides (native `failure` of a started job, not
+  `timed_out`; backup `failure` whose excerpt is no missing-tool error;
+  setup-action failures were already no evidence). A false green counts unless
+  the event or base provably differs. `pull_request` jobs calibrate on past
+  same-repository pull requests whose native checkout binds a base that is an
+  ancestor of the head (so the leg's merge tree is the tree the native job
+  tested); forks never.
+- MUST 3, cost: no target read without a live record whose head waits on CI
+  (`ci_pending`, or a pre-review CI park naming `not_started`); demand targets
+  are planned longest-wait first, within an 8-minute pass deadline; ingest runs
+  first from pins only; no timestamp-only or empty rows, so an idle pass commits
+  nothing (the urgent scan window rotates with the run id instead of aging
+  through writes); the default-branch tip is a candidate only when a record
+  needs it; any client stops for the pass once throttled and the target client
+  also below 1000 remaining requests (it shares the supervisor's App limit).
+  Calibration legs: one per target and two in all per pass, six per target and
+  24 in all per day, counted from every admitted leg in
+  `v1/calibration-legs.json` (48 hours), whatever its outcome; sampling reads
+  are bounded per target and pass.
+- MUST 4, availability during an outage: sampling skips failed runs shorter than
+  30 seconds (never started, which fill the newest pages) without a read or a
+  leg and pages back up to three pages; only the current runner's entries skip a
+  commit, so a new runner after a revision recalibrates on the same history.
+  Without a red in reach nothing is planned.
+- SHOULD 6: the checkout input code table is read by own keys only. Listing a
+  target changes the supervisor's read of it: a never-started run no stand-in
+  covers makes `hasAllChecksGreen` return null (no evidence) instead of false,
+  so retries treat the head as unread and plan no CI correction or fix for it;
+  the read costs the job reads that classify never-started runs, an anonymous
+  store read, and, when the store holds a file for the head, the full check-run,
+  workflow-run and status listings.
+- Closed logs: `sentinel_backup_ci_calibration` per demanded check (`greens`,
+  `reds`, `of` 5, reason `calibrated`, `unusable`, `daily_cap`, `unreadable`,
+  `no_native_history`, `no_native_red`, `no_native_green`, `unbound`, `budget`,
+  `sampling`); `sentinel_backup_ci_incomparable` with `native_missing`,
+  `native_event`, `native_base`, `native_unbound`, `native_not_started`,
+  `native_not_genuine`, `backup_not_genuine`, `step_mismatch`; a refused
+  `actions/checkout` input as `checkout_input=<code>` (the stored reason stays
+  `checkout_inputs`).
 - Store stall (read-only: sentinel `backup-ci` runs 2184-2188 and store tip
   `7cd1692a7d`): no defect. Every run succeeds and logs Passport
-  `{"current":0,"skipped":4,"selected":0}`; all its candidates are final, so
-  the pass has no changes and the commit step is skipped. The last writes were
+  `{"current":0,"skipped":4,"selected":0}`; all its candidates are final, so the
+  pass has no changes and the commit step is skipped. The last writes were
   `updatedAt`-only rows of four candidates that have since left the set.
-- Passport false green (`1cfa6ad6`, peer unit, leg run 41364279374 job
-  125021026580): the leg ran all ten planned steps (checkout short-circuit,
-  Deno/Node/Bun setup, frozen-lockfile install, type generation with its
-  clean-tree check, the runtime validation, both dry runs) and each
-  succeeded. The native failing step is only on Passport's check run
-  125012919402, which this work could not read. Not proven Sentinel-side, so
-  the leg revision is not bumped and the suspension stands. One unbound input
-  is noted for follow-up: a peer comparison does not verify the merge base the
-  native `pull_request` run used.
-- Not changed: a target added later to `sentinel.targets.json` also needs a
-  row here (the test fails until it has one) unless `backup-ci.yml` is changed
-  to read the committed target setting, which this change does not do.
-  Workflows that run only on `pull_request` cannot calibrate from push
-  history (`no_native_history`).
+- Passport false green (`1cfa6ad6`, a `pull_request` peer, leg run 41364279374
+  job 125021026580): the leg ran all ten planned steps and each succeeded.
+  Native check run 125012919402 was created at about 23:20 UTC (bracketed by
+  Sentinel job ids 125010878039 at 23:11:57 and 125017959099 at 23:40:39), when
+  the supervisor's 23:11 repair step had just made progress on that record,
+  consistent with `1cfa6ad6` being published then. The comparison bound neither
+  the native run's event (the planner took the last observation of the group
+  across push and pull_request) nor its merge base; both are now refused. Which
+  applied here is readable only with the target token, so it is not proven: the
+  leg revision is not bumped and the suspension stands. While the runner is
+  excluded, each pass logs `sentinel_backup_ci_false_green_probe` (native event,
+  job start, failing step number, `sameBase`); a different event or base would
+  show the false green compared different code and justify the revision bump.
+- Residuals: the workflow mints one target token for all 29 repositories, so one
+  repository the App cannot reach fails the mint and stops backup CI for every
+  target. A target added later to `sentinel.targets.json` also needs a row here
+  (the test fails until it has one) unless `backup-ci.yml` is changed to read
+  the committed target setting, which this change does not do.
 
-Rollback: revert the commits in reverse order. No `sentinel-state` field and
-no store record shape changes; older readers parse every file written.
+Rollback: revert the commits in reverse order. No `sentinel-state` field
+changes. Store: commit files, `calibration.json` and suspensions keep their
+shapes; new files (`checks.json`, `enrolment.json`, `calibration-legs.json`) are
+never read by older code, so a reverted runtime ignores them.
