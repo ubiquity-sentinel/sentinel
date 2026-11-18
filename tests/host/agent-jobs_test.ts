@@ -205,6 +205,7 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
       readToken: null,
       defaultModel: "fake",
       deadlineAtMs: Date.now() + 3_600_000,
+      heartbeatSeconds: 0.3,
       ports,
     });
 
@@ -252,6 +253,14 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
       /rate limited \(429\) through 2 attempts/,
     );
     assert.ok(lines.includes("limited: model 429, restarting in 60s"));
+    // A running agent reports liveness: commits, uncommitted files, output.
+    assert.ok(
+      lines.some((line) =>
+        /^hangs: alive 0m, restarts 0, commits 0 \(last none\), uncommitted files \d+, agent output \d+ KiB, quiet \d+s$/
+          .test(line)
+      ),
+      lines.join("\n"),
+    );
     // A dropped model stream restarts the agent in the same checkout.
     assert.ok(
       lines.includes("dropped: model stream dropped, restart 1 in 15s"),

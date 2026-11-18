@@ -99,6 +99,14 @@ pushed like any other.
 
 Each job's status is also printed in its `cell` job log as `<id>: <status>`.
 
+While an agent runs, its `cell` job log gets one liveness line every five
+minutes:
+`<id>: alive <minutes>m, restarts <n>, commits <n> (last <sha> <age>
+"<subject>"), uncommitted files <n>, agent output <size>, quiet <seconds>s`.
+`quiet` is the time since the agent last wrote any output; a job that stays
+quiet for many minutes with no new commits is stuck, not working. The log of a
+running job is streamed on its page in the Actions tab.
+
 In a pull request body, links the agent made to files in its checkout point at
 the pushed commit; other runner-local links are reduced to their text.
 

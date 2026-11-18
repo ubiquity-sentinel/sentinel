@@ -50,6 +50,8 @@ const RESTART_NOTE =
  * turns through the public gateway). The work so far is on disk, so the cell
  * restarts the agent in the same checkout instead of ending the job.
  */
+/** Seconds between liveness lines of a running agent. */
+export const HEARTBEAT_SECONDS = 300;
 const DISCONNECTED_MARKER = "stream disconnected before completion";
 export const DISCONNECT_BACKOFF_SECONDS = 15;
 /** Restarts after dropped streams per job; the job deadline still applies. */
@@ -72,6 +74,62 @@ async function interruption(errFile: string): Promise<Interruption> {
  * the transcript. Only lines the client marks as errors are considered, long
  * token-like runs are redacted, and the result is capped.
  */
+/**
+ * One liveness line for a running agent: what it has committed, what is
+ * uncommitted, and how long ago it last produced output. A job's log is the
+ * only view into a runner while it works, so a silent multi-hour job cannot be
+ * told apart from a stuck one without these. Subjects are cut short and long
+ * tokens redacted; the line never includes agent output.
+ */
+export async function agentHeartbeat(probe: {
+  id: string;
+  checkout: string;
+  baseSha: string;
+  logFile: string;
+  startedAtMs: number;
+  restarts: number;
+}): Promise<string> {
+  const run = async (args: string[]) => {
+    const done = await new Deno.Command("git", {
+      args,
+      cwd: probe.checkout,
+      stdout: "piped",
+      stderr: "null",
+    }).output().catch(() => null);
+    return done === null || done.code !== 0
+      ? ""
+      : new TextDecoder().decode(done.stdout).trim();
+  };
+  const minutes = (ms: number) => Math.max(0, Math.round(ms / 60_000));
+  const now = Date.now();
+  const commits = await run(["rev-list", "--count", `${probe.baseSha}..HEAD`]);
+  const last = await run(["log", "-1", "--format=%h %ct %s"]);
+  const dirty = (await run(["status", "--porcelain"])).split("\n")
+    .filter((line) => line.length > 0).length;
+  let lastCommit = "none";
+  if (commits !== "" && commits !== "0" && last !== "") {
+    const [sha, epoch, ...subject] = last.split(" ");
+    const text = subject.join(" ").replace(/[A-Za-z0-9_\-]{32,}/g, "<redacted>")
+      .slice(0, 60);
+    lastCommit = `${sha} ${minutes(now - Number(epoch) * 1000)}m ago "${text}"`;
+  }
+  let bytes = 0;
+  let quietMs = now - probe.startedAtMs;
+  for (const path of [probe.logFile, `${probe.logFile}.err`]) {
+    const stat = await Deno.stat(path).catch(() => null);
+    if (stat === null) continue;
+    bytes += stat.size;
+    if (stat.mtime !== null) {
+      quietMs = Math.min(quietMs, now - stat.mtime.getTime());
+    }
+  }
+  return `${probe.id}: alive ${minutes(now - probe.startedAtMs)}m, ` +
+    `restarts ${probe.restarts}, commits ${commits === "" ? "?" : commits} ` +
+    `(last ${lastCommit}), uncommitted files ${dirty}, ` +
+    `agent output ${Math.round(bytes / 1024)} KiB, ` +
+    `quiet ${Math.round(quietMs / 1000)}s`;
+}
+
 export async function agentFailureReason(errFile: string): Promise<string> {
   const text = await Deno.readTextFile(errFile).catch(() => "");
   const lines = text.slice(-16000).split("\n")
@@ -146,6 +204,8 @@ export interface AgentJobsCellInput {
   defaultModel: string;
   /** Epoch ms after which the cell must be committing, not running agents. */
   deadlineAtMs: number;
+  /** Seconds between liveness lines for a running agent; default 300. */
+  heartbeatSeconds?: number;
   ports: AgentJobsCellPorts;
 }
 
@@ -157,6 +217,8 @@ async function bounded(
     env: Record<string, string>;
     stdin: string | null;
     logFile: string;
+    /** Called at this interval while the command runs; failures are ignored. */
+    heartbeat?: { seconds: number; emit: () => Promise<void> };
   },
 ): Promise<{ code: number; timedOut: boolean }> {
   // coreutils timeout runs the command in its own process group and signals
@@ -185,11 +247,22 @@ async function bounded(
     await writer.write(new TextEncoder().encode(options.stdin));
     await writer.close();
   }
+  const beat = options.heartbeat;
+  let beating = false;
+  const timer = beat === undefined ? null : setInterval(() => {
+    if (beating) return;
+    beating = true;
+    beat.emit().catch(() => {}).finally(() => {
+      beating = false;
+    });
+  }, beat.seconds * 1000);
   const [status] = await Promise.all([
     child.status,
     child.stdout.pipeTo(out.writable),
     child.stderr.pipeTo(err.writable),
-  ]);
+  ]).finally(() => {
+    if (timer !== null) clearInterval(timer);
+  });
   return {
     code: status.code,
     timedOut: status.code === 124 || status.code === 137,
@@ -272,6 +345,7 @@ async function runJob(
     await ports.prepareClient(start);
     const deadlineSeconds = Math.min(job.minutes * 60, remainingSeconds());
     let spentSeconds = 0;
+    const jobStartedAtMs = Date.now();
     let attempt = 0;
     let limited = false;
     let rateLimitAttempts = 0;
@@ -287,6 +361,20 @@ async function runJob(
         env: { ...env, CODEX_HOME: start.clientHome },
         stdin: job.prompt + restartNote,
         logFile,
+        heartbeat: {
+          seconds: input.heartbeatSeconds ?? HEARTBEAT_SECONDS,
+          emit: async () =>
+            ports.log(
+              await agentHeartbeat({
+                id: job.id,
+                checkout,
+                baseSha: base.sha,
+                logFile,
+                startedAtMs: jobStartedAtMs,
+                restarts: attempt,
+              }),
+            ),
+        },
       });
       spentSeconds += (Date.now() - attemptStarted) / 1000;
       const cause: Interruption = !agent.timedOut && agent.code !== 0
