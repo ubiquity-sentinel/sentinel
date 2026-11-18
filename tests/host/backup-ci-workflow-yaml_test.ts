@@ -202,6 +202,11 @@ Deno.test("the backup targets enrol every ubiquity committed target, never the s
     targets.map((target) => target.repository).sort(),
     committed.filter((slug) => slug.startsWith("ubiquity/")).sort(),
   );
+  // Passport stays listed with its committed id, which is identity only
+  // (owner decision 2026-11-18, "no private repos"): the pass re-reads its
+  // visibility and plans nothing for it while it is private, and no receipt
+  // stands in for a private target. Listed, its never-started runs keep
+  // reading as no evidence (its PRs wait), never as red.
   assert.equal(
     targets.find((t) => t.repository === "ubiquity/passport.ubq.fi")?.id,
     1254699258,

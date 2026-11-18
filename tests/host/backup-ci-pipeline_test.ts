@@ -161,8 +161,9 @@ Deno.test("plan, dispatch, leg, ingest, store: a receipt the stand-in rule accep
       },
     });
     const reads: BackupCiTargetReadsV1 = {
+      // Public: a private target gets no leg (owner decision 2026-11-18).
       repository: () =>
-        Promise.resolve({ id: ID, defaultBranch: "main", private: true }),
+        Promise.resolve({ id: ID, defaultBranch: "main", private: false }),
       branchTip: () => Promise.resolve(base),
       checkRuns: (sha) => Promise.resolve(sha === head ? runs : []),
       suites: (sha) => Promise.resolve(sha === head ? suites : []),

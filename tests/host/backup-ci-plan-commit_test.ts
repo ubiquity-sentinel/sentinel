@@ -59,7 +59,9 @@ const T0 = Date.parse("2026-10-25T08:00:00Z");
 const BILLING =
   "The job was not started because recent account payments have failed or your spending limit needs to be increased. Please check the 'Billing & plans' section in your settings";
 const REPO = { owner: "ubiquity", name: "passport.ubq.fi", id: 812345678 };
-const INFO = { id: REPO.id, defaultBranch: "main", private: true };
+// Public: a private target is planned nothing (owner decision 2026-11-18,
+// tests/host/backup-ci-visibility_test.ts).
+const INFO = { id: REPO.id, defaultBranch: "main", private: false };
 const NODE_ACTION = new TextEncoder().encode(
   "runs:\n  using: node24\n  main: index.js\n",
 );
