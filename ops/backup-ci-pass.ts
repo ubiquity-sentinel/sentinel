@@ -296,6 +296,12 @@ async function planTarget(
     deps.log(`backup-ci:${target.repository}:unsupported:repository_id`);
     return [];
   }
+  // Visibility is re-read every pass, not only at enrolment: a leg publishes
+  // the target tree and logs in the public sentinel repository.
+  if (info.private) {
+    deps.log(`backup-ci:${target.repository}:private_repository`);
+    return [];
+  }
   const baseTip = await reads.branchTip(info.defaultBranch);
   const commits = new Set<GitSha>([
     ...records.flatMap((r) => [r.target.head!, r.target.base]),
