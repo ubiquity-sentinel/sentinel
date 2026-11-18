@@ -126,13 +126,16 @@ function protectedPark(
  * sentinel-state/repair at b53e355a4571 (sequence 97103). Every one holds
  * `candidateState.preserved: null`: its protected candidate survives only in
  * an expired artifact, so a release returns the record to a new charged run
- * under the 2026-11-17 policy, which publishes what the old one parked.
+ * under the 2026-11-17 policy, which publishes what the old one parked. Ten
+ * of the eleven parks: Sentinel 270 stays parked (below).
  */
 export const OWNER_PROTECTED_RELEASES_2026_11_17: readonly OwnerReleaseV1[] =
   Object.freeze([
     protectedPark("sentinel", 177, 1794786847840),
     protectedPark("sentinel", 240, 1793933334355),
-    protectedPark("sentinel", 270, 1794542533053),
+    // Sentinel 270 is not released (2026-11-18): its fix needs Sentinel's own
+    // `.github/workflows/` (finalize chaining supervisor-dispatch), which
+    // never publishes, so a release would only spend a charge and park.
     protectedPark("sentinel", 277, 1794542552067),
     protectedPark("sentinel", 383, 1794532634705),
     protectedPark("sentinel", 406, 1794668251018),

@@ -280,7 +280,7 @@ Deno.test("protected release: this checkout's own source carries the 2026-11-17 
   assert.deepEqual(reads, []);
 });
 
-Deno.test("protected release: the planner names exactly the eleven live parks and nothing else", () => {
+Deno.test("protected release: the planner names exactly the ten released live parks and nothing else", () => {
   const relabelled = live("issue-ubiquity-ai.ubq.fi-1370");
   const untrusted = parseWorkRecordV1({
     ...relabelled,
@@ -294,6 +294,10 @@ Deno.test("protected release: the planner names exactly the eleven live parks an
   const snapshot = snapshotOf([...LIVE.work, unnamed()]);
   const planned = planProtectedReleases(snapshot, new Set(), () => false, NOW);
   assert.deepEqual(planned.map((entry) => entry.id).sort(), [...IDS].sort());
+  // Sentinel 270 (its fix needs Sentinel's own `.github/`) is not released.
+  assert.equal(IDS.length, 10);
+  assert.ok(!IDS.includes("issue-ubiquity-sentinel-270"));
+  assert.ok(LIVE.work.some((row) => row.id === "issue-ubiquity-sentinel-270"));
   assert.deepEqual(
     planned.filter((entry) => entry.shape === "published_pull").map((entry) =>
       entry.id
@@ -407,6 +411,13 @@ Deno.test("protected release: the maintenance pass releases each exact park once
         });
       }
     }
+    // Sentinel 270, the same live park but not released, stays exactly so.
+    assert.deepEqual(
+      after.snapshot.work.find((row) =>
+        row.id === "issue-ubiquity-sentinel-270"
+      ),
+      live("issue-ubiquity-sentinel-270"),
+    );
     // The unnamed record holding the same park is untouched.
     assert.deepEqual(
       after.snapshot.work.find((row) => row.id === unnamed().id),
