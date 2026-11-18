@@ -5988,9 +5988,10 @@ written.
   and shares that predicate.
 - Authority paths added (on Sentinel's own repository only its owner merges
   a change to them): issue admission and workflow trust with their inputs
-  (`base-repair.ts`, `wire.ts`), the push guard and its executors
-  (`push-guard.ts`, `push-content-guard.ts`, `port-publication.ts`,
-  `git-executor.ts`, `actions-candidates-preserve.ts`), the CI rule
+  (`base-repair.ts`, `wire.ts`, `wire-issue-author.ts`), the push guard and
+  its executors (`push-guard.ts`, `push-content-guard.ts`,
+  `port-publication.ts`, `git-executor.ts`, `actions-candidates-preserve.ts`),
+  the CI rule
   (`ci-success-rule.ts`), the merge executors' gate (`merge-content-gate.ts`,
   `port-self-merge.ts`) and the launcher's file gates and train
   (`ops/hosted-autonomy-pull-file-gates.ts`,
