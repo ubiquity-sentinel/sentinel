@@ -40,6 +40,26 @@ Deno.test("each refused checkout input has its closed code", () => {
   assert.equal(backupCiCheckoutInput({ token: "x" }), "token");
   assert.equal(backupCiCheckoutInput({ "ssh-key": "x" }), "ssh_key");
   assert.equal(backupCiCheckoutInput({ "made-up": "x" }), "other");
+  // Review probe P5: an inherited property name is not a closed code (it
+  // returned the Object constructor function before).
+  for (
+    const key of ["constructor", "toString", "__proto__", "hasOwnProperty"]
+  ) {
+    assert.equal(
+      backupCiCheckoutInput(JSON.parse(`{"${key}":"x"}`)),
+      "other",
+      key,
+    );
+  }
+});
+
+Deno.test("a refused job never names an inherited property as its input", () => {
+  const refused = planBackupCiJob(workflow("          constructor: x"), "deno");
+  assert.deepEqual(refused, {
+    ok: false,
+    reason: "checkout_inputs",
+    input: "other",
+  });
 });
 
 Deno.test("a refused job names the input; the stored reason is unchanged", () => {

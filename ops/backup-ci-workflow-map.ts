@@ -391,7 +391,12 @@ export function backupCiCheckoutInput(
       (key === "fetch-depth" && value !== 1 && value !== "1") ||
       ((key === "submodules" || key === "lfs") && value !== false &&
         value !== "false")
-    ) return CHECKOUT_INPUT_CODES[key] ?? "other";
+    ) {
+      // Own keys only: `constructor` and other inherited names are `other`.
+      return Object.hasOwn(CHECKOUT_INPUT_CODES, key)
+        ? CHECKOUT_INPUT_CODES[key]
+        : "other";
+    }
   }
   return null;
 }
