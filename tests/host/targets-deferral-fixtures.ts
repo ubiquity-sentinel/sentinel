@@ -20,7 +20,7 @@ export type DeferralRig = Awaited<ReturnType<typeof rig>>;
 
 /** The production target resolvers, over the transport each test supplies. */
 export const PRODUCTION = {
-  resolveDefaultBranch: undefined,
+  resolveRepository: undefined,
   resolveTreeFacts: undefined,
 };
 
@@ -74,7 +74,7 @@ export function unreadable(
     if (request.method !== "GET") return http(request);
     if (path === "/repos/ubiquity-sentinel/sentinel") return branch(request);
     if (path === "/repos/ubiquity/prospector") {
-      return reply(200, {}, '{"default_branch":"main"}')();
+      return reply(200, {}, '{"default_branch":"main","private":false}')();
     }
     if (path === "/repos/ubiquity/prospector/commits/main") {
       return facts(request);

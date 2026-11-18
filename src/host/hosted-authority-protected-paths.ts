@@ -58,6 +58,9 @@ export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
     // no one of them is the only barrier to a push or a merge.
     "src/repair/issue-admission.ts",
     "src/repair/workflow-trust.ts",
+    // 2026-11-18 ("no private repos"): the one predicate that decides which
+    // target repositories Sentinel works, and how GitHub's answer is read.
+    "src/repair/target-visibility.ts",
     "src/repair/base-repair.ts",
     "src/github/wire.ts",
     "src/github/wire-issue-author.ts",

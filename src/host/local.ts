@@ -22,8 +22,8 @@ import {
 } from "../contracts/ports.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import {
-  createDefaultBranchResolver,
   createGatedTargetReadTransport,
+  createTargetRepositoryResolver,
   createTargetTreeFactsResolver,
   loadTargetConfigsV1,
   STATIC_TARGETS_EMPTY,
@@ -250,7 +250,7 @@ export async function runLocalRepairHost(
     });
     const localTargets = await loadTargetConfigsV1({
       template: localTemplate,
-      resolveDefaultBranch: createDefaultBranchResolver({
+      resolveRepository: createTargetRepositoryResolver({
         http,
         token: input.githubToken,
       }),

@@ -408,7 +408,11 @@ export async function rig(
       workDir: dir,
       stateRemoteUrl: remote.remoteUrl,
       refreshSelf: () => Promise.resolve(sha),
-      resolveDefaultBranch: () => Promise.resolve("development"),
+      resolveRepository: () =>
+        Promise.resolve({
+          defaultBranch: "development",
+          visibility: "public" as const,
+        }),
       resolveTreeFacts: () =>
         Promise.resolve({
           files: ["deno.json"],

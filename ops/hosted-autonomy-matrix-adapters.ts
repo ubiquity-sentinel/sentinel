@@ -10,7 +10,7 @@ import {
 import { CLOSED_C_WAVE } from "../src/host/modern-matrix-recovery.ts";
 import { createGitBundleImporter } from "../src/host/matrix-git.ts";
 import {
-  createDefaultBranchResolver,
+  createTargetRepositoryResolver,
   createTargetTreeFactsResolver,
   loadTargetConfigsV1,
 } from "../src/host/targets.ts";
@@ -86,10 +86,11 @@ export async function createHostedClosedMatrixRecovery(input: {
   const artifactHttp = input.artifactHttp ??
     createActionsMatrixArtifactHttpTransport();
   const template = createLocalRepositoryConfig();
-  // Each target's default branch is read with the credential that reaches it.
+  // Each target's repository (default branch and visibility) is read with the
+  // credential that reaches it; a private target is never configured.
   const resolvers = {
-    self: createDefaultBranchResolver({ http, token: input.token }),
-    foreign: createDefaultBranchResolver({ http, token: input.apiToken }),
+    self: createTargetRepositoryResolver({ http, token: input.token }),
+    foreign: createTargetRepositoryResolver({ http, token: input.apiToken }),
   };
   const factsResolvers = {
     self: createTargetTreeFactsResolver({ http, token: input.token }),
@@ -98,7 +99,7 @@ export async function createHostedClosedMatrixRecovery(input: {
   const targets = await loadTargetConfigsV1({
     template,
     root: input.sourceDir,
-    resolveDefaultBranch: (target) =>
+    resolveRepository: (target) =>
       (target.owner === template.repository.owner &&
           target.name === template.repository.name
         ? resolvers.self

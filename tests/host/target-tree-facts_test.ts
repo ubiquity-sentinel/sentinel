@@ -271,7 +271,11 @@ Deno.test("tree facts: 27-target config reload lifecycle reuses facts and refuse
       ...createGitHubTargetResolvers({
         http: (request) => api.http(request),
         token: api.token,
-        resolveDefaultBranch: () => Promise.resolve("main"),
+        resolveRepository: () =>
+          Promise.resolve({
+            defaultBranch: "main",
+            visibility: "public" as const,
+          }),
       }),
     });
   const first = await load();

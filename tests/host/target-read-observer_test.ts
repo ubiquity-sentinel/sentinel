@@ -69,7 +69,7 @@ Deno.test("target reads: only a throw, a 5xx, a 429 or a 403 with rate-limit evi
 
 Deno.test("target reads: the observer keeps each repository's last read and never changes one", async () => {
   const observer = createTargetReadObserverV1({ now: () => NOW });
-  const ok = answer(200, {}, '{"default_branch":"main"}');
+  const ok = answer(200, {}, '{"default_branch":"main","private":false}');
   const failure = new TypeError("connection reset");
   const script = new Map<string, HttpResponseV1 | Error>([
     [`${API}/repos/o/a`, ok],
@@ -115,11 +115,16 @@ function partialGitHub(requests: string[]) {
     [
       "/repos/ubiquity-sentinel/sentinel",
       () =>
-        Promise.resolve(answer(200, {}, '{"default_branch":"development"}')),
+        Promise.resolve(
+          answer(200, {}, '{"default_branch":"development","private":false}'),
+        ),
     ],
     [
       "/repos/ubiquity/prospector",
-      () => Promise.resolve(answer(200, {}, '{"default_branch":"main"}')),
+      () =>
+        Promise.resolve(
+          answer(200, {}, '{"default_branch":"main","private":false}'),
+        ),
     ],
     [
       "/repos/ubiquity/prospector/commits/main",
@@ -145,7 +150,10 @@ function partialGitHub(requests: string[]) {
     ["/repos/ubiquity/broken", () => Promise.resolve(answer(401))],
     [
       "/repos/ubiquity/flaky",
-      () => Promise.resolve(answer(200, {}, '{"default_branch":"main"}')),
+      () =>
+        Promise.resolve(
+          answer(200, {}, '{"default_branch":"main","private":false}'),
+        ),
     ],
     ["/repos/ubiquity/flaky/commits/main", () => Promise.resolve(answer(503))],
     [

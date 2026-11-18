@@ -134,6 +134,7 @@ async function fixture(
             headers: new Headers(),
             bodyText: JSON.stringify({
               default_branch: controls.defaultBranch,
+              private: false,
             }),
           };
         }

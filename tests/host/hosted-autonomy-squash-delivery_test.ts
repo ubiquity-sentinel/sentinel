@@ -110,6 +110,7 @@ function stubForeign(headTree: string): Stub {
       }
       : {
         default_branch: FOREIGN_BRANCH,
+        private: false,
         allow_squash_merge: true,
         allow_merge_commit: true,
       };

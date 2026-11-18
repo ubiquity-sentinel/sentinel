@@ -158,6 +158,7 @@ export async function prepareModernHistory(input: {
       return reply({
         full_name: "ubiquity-sentinel/sentinel",
         default_branch: "development",
+        private: false,
       });
     }
     if (

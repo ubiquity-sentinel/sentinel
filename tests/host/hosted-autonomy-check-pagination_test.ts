@@ -224,7 +224,7 @@ Deno.test(
           title: FOREIGN_TASK_TITLE,
           body: FOREIGN_TASK_BODY,
         }
-        : { default_branch: FOREIGN_BRANCH };
+        : { default_branch: FOREIGN_BRANCH, private: false };
       return Promise.resolve(jsonResponse(payload));
     }) as typeof fetch;
     try {

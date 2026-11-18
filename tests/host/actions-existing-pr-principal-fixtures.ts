@@ -337,7 +337,11 @@ export async function actionsExistingPrincipalFixture(
         sourcePath,
       ]);
     },
-    resolveDefaultBranch: () => Promise.resolve("development"),
+    resolveRepository: () =>
+      Promise.resolve({
+        defaultBranch: "development",
+        visibility: "public" as const,
+      }),
     resolveTreeFacts: () =>
       Promise.resolve({
         files: ["deno.json"],

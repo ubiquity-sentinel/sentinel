@@ -266,11 +266,14 @@ try { result = await runActionsRepairHost({
   // fixture models only its three targets. Resolve their branches here and
   // leave the rest unavailable, so target discovery stays off the fake
   // transport (no eager network/credential requirement at startup).
-  resolveDefaultBranch: (target) => Promise.resolve({
-    "ubiquity-sentinel/sentinel": "development",
-    "ubiquity/ai.ubq.fi": "development",
-    "ubiquity/passport.ubq.fi": "main",
-  }[target.slug] ?? null),
+  resolveRepository: (target) => {
+    const defaultBranch = ({
+      "ubiquity-sentinel/sentinel": "development",
+      "ubiquity/ai.ubq.fi": "development",
+      "ubiquity/passport.ubq.fi": "main",
+    } as Record<string, string>)[target.slug];
+    return Promise.resolve(defaultBranch === undefined ? null : { defaultBranch, visibility: "public" as const });
+  },
   resolveTreeFacts: () => Promise.resolve(null),
   preflight: () => { preflightCalls++; return Promise.resolve(); },
   prepareTarget: async (config, source) => {
@@ -298,7 +301,7 @@ try { result = await runActionsRepairHost({
         for (const [repository, branch] of defaultBranches) {
           if (url.pathname === "/repos/" + repository) {
             assert.equal(request.headers.get("authorization"), "Bearer synthetic-app-token");
-            return Promise.resolve({ status: 200, headers: new Headers(), bodyText: JSON.stringify({ default_branch: branch }) });
+            return Promise.resolve({ status: 200, headers: new Headers(), bodyText: JSON.stringify({ default_branch: branch, private: false }) });
           }
         }
       }

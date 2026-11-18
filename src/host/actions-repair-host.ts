@@ -50,6 +50,7 @@ import type { ReleaseRequestV1 } from "../contracts/release.ts";
 import {
   createGitHubTargetResolvers,
   loadTargetConfigsV1,
+  privateTargetsLineV1,
   STATIC_TARGETS_EMPTY,
   unavailableTargetCountsV1,
 } from "./targets.ts";
@@ -387,8 +388,15 @@ export async function runActionsRepairHost(
       readObserver,
     }),
   });
+  // Owner decision 2026-11-18 (`src/repair/target-visibility.ts`): a private
+  // target is never configured, so nothing below reads, plans, runs, reviews,
+  // comments on or writes its work. One text-free line counts the skips.
+  const privateLine = privateTargetsLineV1(targets);
+  if (privateLine !== null) console.log(JSON.stringify(privateLine));
   // Listed targets that were all unreadable defer (or fail as unavailable);
-  // only a setting that lists no repository is the empty-setting refusal.
+  // only a setting that lists no repository is the empty-setting refusal. A
+  // private target is never a read failure; a setting whose every target is
+  // private configures none and refuses as empty.
   const unavailable = unavailableTargetCountsV1(targets, readObserver);
   if (unavailable !== null) {
     const host = {

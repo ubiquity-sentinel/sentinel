@@ -120,7 +120,11 @@ Deno.test("Actions self dependencies: real host refuses absent producer then run
       workDir: rig.runtime,
       stateRemoteUrl: rig.remote.remoteUrl,
       refreshSelf: () => Promise.resolve(rig.base),
-      resolveDefaultBranch: () => Promise.resolve("development"),
+      resolveRepository: () =>
+        Promise.resolve({
+          defaultBranch: "development",
+          visibility: "public" as const,
+        }),
       resolveTreeFacts: () =>
         Promise.resolve({
           files: ["deno.json"],

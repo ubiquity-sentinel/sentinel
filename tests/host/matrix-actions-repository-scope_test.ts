@@ -65,8 +65,12 @@ Deno.test("matrix actions: retained out-of-scope issues do not abort native plan
     const planned = await runActionsMatrixHost({
       ...job,
       state: memory,
-      resolveDefaultBranch: (target) =>
-        Promise.resolve(target.name === "sentinel" ? "development" : null),
+      resolveRepository: (target) =>
+        Promise.resolve(
+          target.name === "sentinel"
+            ? { defaultBranch: "development", visibility: "public" }
+            : null,
+        ),
       model: {
         modelId: "gpt-6.1-sol",
         runModel: () => {

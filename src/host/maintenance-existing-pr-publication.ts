@@ -18,7 +18,10 @@ import { DEFAULT_APP_INSTALLATION_ID } from "./actions-target-cycles.ts";
 import { createExistingPrTakeover } from "./existing-pr-takeover.ts";
 import { createLocalRepositoryConfig } from "./local-config.ts";
 import { trustedGitPath } from "./local-io.ts";
-import { createDefaultBranchResolver, loadTargetConfigsV1 } from "./targets.ts";
+import {
+  createTargetRepositoryResolver,
+  loadTargetConfigsV1,
+} from "./targets.ts";
 
 type PublicationPort = Pick<ExistingPrTakeoverPort, "resolvePublication">;
 const REPOSITORY = Object.freeze({
@@ -91,7 +94,7 @@ export function createMaintenancePublicationFor(input: {
   async function prepare(deadline: number): Promise<PublicationPort | null> {
     try {
       if (!live(deadline) || input.token.length === 0) return null;
-      const resolveBranch = createDefaultBranchResolver({
+      const resolveRepository = createTargetRepositoryResolver({
         token: input.token,
         http: async (request) => {
           if (
@@ -108,9 +111,9 @@ export function createMaintenancePublicationFor(input: {
       const targets = await loadTargetConfigsV1({
         root: input.sourceDir,
         template: createLocalRepositoryConfig(),
-        resolveDefaultBranch: (target) =>
+        resolveRepository: (target) =>
           target.owner === REPOSITORY.owner && target.name === REPOSITORY.name
-            ? resolveBranch(target)
+            ? resolveRepository(target)
             : Promise.resolve(null),
       });
       const config = targets.configs.find((entry) =>
