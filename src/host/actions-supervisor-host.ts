@@ -1,7 +1,11 @@
 /** Hosted actions-supervisor-host responsibility. */
 import { isGitSha } from "../contracts/brands.ts";
 import { SELF_TOKEN_ENV } from "./hosted-app-grant.ts";
-import { HOSTED_CONTROLLER_SELF } from "../contracts/hosted-controller-deployment.ts";
+import {
+  HOSTED_CONTROLLER_ROLE,
+  HOSTED_CONTROLLER_SELF,
+  PRIVATE_DEPLOYMENT_REASON,
+} from "../contracts/hosted-controller-deployment.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import { canonicalStringify } from "../contracts/canonical.ts";
 import type { HostedExecutionIntentV1 } from "../contracts/hosted-supervisor.ts";
@@ -522,30 +526,41 @@ export async function main(): Promise<void> {
       runner: new DenoGitRunner(gitHome, githubGitAuthEnv(selfToken)),
     });
     throughputMetrics = { port };
-    // The self App token files the watchdog's issues on the self repository
-    // through the existing trusted issue port; no model worker holds it.
-    throughputWatchdog = {
-      metrics: port,
-      issues: createHostedWatchdogIssues(
-        createHostedAutonomyRequest(selfToken),
-        SUPERVISOR_REPOSITORY,
-      ),
-    };
     const summaryPath = Deno.env.get(STEP_SUMMARY_ENV);
     const appendSummary = summaryPath === undefined || summaryPath.length === 0
       ? undefined
       : (line: string) =>
         Deno.writeTextFile(summaryPath, line, { append: true });
+    // The private deployment files nothing in its own tracker (owner,
+    // 2026-11-18): no watchdog issues, and its upkeep notice is the log line.
+    const ownTracker = HOSTED_CONTROLLER_ROLE === "public";
+    // The self App token files the watchdog's issues on the self repository
+    // through the existing trusted issue port; no model worker holds it.
+    if (ownTracker) {
+      throughputWatchdog = {
+        metrics: port,
+        issues: createHostedWatchdogIssues(
+          createHostedAutonomyRequest(selfToken),
+          SUPERVISOR_REPOSITORY,
+        ),
+      };
+    } else {
+      await appendSummary?.(
+        `throughput watchdog: skipped (${PRIVATE_DEPLOYMENT_REASON})\n`,
+      );
+    }
     upkeepDeferral = {
       store: metricsUpkeepStreakStore(port),
       // Owner decision 2026-11-05: the notice is one owner issue on the self
       // repository through the same self App token as the watchdog issues;
       // the log line is the fallback when the issue is not delivered.
       notice: fallbackUpkeepNoticePort({
-        issue: issueUpkeepNoticePort(createHostedUpkeepIssues(
-          createHostedAutonomyRequest(selfToken),
-          SUPERVISOR_REPOSITORY,
-        )),
+        issue: ownTracker
+          ? issueUpkeepNoticePort(createHostedUpkeepIssues(
+            createHostedAutonomyRequest(selfToken),
+            SUPERVISOR_REPOSITORY,
+          ))
+          : null,
         log: logUpkeepNoticePort({ appendSummary }),
         appendSummary,
       }),

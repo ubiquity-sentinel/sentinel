@@ -16,6 +16,7 @@ import {
   type StateReadView,
 } from "../contracts/ports.ts";
 import { parseRepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
+import { isHostedControllerRepository } from "../contracts/hosted-controller-deployment.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { HttpTransportV1 } from "../github/http.ts";
 import { composeLocalGitHub, type LocalGitHubInputV1 } from "./local-github.ts";
@@ -753,9 +754,7 @@ export function composeHostedAppGitHub(
     throw new Error("hosted App principal context unavailable");
   }
   const repository = Object.freeze({ ...input.repository });
-  const selfController = repository.installationId === 0 &&
-    repository.owner === "ubiquity-sentinel" &&
-    repository.name === "sentinel";
+  const selfController = isHostedControllerRepository(repository);
   if (
     !selfController &&
     (repository.owner !== "ubiquity" ||

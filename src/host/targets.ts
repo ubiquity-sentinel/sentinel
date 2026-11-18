@@ -19,6 +19,7 @@
 
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
+import { isHostedControllerDeploymentSlugV1 } from "../contracts/hosted-controller-deployment.ts";
 import type { HttpTransportV1 } from "../github/http.ts";
 import type { GitHubCooldownGateV1 } from "../contracts/ports.ts";
 import {
@@ -505,6 +506,12 @@ export async function loadTargetConfigsV1(options: {
   const publicTargets: string[] = [];
   const factsUnavailable: string[] = [];
   for (const target of targets) {
+    // A host proven private never works a Sentinel deployment (owner,
+    // 2026-11-18), so it never reads one: it is left to the public one.
+    if (privateHost && isHostedControllerDeploymentSlugV1(target.slug)) {
+      publicTargets.push(target.slug);
+      continue;
+    }
     const read = await options.resolveRepository(target);
     if (read === null) {
       skipped.push(target.slug);

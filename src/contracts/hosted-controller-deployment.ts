@@ -153,6 +153,11 @@ if (!SELECTED.ok) {
 /** The selected entry's role; only the public entry works Sentinel itself. */
 export const HOSTED_CONTROLLER_ROLE: HostedControllerRoleV1 =
   SELECTED.binding.role;
+/**
+ * Closed reason every public-only path (Sentinel's own tracker, backup CI,
+ * owner install) reports on the private role instead of re-pointing itself.
+ */
+export const PRIVATE_DEPLOYMENT_REASON = "private_deployment";
 /** Retired pre-migration names of the selected entry, for state reads only. */
 export const HOSTED_CONTROLLER_RETIRED_REPOSITORY: string | null =
   SELECTED.binding.retiredRepository;
@@ -186,6 +191,15 @@ export const HOSTED_CONTROLLER_WORKFLOW_REF =
   `${HOSTED_CONTROLLER_REPOSITORY}/${HOSTED_CONTROLLER_DEPLOYMENT.supervisorWorkflowPath}@${HOSTED_CONTROLLER_SUPERVISOR_REF}`;
 export const HOSTED_CONTROLLER_RUNTIME_ID =
   `${HOSTED_CONTROLLER_REPOSITORY}:0:production`;
+
+/** True for the repository of any committed deployment, either role. */
+export function isHostedControllerDeploymentSlugV1(slug: string): boolean {
+  const wanted = slug.toLowerCase();
+  return HOSTED_CONTROLLER_DEPLOYMENTS.some((entry) =>
+    `${entry.deployment.owner}/${entry.deployment.name}`.toLowerCase() ===
+      wanted
+  );
+}
 
 /** Scope0 identifies this controller, independently of App-backed targets. */
 export function isHostedControllerRepository(

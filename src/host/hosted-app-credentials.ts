@@ -1,5 +1,10 @@
 /** Reads one run's App credentials and live installation identities. */
 import { optionalEnv } from "./actions-host-io.ts";
+import { HOSTED_CONTROLLER_SELF_INSTALLATION_ID } from "../contracts/hosted-controller-deployment.ts";
+
+/** Static refusal: the self installation is not the committed one. */
+export const HOSTED_SELF_INSTALLATION_REFUSED =
+  "hosted self installation is not the committed one";
 import {
   DEFAULT_APP_INSTALLATION_ID,
   parseAppInstallationId,
@@ -38,13 +43,20 @@ export function readHostedAppCredentials(
     ? DEFAULT_APP_INSTALLATION_ID
     : parseAppInstallationId(targetEnv);
   const selfEnv = optionalEnv(readEnv, SELF_INSTALLATION_ID_ENV);
+  const selfInstallationId = selfEnv === undefined
+    ? targetInstallationId
+    : parseAppInstallationId(selfEnv);
+  // A deployment that commits its self installation runs only on it, so a
+  // self token minted for any other organization never reaches its state.
+  if (
+    HOSTED_CONTROLLER_SELF_INSTALLATION_ID !== null &&
+    selfInstallationId !== HOSTED_CONTROLLER_SELF_INSTALLATION_ID
+  ) throw new Error(HOSTED_SELF_INSTALLATION_REFUSED);
   return {
     appToken,
     selfToken,
     selfGrant,
     targetInstallationId,
-    selfInstallationId: selfEnv === undefined
-      ? targetInstallationId
-      : parseAppInstallationId(selfEnv),
+    selfInstallationId,
   };
 }

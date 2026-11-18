@@ -20,6 +20,10 @@ import {
   type HostedAutonomyPassContextV1,
 } from "./hosted-autonomy-scopes.ts";
 import { HOSTED_AUTONOMY_SELF_SCOPE } from "./hosted-autonomy-policy.ts";
+import {
+  HOSTED_CONTROLLER_ROLE,
+  PRIVATE_DEPLOYMENT_REASON,
+} from "../src/contracts/hosted-controller-deployment.ts";
 import type {
   HostedAutonomyDepsV1,
   HostedAutonomyGitHubV1,
@@ -560,6 +564,12 @@ async function runHostedAutonomyChain(
   // any refusal inside it is reported as an action rather than a failure. The
   // normal repair loop then works those issues like any other. A pass that
   // wrote state never runs it.
+  // The private deployment files nothing in its own tracker (owner,
+  // 2026-11-18): both notice passes report the closed reason and read nothing.
+  if (HOSTED_CONTROLLER_ROLE !== "public") {
+    actions.push(`self-observation:skipped:${PRIVATE_DEPLOYMENT_REASON}`);
+    return skippedAfterObservation(actions, observedHead);
+  }
   let selfSurface: HostedAutonomyGitHubV1 | null = null;
   const finishObservation = beginMaintenanceProgress("self_observation");
   try {
@@ -603,7 +613,14 @@ async function runHostedAutonomyChain(
   } finally {
     finishObservation();
   }
+  return skippedAfterObservation(actions, observedHead);
+}
 
+/** The run's no-write outcome, classified by the actions it recorded. */
+function skippedAfterObservation(
+  actions: string[],
+  observedHead: string | null,
+): HostedAutonomyResultV1 {
   const suffix = (value: string) =>
     actions.some((action) => action.endsWith(value));
   // A read-only retry line (a repeated denial or skip) is not a retry: only a

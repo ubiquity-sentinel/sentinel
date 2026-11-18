@@ -25,6 +25,7 @@ import {
   BackupCiListingCache,
 } from "../github/backup-ci-observations.ts";
 import { createBackupCiReader } from "../github/backup-ci-reader.ts";
+import { HOSTED_CONTROLLER_ROLE } from "../contracts/hosted-controller-deployment.ts";
 import type { GitRunnerV1, GitRunResultV1 } from "../state/state-git.ts";
 
 /** The workflow variable (and child environment key) of the mode. */
@@ -50,12 +51,16 @@ export function readBackupCiMode(
   }
 }
 
-/** The committed targets file under `root`; any failure lists nothing. */
+/**
+ * The committed targets file under `root`; any failure lists nothing, and so
+ * does the private deployment, which runs no backup CI (owner, 2026-11-18).
+ */
 export async function readBackupCiTargets(
   root: string,
   readFile: (path: string) => Promise<string> = (path) =>
     Deno.readTextFile(path),
 ): Promise<BackupCiTargetV1[]> {
+  if (HOSTED_CONTROLLER_ROLE !== "public") return [];
   try {
     const targets = parseBackupCiTargets(
       JSON.parse(await readFile(`${root}/${BACKUP_CI_TARGETS_FILE_NAME}`)),
