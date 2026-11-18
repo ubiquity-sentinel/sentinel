@@ -425,7 +425,10 @@ Deno.test("maintenance publication: genuine submitted successor restores into a 
         state: "open",
         labels: [],
         assignees: [],
-        author: "human-owner",
+        // The admitted owner's source issue (2026-11-17); the adopted pull
+        // request stays a person's.
+        author: "0x4007",
+        authorId: 4975670,
         createdAt: r.clock.now(),
         closedAt: null,
         updatedAt: r.clock.now(),

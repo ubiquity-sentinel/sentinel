@@ -69,7 +69,9 @@ export function issueRow(number: number): GitHubIssueV1 {
     title: `matrix issue ${number}`,
     body: `body ${number}`,
     state: "open",
-    author: null,
+    // The admitted owner (2026-11-17): only the owner's and the App's issues.
+    author: "0x4007",
+    authorId: 4975670,
     labels: [],
     createdAt: T0 - 10_000,
     updatedAt: T0 - 10_000,

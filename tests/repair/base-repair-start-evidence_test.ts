@@ -73,7 +73,11 @@ function issue(kind: Issue): GitHubIssueV1 {
     body: kind === "ordinary"
       ? "The build fails on every pull request."
       : `${MARKER}\n\nCI is failing on \`development\` at ${SHA2}.`,
-    author: kind === "app" ? "ubiquity-sentinel[bot]" : "someone",
+    // A person's issue is the admitted owner's (2026-11-17): the marker in
+    // it still makes no base repair.
+    ...(kind === "app"
+      ? { author: "ubiquity-sentinel[bot]" }
+      : { author: "0x4007", authorId: 4975670 }),
     relations: { openBlockers: [], subIssueCount: 0 },
   });
 }

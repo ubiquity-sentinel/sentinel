@@ -234,6 +234,22 @@ export interface FakeGithubOptionsV1 {
  */
 export type SuitedCheckV1 = GitHubCheckV1 & { suite?: number };
 
+/** The admitted owner identity every fixture issue carries by default. */
+export const OWNER_AUTHOR = Object.freeze({
+  author: "0x4007",
+  authorId: 4975670,
+});
+
+/** A fixture issue's author: its own fields, else the admitted owner. */
+export function authorOf(
+  issue: Partial<GitHubIssueV1>,
+): { author: string | null; authorId?: number } {
+  if (issue.author === undefined) return { ...OWNER_AUTHOR };
+  return issue.authorId === undefined
+    ? { author: issue.author }
+    : { author: issue.author, authorId: issue.authorId };
+}
+
 /** Recording fake GitHubPort; product logic never lives here. */
 export class FakeGithub implements GitHubPort {
   nativeQueue: NativeQueueGuardV1 | undefined;
@@ -341,7 +357,7 @@ export class FakeGithub implements GitHubPort {
           title: `issue ${issueNumber}`,
           body: "",
           state: "open",
-          author: null,
+          ...OWNER_AUTHOR,
           labels: [],
           createdAt: T0,
           updatedAt: T0,
@@ -355,7 +371,7 @@ export class FakeGithub implements GitHubPort {
       title: issue.title ?? `issue ${issueNumber}`,
       body: issue.body ?? "",
       state: "open",
-      author: issue.author ?? null,
+      ...authorOf(issue),
       ...(issue.authorAssociation === undefined
         ? {}
         : { authorAssociation: issue.authorAssociation }),
@@ -374,7 +390,7 @@ export class FakeGithub implements GitHubPort {
         title: issue.title ?? `issue ${issue.number ?? 0}`,
         body: issue.body ?? "",
         state: issue.state ?? "open",
-        author: issue.author ?? null,
+        ...authorOf(issue),
         labels: issue.labels ?? [],
         createdAt: issue.createdAt ?? T0,
         updatedAt: issue.updatedAt ?? T0,

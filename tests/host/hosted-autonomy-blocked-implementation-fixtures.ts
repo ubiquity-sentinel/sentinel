@@ -54,10 +54,11 @@ export async function blockedRetryRig() {
   const published = await checked(target, ["rev-parse", "HEAD"], env) as GitSha;
   const mirror = f.tmp + "/mirror";
   await checked(f.tmp, ["clone", "-q", target, mirror], env);
-  await Deno.mkdir(target + "/.github/workflows", { recursive: true });
-  await Deno.writeTextFile(target + "/.github/workflows/ci.yml", "jobs: {}\n");
+  // A credential path: never published on any target (2026-11-17), so the
+  // correction is refused with the plain protected park whatever its source.
+  await Deno.writeTextFile(target + "/.env", "MODE=fixture\n");
   await checked(target, ["add", "."], env);
-  await checked(target, ["commit", "-qm", "protected CI correction"], env);
+  await checked(target, ["commit", "-qm", "protected correction"], env);
   const candidate = await checked(target, ["rev-parse", "HEAD"], env) as GitSha;
   const cell = f.plan.cells[0];
   cell.expectedBase = base;
@@ -75,7 +76,7 @@ export async function blockedRetryRig() {
   f.result.receipt!.candidate = {
     head: candidate,
     checkpointSha: null,
-    changedPaths: [".github/workflows/ci.yml"],
+    changedPaths: [".env"],
   };
   const file = cell.cellId + ".bundle";
   const bundle = await createGitBundleExporter({
@@ -229,7 +230,7 @@ export async function blockedRetryRig() {
   };
   const github = new FakeGithub();
   const config = repositoryConfig(REPO, { perHour: 100, perSevenDays: null }, {
-    protectedPaths: [".github/workflows"],
+    protectedPaths: [".env"],
   });
   let now = T0 + 10_000;
   const clock = { now: () => now };

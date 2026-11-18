@@ -274,24 +274,27 @@ export async function handleModelReceipt(
     );
   }
   // A protected change is published like any other (on Sentinel itself for
-  // its owner to merge) unless it touches a credential path, which never
-  // publishes (2026-11-17).
+  // its owner to merge) unless it touches a credential path, any `.github/`
+  // path on Sentinel itself, or a path no predicate can classify, which
+  // never publish (2026-11-17).
   const touch = ownerLandingTouch(
     config,
     candidate!.changedPaths,
     record.repository,
   );
   // The one gate kept (2026-11-17): a CI-executable change runs with the
-  // target's secrets once pushed, so it is pushed only on a trusted issue's
-  // authority; an unreadable author fails closed into today's park. Read
-  // before anything is consumed, and only for such a candidate.
+  // target's secrets once pushed, so an untrusted source's one parks here,
+  // read before anything is consumed and only for such a candidate. An
+  // unreadable source is not decided here: the push guard re-reads it at
+  // every push of this candidate and waits (never pushes) while it is
+  // unreadable, so a transient read failure parks nothing.
   const trust = touch.kind === "unpublishable"
     ? "trusted"
     : await workflowChangeTrust(deps, record, candidate!.changedPaths);
-  const protectedHit = touch.kind === "unpublishable" || trust !== "trusted";
-  const protectedPark = trust === "untrusted"
-    ? UNTRUSTED_WORKFLOW_PARK
-    : PROTECTED_PATH_PARK;
+  const protectedHit = touch.kind === "unpublishable" || trust === "untrusted";
+  const protectedPark = touch.kind === "unpublishable"
+    ? PROTECTED_PATH_PARK
+    : UNTRUSTED_WORKFLOW_PARK;
   // The verified prior published head: retained from existing V1 candidate
   // state, or proved by an ACTUAL owned-branch observation of the exact prior
   // target head for a legacy record. Model output never establishes it. It is
