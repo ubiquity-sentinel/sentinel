@@ -6494,7 +6494,20 @@ receipts stand in again, which this decision forbids.
     `reviews`, `ownerSuccessorReviews`, `replays`, `releaseRequests`,
     `attemptMemory`, `lessons`, `targetCapabilities`; `githubCooldowns` and
     `tierScans` name none). The classification is typed over the contract's
-    own keys, so a new collection does not compile unclassified.
+    own keys, so a new collection does not compile unclassified. An optional
+    collection (`reservationArchive`, `ownerSuccessorReviews`,
+    `targetCapabilities`) whose every row is hidden is left out of the view,
+    exactly as in a snapshot that never had one, because the contract refuses
+    an empty one. A write puts it back with its hidden rows. The contract's
+    only cross-collection rule (an id is never both live and archived) holds
+    in the view, since hiding is by repository in both collections.
+  - Every hidden view is checked with the contract parser
+    (`parseRepairStateSnapshotV1`) before a pass sees it. The run's first
+    read goes through that check before any pass runs. A view the parser
+    refuses ends the run there: `skipped`, `snapshot_invalid`, action
+    `private_targets:view_invalid`, no GitHub read or write, and the queue
+    custody output not ready. That first read is handed to the first state
+    reader (queue custody), so the check costs no extra state read.
   - A write through the view gets the hidden rows back byte-identical (the
     exact rows of the snapshot at the expected head), each after as many
     visible rows as preceded it, so a pass that keeps its rows in place
@@ -6502,11 +6515,22 @@ receipts stand in again, which this decision forbids.
     repository in any row, or that would make the store compact a
     reservation ledger holding hidden rows, is refused
     (`private_repository_row:<collection>`,
-    `private_repository_compaction:reservations`) and nothing is written. A
-    full hot+cold ledger read through the gate falls back to the hidden hot
-    view; the repair tiers never list a hidden repository and never move its
-    rows. History reads (`openRepairHistory`) stay raw: a pass that tried to
-    write a hidden row recovered from history would be refused.
+    `private_repository_compaction:reservations`) and nothing is written.
+  - A write against a head the gate read or wrote this run costs no extra
+    state read; the store's own compare-and-swap answers a head that has
+    since moved, and that conflict comes back unchanged. A write against a
+    head the gate never saw reads the state once; a moved head there is
+    answered the same way, as a conflict with nothing written.
+  - A full hot+cold ledger read through the gate falls back to the hidden hot
+    view, and the repair tiers never list a hidden repository, so no tier
+    pass selects its rows by its open issues and none demotes them. Hidden
+    rows' content never changes, but the rows may still move. Tier promotion
+    can carry them between cold and hot as byte-identical tree moves:
+    through a promote-all scan, a release seed, or a hot row's dependency.
+    The store's own reservation-ledger compaction, which runs on a runtime
+    write past the ledger bound, can archive a settled private reservation
+    unchanged. History reads (`openRepairHistory`) stay raw: a pass that
+    tried to write a hidden row recovered from history would be refused.
   - `githubFor` answers null (the documented unreadable surface: the record
     is skipped, nothing changes) for any repository not proven public this
     run, so no merge, comment, issue, CI re-run or approval, notice or
@@ -6520,20 +6544,27 @@ receipts stand in again, which this decision forbids.
     24 reads per run, under 300 an hour at one run every five minutes,
     against the App installation's 5,000 an hour, and partly offset by the
     repeated reads it replaces. Unknown or unreadable hides the repository
-    for the run. Sentinel's own repository is never read or
-    hidden: it is the public repository the launcher runs in, so a failed
-    read can never stop self-follow, self-observation or the owner-merge
-    flow.
+    for the run. Sentinel's own repository is never read or hidden, since
+    it is the public repository the launcher runs in. A failed visibility
+    read hides only the repository it was for, so it cannot stop Sentinel's
+    own delivery, self-observation or the owner-merge flow; a launcher test
+    fails every foreign read and Sentinel's delivery still merges and writes.
+    A hidden view the contract parser refuses is different: it stops the
+    whole run before any pass, Sentinel's own work included, until the state
+    is repaired. With the empty-collection rule above no such view is known.
   - One text-free line per run that hid anything:
     `{"kind":"sentinel_private_targets_hidden","reason":"private_repository",
-    "repositories":N,"rows":M,"refusedWrites":K}`.
+    "repositories":N,"rows":M,"refusedWrites":K,"invalidViews":V}`.
   - Derived counters see only the visible rows: delivery and tier metrics,
     the throughput watchdog inputs (durations, planned cells, refresh and CI
     runs per merge, owner notices; no threshold counts merges), CI-outage
     and capability notices, base-repair filing and CI resume (all derived
     from visible waiting records), and uncertainty maintenance (a hidden
     unsettled reservation stays as it is). None files an issue, raises an
-    alarm or fails the run because rows are hidden. The park summary and the
+    alarm or fails the run because rows are hidden. The runtime watchdog's
+    ready-but-unplanned count is the planner's ready set, ranked over the
+    configured targets only, so a private record in the raw state is skipped
+    as unconfigured and never counted as ready work. The park summary and the
     memory digest still read the raw state and list private parks by id, as
     before.
 - Already published artifacts and state history are not deleted (the owner
