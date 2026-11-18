@@ -34,10 +34,11 @@ import {
   replaceWorkMutation,
 } from "./loop-state.ts";
 import {
+  observeIssueForModel,
   readDeliveryTaskContext,
-  readIssueForModel,
   semanticRefusalKind,
 } from "./loop-task-context.ts";
+import { AUTHOR_NOT_ADMITTED_PARK } from "./issue-admission.ts";
 import type {
   LoopContextV1,
   RepairCycleDepsV1,
@@ -109,7 +110,22 @@ export async function recoverMissingTaskReview(
       record.intent.expectedHead !== record.target.head ||
       record.intent.pr !== record.target.pr)
   ) return null;
-  if (await readIssueForModel(deps, record) === "unavailable") {
+  const observed = await observeIssueForModel(deps, record);
+  if (observed.kind === "not_admitted") {
+    // 2026-11-17 admission: an issue Sentinel does not work parks uncharged
+    // (its reason is final) instead of deferring a read every cycle.
+    return persistWork(
+      deps,
+      context,
+      markBlocked(
+        clearIntent(record, deps.clock.now()),
+        "other",
+        AUTHOR_NOT_ADMITTED_PARK,
+        deps.clock.now(),
+      ),
+    );
+  }
+  if (observed.kind !== "issue") {
     return {
       kind: "deferred",
       detail:
