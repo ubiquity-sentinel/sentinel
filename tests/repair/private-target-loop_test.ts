@@ -26,6 +26,7 @@ import {
   RelationsFakeGithub,
   seededSnapshot,
 } from "./loop-rig.ts";
+import { rankEligibleWork } from "../../src/repair/selection.ts";
 
 const PRIVATE_REPO: RepositoryIdentityV1 = {
   owner: "ubiquity",
@@ -141,4 +142,31 @@ Deno.test("private target (runtime loop): records of an unconfigured private tar
     after.work.some((row) => row.repository.name !== "prospector"),
     JSON.stringify(github.calls),
   );
+});
+
+Deno.test("private target (runtime loop): the planner's ready set, which the throughput watchdog counts, never holds a private record", () => {
+  // The watchdog's "ready but not planned" count is the matrix planner's
+  // `ranked.ordered.filter(isReady)` over `rankEligibleWork(snapshot,
+  // deps.configs, now)` (`matrix-planner.ts`, `matrix-plan-refusal.ts`): it is
+  // ranked over the configured targets only, so a private record in the raw
+  // state is skipped as unconfigured and never counted as ready work.
+  const rig = makeMemoryRig(new RelationsFakeGithub());
+  const snapshot = seededSnapshot(
+    RECORDS,
+    { reviews: RECEIPTS } as unknown as Partial<RepairStateSnapshotV1>,
+  );
+  const ranked = rankEligibleWork(snapshot, rig.configs, rig.clock.now());
+  for (const record of RECORDS) {
+    assert.equal(ranked.ordered.includes(record.id), false, record.id);
+  }
+  assert.equal(ranked.skipped[RECORDS[0].id], "unconfigured");
+  assert.equal(ranked.skipped[RECORDS[1].id], "unconfigured");
+  assert.equal(ranked.skipped[RECORDS[2].id], "blocked");
+  // The same records under a configuration that names the target ARE ready:
+  // the exclusion is the configuration, not the records.
+  const configured = rankEligibleWork(snapshot, [
+    ...rig.configs,
+    { ...rig.configs[0], repository: PRIVATE_REPO },
+  ], rig.clock.now());
+  assert.ok(configured.ordered.includes(RECORDS[0].id));
 });
