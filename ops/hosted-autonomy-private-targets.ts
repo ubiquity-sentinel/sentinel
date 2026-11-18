@@ -350,11 +350,14 @@ export function createPrivateTargetGateV1(input: {
   const hiddenOf = async (
     snapshot: RepairStateSnapshotV1,
   ): Promise<Set<string>> => {
-    const hidden = new Set<string>();
-    for (const [key, repository] of namedRepositoriesV1(snapshot)) {
-      if (!await resolveKey(key, repository)) hidden.add(key);
-    }
-    return hidden;
+    // The first read of a run resolves every repository at once.
+    const named = [...namedRepositoriesV1(snapshot)];
+    const works = await Promise.all(
+      named.map(([key, repository]) => resolveKey(key, repository)),
+    );
+    return new Set(
+      named.filter((_, index) => !works[index]).map(([key]) => key),
+    );
   };
 
   const view = async (
