@@ -6475,23 +6475,65 @@ receipts stand in again, which this decision forbids.
   configures nothing and refuses as an empty setting (`targets_empty`, red),
   as a setting that authorizes no work always has.
 - Existing private-target records (prospector, passport and any other
-  private target; the runtime decides live, no list is written) are not
-  parked, rewritten, charged, commented on or closed by the runtime; their
-  pull requests and unsettled reservations stay as they are and resume
-  untouched if the predicate is later replaced.
-- Not yet covered (open): the launcher maintenance passes
-  (`ops/hosted-autonomy-*`) walk repair-state records, not the target
-  setting, so they still step existing private-target records (delivery and
-  merge of a record with a clean review and current-head CI, retries and
-  re-arms, closures, follow-ups, capability and CI-outage notices,
-  base-repair filing, CI resume). They publish no new private content to
-  artifacts (the runtime no longer plans, runs or reviews these targets), but
-  they are work on a private repository and this decision forbids it. The
-  fix needs one launcher choke point applied before any pass reads a record:
-  a production-composed state view that hides every row of a repository whose
-  visibility is not public (read once per repository per pass through the
-  launcher's own surface) and writes those rows back unchanged, plus a
-  `githubFor` that answers null for such a repository.
+  private target; the runtime and the launcher decide live, no list is
+  written) are not parked, rewritten, charged, commented on, merged or
+  closed; their pull requests and unsettled reservations stay as they are
+  and resume untouched if the predicate is later replaced.
+- Launcher ([ops/hosted-autonomy-private-targets.ts](../ops/hosted-autonomy-private-targets.ts)):
+  the maintenance passes walk repair-state records, not the target setting,
+  so `runHostedAutonomy` reads and writes state, and resolves repository
+  surfaces, only through one gate per run, which the production
+  composition (`hosted-autonomy-main.ts`) also hands the merge-queue
+  coordinator and its publication. Closed-matrix recovery and uncertainty
+  maintenance take the gated state from the runner (and closed-matrix
+  recovery and the maintenance publication load target configs, which never
+  include a private target); backup CI already refuses a private target.
+  - A read hides every row of a repository the same predicate does not
+    accept, in every repair-snapshot collection that names a repository
+    (`incidents`, `evidence`, `work`, `reservations`, `reservationArchive`,
+    `reviews`, `ownerSuccessorReviews`, `replays`, `releaseRequests`,
+    `attemptMemory`, `lessons`, `targetCapabilities`; `githubCooldowns` and
+    `tierScans` name none). The classification is typed over the contract's
+    own keys, so a new collection does not compile unclassified.
+  - A write through the view gets the hidden rows back byte-identical (the
+    exact rows of the snapshot at the expected head), each after as many
+    visible rows as preceded it, so a pass that keeps its rows in place
+    leaves every hidden row at its index. A write that names a hidden
+    repository in any row, or that would make the store compact a
+    reservation ledger holding hidden rows, is refused
+    (`private_repository_row:<collection>`,
+    `private_repository_compaction:reservations`) and nothing is written. A
+    full hot+cold ledger read through the gate falls back to the hidden hot
+    view; the repair tiers never list a hidden repository and never move its
+    rows. History reads (`openRepairHistory`) stay raw: a pass that tried to
+    write a hidden row recovered from history would be refused.
+  - `githubFor` answers null (the documented unreadable surface: the record
+    is skipped, nothing changes) for any repository not proven public this
+    run, so no merge, comment, issue, CI re-run or approval, notice or
+    backup-CI demand reaches it.
+  - Visibility is one `GET /repos/{owner}/{name}` per distinct repository
+    the hot state names (about 30), per run, cached for the run on the
+    launcher surface, which now also serves every later default-branch read
+    of the run from that answer (each pass scope used to read it again). At
+    most about 30 reads per run, 360 an hour at one run every five minutes,
+    against the App installation's 5,000 an hour, and largely offset by the
+    repeated reads it replaces. Unknown or unreadable hides the repository
+    for the run. Sentinel's own repository is never read or
+    hidden: it is the public repository the launcher runs in, so a failed
+    read can never stop self-follow, self-observation or the owner-merge
+    flow.
+  - One text-free line per run that hid anything:
+    `{"kind":"sentinel_private_targets_hidden","reason":"private_repository",
+    "repositories":N,"rows":M,"refusedWrites":K}`.
+  - Derived counters see only the visible rows: delivery and tier metrics,
+    the throughput watchdog inputs (durations, planned cells, refresh and CI
+    runs per merge, owner notices; no threshold counts merges), CI-outage
+    and capability notices, base-repair filing and CI resume (all derived
+    from visible waiting records), and uncertainty maintenance (a hidden
+    unsettled reservation stays as it is). None files an issue, raises an
+    alarm or fails the run because rows are hidden. The park summary and the
+    memory digest still read the raw state and list private parks by id, as
+    before.
 - Already published artifacts and state history are not deleted (the owner
   declined deletion), and no workflow is changed here. A later workflow
   change should shorten matrix artifact retention and stop uploading
@@ -6499,4 +6541,5 @@ receipts stand in again, which this decision forbids.
   of artifacts).
 
 Rollback: revert the commits; private targets are then configured, planned
-and run again, which this decision forbids.
+and run again, and the launcher steps their records again, which this
+decision forbids.
