@@ -56,6 +56,9 @@ import {
 import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
 import { hasTakeoverCustody } from "../src/github/existing-pr-takeover-provenance.ts";
 import { candidateBranch } from "../src/repair/keys.ts";
+import { portError, portOk } from "../src/contracts/ports.ts";
+import { issueAuthorAdmitted } from "../src/repair/issue-admission.ts";
+import { recordCiTrust } from "../src/repair/workflow-trust.ts";
 import {
   OWNER_PROTECTED_RELEASES_2026_11_17,
   ownerReleased,
@@ -72,6 +75,7 @@ import type { RetryPlanV1 } from "./hosted-autonomy-retries.ts";
 import type { HostedAutonomyScopeV1 } from "./hosted-autonomy-scopes.ts";
 import type {
   HostedAutonomyDepsV1,
+  HostedAutonomyGitHubV1,
   HostedAutonomyPullV1,
 } from "./hosted-autonomy-types.ts";
 
@@ -85,6 +89,8 @@ export const PUBLICATION_POLICY_SOURCES = Object.freeze(
     park: "src/repair/loop-implementation-result.ts",
     trust: "src/repair/workflow-trust.ts",
     push: "src/repair/loop-publication.ts",
+    admission: "src/repair/issue-admission.ts",
+    start: "src/repair/loop-implementation.ts",
   } as const,
 );
 
@@ -101,29 +107,44 @@ const UNPUBLISHABLE_IS_CREDENTIAL =
 const NEVER_MERGES =
   /^export function sentinelNeverMerges\([^)]*\): boolean \{\s*return ownerLandingTouch\(config, changedPaths, repository\)\.kind !== "none";\s*\}$/m;
 
-/** The park decision: unpublishable, or a CI change on an untrusted issue. */
+/** The park decision: unpublishable, or a CI change on an untrusted source. */
 const PARK_DECISION =
-  /^\s*const protectedHit = touch\.kind === "unpublishable" \|\| trust !== "trusted";$/m;
+  /^\s*const protectedHit = touch\.kind === "unpublishable" \|\| trust === "untrusted";$/m;
 
 /** The trust read the park decision takes for the candidate's paths. */
 const TRUST_READ =
   /\bawait workflowChangeTrust\(deps, record, candidate!\.changedPaths\)/;
 
-/** The App's own issues (capability, base repair) steer a CI change. */
-const APP_TRUSTED =
-  /^\s*if \(read\.value\.author === BASE_REPAIR_AUTHOR\) return "trusted";$/m;
+/**
+ * Provenance trust (2026-11-17): the owner's issue is trusted, any other
+ * author's is not, and of the App's only the structured kinds Sentinel writes
+ * from its own facts (base repair, the capability notice) are.
+ */
+const OWNER_TRUSTED = /^\s*if \(kind === "owner"\) return "trusted";$/m;
+const OTHER_UNTRUSTED = /^\s*if \(kind === "other"\) return "untrusted";$/m;
+const STRUCTURED_APP_TRUSTED =
+  /^\s*if \(isBaseRepairBody\(issue\.body\) \|\| capabilityNotice\(issue\.body\)\) \{$/m;
+
+/** Admission: only the owner account (login and id) and the App are worked. */
+const OWNER_IDENTITY = /\{ login: "0x4007", id: 4975670 \}/;
+const ADMITTED = /^\s*return issueAuthorKind\(issue\) !== "other";$/m;
+/** A not-admitted record parks, uncharged, at its pre-start issue read. */
+const START_PARK = /^\s*if \(observation\.kind === "not_admitted"\) \{$/m;
 
 /** A push GitHub refuses for the `workflows` permission parks, uncharged. */
 const PERMISSION_PARK =
   /^\s*if \(push\.error\.detail === PUSH_WORKFLOWS_PERMISSION_DETAIL\) \{$/m;
 
 /**
- * Whether installed source text carries the 2026-11-17 publication policy:
- * only a credential path is unpublishable and the merge-time predicate is
- * the same touch (`policy`), the park is decided by that touch and the trust
- * read (`park`), the App's own issue is trusted (`trust`), and a refused
- * workflow push parks instead of retrying (`push`). A runtime from before the
- * policy, or one that reverted any part of it, fails.
+ * Whether installed source text carries the 2026-11-17 policy as it finally
+ * stands: only a credential path is unpublishable and the merge-time
+ * predicate is the same touch (`policy`), the park is decided by that touch
+ * and an untrusted source (`park`), trust follows provenance (`trust`: the
+ * owner's issue, and the App's structured base-repair and capability issues),
+ * a refused workflow push parks instead of retrying (`push`), and only the
+ * owner's and the App's issues are worked (`admission`), a record of any
+ * other author parking uncharged before its start (`start`). A runtime from
+ * before the policy, or one that reverted any part of it, fails.
  */
 export function runtimeSourceCarriesPublicationPolicy(
   sources: PublicationPolicySourcesV1,
@@ -131,7 +152,12 @@ export function runtimeSourceCarriesPublicationPolicy(
   return UNPUBLISHABLE_IS_CREDENTIAL.test(sources.policy) &&
     NEVER_MERGES.test(sources.policy) &&
     PARK_DECISION.test(sources.park) && TRUST_READ.test(sources.park) &&
-    APP_TRUSTED.test(sources.trust) && PERMISSION_PARK.test(sources.push);
+    OWNER_TRUSTED.test(sources.trust) &&
+    OTHER_UNTRUSTED.test(sources.trust) &&
+    STRUCTURED_APP_TRUSTED.test(sources.trust) &&
+    PERMISSION_PARK.test(sources.push) &&
+    OWNER_IDENTITY.test(sources.admission) &&
+    ADMITTED.test(sources.admission) && START_PARK.test(sources.start);
 }
 
 /**
@@ -273,6 +299,65 @@ function pullBindsPublishedHead(
  * while the installed runtime carries the policy. Reads only when something
  * is planned.
  */
+/** Why a release's source issue is not established; null when it is. */
+export type ReleaseSourceRefusalV1 =
+  | "owner_release_source_unreadable"
+  | "owner_release_not_admitted"
+  | "owner_release_untrusted";
+
+/**
+ * Whether the released record's source issue is still worked and, on a
+ * target, may steer a `.github/` change, read live over the record's own
+ * repository surface with the runtime's exact rules (`issue-admission.ts`,
+ * `recordCiTrust`): its author is the owner account (login and id) or the
+ * App, and on a target its provenance is trusted (the owner's issue, or the
+ * App's base-repair or capability issue; a review follow-up by its origin).
+ * The parked candidates are gone, so whether a target's fix needs `.github/`
+ * is unknown: every target release needs trust. On Sentinel's own repository
+ * trust is never consulted (its `.github/` never publishes; an authority
+ * change lands for the owner). Anything unreadable is not established: the
+ * release skips, uncharged, instead of spending a run that would park.
+ */
+export async function releaseSourceRefusal(
+  record: WorkRecordV1,
+  surface: HostedAutonomyGitHubV1 | null,
+): Promise<ReleaseSourceRefusalV1 | null> {
+  const number = record.related.issueNumber;
+  const read = surface?.readIssueFacts;
+  if (number === null || surface === null || read === undefined) {
+    return "owner_release_source_unreadable";
+  }
+  const github = {
+    async readIssue(issue: number) {
+      try {
+        const facts = await read.call(surface, issue);
+        return facts === null
+          ? portError("unavailable", "issue unreadable")
+          : portOk(facts);
+      } catch {
+        return portError("unavailable", "issue unreadable");
+      }
+    },
+  };
+  const first = await github.readIssue(number);
+  if (!first.ok || first.value.number !== number) {
+    return "owner_release_source_unreadable";
+  }
+  if (!issueAuthorAdmitted(first.value)) return "owner_release_not_admitted";
+  if (sameRepository(record.repository, HOSTED_AUTONOMY_SELF_SCOPE)) {
+    return null;
+  }
+  const trust = await recordCiTrust(
+    { github } as unknown as Parameters<typeof recordCiTrust>[0],
+    record,
+  );
+  return trust === "trusted"
+    ? null
+    : trust === "untrusted"
+    ? "owner_release_untrusted"
+    : "owner_release_source_unreadable";
+}
+
 export async function takeProtectedReleases(
   snapshot: RepairStateSnapshotV1,
   planned: readonly ProtectedReleaseV1[],
@@ -289,18 +374,26 @@ export async function takeProtectedReleases(
 ): Promise<ProtectedReleaseV1[]> {
   const verified: ProtectedReleaseV1[] = [];
   for (const entry of planned) {
-    if (entry.shape === "unpublished") {
-      verified.push(entry);
-      continue;
-    }
     const record = snapshot.work.find((row) =>
       row.id === entry.id && sameRepository(row.repository, entry.repository)
     );
-    if (record === undefined || record.target.pr === null) continue;
+    if (record === undefined) continue;
     const scope = await scopeFor(record.repository);
-    const pull = await readPull(scope, record.target.pr);
-    if (!pullBindsPublishedHead(record, scope, pull)) {
-      actions.push(`retry:${entry.id}:skipped:owner_release_pull_unverified`);
+    if (entry.shape === "published_pull") {
+      if (record.target.pr === null) continue;
+      const pull = await readPull(scope, record.target.pr);
+      if (!pullBindsPublishedHead(record, scope, pull)) {
+        actions.push(
+          `retry:${entry.id}:skipped:owner_release_pull_unverified`,
+        );
+        continue;
+      }
+    }
+    // 2026-11-17 admission and provenance trust, read live: a record that
+    // would only park again is never released (uncharged skip).
+    const refusal = await releaseSourceRefusal(record, scope.surface);
+    if (refusal !== null) {
+      actions.push(`retry:${entry.id}:skipped:${refusal}`);
       continue;
     }
     verified.push(entry);

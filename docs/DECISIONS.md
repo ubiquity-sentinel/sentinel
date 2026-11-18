@@ -6330,3 +6330,52 @@ Rollback: revert the release commit. Before its write the eleven stay parked;
 after it, each released record is an ordinary `work` record (or an
 existing-published-head continuation) the previous code handles normally. No
 persisted field or state format changes; older runtimes read every record.
+
+## 2026-11-18: the one-time protected release checks admission and provenance trust
+
+The 2026-11-17 release entry above was written before issue admission and
+provenance trust landed. Integrated onto them (2026-11-18):
+
+- The installed-runtime source gate now proves the policy as it finally
+  stands (`runtimeSourceCarriesPublicationPolicy`, six installed files read
+  at the installed revision): a credential path is the only unpublishable
+  path and `sentinelNeverMerges` is the same touch (`owner-landing.ts`); the
+  park is that touch or an untrusted source (`trust === "untrusted"`,
+  `loop-implementation-result.ts`); trust follows provenance (the owner's
+  issue trusted, any other author untrusted, of the App's only the
+  base-repair and capability shapes, `workflow-trust.ts`); a refused
+  workflow push parks (`loop-publication.ts`); only the owner account (login
+  `0x4007` and id 4975670) and the App are admitted (`issue-admission.ts`);
+  a not-admitted record parks uncharged before its start
+  (`loop-implementation.ts`). The two shapes the earlier gate required and
+  the final source no longer has (`trust !== "trusted"` and the blanket "an
+  App issue is trusted" rule) are gone from it.
+- Each release now reads its source issue live over its own repository
+  (`readIssueFacts`, the runtime's author-id parse) and applies the
+  runtime's own rules (`issueAuthorAdmitted`, `recordCiTrust`): a record
+  whose author is not admitted, or, on a target, whose provenance is not
+  trusted, or whose source cannot be read, stays parked with
+  `owner_release_not_admitted`, `owner_release_untrusted` or
+  `owner_release_source_unreadable`: no write and no charge, instead of a
+  charged run that would park again. The parked candidates are gone, so
+  whether a target's fix needs `.github/` is unknown and every target
+  release needs trust; on Sentinel's own repository trust is never consulted
+  (its `.github/` never publishes; an authority change lands for the owner).
+- The eleven, offline (work records persist no author): Sentinel 177, 240,
+  270 and 277 are the owner's issues and 383 and 406 the App's
+  self-observation issues (from the reviewer's issue listing): all admitted;
+  trust is not consulted on Sentinel. ai.ubq.fi 1370 is the App's
+  base-repair issue: admitted, and trusted by provenance while its body
+  keeps the base-repair marker on its first line (a test pins both, and that
+  the same App issue without the marker is untrusted). deno-deploy-workflow
+  25, demo.ubq.fi 23, arbitrage-bot 7 and notifications.ubq.fi 13: their
+  authors are not in state and no other repository was read, so each is
+  decided by the live read at release time and released only when it is the
+  owner's (or a structured App issue). Risk named, not decided: Sentinel 270
+  ("finalize always chains supervisor-dispatch", `.github/workflows/`) may
+  need a Sentinel `.github/` change, which never publishes; its release may
+  spend one charge and park again.
+
+Rollback: revert this commit; the release then gates on the earlier shapes,
+which the final source does not carry, so it holds every release
+(`runtime_without_policy`).
