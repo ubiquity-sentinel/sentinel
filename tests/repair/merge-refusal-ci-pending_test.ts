@@ -16,6 +16,8 @@ import type {
 import { CHECK_POLL_MS } from "../../src/repair/loop-bounds.ts";
 import { DurableGitHubCooldownGate } from "../../src/repair/github-cooldown.ts";
 import { handleMergeOutcome } from "../../src/repair/loop-merge.ts";
+import { PRE_REVIEW_CI_BOUND_MS } from "../../src/repair/ci-first-policy.ts";
+import { CHANGE_SET_UNREADABLE_PARK } from "../../src/repair/ci-success-rule.ts";
 import { pendingPremergeRecords } from "../../src/host/actions-premerge-ci.ts";
 import { REPO, SHA1, SHA2, T0, workRecord } from "../state/helpers.ts";
 import { FakeClock, FakeGithub, MemoryState } from "./helpers.ts";
@@ -54,15 +56,17 @@ function merging(extra: Record<string, unknown> = {}): WorkRecordV1 {
 async function refuse(
   record: WorkRecordV1,
   reason: "checks_pending" | "conflict",
+  github = new FakeGithub(),
+  now = NOW,
 ) {
-  const clock = new FakeClock(NOW);
+  const clock = new FakeClock(now);
   const state = new MemoryState();
   state.repair = seededSnapshot([record]);
   state.repairHead = SHA1;
   const deps = {
     clock,
     state,
-    github: new FakeGithub(),
+    github,
     githubCooldown: new DurableGitHubCooldownGate({ state, clock }),
   } as unknown as RepairCycleDepsV1;
   const read = await state.readRepair();
@@ -70,7 +74,7 @@ async function refuse(
   const context: LoopContextV1 = {
     head: read.value.head,
     snapshot: read.value.snapshot,
-    bounds: { runDeadline: NOW + 3_600_000, modelCutoff: NOW + 3_600_000 },
+    bounds: { runDeadline: now + 3_600_000, modelCutoff: now + 3_600_000 },
     executionBaseline: null,
   };
   const step = await handleMergeOutcome(deps, context, record, {
@@ -114,4 +118,36 @@ Deno.test("merge refusal: a conflict refusal keeps the merge intent and backoff"
   const row = await refuse(merging(), "conflict");
   assert.equal(row.intent?.kind, "merge");
   assert.equal(row.wait?.reason, "backoff");
+});
+
+Deno.test("merge refusal (third review D3): a held head whose change set stays unreadable parks after the 6-hour bound, truthfully", async () => {
+  const late = T0 + PRE_REVIEW_CI_BOUND_MS + 1;
+  const waiting = merging({
+    wait: { reason: "ci_pending", since: T0, until: T0 + 1 },
+  });
+  const parked = await refuse(
+    waiting,
+    "checks_pending",
+    new FakeGithub({ changedPaths: "unavailable" }),
+    late,
+  );
+  assert.equal(parked.nextStep, "blocked");
+  assert.equal(parked.intent, null);
+  assert.equal(parked.blocker?.message, CHANGE_SET_UNREADABLE_PARK);
+  // A readable change set (the hold was for something else) keeps waiting.
+  const readable = await refuse(
+    waiting,
+    "checks_pending",
+    new FakeGithub({ changedPaths: ["src/app.ts"] }),
+    late,
+  );
+  assert.equal(readable.wait?.reason, "ci_pending");
+  assert.equal(readable.blocker, null);
+  // Within the bound an unreadable change set keeps waiting too.
+  const early = await refuse(
+    waiting,
+    "checks_pending",
+    new FakeGithub({ changedPaths: "unavailable" }),
+  );
+  assert.equal(early.wait?.reason, "ci_pending");
 });

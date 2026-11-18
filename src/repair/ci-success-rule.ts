@@ -56,6 +56,13 @@ export const WORKFLOW_CI_SUCCESS_DETAIL =
   "run to success every job the last merged pull request passed; owner " +
   "action required";
 
+/**
+ * The park of a head the merge executor held because neither the mirror nor
+ * the comparison could list its change set, once the 6-hour CI bound ends.
+ */
+export const CHANGE_SET_UNREADABLE_PARK =
+  "change set unreadable; owner action required";
+
 /** Merged pull requests whose successes the reference unites (the listing's). */
 export const CI_REFERENCE_PULLS_MAX = MERGED_PULLS_WANTED;
 

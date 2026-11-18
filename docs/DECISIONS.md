@@ -6059,22 +6059,23 @@ false (marked "corrected 2026-11-18").
 
 - CI integrity rule, redesigned
   ([src/repair/ci-success-rule.ts](../src/repair/ci-success-rule.ts)). For
-  a head that changes a CI-executable path, the expected jobs are the names
-  GitHub Actions ran to `success` (latest run of each name) on the head of
-  the most recently merged pull request into the same base branch: the same
+  a head that changes a CI-executable path, the expected jobs are the UNION
+  of the names GitHub Actions ran to `success` (latest run of each name) on
+  the heads of the five most recently merged pull requests into the same
+  base branch (third review: the union, so a docs-only last merge whose
+  path-filtered workflows ran only `lint` cannot shrink the set): the same
   pull-request context, where a push-only or conditional job (a deploy
-  skipped on pull request heads) never runs. If that pull request has no
-  Actions success, up to five merged pull requests are walked back, newest
-  merge first; only after those five, or every merged pull request there is
-  when the one listing page is not full, is there "no prior CI": then the
-  base commit's own Actions successes are expected, and only when the base
-  has none either is it a first CI workflow, which needs at least one
-  Actions job to succeed on the head. Every expected name must conclude
+  skipped on pull request heads) never runs. Only when none of those five
+  (or of every merged pull request there is, when fewer exist) has an
+  Actions success is there "no prior CI": then the base commit's own
+  Actions successes are expected, and only when the base has none either is
+  it a first CI workflow, which needs at least one Actions job to succeed on
+  the head. Every expected name must conclude
   `success` on the candidate head. No name is exempt, absent, skipped,
   neutral or renamed: anything a workflow-changing head controls could
   produce that state, so an exemption would be the head's own choice.
-  Anything unreadable, or a full listing page with fewer than five merged
-  pull requests and no reference, is `unknown` and waits (runtime: the
+  Anything unreadable, or a listing that cannot be proven (below), is
+  `unknown` and waits (runtime: the
   6-hour CI-first park, now "CI-first: the head changes a CI-executable path
   and its own CI did not run to success every job the last merged pull
   request passed; owner action required"; launcher: `ci_success_required`).
@@ -6085,12 +6086,19 @@ false (marked "corrected 2026-11-18").
   `deno-deploy.yml`), and a base without an Actions success
   (pull_request-only CI, a `[skip ci]` or status-only base) let one trivial
   job pass on a repository that does have CI.
-- Reads: one extra listing, `GET /pulls?state=closed&base=<branch>&sort=
-  updated&direction=desc&per_page=50` (a merged pull request's update time
-  is never before its merge), parsed identically by the runtime client and
-  the launcher adapter
+- Reads: the listing of the closed pull requests into the base branch,
+  `GET /pulls?state=closed&base=<branch>&sort=updated&direction=desc&
+  per_page=30&page=N`, read page by page until the five most recently
+  merged are proven: a pull request's update time is never before its
+  merge, so once five merged ones are seen and the fifth merged at or after
+  the last update time read, no unread pull request merged later. Anyone
+  can comment on a closed pull request (moving its update time), so a flood
+  can only push the proof past the bound (8 pages, 240 pull requests):
+  then the rule waits; it can never make an older pull request the
+  reference (third review). The parse and proof are shared by the runtime
+  client and the launcher adapter
   ([src/github/merged-pull-heads.ts](../src/github/merged-pull-heads.ts)),
-  then one check-run listing per walked head (usually one) and the base's
+  then one check-run listing per walked head (up to five) and the base's
   only in the no-prior-CI case. Read only for a head known to change a
   CI-executable path, at the CI-first, delivery and carried gates and at the
   merge executors. The runtime gates, the runtime merge executor
@@ -6112,8 +6120,8 @@ false (marked "corrected 2026-11-18").
   proceeding CI gate and every merge attempt is gone for those heads, and an
   ordinary head is no longer held when the comparison fails or 404s. A head
   neither read lists whole is unknown: the CI gates decide as before and the
-  merge executor holds it (`checks_pending`, the bounded `ci_pending` wait),
-  because it may change CI. The publication-time paths of the push backstop
+  merge executor holds it (`checks_pending`), because it may change CI;
+  that hold parks after 6 hours (below). The publication-time paths of the push backstop
   are not persisted (no state format change); they are recomputed this way.
 - Admission backstop: the runtime merge executor (`port-merge.ts`, already
   owner-merged) reads the issue the pull request's closing link (or its
@@ -6148,21 +6156,58 @@ false (marked "corrected 2026-11-18").
   real CI reports only commit statuses or another app's checks is a first
   CI workflow to this rule (statuses never count); its statuses still gate
   through the ordinary rule (red blocks, pending waits) but are not
-  required by name. If 50 closed pull requests were updated since the last
-  merge the listing cannot prove the walk and the rule waits. When the
-  target's own Actions cannot start jobs (billing), a workflow-changing
-  head cannot merge (stand-ins never count). An ordinary Sentinel pull
-  request can still weaken an ordinary caller: skip an admission park in
-  the repair loop (the merge executor still refuses the merge; an ordinary
-  change for a non-admitted issue may be pushed and reviewed, and a
-  `.github/` change still needs owner or App provenance at the push), make
-  `client-reads.ts` or `port-base.ts` stop delegating to the owner-merged
-  reader or listing (the reads are then wrong but the verdicts are not
-  changed), or change the launcher: its merges (`preMergeGate`, carried
-  delivery) apply the CI rule through the owner-merged gate module but do
-  not check admission (the runtime parks a not-admitted record at its next
-  start, review request or merge decision, and the launcher's spent rule
-  admits only its own park reasons).
+  required by name. Accepted liveness costs, fail closed (safety over
+  liveness): a job only some pull requests trigger (a path filter) is
+  required of every workflow-changing head once any of the last five merges
+  ran it, so such a head waits and parks and the owner lands it; and anyone
+  who comments on more than 240 closed pull requests can hold every
+  workflow-changing pull request of that repository in that wait (denial
+  of service, never a weaker reference). When the target's own Actions
+  cannot start jobs (billing), a workflow-changing head cannot merge
+  (stand-ins never count). An owner's or App issue that quotes an
+  outsider's text is trusted by the owner's rule: provenance is the
+  issue's author, not the origin of every sentence in it. An ordinary
+  Sentinel pull request can still weaken an ordinary caller: skip an
+  admission park in the repair loop (the runtime merge executor and the
+  launcher gates still refuse the merge; an ordinary change for a
+  non-admitted issue may be pushed and reviewed, and a `.github/` change
+  still needs owner or App provenance at the push); or make
+  `client-reads.ts`, `port-base.ts`, `ops/hosted-autonomy-github.ts` or
+  `ops/hosted-autonomy-source-reads.ts` answer wrongly (corrected, third
+  review: the earlier text said only "the reads are then wrong"). A wrong
+  change-set read (an empty list) switches OFF the never-merge verdict and
+  the CI rule for that head, and a wrong listing or issue read switches off
+  the CI rule's reference or the launcher's admission, so those ordinary
+  files are part of what a natively reviewed Sentinel pull request could
+  weaken; the owner-merged modules define the rules and parse the inputs,
+  not every transport that fetches them.
+- Launcher admission (third review, must): the launcher job runs BEFORE the
+  runtime job every cycle and merges through its own adapter (`PUT
+  /pulls/{n}/merge`), never through `port-merge.ts`, so a not-admitted
+  record holding a clean review could merge before the runtime parked it.
+  The owner-merged gate module
+  ([ops/hosted-autonomy-pull-file-gates.ts](../ops/hosted-autonomy-pull-file-gates.ts),
+  `sourceAdmissionRefusal`) reads the source issue's author live
+  (`readIssueFacts`, parsed by the owner-merged
+  `ops/hosted-autonomy-issue-facts.ts` with the runtime's author-id parse)
+  and refuses `issue_not_admitted` (another author, or the owner's login
+  with another id) or `issue_author_unverified` (unreadable: no merge, the
+  record waits); nothing is charged. `preMergeGate` (delivery and spent
+  delivery), `carriedMergeGate` and `trainMemberGate` (before a train is
+  built and before every train merge) call it, one issue read per merge
+  attempt. A record with no source issue (an incident) is no issue's work.
+  The runtime's native self merge resumed from a saved proof
+  (`port-merge.ts`) skips the read: a proof is written only after the full
+  gate, admission included, passed in an earlier attempt (not a one-line
+  change; a proof written by a runtime before admission existed settles a
+  merge that runtime had already authorised).
+- Unreadable change set, bounded (third review): the merge executor holds
+  `checks_pending` a head whose change set neither the mirror nor the
+  comparison can list, and the delivery CI gate proceeds on such a head, so
+  nothing else ended the wait. After the 6-hour CI bound the delivery step
+  reads the change set once more and parks "change set unreadable; owner
+  action required" when it is still unreadable (`loop-merge.ts`); the
+  CI-path text is never used for it.
 - Smaller fixes: a `.github/` path in any letter case is CI-executable
   (`ciExecutablePath`; a case-insensitive checkout runs `.GitHub/`). The
   missing-acceptance review recovery (`loop-review-result.ts`) parks a
