@@ -5866,3 +5866,167 @@ older runtimes read every record written here. Launcher (ops/) and runtime
 (`protected_path`) what a newer runtime published, and merges a workflow
 pull request without the success read (the runtime gate still holds it
 before review); an older runtime parks again before publication.
+
+## 2026-11-17: only the owner's and the App's issues are worked; CI trust by provenance; push and merge backstops
+
+Owner directive (2026-11-17, verbatim): "i guess sentinel should only
+automatically handle issues that are either authored by me 0x4007 or the
+sentinel". This entry also answers a native review of the previous entry's
+commits and corrects that entry where stated; the previous entry is kept as
+written.
+
+- Admission ([src/repair/issue-admission.ts](../src/repair/issue-admission.ts)):
+  on every target an issue is worked only when its author is the owner
+  account, bound by login `0x4007` AND numeric user id 4975670
+  (`ADMITTED_ISSUE_OWNER`, the one constant: a renamed or recycled login, or
+  a response without the id, does not match), or the Sentinel App
+  (`ubiquity-sentinel[bot]`, the identity `isBaseRepairIssue` checks; GitHub
+  reserves `[bot]` logins for Apps). Intake decides from the listing's own
+  author fields (no extra read): any other author's open issue gets no
+  record, no comment and no charge, and is reported in the intake line's
+  `skippedIssues` with the closed reason `author_not_admitted`. An existing
+  record of such an issue parks uncharged with "issue author is not
+  admitted; owner action required" at its next model start (implementation,
+  retry, CI fix, continuation: the pre-start issue read), review request
+  (the task-statement read) or Sentinel merge decision (the delivery task
+  read, before any merge intent); nothing is pushed or reserved. Its blocked
+  progress comment says why once: "Sentinel works only on issues opened by
+  its owner or by Sentinel itself; the owner can re-file this issue to have
+  it worked." A person's merge of such a pull request is still recorded
+  (human-merge, release and closure bookkeeping do not read admission).
+- Live state: work records persist no issue author (`source` is
+  `{kind, id, revision}`), so the records this affects cannot be counted from
+  `sentinel-state`. From the first cycle after install, each live issue
+  record whose author is not admitted parks at its next model start, review
+  request or Sentinel merge decision; a record waiting on CI or already
+  parked changes nothing until then. The intake line names every skipped
+  issue.
+- CI-executable changes are trusted by the provenance of the text the model
+  worked from, not by GitHub's author association (this supersedes the
+  previous entry's `OWNER`/`MEMBER`/`COLLABORATOR` rule;
+  [src/repair/workflow-trust.ts](../src/repair/workflow-trust.ts)):
+  - the owner (login and id): trusted;
+  - an App issue of a structured kind whose text Sentinel writes from its
+    own facts is trusted: base-repair (the `isBaseRepairIssue` shape) and the
+    target capability notice (`<!-- sentinel:skip -->` then
+    `<!-- sentinel:target-capability -->`); a review follow-up (its first
+    line is the follow-up marker for this repository) inherits its original
+    issue's trust (`- Original issue: #N` in its header, before the first
+    finding; at most four hops; no origin, a self-reference or an origin
+    that does not exist is untrusted); every other App kind (CI outage
+    notice, throughput watchdog, anything else) is untrusted;
+  - an incident is untrusted without a read (its text comes from logs and
+    models);
+  - any other author, and the owner's login with a different or missing id,
+    is untrusted;
+  - an unreadable source is `unavailable` and parks nothing: the
+    implementation result continues, and the push guard re-reads it at the
+    push and sends nothing while it stays unreadable (a transient read
+    failure defers).
+  An untrusted source parks "candidate touches a protected path: workflow
+  change from an untrusted issue author; owner action required". Its public
+  progress comment now says "The fix changes CI workflow files, which
+  Sentinel publishes only when the task text comes from its owner or from
+  Sentinel's own base-repair or CI capability issues (a review follow-up
+  counts as its original issue); the repository owner can land this change
+  by hand." The earlier wording promised publication for any issue Sentinel
+  opened.
+- Changed paths cannot hide from the predicates: the model checkout lists
+  `git diff --no-renames --name-only -z` (raw and NUL-separated; without
+  `-z` git C-quotes a path with a quote, backslash, control or non-ASCII
+  byte, such as `".github/workflows/d\303\251ploy.yml"`, which no prefix
+  predicate recognised). Every predicate fails closed on a path it cannot
+  classify (`unsafeChangedPath`: empty, a leading `/`, a quote, backslash or
+  control character, an empty, `.` or `..` segment): such a path counts as
+  CI-executable and is never published or merged on any repository.
+- Push backstop
+  ([src/github/push-content-guard.ts](../src/github/push-content-guard.ts)):
+  every push of model-written content re-derives the paths it carries from
+  the actual `base..head` tree diff in the pusher's own object store (`-z`,
+  never a receipt's list) and applies the same decision. Task-branch
+  publication and base refresh (a conflict resolution included) pass it
+  through the port's `pushHead` guard (`recordPushGuard`); every
+  `sentinel-candidates/*` preservation passes it in the hosted candidate
+  preserver, before validation. On Sentinel's own repository any
+  CI-executable path is refused (the port's own repository fact, never the
+  caller's claim); elsewhere the source's trust decides; an unreadable diff
+  or source sends nothing.
+- Every publication route and its gate:
+  1. implementation, retry, CI-fix and continuation results: the
+     implementation-result gate (`ownerLandingTouch` and trust), the
+     preserver backstop, the push guard at publication;
+  2. conflict resolution: the trust gate at preservation and at the
+     receipt, the preserver backstop, the push guard at the base-refresh
+     push;
+  3. mechanical and carried base refresh: the push guard;
+  4. legacy direct publication: the push guard;
+  5. the launcher's candidate port and matrix bundles: the preserver
+     backstop, then route 1;
+  6. original-candidate recovery: republishes only an already-preserved
+     original candidate and skips any configured protected change; no new
+     model content;
+  7. existing-PR takeover: pushes a person's own pull request head, not
+     model content; unchanged (it still refuses to adopt a pull request
+     that touches a protected path).
+- Sentinel's own `.github/` is unpublishable exactly as before the directive
+  (this supersedes the previous entry's statement that Sentinel's
+  `.github/` publishes for the owner): the implementation result, the
+  publication check (`publicationProtectedPaths` always adds `.github/`
+  there), the push guard and the self merge (its base-pinned `.github` tree)
+  each refuse it. Sentinel's other authority files still publish for the
+  owner and are never merged by Sentinel.
+- Merge executors: no caller is the only barrier. The GitHub merge port
+  re-reads the exact `base...head` comparison at merge time and refuses
+  what Sentinel never merges (`sentinelNeverMerges`: `protection_required`)
+  and a CI-executable change that fails the CI rule below
+  (`checks_pending`); an unreadable or possibly truncated comparison refuses
+  `checks_pending` (a reviewed head has at most the review snapshot's 128
+  paths, below the comparison's 300). The native self merge applies the same
+  never-merge verdict on its local tree diff after its pipeline pin, until
+  its source write (a proof past it settles a merge already on the base):
+  `self_merge_protected_path`. The launcher's merge-time gate keeps its shape
+  and shares that predicate.
+- Authority paths added (on Sentinel's own repository only its owner merges
+  a change to them): issue admission and workflow trust with their inputs
+  (`base-repair.ts`, `wire.ts`), the push guard and its executors
+  (`push-guard.ts`, `push-content-guard.ts`, `port-publication.ts`,
+  `git-executor.ts`, `actions-candidates-preserve.ts`), the CI rule
+  (`ci-success-rule.ts`), the merge executors' gate (`merge-content-gate.ts`,
+  `port-self-merge.ts`) and the launcher's file gates and train
+  (`ops/hosted-autonomy-pull-file-gates.ts`,
+  `ops/hosted-autonomy-train-members.ts`). The repair-loop files that call
+  them, the target policy lists and the launcher's GitHub adapter stay
+  ordinary work under the 2026-10-30 decision (existing tests pin that);
+  each call is backed by an executor gate above. Residual: a weakening of
+  one of those ordinary callers is a natively reviewed Sentinel pull
+  request that Sentinel may merge.
+- CI integrity rule, corrected (this supersedes the previous entry's "at
+  least one job"): only GitHub Actions check runs count, never a commit
+  status or app-less run, another app's check, a skipped or neutral job, or
+  a backup-CI stand-in. Every job name GitHub Actions ran to `success` on
+  the base (the latest run of each name) must also run to `success` on the
+  exact head; when the base has none (a first CI workflow) at least one
+  must. Runtime ([src/repair/ci-success-rule.ts](../src/repair/ci-success-rule.ts)):
+  the CI-first review gate and the delivery and carried gates apply it only
+  on positive knowledge, when the exact comparison lists a CI-executable
+  path; any other head, including one whose comparison is unreadable or
+  possibly truncated, decides exactly as before (no false park text), and
+  the merge executor holds the unknown case. An unreadable base read waits.
+  Launcher (`ciSuccessRefusal`): `targetCiSuccessNames` of the head and the
+  base, reduced by the protected gate module (`actionsSuccessNames`); an
+  unreadable listing or a head without its base refuses. The launcher gate
+  needs no runtime cooperation, so it holds after a runtime rollback.
+  Residual: a runtime rolled back to before this entry merges the pull
+  requests it merges itself through its own port without the rule.
+- Correction (credential paths): `credentialPath` refuses a change only where
+  a configured protected prefix covers it; every shipped target lists
+  `.git/`, `.env`, `.npmrc`, the act files and `sentinel.protected`. A key or
+  certificate file is refused only by the secret-shaped-text detector, as
+  before.
+
+Rollback: revert these commits in reverse order. No persisted field or state
+format changes (`authorId` is an optional in-memory wire field). An older
+launcher skips an intake summary line that carries the new
+`author_not_admitted` reason and does not know the new merge-event code
+`self_merge_protected_path`; the runtime and launcher may roll back
+separately, with the residuals above.
