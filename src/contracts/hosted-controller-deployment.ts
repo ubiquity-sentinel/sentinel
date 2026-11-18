@@ -7,23 +7,167 @@ import {
   MaxText,
 } from "./validation.ts";
 
-// Native repository/workflow facts must match this committed binding. Neither
-// environment variables nor target configuration may choose the controller.
+// Native repository/workflow facts must match one committed binding of this
+// closed list. GitHub's own GITHUB_REPOSITORY selects the entry a process runs
+// as; neither environment variables nor target configuration may add, alter or
+// otherwise choose an entry. Any other repository selects the first entry,
+// whose native identity checks refuse it exactly as before the list existed.
+// Both deployments run identical code (owner, 2026-11-18).
+export const HOSTED_CONTROLLER_DEPLOYMENTS = Object.freeze(
+  [
+    Object.freeze({
+      role: "public",
+      retiredRepository: "ubiquity/sentinel",
+      retiredRuntimeId: "ubiquity/sentinel:0:production",
+      // Derived by the workflow's self-token mint; never committed here.
+      selfInstallationId: null,
+      deployment: Object.freeze({
+        owner: "ubiquity-sentinel",
+        name: "sentinel",
+        sourceBranch: "development",
+        supervisorBranch: "sentinel-supervisor",
+        supervisorWorkflowPath: ".github/workflows/supervisor.yml",
+        supervisorWorkflowId: 357012162,
+        ciWorkflowPath: ".github/workflows/ci.yml",
+        ciWorkflowId: 353613034,
+      }),
+    }),
+    // Private mirror. Its ids are GitHub's numeric ids of its own supervisor.yml
+    // and ci.yml (GET /repos/ubiquity-sentinel-private/sentinel/actions/workflows);
+    // while either is null, selecting this entry refuses to start. The App's
+    // installation on the ubiquity-sentinel-private org is its self scope.
+    Object.freeze({
+      role: "private",
+      retiredRepository: null,
+      retiredRuntimeId: null,
+      selfInstallationId: 183425201,
+      deployment: Object.freeze({
+        owner: "ubiquity-sentinel-private",
+        name: "sentinel",
+        sourceBranch: "development",
+        supervisorBranch: "sentinel-supervisor",
+        supervisorWorkflowPath: ".github/workflows/supervisor.yml",
+        supervisorWorkflowId: null,
+        ciWorkflowPath: ".github/workflows/ci.yml",
+        ciWorkflowId: null,
+      }),
+    }),
+  ] as const,
+);
+
+export type HostedControllerRoleV1 = "public" | "private";
+
+/** One committed entry; a null workflow id is not yet bound. */
+export interface HostedControllerEntryV1 {
+  readonly role: HostedControllerRoleV1;
+  readonly retiredRepository: string | null;
+  readonly retiredRuntimeId: string | null;
+  readonly selfInstallationId: number | null;
+  readonly deployment: Readonly<{
+    owner: string;
+    name: string;
+    sourceBranch: string;
+    supervisorBranch: string;
+    supervisorWorkflowPath: string;
+    supervisorWorkflowId: number | null;
+    ciWorkflowPath: string;
+    ciWorkflowId: number | null;
+  }>;
+}
+
+/** A selected entry whose workflow ids are bound. */
+export interface HostedControllerBindingV1 extends HostedControllerEntryV1 {
+  readonly deployment: HostedControllerEntryV1["deployment"] & {
+    readonly supervisorWorkflowId: number;
+    readonly ciWorkflowId: number;
+  };
+}
+
+export type HostedControllerSelectionV1 =
+  | { ok: true; binding: HostedControllerBindingV1 }
+  | {
+    ok: false;
+    reason: "workflow_ids_unfilled" | "private_role_unwired";
+    repository: string;
+  };
+
+// The private role's own wiring (Sentinel self passes off rather than
+// re-pointed, release, install promotion and backup CI refused, state on its
+// own remote only) is not in this revision, so a private selection refuses to
+// start even with bound workflow ids. The change that wires it sets this.
+const PRIVATE_ROLE_WIRED = false;
+
+/**
+ * Pure selection over a closed list (the committed one in production). The
+ * GitHub-provided repository picks an exact entry; anything else, or none,
+ * picks the first entry. An entry whose ids are not committed refuses.
+ */
+export function selectHostedControllerDeploymentV1(
+  repository: string | undefined,
+  entries: readonly HostedControllerEntryV1[] = HOSTED_CONTROLLER_DEPLOYMENTS,
+): HostedControllerSelectionV1 {
+  const entry =
+    entries.find((candidate) =>
+      `${candidate.deployment.owner}/${candidate.deployment.name}` ===
+        repository
+    ) ?? entries[0];
+  const { supervisorWorkflowId, ciWorkflowId } = entry.deployment;
+  const selected = `${entry.deployment.owner}/${entry.deployment.name}`;
+  if (supervisorWorkflowId === null || ciWorkflowId === null) {
+    return { ok: false, reason: "workflow_ids_unfilled", repository: selected };
+  }
+  if (entry.role === "private" && !PRIVATE_ROLE_WIRED) {
+    return { ok: false, reason: "private_role_unwired", repository: selected };
+  }
+  return {
+    ok: true,
+    binding: {
+      ...entry,
+      deployment: { ...entry.deployment, supervisorWorkflowId, ciWorkflowId },
+    },
+  };
+}
+
+/** GitHub's own repository name, read only where the process may read it. */
+function nativeRepository(): string | undefined {
+  try {
+    const grant = Deno.permissions.querySync({
+      name: "env",
+      variable: "GITHUB_REPOSITORY",
+    });
+    return grant.state === "granted"
+      ? Deno.env.get("GITHUB_REPOSITORY")
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const SELECTED = selectHostedControllerDeploymentV1(nativeRepository());
+if (!SELECTED.ok) {
+  throw new Error(
+    `hosted controller binding refused: ${SELECTED.reason} ${SELECTED.repository}`,
+  );
+}
+
+/** The selected entry's role; only the public entry works Sentinel itself. */
+export const HOSTED_CONTROLLER_ROLE: HostedControllerRoleV1 =
+  SELECTED.binding.role;
+/** Retired pre-migration names of the selected entry, for state reads only. */
+export const HOSTED_CONTROLLER_RETIRED_REPOSITORY: string | null =
+  SELECTED.binding.retiredRepository;
+export const HOSTED_CONTROLLER_RETIRED_RUNTIME_ID: string | null =
+  SELECTED.binding.retiredRuntimeId;
+/** Committed App self installation of the selected entry, when committed. */
+export const HOSTED_CONTROLLER_SELF_INSTALLATION_ID: number | null =
+  SELECTED.binding.selfInstallationId;
+
 export const HOSTED_CONTROLLER_DEPLOYMENT = Object.freeze(
-  {
-    owner: "ubiquity-sentinel",
-    name: "sentinel",
-    sourceBranch: "development",
-    supervisorBranch: "sentinel-supervisor",
-    supervisorWorkflowPath: ".github/workflows/supervisor.yml",
-    supervisorWorkflowId: 357012162,
-    ciWorkflowPath: ".github/workflows/ci.yml",
-    ciWorkflowId: 353613034,
-  } as const,
+  SELECTED.binding.deployment,
 );
 
 export const HOSTED_CONTROLLER_REPOSITORY =
-  `${HOSTED_CONTROLLER_DEPLOYMENT.owner}/${HOSTED_CONTROLLER_DEPLOYMENT.name}` as const;
+  `${HOSTED_CONTROLLER_DEPLOYMENT.owner}/${HOSTED_CONTROLLER_DEPLOYMENT.name}`;
 export const HOSTED_CONTROLLER_SELF: Readonly<RepositoryIdentityV1> = Object
   .freeze({
     owner: HOSTED_CONTROLLER_DEPLOYMENT.owner,

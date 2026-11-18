@@ -6622,3 +6622,50 @@ decision forbids.
 
 Rollback: revert the commit; every host is then public-only again, as in the
 entry above.
+
+## 2026-11-18: two committed controller deployments, selected by GitHub's own repository name
+
+- Owner, 2026-11-18, on the second, private deployment
+  (`ubiquity-sentinel-private/sentinel`, same code, kept in sync by
+  fast-forward): "can you please just handle all that". The single committed
+  controller binding becomes a committed closed list of exactly two entries in
+  the same owner-merged authority file
+  ([src/contracts/hosted-controller-deployment.ts](../src/contracts/hosted-controller-deployment.ts),
+  already in `HOSTED_AUTHORITY_PROTECTED_PATHS`):
+  - `public`: `ubiquity-sentinel/sentinel`, byte-for-byte the former
+    constants (branches `development` / `sentinel-supervisor`, supervisor
+    workflow 357012162, CI workflow 353613034), and the retired
+    `ubiquity/sentinel` names for state reads, as before;
+  - `private`: `ubiquity-sentinel-private/sentinel`, same branches and
+    workflow paths, no retired names, the App's installation on the
+    `ubiquity-sentinel-private` org (183425201) recorded as its self scope,
+    and both workflow ids `null` until GitHub registers its workflows.
+- Selection: a process that may read `GITHUB_REPOSITORY` (GitHub's own
+  value) selects the entry with exactly that name; any other name, or none,
+  or a process without that grant, selects the public entry, whose native
+  identity checks refuse anything but the public repository exactly as
+  before. The recorded invariant is restated, not relaxed: neither an
+  environment variable nor target configuration can add, alter or otherwise
+  choose an entry; GitHub's repository name only picks one of the two
+  committed entries, and the existing checks (workflow ref, run reads through
+  the selected repository's API path, committed workflow ids) then verify the
+  run against it. Every existing consumer of the binding (runtime and
+  launcher identity, state remote, refs, workflow ids, auto-follow, dispatch,
+  bootstrap) reads the selected entry with no code change of its own.
+- Fail closed: selecting the private entry refuses to start (module load
+  throws `hosted controller binding refused: <reason> <repository>`) while
+  either workflow id is `null` (`workflow_ids_unfilled`) and while the
+  private role is not wired (`private_role_unwired`, a committed `false` in
+  the same file). The private role's wiring is a later change: Sentinel self
+  passes turned off rather than re-pointed at the private repository;
+  release, install promotion and backup CI refused; state only on its own
+  `sentinel-state/*` branches; its dispatcher and auto-follow able to read
+  `GITHUB_REPOSITORY`; its self-token mint scoped to its own organization.
+  Filling the ids alone therefore does not start it.
+- Public host: unchanged. Its processes either read `GITHUB_REPOSITORY` as
+  `ubiquity-sentinel/sentinel` or cannot read it; both select the public
+  entry, whose values are the former constants. No new read, request, state
+  field or workflow edit.
+
+Rollback: revert the commit; the public deployment is unaffected either way,
+and the private one again cannot select itself.
