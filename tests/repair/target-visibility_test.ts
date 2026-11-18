@@ -10,6 +10,8 @@ import {
 } from "../../src/host/targets.ts";
 import { createLocalRepositoryConfig } from "../../src/host/local-config.ts";
 import { touchesProtected } from "../../src/repair/loop-records.ts";
+import { parsePrivateTargetsLine } from "../../src/repair/private-targets-line.ts";
+import { scanStepLines } from "../../src/repair/step-line.ts";
 
 Deno.test("target visibility: only GitHub's explicit public answer is public", () => {
   for (
@@ -98,6 +100,32 @@ Deno.test("target visibility: the load configures public targets only; private i
   assert.equal(
     privateTargetsLineV1({ ...loaded, privateTargets: [] }),
     null,
+  );
+});
+
+Deno.test("target visibility: the skip line re-parses strictly and stays text-free", () => {
+  const line = {
+    kind: "sentinel_private_targets",
+    reason: "private_repository",
+    skipped: 2,
+    listed: 30,
+    configured: 28,
+  };
+  assert.deepEqual(parsePrivateTargetsLine(line), line);
+  for (
+    const bad of [
+      { ...line, skipped: 0 },
+      { ...line, skipped: 3 },
+      { ...line, listed: 65 },
+      { ...line, reason: "other" },
+      { ...line, slug: "ubiquity/prospector" },
+      { ...line, status: "idle" },
+      { ...line, skipped: 1.5 },
+    ]
+  ) assert.equal(parsePrivateTargetsLine(bad), null, JSON.stringify(bad));
+  assert.deepEqual(
+    scanStepLines(`noise\n${JSON.stringify(line)}\n`),
+    [line],
   );
 });
 

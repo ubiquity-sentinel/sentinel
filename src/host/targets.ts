@@ -32,11 +32,14 @@ import {
 } from "./target-tree-facts.ts";
 import type { TargetReadObserverV1 } from "./target-read-observer.ts";
 import {
-  PRIVATE_TARGET_REASON,
   repositoryVisibilityV1,
   sentinelWorksRepositoryV1,
   type TargetVisibilityV1,
 } from "../repair/target-visibility.ts";
+import {
+  type PrivateTargetsLineV1,
+  privateTargetsLineV1 as privateTargetsCountsLineV1,
+} from "../repair/private-targets-line.ts";
 export type { TargetTreeFactsV1 } from "./target-policy-generic.ts";
 export {
   createTargetTreeFactsResolver,
@@ -353,26 +356,18 @@ export interface UnavailableTargetCountsV1 {
 }
 
 /**
- * The one text-free line of a load that skipped private targets: the closed
- * reason and counts, never a repository name. Null when none was private.
+ * The one text-free line of a load that skipped private targets
+ * (`src/repair/private-targets-line.ts`): the closed reason and counts, never
+ * a repository name. Null when none was private.
  */
 export function privateTargetsLineV1(
   result: LoadTargetConfigsResultV1,
-): {
-  readonly kind: "sentinel_private_targets";
-  readonly reason: typeof PRIVATE_TARGET_REASON;
-  readonly skipped: number;
-  readonly listed: number;
-  readonly configured: number;
-} | null {
-  if (result.privateTargets.length === 0) return null;
-  return {
-    kind: "sentinel_private_targets",
-    reason: PRIVATE_TARGET_REASON,
+): PrivateTargetsLineV1 | null {
+  return privateTargetsCountsLineV1({
     skipped: result.privateTargets.length,
     listed: result.targets.length,
     configured: result.configs.length,
-  };
+  });
 }
 
 /**

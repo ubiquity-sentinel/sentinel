@@ -49,6 +49,11 @@ import {
   STARTUP_PREFLIGHT_KIND,
   type StartupPreflightLineV1,
 } from "./startup-preflight-line.ts";
+import {
+  parsePrivateTargetsLine,
+  PRIVATE_TARGETS_KIND,
+  type PrivateTargetsLineV1,
+} from "./private-targets-line.ts";
 
 export const STEP_LINE_KIND = "sentinel_step";
 
@@ -240,7 +245,8 @@ export type AdvisoryLogLineV1 =
   | HostPhaseLineV1
   | TargetTimingLineV1
   | TargetsDeferralLineV1
-  | StartupPreflightLineV1;
+  | StartupPreflightLineV1
+  | PrivateTargetsLineV1;
 
 const MATRIX_SKIP_KEYS = ["detail", "kind", "records"].join();
 
@@ -276,15 +282,16 @@ const ADVISORY_KINDS = [
   TARGET_TIMING_KIND,
   TARGETS_DEFERRAL_KIND,
   STARTUP_PREFLIGHT_KIND,
+  PRIVATE_TARGETS_KIND,
 ];
 
 /**
  * Every valid advisory line of one child's stdout, in order, bounded: the
  * per-step lines, the one matrix-skip summary, the one pass summary, the
  * serial job's fan-out hand-back and delegation lines, the host phase and
- * target timing lines, the unreadable-targets deferral line and the startup
- * preflight's text-free failure line the launcher re-emits, so they survive
- * the hosted child's stdout filter.
+ * target timing lines, the unreadable-targets deferral line, the startup
+ * preflight's text-free failure line and the private-targets skip line the
+ * launcher re-emits, so they survive the hosted child's stdout filter.
  */
 export function scanStepLines(stdout: string): AdvisoryLogLineV1[] {
   const lines: AdvisoryLogLineV1[] = [];
@@ -303,7 +310,7 @@ export function scanStepLines(stdout: string): AdvisoryLogLineV1[] {
       parsePassSummaryLine(value) ?? parseRepairHandbackLine(value) ??
       parseRepairFanoutDelegationLine(value) ?? parseHostPhaseLine(value) ??
       parseTargetTimingLine(value) ?? parseTargetsDeferralLine(value) ??
-      parseStartupPreflightLine(value);
+      parseStartupPreflightLine(value) ?? parsePrivateTargetsLine(value);
     if (line !== null) lines.push(line);
   }
   return lines;

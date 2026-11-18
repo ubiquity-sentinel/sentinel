@@ -25,6 +25,8 @@ import {
 } from "../../src/host/targets.ts";
 import type { HttpTransportV1 } from "../../src/github/http.ts";
 import { PRIVATE_TARGET_REASON } from "../../src/repair/target-visibility.ts";
+import { PRIVATE_TARGETS_KIND } from "../../src/repair/private-targets-line.ts";
+import { scanStepLines } from "../../src/repair/step-line.ts";
 import { TARGETS_DEFERRAL_KIND } from "../../src/repair/targets-deferral-line.ts";
 import { rig } from "./matrix-actions-fixtures.ts";
 import {
@@ -136,6 +138,13 @@ Deno.test("private target: never configured; the pass reads nothing more of it a
       configured: 1,
     });
     assert.equal(line[0].includes("prospector"), false);
+    // The launcher re-emits it into the job log after its strict re-parse.
+    assert.deepEqual(
+      scanStepLines(lines.join("\n")).filter((entry) =>
+        entry.kind === PRIVATE_TARGETS_KIND
+      ),
+      [JSON.parse(line[0])],
+    );
     assert.deepEqual(deferralLines(lines), [], "no deferral line");
   } finally {
     await r.cleanup();
