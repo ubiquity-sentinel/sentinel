@@ -378,7 +378,11 @@ export async function backupCiStoreChanges(
     const path = backupCiProbePath(repository.owner, repository.name);
     const existing = await current(view, path, parseBackupCiProbeRecord)
       .catch(() => null);
-    if (existing?.facts.receipt === record.facts.receipt) continue;
+    // A version 1 answer is replaced by the version 2 re-read once.
+    if (
+      existing !== null && existing.version >= record.version &&
+      existing.facts.receipt === record.facts.receipt
+    ) continue;
     changes.set(path, parseBackupCiProbeRecord(record));
   }
   return changes;

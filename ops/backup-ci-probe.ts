@@ -18,6 +18,13 @@
  * once and remembered (2026-11-18 review): the commit step stores it in
  * `v1/<owner>/<repo>/probe.json` (a new file older code never reads), and
  * later passes log the stored facts without any target read.
+ *
+ * Version 2 (2026-11-18 review): the leg's synthetic merge carries the
+ * head's own tree, so the push run and the leg tested the same tree; the
+ * probe therefore also reports the native `pull_request`-event runs of the
+ * same check on that commit (at most three, oldest first: started,
+ * conclusion, failing step number, the merge base their checkout logged).
+ * A stored version 1 answer is read once more and replaced, then replayed.
  */
 import {
   type BackupCiCommitFileV1,
@@ -37,6 +44,19 @@ type Obj = Record<string, unknown>;
 const row = (v: unknown): Obj | null =>
   typeof v === "object" && v !== null && !Array.isArray(v) ? v as Obj : null;
 
+/** One native pull_request-event run of the evidence's check (closed). */
+export interface BackupCiProbePullRunV2 {
+  started: boolean | null;
+  conclusion: string | null;
+  failingStep: number | null;
+  base12: string | null;
+}
+
+/** At most this many pull_request runs are read (a job and a log each). */
+export const BACKUP_CI_PROBE_MAX_PULL_RUNS = 3;
+/** The record version this code writes (and replays without a read). */
+export const BACKUP_CI_PROBE_VERSION = 2;
+
 /** The closed facts of one probe (hex, enum, integer and boolean only). */
 export interface BackupCiProbeFactsV1 {
   receipt: string;
@@ -48,11 +68,17 @@ export interface BackupCiProbeFactsV1 {
   legBase12: string | null;
   nativeBase12: string | null;
   sameBase: boolean | null;
+  /**
+   * Version 2: the native pull_request-event runs of the same check on the
+   * commit (empty: none); null when the listings were unreadable. Absent in
+   * a version 1 record.
+   */
+  pullRequestRuns?: BackupCiProbePullRunV2[] | null;
 }
 
 /** v1/<owner>/<repo>/probe.json: the remembered answer of one suspension. */
 export interface BackupCiProbeRecordV1 {
-  version: 1;
+  version: 1 | 2;
   kind: "sentinel_backup_ci_probe";
   nativeCheckRunId: number;
   facts: BackupCiProbeFactsV1;
@@ -88,7 +114,11 @@ export function parseBackupCiProbeRecord(
   const o = row(input) ?? fail("record");
   const keys = Object.keys(o).sort().join();
   if (keys !== "facts,kind,nativeCheckRunId,probedAt,version") fail("keys");
-  if (o.version !== 1 || o.kind !== "sentinel_backup_ci_probe") fail("kind");
+  if (
+    (o.version !== 1 && o.version !== 2) ||
+    o.kind !== "sentinel_backup_ci_probe"
+  ) fail("kind");
+  const version = o.version as 1 | 2;
   const id = o.nativeCheckRunId;
   const at = o.probedAt;
   if (typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0) {
@@ -98,7 +128,10 @@ export function parseBackupCiProbeRecord(
     fail("probedAt");
   }
   const f = row(o.facts) ?? fail("facts");
-  if (Object.keys(f).sort().join() !== [...FACT_KEYS].sort().join()) {
+  const factKeys = version === 1
+    ? [...FACT_KEYS]
+    : [...FACT_KEYS, "pullRequestRuns"];
+  if (Object.keys(f).sort().join() !== factKeys.sort().join()) {
     fail("fact keys");
   }
   const nullable = <T>(v: unknown, ok: (x: unknown) => boolean): T | null =>
@@ -126,8 +159,32 @@ export function parseBackupCiProbeRecord(
     nativeBase12: nullable(f.nativeBase12, hex),
     sameBase: nullable(f.sameBase, bool),
   };
+  if (version === 2) {
+    const runs = f.pullRequestRuns;
+    if (runs !== null) {
+      if (!Array.isArray(runs) || runs.length > BACKUP_CI_PROBE_MAX_PULL_RUNS) {
+        fail("pullRequestRuns");
+      }
+      facts.pullRequestRuns = (runs as unknown[]).map((v) => {
+        const r = row(v) ?? fail("pull request run");
+        if (
+          Object.keys(r).sort().join() !==
+            "base12,conclusion,failingStep,started"
+        ) fail("pull request run keys");
+        return {
+          started: nullable(r.started, bool),
+          conclusion: nullable(r.conclusion, word),
+          failingStep: nullable(
+            r.failingStep,
+            (v) => typeof v === "number" && Number.isSafeInteger(v) && v > 0,
+          ),
+          base12: nullable(r.base12, hex),
+        };
+      });
+    } else facts.pullRequestRuns = null;
+  }
   return {
-    version: 1,
+    version,
     kind: "sentinel_backup_ci_probe",
     nativeCheckRunId: id as number,
     facts,
@@ -137,7 +194,19 @@ export function parseBackupCiProbeRecord(
 
 /** The log line of a probe's facts (the same line, read or remembered). */
 export function backupCiProbeLine(facts: BackupCiProbeFactsV1): string {
-  const ordered = Object.fromEntries(FACT_KEYS.map((k) => [k, facts[k]]));
+  const ordered: Record<string, unknown> = Object.fromEntries(
+    FACT_KEYS.map((k) => [k, facts[k]]),
+  );
+  if (facts.pullRequestRuns !== undefined) {
+    ordered.pullRequestRuns = facts.pullRequestRuns === null
+      ? null
+      : facts.pullRequestRuns.map((r) => ({
+        started: r.started,
+        conclusion: r.conclusion,
+        failingStep: r.failingStep,
+        base12: r.base12,
+      }));
+  }
   return `sentinel_backup_ci_false_green_probe ${JSON.stringify(ordered)}`;
 }
 
@@ -193,6 +262,47 @@ export async function probeBackupCiFalseGreenFacts(input: {
   const legBase = leg?.key.base ?? null;
   const word = (v: unknown) =>
     typeof v === "string" && WORD_RE.test(v) ? v : null;
+  // Version 2: the native pull_request-event runs of the same check on the
+  // same commit, oldest first, at most three (a job and a log read each).
+  const suiteEvent = (r: Record<string, unknown> | undefined) =>
+    suites?.find((s) => s.suiteId === row(r?.check_suite)?.id)?.event;
+  const pullIds = runs === null || suites === null ? null : runs
+    .filter((r) =>
+      r.name === evidence.checkName && r.id !== evidence.nativeCheckRunId &&
+      typeof r.id === "number" && Number.isSafeInteger(r.id) && r.id > 0 &&
+      suiteEvent(r) === "pull_request"
+    )
+    .map((r) => r.id as number)
+    .sort((a, b) => a - b)
+    .slice(-BACKUP_CI_PROBE_MAX_PULL_RUNS);
+  const pullRequestRuns = pullIds === null ? null : await Promise.all(
+    pullIds.map(async (id): Promise<BackupCiProbePullRunV2> => {
+      const pullJob = await input.reads.job(id);
+      const pullBody = row(pullJob);
+      const never = pullJob === null
+        ? null
+        : completedJobNeverStarted(pullJob, id, evidence.commit);
+      const pullSteps = Array.isArray(pullBody?.steps)
+        ? pullBody.steps.map(row)
+        : [];
+      const step = pullSteps.find((s) => s?.conclusion === "failure")?.number;
+      const log = input.reads.jobLogPrefix === undefined || never !== false
+        ? null
+        : await input.reads.jobLogPrefix(id);
+      const merge = log === null ? "unbound" : backupCiNativeMergeParents(log);
+      return {
+        started: never === null ? null : !never,
+        conclusion: word(pullBody?.conclusion),
+        failingStep: typeof step === "number" && Number.isSafeInteger(step) &&
+            step > 0
+          ? step
+          : null,
+        base12: merge === "unbound" || merge.head !== evidence.commit
+          ? null
+          : merge.base.slice(0, 12),
+      };
+    }),
+  );
   return {
     receipt: evidence.receipt,
     legContext: leg?.key.context ?? null,
@@ -205,6 +315,7 @@ export async function probeBackupCiFalseGreenFacts(input: {
     sameBase: legBase === null || nativeBase === null
       ? null
       : legBase === nativeBase,
+    pullRequestRuns,
   };
 }
 
@@ -215,7 +326,11 @@ export async function probeBackupCiFalseGreenFacts(input: {
  */
 function complete(facts: BackupCiProbeFactsV1): boolean {
   return facts.nativeEvent !== null && facts.nativeStarted !== null &&
-    facts.nativeConclusion !== null;
+    facts.nativeConclusion !== null &&
+    Array.isArray(facts.pullRequestRuns) &&
+    facts.pullRequestRuns.every((r) =>
+      r.started !== null && r.conclusion !== null
+    );
 }
 
 /**
@@ -247,8 +362,10 @@ export async function probeExcludedBackupCiRunner(input: {
     const stored = await input.store.read(backupCiProbePath(owner, name))
       .then((v) => v === null ? null : parseBackupCiProbeRecord(v))
       .catch(() => null);
+    // A version 1 answer lacks the pull_request runs: read once more.
     if (
-      stored !== null && stored.facts.receipt === evidence.receipt &&
+      stored !== null && stored.version === BACKUP_CI_PROBE_VERSION &&
+      stored.facts.receipt === evidence.receipt &&
       stored.nativeCheckRunId === evidence.nativeCheckRunId
     ) {
       input.log(backupCiProbeLine(stored.facts));
@@ -270,7 +387,7 @@ export async function probeExcludedBackupCiRunner(input: {
     return {
       repository: target.repository,
       record: parseBackupCiProbeRecord(JSON.parse(canonicalStringify({
-        version: 1,
+        version: BACKUP_CI_PROBE_VERSION,
         kind: "sentinel_backup_ci_probe",
         nativeCheckRunId: evidence.nativeCheckRunId,
         facts,

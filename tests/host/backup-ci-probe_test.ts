@@ -106,6 +106,8 @@ Deno.test("the probe logs the native event, step and merge base against the leg'
         legBase12: B.slice(0, 12),
         nativeBase12: OTHER_BASE.slice(0, 12),
         sameBase: false,
+        // Version 2: no other run of the check on the commit.
+        pullRequestRuns: [],
       })
     }`,
   );
@@ -238,5 +240,169 @@ Deno.test("an incomplete probe answer is logged but not remembered", async () =>
   assert(
     world.lines.some((l) => l.includes('"nativeStarted":null')),
     world.lines.join("\n"),
+  );
+});
+
+/**
+ * Version 2 (2026-11-18): the evidence run is a push run; the same check also
+ * ran for the pull request (once failing at step 9 against base B, once a
+ * billing stop that never started) and once in another workflow's suite.
+ */
+function pushEvidenceReads(calls: string[]): BackupCiTargetReadsV1 {
+  const job = (id: number, conclusion: string, started: boolean) => ({
+    id,
+    head_sha: H,
+    status: "completed",
+    conclusion,
+    runner_id: started ? 4 : 0,
+    steps: started
+      ? [
+        { name: "Set up job", number: 1, conclusion: "success" },
+        { name: "Run deno test", number: 9, conclusion: conclusion },
+      ]
+      : [],
+  });
+  const jobs = new Map<number, unknown>([
+    [501, job(501, "failure", true)],
+    [601, job(601, "failure", true)],
+    [602, job(602, "failure", false)],
+  ]);
+  return {
+    checkRuns: () => {
+      calls.push("checkRuns");
+      return Promise.resolve([
+        { id: 501, name: CHECK, check_suite: { id: 12 } },
+        { id: 602, name: CHECK, check_suite: { id: 14 } },
+        { id: 601, name: CHECK, check_suite: { id: 14 } },
+        { id: 603, name: "lint", check_suite: { id: 14 } },
+      ]);
+    },
+    suites: () =>
+      Promise.resolve([
+        {
+          suiteId: 12,
+          runId: 13,
+          workflowPath: ".github/workflows/ci.yml",
+          event: "push",
+        },
+        {
+          suiteId: 14,
+          runId: 15,
+          workflowPath: ".github/workflows/ci.yml",
+          event: "pull_request",
+        },
+      ]),
+    job: (id: number) => {
+      calls.push(`job:${id}`);
+      return Promise.resolve(jobs.get(id) ?? null);
+    },
+    jobLogPrefix: (id: number) => {
+      calls.push(`log:${id}`);
+      return Promise.resolve([
+        "##[group]Run actions/checkout@v4",
+        `HEAD is now at 1a2b3c4 Merge ${H} into ${B}`,
+        "##[group]Run deno test",
+      ].join("\n"));
+    },
+  } as unknown as BackupCiTargetReadsV1;
+}
+
+Deno.test("v2: the probe reports the native pull_request runs of the same check", async () => {
+  const calls: string[] = [];
+  const line = await probeBackupCiFalseGreen({
+    repository: REPO,
+    suspension: evidence(),
+    file: commitFile([result(PR_KEY)]),
+    reads: pushEvidenceReads(calls),
+  });
+  const facts = JSON.parse(line!.slice(line!.indexOf("{")));
+  assert.equal(facts.nativeEvent, "push");
+  assert.equal(facts.sameBase, null);
+  assert.deepEqual(facts.pullRequestRuns, [
+    {
+      started: true,
+      conclusion: "failure",
+      failingStep: 9,
+      base12: B.slice(0, 12),
+    },
+    { started: false, conclusion: "failure", failingStep: null, base12: null },
+  ]);
+  // Bounded: one job read per pull_request run, a log only for a started one.
+  assert.deepEqual(calls.filter((c) => c.startsWith("log:")), ["log:601"]);
+  assert(!calls.includes("job:603"));
+});
+
+Deno.test("v2: a stored version 1 answer is read once more, then replayed", async () => {
+  const world = passWorld();
+  world.store.set(backupCiSuspensionPath(OWNER, NAME), evidence());
+  world.store.set(
+    backupCiCommitPath(OWNER, NAME, H),
+    commitFile([result(PR_KEY)]),
+  );
+  const path = backupCiProbePath(OWNER, NAME);
+  const v1 = {
+    version: 1,
+    kind: "sentinel_backup_ci_probe",
+    nativeCheckRunId: 501,
+    facts: {
+      receipt: RECEIPT,
+      legContext: "pull_request",
+      nativeEvent: "push",
+      nativeStarted: true,
+      nativeConclusion: "failure",
+      nativeFailingStep: 9,
+      legBase12: B.slice(0, 12),
+      nativeBase12: null,
+      sameBase: null,
+    },
+    probedAt: T0,
+  };
+  assert.equal(parseBackupCiProbeRecord(v1).version, 1);
+  world.store.set(path, v1);
+  const calls: string[] = [];
+  const first = await runBackupCiPass(
+    passDeps(world, [{ repository: REPO, id: REPO_ID }], {
+      targetReads: () => pushEvidenceReads(calls),
+    }),
+  );
+  assert.equal(calls.filter((c) => c === "checkRuns").length, 1);
+  const record = first.probes![0].record;
+  assert.equal(record.version, 2);
+  assert.equal(record.facts.pullRequestRuns?.length, 2);
+  // The commit step replaces the version 1 answer once.
+  const changes = await backupCiStoreChanges(
+    first,
+    [],
+    [],
+    storeView(world.store),
+    T0,
+    () => {},
+  );
+  assert.deepEqual(parseBackupCiProbeRecord(changes.get(path)), record);
+  world.store.set(path, changes.get(path));
+  const again = await backupCiStoreChanges(
+    first,
+    [],
+    [],
+    storeView(world.store),
+    T0,
+    () => {},
+  );
+  assert.equal(again.has(path), false);
+  // Later passes replay it with no target read.
+  const second = await runBackupCiPass(
+    passDeps(world, [{ repository: REPO, id: REPO_ID }], {
+      targetReads: () => {
+        throw new Error("a remembered version 2 probe reads no target");
+      },
+    }),
+  );
+  assert.deepEqual(second.probes, []);
+  assert(world.lines.includes("backup-ci:probe:remembered"));
+  assert(
+    world.lines.some((l) =>
+      l.startsWith("sentinel_backup_ci_false_green_probe ") &&
+      l.includes('"pullRequestRuns":[{"started":true')
+    ),
   );
 });
