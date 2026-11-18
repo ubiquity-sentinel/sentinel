@@ -33,6 +33,7 @@ import {
 } from "../src/github/backup-ci-store.ts";
 import type { BackupCiActionSourceV1 } from "./backup-ci-actions.ts";
 import { planBackupCiCalibration } from "./backup-ci-calibrate.ts";
+import { probeExcludedBackupCiRunner } from "./backup-ci-probe.ts";
 import {
   enrolBackupCiTarget,
   pinnedBackupCiTargets,
@@ -516,6 +517,14 @@ export async function runBackupCiPass(
         JSON.stringify({ runnerId: deps.runnerId, state: "excluded" })
       }`,
     );
+    // Diagnosis only (backup-ci-probe.ts): the native run of the false green.
+    await probeExcludedBackupCiRunner({
+      runnerId: deps.runnerId!,
+      targets: pinned,
+      store: deps.store,
+      targetReads: deps.targetReads,
+      log: deps.log,
+    }).catch(() => deps.log("backup-ci:probe:refused"));
   }
   // Demand from the repair state alone: a target without it costs no read.
   const demand = new Map<string, RepairStateSnapshotV1["work"]>();
