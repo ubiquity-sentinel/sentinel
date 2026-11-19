@@ -44,26 +44,34 @@ regenerate bundles for the current attempt. This starts the agents again.
 }
 ```
 
-| Field        | Required | Meaning                                                                                    |
-| ------------ | -------- | ------------------------------------------------------------------------------------------ |
-| `id`         | yes      | Unique in the request; lowercase letters, digits and `-`, at most 40 characters.           |
-| `repository` | yes      | `owner/name`. The Sentinel GitHub App must be installed on it with write access.           |
-| `prompt`     | yes      | The task. Its first line becomes the commit and pull request title.                        |
-| `base`       | no       | Branch to start from. Defaults to the repository's default branch.                         |
-| `pr`         | no       | `true` opens a draft pull request for the pushed branch. Default `false`.                  |
-| `setup`      | no       | Shell commands to run in the checkout before the agent starts.                             |
-| `minutes`    | no       | Agent deadline. Defaults to the maximum, 350. Work done before a deadline is still pushed. |
-| `model`      | no       | Gateway model id. Defaults to the workflow's implementation model.                         |
-| `runner`     | no       | Hosted runner kind: `linux-x64` (default), `linux-arm64` or `macos-arm64`.                 |
+| Field        | Required | Meaning                                                                                      |
+| ------------ | -------- | -------------------------------------------------------------------------------------------- |
+| `id`         | yes      | Unique in the request; lowercase letters, digits and `-`, at most 40 characters.             |
+| `repository` | yes      | `owner/name`. The Sentinel GitHub App must be installed on it with write access.             |
+| `prompt`     | yes      | The task. Its first line becomes the commit and pull request title.                          |
+| `base`       | no       | Branch to start from. Defaults to the repository's default branch.                           |
+| `pr`         | no       | `true` opens a draft pull request for the pushed branch. Default `false`.                    |
+| `setup`      | no       | Shell commands to run in the checkout before the agent starts.                               |
+| `minutes`    | no       | Agent deadline. Defaults to the maximum, 350. Work done before a deadline is still pushed.   |
+| `model`      | no       | Gateway model id. Defaults to the workflow's implementation model.                           |
+| `runner`     | no       | Hosted runner kind: `linux-x64` (default), `linux-arm64`, `linux-arm64-26` or `macos-arm64`. |
 
 One job is one agent. To put several agents on one repository, give each its own
 job with a task that does not overlap the others; each gets its own clone and
 its own branch.
 
 Jobs that ask for different runner kinds never share a runner. `linux-arm64` is
-`ubuntu-24.04-arm` (4 vCPU, 16 GB) and `macos-arm64` is `macos-latest` (Apple
-Silicon, 3 vCPU, 7 GB, no `apt`; Homebrew is installed). Use them when the task
-must build or run on that platform; macOS runners are the scarcest.
+`ubuntu-24.04-arm` (4 vCPU, 16 GB), `linux-arm64-26` is `ubuntu-26.04-arm` (same
+size, newer packages) and `macos-arm64` is `macos-latest` (Apple Silicon, 3
+vCPU, 7 GB, no `apt`; Homebrew is installed). Use them when the task must build
+or run on that platform; macOS runners are the scarcest.
+
+Every cell restores a build cache directory before its agents start and saves it
+afterwards. Agents find it in `AGENT_JOBS_CACHE_DIR`; `CCACHE_DIR` points inside
+it and `ccache` is installed on Linux runners, so a build that compiles through
+`ccache` reuses objects from earlier jobs of the same repository owner on the
+same runner kind. The cache is a convenience, never an input to trust: it is
+written by earlier agents.
 
 ### Writing a good prompt
 

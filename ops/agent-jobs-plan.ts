@@ -41,6 +41,9 @@ const MODEL_PATTERN =
 export const AGENT_JOB_RUNNERS = {
   "linux-x64": "ubuntu-latest",
   "linux-arm64": "ubuntu-24.04-arm",
+  // A newer image whose packages (Clang 21, Boost 1.90) build current C++
+  // trees without compiling a toolchain first.
+  "linux-arm64-26": "ubuntu-26.04-arm",
   "macos-arm64": "macos-latest",
 } as const;
 export type AgentJobRunner = keyof typeof AGENT_JOB_RUNNERS;

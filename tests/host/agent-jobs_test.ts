@@ -78,7 +78,7 @@ Deno.test("agent jobs plan gives each runner kind its own cells", () => {
   assert.throws(
     () =>
       planAgentJobs({ jobs: [job("w1", "ubiquity/a", { runner: "windows" })] }),
-    /runner must be one of linux-x64, linux-arm64, macos-arm64/,
+    /runner must be one of linux-x64, linux-arm64, linux-arm64-26, macos-arm64/,
   );
 });
 

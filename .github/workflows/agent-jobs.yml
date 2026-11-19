@@ -167,6 +167,30 @@ jobs:
           cp ops/agent-jobs-progress.mjs "$probe/"
           npm install --prefix "$probe" --no-audit --no-fund @actions/artifact@6.3.1
           echo "AGENT_JOBS_PROGRESS_SCRIPT=$probe/agent-jobs-progress.mjs" >> "$GITHUB_ENV"
+      # Build cache: compiled objects from earlier jobs of the same owner on the
+      # same runner kind (jobs/README.md). Best effort; a miss only costs time.
+      - name: Restore the build cache
+        id: build-cache
+        continue-on-error: true
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/agent-jobs-cache
+          key: agent-jobs-cache-${{ matrix.runner || 'ubuntu-latest' }}-${{ matrix.owner }}-${{ github.run_id }}-${{ matrix.cellId }}
+          restore-keys: |
+            agent-jobs-cache-${{ matrix.runner || 'ubuntu-latest' }}-${{ matrix.owner }}-
+      - name: Prepare the build cache
+        continue-on-error: true
+        run: |
+          mkdir -p "$RUNNER_TEMP/agent-jobs-cache/ccache"
+          {
+            echo "AGENT_JOBS_CACHE_DIR=$RUNNER_TEMP/agent-jobs-cache"
+            echo "CCACHE_DIR=$RUNNER_TEMP/agent-jobs-cache/ccache"
+            echo "CCACHE_MAXSIZE=3G"
+            echo "CCACHE_COMPILERCHECK=content"
+          } >> "$GITHUB_ENV"
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get install -y --no-install-recommends ccache >/dev/null 2>&1 || true
+          fi
       - name: Run the cell's agents
         env:
           AGENT_JOBS_PLAN: .agent-jobs/plan.json
@@ -177,6 +201,13 @@ jobs:
           SENTINEL_MODEL_ID: ${{ vars.SENTINEL_IMPLEMENTATION_MODEL_ID || 'gpt-6.1-sol' }}
         run: >-
           deno run --no-lock --allow-all ops/agent-jobs-cell.ts
+      - name: Save the build cache
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/agent-jobs-cache
+          key: ${{ steps.build-cache.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
