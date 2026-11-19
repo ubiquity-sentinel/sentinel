@@ -93,6 +93,17 @@ Deno.test("agent jobs plan refuses invalid requests", () => {
   refuse([job("x", "ubiquity/a", { prompt: " " })], /prompt/);
   refuse([job("x", "ubiquity/a", { minutes: 351 })], /minutes/);
   refuse([job("x", "ubiquity/a", { token: "t" })], /unknown job field/);
+  for (const model of ["/a", "a/", "a//b", "a/../b", "a b", "a;b", "-a"]) {
+    refuse([job("x", "ubiquity/a", { model })], /plain model id/);
+  }
+  assert.equal(
+    planAgentJobs([
+      job("x", "ubiquity/a", {
+        model: "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+      }),
+    ]).cells[0].jobs[0].model,
+    "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+  );
   refuse([job("x"), job("y"), job("z")], /need 3 cells/, {
     agentsPerCell: 1,
     maxCells: 2,

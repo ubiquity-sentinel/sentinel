@@ -29,7 +29,10 @@ export const AGENT_JOBS_MAX_MINUTES = 350;
 const ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9._-]+$/;
 const REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,199}$/;
-const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+// A gateway model id: plain segments, optionally namespaced with single
+// slashes (`vendor/model`). The id is only ever passed as one argument.
+const MODEL_PATTERN =
+  /^(?=.{1,96}$)[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)*$/;
 
 /**
  * Hosted runner kinds a job may ask for, and the `runs-on` label of each.
