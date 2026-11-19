@@ -1,0 +1,14 @@
+{
+  "jobs": [
+    {
+      "id": "cppgw-macos-final-20261119",
+      "repository": "ubiquity/ai.ubq.fi",
+      "base": "claude/cpp-gateway-port",
+      "pr": true,
+      "minutes": 240,
+      "model": "gpt-6.2-sol",
+      "runner": "macos-arm64",
+      "prompt": "build(cpp): confirm the delivered C++-only native gateway on Apple Silicon\n\nCONTEXT (you have no other context than this prompt and the repository)\nYou start from branch `claude/cpp-gateway-port` of ubiquity/ai.ubq.fi: the delivered native C++20 gateway (`cpp/gateway/`) and `static/`, C++ only by owner decision (do NOT install or run Bun, Node, Deno, Rust or Cargo). Linux ARM64 is verified by the repository's CI. The Apple Silicon build last passed several merges ago (450 binaries, 5,119 cases); since then the tree gained input limits, a Gemini subscription provider (opt-in, Linux confinement only), production drift ports, residual fixes, and a cleanup that removed add-on verification, an offline converter and the comparison tooling, and changed how the packaged commit is bound into health (`UOS_PACKAGE_GIT_COMMIT`). Read `cpp/gateway/docs/MACOS.md`, `cpp/gateway/tools/macos-build.sh`, `cpp/gateway/packaging/macos/build.py`. Your branch becomes a pull request only if you had to change something; your final message is its body (short, plain language).\n\nYOUR MACHINE: GitHub-hosted macOS runner on Apple Silicon, Homebrew available. Install what `docs/MACOS.md` lists.\n\nRULES\n- The runner holds a model gateway token: never print it or write any credential to a file. Tests use local mocks only.\n- Your process can be restarted without warning and then knows only what is committed: commit after each fix, keep a checklist in `cpp/gateway/docs/findings/cppgw-macos-final-20261119.md`, read it and `git log` first after a restart. Run long builds in the background and poll; no foreground command longer than about 10 minutes.\n- You may edit only `cpp/gateway/tools/macos-build.sh`, `cpp/gateway/packaging/macos/**`, `cpp/gateway/docs/MACOS.md`, Darwin-conditional test expectations, and standard-library portability fixes that cannot change Linux behaviour. Do not delete or weaken tests.\n\nTASK\nRun `tools/macos-build.sh` from a clean checkout, the runtime tests, then the whole suite, then `python3 -B cpp/gateway/packaging/macos/build.py <out>` as the release workflow's macOS job does, and confirm the packaged executable answers `--version` with the commit you built and that its health identity is that commit, not `unknown`. Fix what fails within your allowed paths; a functional failure outside them gets a precise report, not a fix. Record binaries and cases passed.\n\nDONE WHEN\nThe full suite passes on your runner (state binaries and cases) and the macOS package builds and reports the right commit, or every remaining failure is listed with its first error lines and a diagnosis.\n"
+    }
+  ]
+}
