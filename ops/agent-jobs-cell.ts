@@ -494,7 +494,13 @@ async function runJob(
                       row.end !== "complete" || row.sawCompleted === false
                     ).slice(-12).map((row) =>
                       `${row.startedAt} ${row.gatewayRequestId ?? "-"} ` +
-                      `${row.end} status ${row.status} ${row.durationMs}ms`
+                      `${row.end} status ${row.status} ${row.durationMs}ms` +
+                      (row.streamError === null
+                        ? ""
+                        : ` error ${JSON.stringify(row.streamError)}`) +
+                      (row.lastEvents === null
+                        ? ""
+                        : ` events ${row.lastEvents.join(",")}`)
                     ),
                     "",
                   ]),

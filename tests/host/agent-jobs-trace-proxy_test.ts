@@ -12,6 +12,18 @@ Deno.test("agent jobs trace proxy forwards streams and records how they end", as
       seenPath = url.pathname + url.search;
       seenAuthorization = request.headers.get("authorization") ?? "";
       const broken = url.pathname.endsWith("/broken");
+      if (url.pathname.endsWith("/errored")) {
+        return new Response(
+          'event: response.created\ndata: {"type":"response.created"}\n\n' +
+            'event: error\ndata: {"type":"error","error":{"type":"server_error","code":"overloaded","message":"try again"}}\n\n',
+          {
+            headers: {
+              "content-type": "text/event-stream",
+              "x-uos-request-id": "req-errored",
+            },
+          },
+        );
+      }
       const body = new ReadableStream<Uint8Array>({
         async start(controller) {
           controller.enqueue(
@@ -60,6 +72,22 @@ Deno.test("agent jobs trace proxy forwards streams and records how they end", as
     });
     await assert.rejects(broken.text());
     await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const errored = await fetch(`${proxy.baseFor("job-b")}/errored`, {
+      method: "POST",
+      body: "{}",
+    });
+    await errored.text();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const failure = proxy.summary("job-b").recent[0];
+    assert.equal(failure.end, "complete");
+    assert.equal(failure.sawCompleted, false);
+    assert.deepEqual(failure.lastEvents, ["response.created", "error"]);
+    assert.deepEqual(failure.streamError, {
+      type: "server_error",
+      code: "overloaded",
+      message: "try again",
+    });
 
     const summary = proxy.summary("job-a");
     assert.equal(summary.requests, 2);

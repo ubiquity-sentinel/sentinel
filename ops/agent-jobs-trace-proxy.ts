@@ -30,6 +30,13 @@ export interface TracedRequestV1 {
   end: "complete" | "upstream_error" | "client_cancel" | "connect_error";
   /** For event streams: whether a `response.completed` event went by. */
   sawCompleted: boolean | null;
+  /**
+   * For an event stream that ended without completing: the kind of its last
+   * events and, when the last one was an error, that error's type, code and
+   * the start of its message. Never any model output.
+   */
+  lastEvents: string[] | null;
+  streamError: { type: string; code: string; message: string } | null;
   error: string | null;
 }
 
@@ -132,6 +139,8 @@ export function startTraceProxy(upstreamBase: string): TraceProxy {
         responseBytes: 0,
         end: "complete",
         sawCompleted: null,
+        lastEvents: null,
+        streamError: null,
         error: null,
       };
       const finish = (end: TracedRequestV1["end"], error: unknown = null) => {
@@ -178,12 +187,47 @@ export function startTraceProxy(upstreamBase: string): TraceProxy {
       const decoder = new TextDecoder();
       let tail = "";
       let done = false;
+      // The end of the stream, kept only to describe a failure afterwards.
+      let recentText = "";
+      const describeFailure = () => {
+        if (!eventStream || record.sawCompleted !== false) return;
+        const kinds: string[] = [];
+        let last: Record<string, unknown> | null = null;
+        for (const line of recentText.split("\n")) {
+          if (!line.startsWith("data:")) continue;
+          try {
+            const data = JSON.parse(line.slice(5));
+            if (data !== null && typeof data === "object") {
+              kinds.push(String(data.type ?? "?").slice(0, 60));
+              last = data as Record<string, unknown>;
+            }
+          } catch {
+            // A data line cut by the window; skip it.
+          }
+        }
+        record.lastEvents = kinds.slice(-6);
+        if (last === null) return;
+        const holder = (last.error ?? (last.response as
+          | Record<string, unknown>
+          | undefined)?.error ??
+          last) as Record<string, unknown>;
+        const field = (name: string) =>
+          redact(String(holder?.[name] ?? "")).slice(0, 160);
+        if (/error|failed|incomplete/.test(String(last.type ?? ""))) {
+          record.streamError = {
+            type: field("type"),
+            code: field("code"),
+            message: field("message"),
+          };
+        }
+      };
       const stream = new ReadableStream<Uint8Array>({
         async pull(controller) {
           try {
             const chunk = await reader.read();
             if (chunk.done) {
               done = true;
+              describeFailure();
               finish("complete");
               controller.close();
               return;
@@ -193,9 +237,13 @@ export function startTraceProxy(upstreamBase: string): TraceProxy {
             }
             record.responseBytes += chunk.value.byteLength;
             if (eventStream && record.sawCompleted === false) {
-              const text = tail + decoder.decode(chunk.value, { stream: true });
+              const piece = decoder.decode(chunk.value, { stream: true });
+              const text = tail + piece;
               if (text.includes("response.completed")) {
                 record.sawCompleted = true;
+                recentText = "";
+              } else {
+                recentText = (recentText + piece).slice(-4096);
               }
               tail = text.slice(-32);
             }
@@ -203,6 +251,7 @@ export function startTraceProxy(upstreamBase: string): TraceProxy {
           } catch (error) {
             if (!done) {
               done = true;
+              describeFailure();
               finish("upstream_error", error);
             }
             controller.error(error);
