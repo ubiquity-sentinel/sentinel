@@ -16,6 +16,11 @@
 import { cloneBranch, git, githubRemoteUrl, gitOk } from "./agent-jobs-git.ts";
 import type { RemoteUrl } from "./agent-jobs-git.ts";
 import {
+  startTraceProxy,
+  type TraceProxy,
+  type TraceSummaryV1,
+} from "./agent-jobs-trace-proxy.ts";
+import {
   AGENT_JOBS_MAX_MINUTES,
   type AgentJobsPlanV1,
   type AgentJobV1,
@@ -246,6 +251,8 @@ export interface AgentJobsCellPorts {
     sequence: number,
     text: string,
   ) => Promise<void>;
+  /** The job's model requests as seen by the trace proxy. Optional. */
+  requestTrace?: (jobId: string) => TraceSummaryV1;
 }
 
 export interface AgentJobsCellInput {
@@ -416,6 +423,7 @@ async function runJob(
         errors: { line: string; count: number }[];
       }[],
       heartbeats: [] as string[],
+      requests: null as TraceSummaryV1 | null,
     };
     let agent: { code: number; timedOut: boolean };
     for (;;) {
@@ -438,8 +446,16 @@ async function runJob(
               startedAtMs: jobStartedAtMs,
               restarts: attempt,
             });
+            const traced = ports.requestTrace?.(job.id);
+            const modelLine = traced === undefined
+              ? null
+              : `${job.id}: model requests ${traced.requests}, ` +
+                `model time ${Math.round(traced.modelSeconds / 60)}m, ` +
+                `ends ${JSON.stringify(traced.byEnd)}, ` +
+                `streams without completion ${traced.incompleteStreams}`;
             telemetry.heartbeats.push(line);
             ports.log(line);
+            if (modelLine !== null) ports.log(modelLine);
             if (
               (telemetry.heartbeats.length - 1) % HEARTBEAT_NOTICE_EVERY === 0
             ) {
@@ -469,6 +485,19 @@ async function runJob(
                   "liveness lines so far:",
                   ...telemetry.heartbeats,
                   "",
+                  ...(traced === undefined ? [] : [
+                    "model requests (trace proxy):",
+                    modelLine ?? "",
+                    "last streams that ended without completion " +
+                    "(start time, gateway request id, how it ended, ms):",
+                    ...traced.recent.filter((row) =>
+                      row.end !== "complete" || row.sawCompleted === false
+                    ).slice(-12).map((row) =>
+                      `${row.startedAt} ${row.gatewayRequestId ?? "-"} ` +
+                      `${row.end} status ${row.status} ${row.durationMs}ms`
+                    ),
+                    "",
+                  ]),
                   "commits since the base, newest first:",
                   log.trim().length === 0 ? "(none)" : log.trim(),
                   "",
@@ -529,6 +558,7 @@ async function runJob(
       attempt += 1;
     }
     await Deno.mkdir(input.outDir, { recursive: true });
+    telemetry.requests = ports.requestTrace?.(job.id) ?? null;
     await Deno.writeTextFile(
       `${input.outDir}/${job.id}.telemetry.json`,
       JSON.stringify(telemetry, null, 2) + "\n",
@@ -642,6 +672,17 @@ if (import.meta.main) {
   const workspace = env("GITHUB_WORKSPACE") || Deno.cwd();
   const progressScript = env("AGENT_JOBS_PROGRESS_SCRIPT");
   const baseUrl = env("SENTINEL_MODEL_BASE_URL") || "https://ai.ubq.fi/v1";
+  // Telemetry only: a loopback pass-through that records each model request's
+  // gateway request id and how its stream ended. Set AGENT_JOBS_TRACE_PROXY=0
+  // to bypass it; if it cannot start, agents talk to the gateway directly.
+  let traceProxy: TraceProxy | null = null;
+  if (env("AGENT_JOBS_TRACE_PROXY") !== "0") {
+    try {
+      traceProxy = startTraceProxy(baseUrl);
+    } catch (error) {
+      console.log(`trace proxy unavailable: ${String(error).slice(0, 200)}`);
+    }
+  }
   const plan = JSON.parse(
     await Deno.readTextFile(env("AGENT_JOBS_PLAN")),
   ) as AgentJobsPlanV1;
@@ -681,7 +722,9 @@ if (import.meta.main) {
             `model_provider = "${MODEL_PROVIDER}"`,
             `[model_providers.${MODEL_PROVIDER}]`,
             `name = "${MODEL_PROVIDER}"`,
-            `base_url = ${JSON.stringify(baseUrl)}`,
+            `base_url = ${
+              JSON.stringify(traceProxy?.baseFor(start.job.id) ?? baseUrl)
+            }`,
             'wire_api = "responses"',
             `request_max_retries = ${MODEL_MAX_RETRIES}`,
             `stream_max_retries = ${MODEL_MAX_RETRIES}`,
@@ -700,6 +743,9 @@ if (import.meta.main) {
       sleep: (seconds) =>
         new Promise((resolve) => setTimeout(resolve, seconds * 1000)),
       log: (line) => console.log(line),
+      requestTrace: traceProxy === null
+        ? undefined
+        : (jobId) => traceProxy.summary(jobId),
       publishProgress: progressScript.length === 0 ||
           env("ACTIONS_RUNTIME_TOKEN").length === 0
         ? undefined
@@ -730,6 +776,7 @@ if (import.meta.main) {
         },
     },
   });
+  await traceProxy?.close().catch(() => {});
   const summary = env("GITHUB_STEP_SUMMARY");
   if (summary) {
     const rows = cell.results.map((row) =>
