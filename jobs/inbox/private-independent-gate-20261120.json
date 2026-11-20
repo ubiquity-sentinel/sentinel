@@ -1,0 +1,34 @@
+{
+  "jobs": [
+    {
+      "id": "verify-web-265-1120",
+      "repository": "ubiquity/prospector",
+      "base": "prospector/scheduler-readiness-pr-20261120",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "minutes": 110,
+      "pr": false,
+      "prompt": "Verify the full private development gate for candidate 265\n\nThis is a read-only independent release check for the checked-out private repository. Verify that the starting Git revision is exactly 27652d3149e571cd3ef0a1eaf6af7a1b91534b18 and retain that revision throughout. Run the complete canonical Linux workflow's shell checks in this runner, including its exact pinned versions, frozen installs, pgvector PostgreSQL 16 container and synthetic fixture on local loopback, SQL harness contracts, SQL migrations, the repository-wide Bun and Deno checks, documentation drift, and extra Node runtime when specified by this revision. Read .github/workflows/ci.yml and AGENTS.md at this revision to reproduce their actual steps and environment. Keep all output logs under runner temp, and run no production operations or remote service calls. Standard package and tool downloads for this synthetic local verification are allowed. Use gpt-6.2-sol max developers for independent check setup/verification; execute the main full gate once, with independent local database path only.\nNo edits to tracked files, changes to GitHub or uploads of source, fixtures, raw test logs, traces, database dumps, dotenv, or credentials. Do not try to simulate passing results or weaken an assertion; if a command fails report its exit code, a safe short category and any independent retry. Return the exact checked commit, observed tool versions and numeric command exit codes and test counts (Bun, Deno, SQL and documentation), plus final clean tracked tree. Do not report private case titles, source excerpts or project details in the run report. Do not publish a branch or pull request. A successful unchanged tree is the intended result."
+    },
+    {
+      "id": "verify-web-266-1120",
+      "repository": "ubiquity/prospector",
+      "base": "prospector/shared-registry-20261120",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "minutes": 110,
+      "pr": false,
+      "prompt": "Verify the full private development gate for candidate 266\n\nThis is a read-only independent release check for the checked-out private repository. Verify that the starting Git revision is exactly aa289793834524182f1656be5f0f55c280d9d5e3 and retain that revision throughout. Run the complete canonical Linux workflow's shell checks in this runner, including its exact pinned versions, frozen installs, pgvector PostgreSQL 16 container and synthetic fixture on local loopback, SQL harness contracts, SQL migrations, the repository-wide Bun and Deno checks, documentation drift, and extra Node runtime when specified by this revision. Read .github/workflows/ci.yml and AGENTS.md at this revision to reproduce their actual steps and environment. Keep all output logs under runner temp, and run no production operations or remote service calls. Standard package and tool downloads for this synthetic local verification are allowed. Use gpt-6.2-sol max developers for independent check setup/verification; execute the main full gate once, with independent local database path only.\nNo edits to tracked files, changes to GitHub or uploads of source, fixtures, raw test logs, traces, database dumps, dotenv, or credentials. Do not try to simulate passing results or weaken an assertion; if a command fails report its exit code, a safe short category and any independent retry. Return the exact checked commit, observed tool versions and numeric command exit codes and test counts (Bun, Deno, SQL and documentation), plus final clean tracked tree. Do not report private case titles, source excerpts or project details in the run report. Do not publish a branch or pull request. A successful unchanged tree is the intended result."
+    },
+    {
+      "id": "verify-web-267-1120",
+      "repository": "ubiquity/prospector",
+      "base": "prospector/published-api-contract-20261120",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "minutes": 110,
+      "pr": false,
+      "prompt": "Verify the full private development gate for candidate 267\n\nThis is a read-only independent release check for the checked-out private repository. Verify that the starting Git revision is exactly ab8abe167e5041c688bb31a84e163c7be9dfa6dc and retain that revision throughout. Run the complete canonical Linux workflow's shell checks in this runner, including its exact pinned versions, frozen installs, pgvector PostgreSQL 16 container and synthetic fixture on local loopback, SQL harness contracts, SQL migrations, the repository-wide Bun and Deno checks, documentation drift, and extra Node runtime when specified by this revision. Read .github/workflows/ci.yml and AGENTS.md at this revision to reproduce their actual steps and environment. Keep all output logs under runner temp, and run no production operations or remote service calls. Standard package and tool downloads for this synthetic local verification are allowed. Use gpt-6.2-sol max developers for independent check setup/verification; execute the main full gate once, with independent local database path only.\nNo edits to tracked files, changes to GitHub or uploads of source, fixtures, raw test logs, traces, database dumps, dotenv, or credentials. Do not try to simulate passing results or weaken an assertion; if a command fails report its exit code, a safe short category and any independent retry. Return the exact checked commit, observed tool versions and numeric command exit codes and test counts (Bun, Deno, SQL and documentation), plus final clean tracked tree. Do not report private case titles, source excerpts or project details in the run report. Do not publish a branch or pull request. A successful unchanged tree is the intended result."
+    }
+  ]
+}
