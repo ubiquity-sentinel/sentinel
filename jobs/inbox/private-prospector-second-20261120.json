@@ -1,0 +1,134 @@
+{
+  "jobs": [
+    {
+      "id": "pvt2-web-56-1120",
+      "repository": "ubiquity/prospector",
+      "base": "development",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "pr": false,
+      "minutes": 90,
+      "prompt": "Show the release identifier for the active dashboard runtime.\n\nUpdate the Operations health identity display so the VPS variant shows its release ID and the Deno variant continues to show its deployment ID. Keep the change in the identity renderer. Exercise both response shapes and the missing-ID case with synthetic local rendering fixtures.\n\nTarget issue #56. You are the Astra ultra orchestrator. Delegate a bounded portion to a gpt-6.2-sol developer at max effort and a separate local verification task to a second Sol max developer if useful. Use collaboration.spawn_agent with fork_turns set to none, model gpt-6.2-sol, and reasoning_effort max. Supply a self-contained child brief and wait for completion. If the built-in delegation tool cannot pin both, launch a child with codex exec -m gpt-6.2-sol -c 'model_reasoning_effort=\"max\"' in this isolated checkout; give each child exclusive file ownership. Report which children actually ran and their checks. Keep changes focused. Verify on the checkout, use synthetic fixtures, and do not change external services or deploy. If already satisfied on the base branch, provide evidence and finish without a change."
+    },
+    {
+      "id": "pvt2-web-78-1120",
+      "repository": "ubiquity/prospector",
+      "base": "development",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "pr": false,
+      "minutes": 90,
+      "prompt": "Finish billing fragment navigation when its content mounts.\n\nFix in-app navigation to /billing#subscriptions when billing content loads asynchronously. Preserve the immediate shell render, then scroll to and focus the requested section once it mounts. Use a local UI test with a delayed billing response and assert the target receives focus and scroll. Limit the dashboard change to billing route completion.\n\nTarget issue #78. You are the Astra ultra orchestrator. Delegate a bounded portion to a gpt-6.2-sol developer at max effort and a separate local verification task to a second Sol max developer if useful. Use collaboration.spawn_agent with fork_turns set to none, model gpt-6.2-sol, and reasoning_effort max. Supply a self-contained child brief and wait for completion. If the built-in delegation tool cannot pin both, launch a child with codex exec -m gpt-6.2-sol -c 'model_reasoning_effort=\"max\"' in this isolated checkout; give each child exclusive file ownership. Report which children actually ran and their checks. Keep changes focused. Verify on the checkout, use synthetic fixtures, and do not change external services or deploy. If already satisfied on the base branch, provide evidence and finish without a change."
+    },
+    {
+      "id": "pvt2-web-112-1120",
+      "repository": "ubiquity/prospector",
+      "base": "development",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "pr": false,
+      "minutes": 90,
+      "prompt": "Preserve queued retry notifications while the sender is unavailable.\n\nKeep a queued retry notification recoverable when no sender is configured. In the retry-wake delivery path, preserve pending work until a sender is available and retain the existing duplicate-delivery protection. Run a focused local recovery test with an absent sender followed by a recording fake; verify one eventual delivery.\n\nTarget issue #112. You are the Astra ultra orchestrator. Delegate a bounded portion to a gpt-6.2-sol developer at max effort and a separate local verification task to a second Sol max developer if useful. Use collaboration.spawn_agent with fork_turns set to none, model gpt-6.2-sol, and reasoning_effort max. Supply a self-contained child brief and wait for completion. If the built-in delegation tool cannot pin both, launch a child with codex exec -m gpt-6.2-sol -c 'model_reasoning_effort=\"max\"' in this isolated checkout; give each child exclusive file ownership. Report which children actually ran and their checks. Keep changes focused. Verify on the checkout, use synthetic fixtures, and do not change external services or deploy. If already satisfied on the base branch, provide evidence and finish without a change."
+    },
+    {
+      "id": "pvt2-web-118-1120",
+      "repository": "ubiquity/prospector",
+      "base": "development",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "pr": false,
+      "minutes": 90,
+      "prompt": "Allow unfinished text in draft playbook saves.\n\nAlign the draft playbook save contract with the existing parser. The four draft fields for targeting, messaging guidance, tone and call to action should accept empty strings while publication continues to require completed text. Check the draft schema, publish validation and generated contract locally using synthetic examples. Regenerate only affected artifacts with the repository generator.\n\nTarget issue #118. You are the Astra ultra orchestrator. Delegate a bounded portion to a gpt-6.2-sol developer at max effort and a separate local verification task to a second Sol max developer if useful. Use collaboration.spawn_agent with fork_turns set to none, model gpt-6.2-sol, and reasoning_effort max. Supply a self-contained child brief and wait for completion. If the built-in delegation tool cannot pin both, launch a child with codex exec -m gpt-6.2-sol -c 'model_reasoning_effort=\"max\"' in this isolated checkout; give each child exclusive file ownership. Report which children actually ran and their checks. Keep changes focused. Verify on the checkout, use synthetic fixtures, and do not change external services or deploy. If already satisfied on the base branch, provide evidence and finish without a change."
+    },
+    {
+      "id": "pvt2-web-131-1120",
+      "repository": "ubiquity/prospector",
+      "base": "development",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "pr": false,
+      "minutes": 90,
+      "prompt": "Isolate the supplier used by the HTTP acceptance fixture.\n\nIsolate the supplier selection fixture in the marketplace HTTP acceptance suite so the test reliably dispatches to its own local supplier. Exercise dispatch, claim and settlement through the normal loopback HTTP path against a disposable database with another compatible synthetic supplier. Check that only the intended fixture receives the wake and that the other supplier\u2019s scheduling values remain unchanged. Preserve the production selection policy.\n\nTarget issue #131. You are the Astra ultra orchestrator. Delegate a bounded portion to a gpt-6.2-sol developer at max effort and a separate local verification task to a second Sol max developer if useful. Use collaboration.spawn_agent with fork_turns set to none, model gpt-6.2-sol, and reasoning_effort max. Supply a self-contained child brief and wait for completion. If the built-in delegation tool cannot pin both, launch a child with codex exec -m gpt-6.2-sol -c 'model_reasoning_effort=\"max\"' in this isolated checkout; give each child exclusive file ownership. Report which children actually ran and their checks. Keep changes focused. Verify on the checkout, use synthetic fixtures, and do not change external services or deploy. If already satisfied on the base branch, provide evidence and finish without a change."
+    },
+    {
+      "id": "pvt2-web-142-1120",
+      "repository": "ubiquity/prospector",
+      "base": "development",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "pr": false,
+      "minutes": 90,
+      "prompt": "Read workspace membership and candidates consistently.\n\nMake workspace resolution read membership links and workspace candidates consistently when workspace creation commits concurrently. Use one consistent read or the existing locked retry as appropriate in the workspace store. Run a focused local test with synthetic fixtures and controlled transaction ordering. Verify successful resolution during concurrent creation and preserve existing handling for genuinely missing records.\n\nTarget issue #142. You are the Astra ultra orchestrator. Delegate a bounded portion to a gpt-6.2-sol developer at max effort and a separate local verification task to a second Sol max developer if useful. Use collaboration.spawn_agent with fork_turns set to none, model gpt-6.2-sol, and reasoning_effort max. Supply a self-contained child brief and wait for completion. If the built-in delegation tool cannot pin both, launch a child with codex exec -m gpt-6.2-sol -c 'model_reasoning_effort=\"max\"' in this isolated checkout; give each child exclusive file ownership. Report which children actually ran and their checks. Keep changes focused. Verify on the checkout, use synthetic fixtures, and do not change external services or deploy. If already satisfied on the base branch, provide evidence and finish without a change."
+    },
+    {
+      "id": "pvt2-web-169-1120",
+      "repository": "ubiquity/prospector",
+      "base": "development",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "pr": false,
+      "minutes": 90,
+      "prompt": "Check the tested pool after billing workspace preparation.\n\nFix the post-preparation assertion in the billing workspace readiness test to inspect the queries sent by the single-connection pool under test. Mark a boundary immediately before the explicit installer invocation, verify that it issued read-only verification queries, and reject schema-changing statements in that slice. Keep the original collision assertions. Run the focused test against a disposable local database.\n\nTarget issue #169. You are the Astra ultra orchestrator. Delegate a bounded portion to a gpt-6.2-sol developer at max effort and a separate local verification task to a second Sol max developer if useful. Use collaboration.spawn_agent with fork_turns set to none, model gpt-6.2-sol, and reasoning_effort max. Supply a self-contained child brief and wait for completion. If the built-in delegation tool cannot pin both, launch a child with codex exec -m gpt-6.2-sol -c 'model_reasoning_effort=\"max\"' in this isolated checkout; give each child exclusive file ownership. Report which children actually ran and their checks. Keep changes focused. Verify on the checkout, use synthetic fixtures, and do not change external services or deploy. If already satisfied on the base branch, provide evidence and finish without a change."
+    },
+    {
+      "id": "pvt2-web-185-1120",
+      "repository": "ubiquity/prospector",
+      "base": "development",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "pr": false,
+      "minutes": 90,
+      "prompt": "Preserve failed campaign selections after grouped writes.\n\nPreserve per-campaign results in the dashboard\u2019s grouped bulk-action result handling. When a successful HTTP response contains one successful campaign and one failed campaign, clear the successful selection, retain the failed one, and show its error. Verify with a mocked response and synthetic campaign IDs through the campaign-list UI; keep the change scoped to grouped results and campaign-list completion.\n\nTarget issue #185. You are the Astra ultra orchestrator. Delegate a bounded portion to a gpt-6.2-sol developer at max effort and a separate local verification task to a second Sol max developer if useful. Use collaboration.spawn_agent with fork_turns set to none, model gpt-6.2-sol, and reasoning_effort max. Supply a self-contained child brief and wait for completion. If the built-in delegation tool cannot pin both, launch a child with codex exec -m gpt-6.2-sol -c 'model_reasoning_effort=\"max\"' in this isolated checkout; give each child exclusive file ownership. Report which children actually ran and their checks. Keep changes focused. Verify on the checkout, use synthetic fixtures, and do not change external services or deploy. If already satisfied on the base branch, provide evidence and finish without a change."
+    },
+    {
+      "id": "pvt2-ext-56-1120",
+      "repository": "ubiquity/prospector-chrome-extension",
+      "base": "development",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "pr": false,
+      "minutes": 90,
+      "prompt": "Bound stalled client telemetry sends.\n\nIn the client telemetry reporter, a timed-out diagnostic send can release its slot while its proxy request is still pending. Bound the number of underlying requests during a stall, using the existing reporter and transport interfaces. Keep the payload and reporting triggers as they are. A timeout or failure must wait for an external trigger before another send, and Stop must still produce a final disabled report when transport is available. Use a mock transport and controlled clock to exercise repeated triggers during a stall, count actual outstanding requests, then recover the transport and verify the final disabled report. Run the focused reporter test locally.\n\nTarget issue #56. You are the Astra ultra orchestrator. Delegate a bounded portion to a gpt-6.2-sol developer at max effort and a separate local verification task to a second Sol max developer if useful. Use collaboration.spawn_agent with fork_turns set to none, model gpt-6.2-sol, and reasoning_effort max. Supply a self-contained child brief and wait for completion. If the built-in delegation tool cannot pin both, launch a child with codex exec -m gpt-6.2-sol -c 'model_reasoning_effort=\"max\"' in this isolated checkout; give each child exclusive file ownership. Report which children actually ran and their checks. Keep changes focused. Verify on the checkout, use synthetic fixtures, and do not change external services or deploy. If already satisfied on the base branch, provide evidence and finish without a change."
+    },
+    {
+      "id": "pvt2-ext-58-1120",
+      "repository": "ubiquity/prospector-chrome-extension",
+      "base": "development",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "pr": false,
+      "minutes": 90,
+      "prompt": "Recognize only documented ownership diagnostic combinations.\n\nIn src/marketplace/durable-continuation/v2.ts, narrow the local ownership-diagnostic classifier to the fixed-order combinations the existing emitters produce for plan, claim, and URL flags. An unrecognized string currently takes a terminal path because it shares the prefix. Preserve the existing pause for unsupported diagnostics, the assignment and phase checks, and idempotent release for recognized codes. Add a table to the local v2 Deno tests covering valid strings, an unknown suffix, and malformed flag combinations. Verify the affected continuation tests using synthetic state.\n\nTarget issue #58. You are the Astra ultra orchestrator. Delegate a bounded portion to a gpt-6.2-sol developer at max effort and a separate local verification task to a second Sol max developer if useful. Use collaboration.spawn_agent with fork_turns set to none, model gpt-6.2-sol, and reasoning_effort max. Supply a self-contained child brief and wait for completion. If the built-in delegation tool cannot pin both, launch a child with codex exec -m gpt-6.2-sol -c 'model_reasoning_effort=\"max\"' in this isolated checkout; give each child exclusive file ownership. Report which children actually ran and their checks. Keep changes focused. Verify on the checkout, use synthetic fixtures, and do not change external services or deploy. If already satisfied on the base branch, provide evidence and finish without a change."
+    },
+    {
+      "id": "pvt2-ext-68-1120",
+      "repository": "ubiquity/prospector-chrome-extension",
+      "base": "development",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "pr": false,
+      "minutes": 90,
+      "prompt": "Recover the popup Stop control after nondelivery.\n\nIn the popup Stop handler, a request rejected before dispatch leaves the control locked until the popup closes. Restore a retry in the open popup after confirmed non-delivery. For accepted or uncertain delivery, preserve pending status until an authoritative refresh settles it. Use the popup tests with mocked extension messaging to distinguish confirmed rejection, uncertain delivery, accepted Stop with work still held, and terminal status. Check the available actions in each state and run the focused local popup test.\n\nThe current development branch already has a regression test for this behavior. Run that test on the unmodified base first and inspect what it exercises. Return a verified no-change result if the acceptance criteria already pass. Target issue #68. You are the Astra ultra orchestrator. Delegate a bounded portion to a gpt-6.2-sol developer at max effort and a separate local verification task to a second Sol max developer if useful. Use collaboration.spawn_agent with fork_turns set to none, model gpt-6.2-sol, and reasoning_effort max. Supply a self-contained child brief and wait for completion. If the built-in delegation tool cannot pin both, launch a child with codex exec -m gpt-6.2-sol -c 'model_reasoning_effort=\"max\"' in this isolated checkout; give each child exclusive file ownership. Report which children actually ran and their checks. Keep changes focused. Verify on the checkout, use synthetic fixtures, and do not change external services or deploy. If already satisfied on the base branch, provide evidence and finish without a change."
+    },
+    {
+      "id": "pvt2-ext-70-1120",
+      "repository": "ubiquity/prospector-chrome-extension",
+      "base": "development",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "pr": false,
+      "minutes": 90,
+      "prompt": "Show rejected cancellation in panel status.\n\nIn the panel status presentation, a rejected cancellation is currently displayed as ongoing progress because the text also matches the cancellation-progress branch. Show a clear error in the main status and keep Cancel available for retry while the job is active. An accepted cancellation should continue to show stopping progress until settlement. Keep the change in the panel presentation and its tests. Feed synthetic rejected and accepted updates into the local panel test, assert the visible status and action, and run that test.\n\nThe current development branch already has a regression test for this behavior. Run that test on the unmodified base first and inspect what it exercises. Return a verified no-change result if the acceptance criteria already pass. Target issue #70. You are the Astra ultra orchestrator. Delegate a bounded portion to a gpt-6.2-sol developer at max effort and a separate local verification task to a second Sol max developer if useful. Use collaboration.spawn_agent with fork_turns set to none, model gpt-6.2-sol, and reasoning_effort max. Supply a self-contained child brief and wait for completion. If the built-in delegation tool cannot pin both, launch a child with codex exec -m gpt-6.2-sol -c 'model_reasoning_effort=\"max\"' in this isolated checkout; give each child exclusive file ownership. Report which children actually ran and their checks. Keep changes focused. Verify on the checkout, use synthetic fixtures, and do not change external services or deploy. If already satisfied on the base branch, provide evidence and finish without a change."
+    },
+    {
+      "id": "pvt2-ext-125-1120",
+      "repository": "ubiquity/prospector-chrome-extension",
+      "base": "development",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "pr": false,
+      "minutes": 90,
+      "prompt": "Describe the current worker pause in update receipts.\n\nIn src/popup/update.ts, distinguish a paused worker from an explicit opt-out in the update receipt and user-facing report. A currently disabled worker without a recorded opt-out can later resume, so its report should describe its current pause. Keep the existing worker preference and start behavior. Exercise the local update flow with mocked state for a disabled worker with and without an opt-out, verify the receipt and message in both cases, and run the focused update test.\n\nTarget issue #125. You are the Astra ultra orchestrator. Delegate a bounded portion to a gpt-6.2-sol developer at max effort and a separate local verification task to a second Sol max developer if useful. Use collaboration.spawn_agent with fork_turns set to none, model gpt-6.2-sol, and reasoning_effort max. Supply a self-contained child brief and wait for completion. If the built-in delegation tool cannot pin both, launch a child with codex exec -m gpt-6.2-sol -c 'model_reasoning_effort=\"max\"' in this isolated checkout; give each child exclusive file ownership. Report which children actually ran and their checks. Keep changes focused. Verify on the checkout, use synthetic fixtures, and do not change external services or deploy. If already satisfied on the base branch, provide evidence and finish without a change."
+    }
+  ]
+}
