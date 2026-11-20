@@ -1,0 +1,13 @@
+{
+  "jobs": [
+    {
+      "id": "dispatcher-effort-20261120",
+      "repository": "ubiquity-sentinel/sentinel",
+      "base": "claude/great-ride-tu5r70",
+      "model": "gpt-6.2-sol",
+      "minutes": 45,
+      "pr": false,
+      "prompt": "Allow Sentinel agent jobs to select their lead agent's reasoning effort.\n\nImplement an optional reasoningEffort job field, including max and ultra, and keep max as the default for existing inbox files and old serialized job plans. Strictly validate a finite set of actual supported effort values, and pass the value safely to the real Codex exec invocation for all attempts. Keep changes limited to the agent-jobs planner, runner, their tests and jobs/README.md, with a small shared helper if necessary. Follow repository development instructions. Add an example with gpt-6.2-astra and ultra. Exercise accepted and rejected inputs, the default, and the actual Codex argument construction. Run the affected host agent-jobs test module, scoped static checks, and a native Codex review per the repository rules, if available. Report exact checks and outcomes. No runtime supervisor, secrets, GitHub settings, or workflow changes. No deployment. Only edit the checkout and let the publisher return the result branch."
+    }
+  ]
+}
