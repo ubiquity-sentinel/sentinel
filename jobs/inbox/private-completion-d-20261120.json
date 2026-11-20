@@ -1,0 +1,24 @@
+{
+  "jobs": [
+    {
+      "id": "complete-ext-filters-1120",
+      "repository": "ubiquity/prospector-chrome-extension",
+      "base": "private-prospector/remaining-ext-20261120",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "minutes": 150,
+      "pr": false,
+      "prompt": "accurate filter readback and scoped option selection\n\nImplement accurate filter readback and scoped option selection. Read empty collapsed account Headquarters geography as an empty group, retaining richer people-geography behavior. Poll a connected open group while the toggle is temporarily absent until options appear, the group detaches or its deadline expires. Normalize count/metro annotations relative to the requested geography so explicit metropolitan qualifiers survive and the shorter requested form remains compatible. After a rerender, resolve the current input and its true combobox owner for portaled options in marked non-geography groups; continue enforcing ownership, ambiguity, visibility and enabled state. Verify through the normal entry points. #134: Read an unrelated account definition alongside an empty collapsed Headquarters fieldset and assert no needs-repair result. #135: Remove the group toggle, expose options a poll later and ensure they are read before caching. Cover detach and timeout. #137: Round-trip requested geography labels with and without an explicit Metropolitan Area qualifier and with count suffixes. #143: Rerender a marked fieldset whose wrapper owns an external listbox and nested input owns none; type into the current input, resolve just the intended option, and reject hidden, disabled, ambiguous and unrelated options. Work in the extension source and its local tests. Use generated DOM fixtures, mocked browser/storage/transport APIs and fake clocks as appropriate. Keep verification offline and use fictional records. Do not contact any live service, use credentials or customer data, or operate a real account. Inspect current implementation before editing. Report the changed files, commands actually run, per-issue assertions and any unverified acceptance criteria.\n\nTarget issues: #134, #135, #137, #143. Lead this issue group as gpt-6.2-astra at ultra effort. Use gpt-6.2-sol developers at max effort with separate file ownership and independent verification. Use the repository's normal local checks and generated synthetic fixtures. First inspect the current code and tests; when the base already satisfies an item, establish that directly. Retain existing fixes. For each numbered issue report its concrete behavior, tracked regression coverage and the exact commands and outcomes. Run the repository's complete affected test suites and update generated content hashes where required. Do not deploy, use production systems, change external settings or publish sensitive data. Finish on your result branch."
+    },
+    {
+      "id": "complete-web-110-1120",
+      "repository": "ubiquity/prospector",
+      "base": "private-prospector/remaining-web-20261120",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "minutes": 150,
+      "pr": false,
+      "prompt": "Reconcile the shared operation registry with its intended dashboard capabilities\n\nReconcile the shared operation registry with its intended dashboard capabilities. Classify the diagnostics read with the existing admin-only read policy and verify response parity on a synthetic aggregate; if explicitly human-only by project policy, enforce the existing exclusion and give its reason. Keep fleet control mutations in their current human flow. For search provenance, use the current parsers and stores for the intended typed append/read operations, or enforce and explain a deliberate internal classification if the repository calls for one. Verify fake scoped actors, visibility, version checks, redaction, replay, conflict handling, retention and multipage parity through the normal registry. Any generated reference output must be regenerated from source after the catalog changes.\n\nTarget issues: #110, #155. Lead this issue group as gpt-6.2-astra at ultra effort. Use gpt-6.2-sol developers at max effort with separate file ownership and independent verification. Use the repository's normal local checks and generated synthetic fixtures. First inspect the current code and tests; when the base already satisfies an item, establish that directly. Retain existing fixes. For each numbered issue report its concrete behavior, tracked regression coverage and the exact commands and outcomes. Run the repository's complete affected test suites and update generated content hashes where required. Do not deploy, use production systems, change external settings or publish sensitive data. Finish on your result branch."
+    }
+  ]
+}
