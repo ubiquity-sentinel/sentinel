@@ -1,0 +1,14 @@
+{
+  "jobs": [
+    {
+      "id": "combine-ext-identity-1120",
+      "repository": "ubiquity/prospector-chrome-extension",
+      "base": "private-prospector/incoming-combine-ext-identity-1120",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "minutes": 150,
+      "pr": false,
+      "prompt": "Integrate the incoming extension fixes with the verified baseline\n\nThis private target branch contains both sides of a three-way integration. Resolve every remaining Git conflict marker in these files: src/background/network-worker-state-machine.ts, src/background/network-worker.test.ts, src/background/network-worker.ts, src/content_scripts/sales-nav-capture-v6.ts. Keep existing behavior and regression tests on both sides. Ours has the new shared probe deadline and heartbeat replay, capture extraction version and 8192-character URL contract, scoped selector repairs and legacy value readback. The incoming group covers these issues: 74, 104, 106, 107. Read all already committed regression tests from BOTH versions and integrate them. Take special care to maintain state generation, observed viewer identity, any live claim, stop cleanup, worker binding and precise errors. Start from these exact branch contents. Run the complete locked type checks, Bun/Deno suites, production and fixture builds, using the repository workflow, and provide the exact commands and outcomes. Use gpt-6.2-sol max subagents to divide implementation and independent review. No live service or production changes, deployments, browser accounts, network probing or source uploads. Do not weaken an assertion to make the integration pass."
+    }
+  ]
+}
