@@ -38,23 +38,29 @@ regenerate bundles for the current attempt. This starts the agents again.
       "repository": "ubiquity/ubq.fi-router",
       "base": "development",
       "prompt": "Add unit tests for the route matcher.",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
       "pr": true
     }
   ]
 }
 ```
 
-| Field        | Required | Meaning                                                                                      |
-| ------------ | -------- | -------------------------------------------------------------------------------------------- |
-| `id`         | yes      | Unique in the request; lowercase letters, digits and `-`, at most 40 characters.             |
-| `repository` | yes      | `owner/name`. The Sentinel GitHub App must be installed on it with write access.             |
-| `prompt`     | yes      | The task. Its first line becomes the commit and pull request title.                          |
-| `base`       | no       | Branch to start from. Defaults to the repository's default branch.                           |
-| `pr`         | no       | `true` opens a draft pull request for the pushed branch. Default `false`.                    |
-| `setup`      | no       | Shell commands to run in the checkout before the agent starts.                               |
-| `minutes`    | no       | Agent deadline. Defaults to the maximum, 350. Work done before a deadline is still pushed.   |
-| `model`      | no       | Gateway model id. Defaults to the workflow's implementation model.                           |
-| `runner`     | no       | Hosted runner kind: `linux-x64` (default), `linux-arm64`, `linux-arm64-26` or `macos-arm64`. |
+| Field             | Required | Meaning                                                                                      |
+| ----------------- | -------- | -------------------------------------------------------------------------------------------- |
+| `id`              | yes      | Unique in the request; lowercase letters, digits and `-`, at most 40 characters.             |
+| `repository`      | yes      | `owner/name`. The Sentinel GitHub App must be installed on it with write access.             |
+| `prompt`          | yes      | The task. Its first line becomes the commit and pull request title.                          |
+| `base`            | no       | Branch to start from. Defaults to the repository's default branch.                           |
+| `pr`              | no       | `true` opens a draft pull request for the pushed branch. Default `false`.                    |
+| `setup`           | no       | Shell commands to run in the checkout before the agent starts.                               |
+| `minutes`         | no       | Agent deadline. Defaults to the maximum, 350. Work done before a deadline is still pushed.   |
+| `model`           | no       | Gateway model id. Defaults to the workflow's implementation model.                           |
+| `reasoningEffort` | no       | Codex reasoning effort for every attempt. Defaults to `max`.                                 |
+| `runner`          | no       | Hosted runner kind: `linux-x64` (default), `linux-arm64`, `linux-arm64-26` or `macos-arm64`. |
+
+Allowed reasoning efforts are `none`, `minimal`, `low`, `medium`, `high`,
+`xhigh`, `max`, and `ultra`. Choose an effort supported by the job's model.
 
 One job is one agent. To put several agents on one repository, give each its own
 job with a task that does not overlap the others; each gets its own clone and

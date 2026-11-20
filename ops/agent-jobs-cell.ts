@@ -22,8 +22,10 @@ import {
 } from "./agent-jobs-trace-proxy.ts";
 import {
   AGENT_JOBS_MAX_MINUTES,
+  type AgentJobReasoningEffort,
   type AgentJobsPlanV1,
   type AgentJobV1,
+  resolveAgentJobReasoningEffort,
 } from "./agent-jobs-plan.ts";
 
 export const AGENT_JOB_BRANCH = "agent-job";
@@ -228,6 +230,7 @@ export interface AgentStartV1 {
   checkout: string;
   clientHome: string;
   model: string;
+  reasoningEffort: AgentJobReasoningEffort;
   lastMessageFile: string;
 }
 
@@ -365,6 +368,10 @@ async function runJob(
   const checkout = `${root}/checkout`;
   const tmpDir = `${root}/tmp`;
   try {
+    const reasoningEffort = resolveAgentJobReasoningEffort(
+      job.reasoningEffort,
+      job.id,
+    );
     await Deno.mkdir(tmpDir, { recursive: true });
     const base = await cloneBranch({
       url: ports.remoteUrl(job.repository),
@@ -399,6 +406,7 @@ async function runJob(
       checkout,
       clientHome: `${root}/client`,
       model: job.model ?? input.defaultModel,
+      reasoningEffort,
       lastMessageFile: `${root}/last-message.md`,
     };
     await ports.sleep(startDelaySeconds);
@@ -669,6 +677,23 @@ const WITHHELD_ENV = [
   "AGENT_JOBS_PROGRESS_SCRIPT",
 ];
 
+export function codexExecCommand(start: AgentStartV1): string[] {
+  return [
+    "codex",
+    "exec",
+    "--dangerously-bypass-approvals-and-sandbox",
+    "-C",
+    start.checkout,
+    "-m",
+    start.model,
+    "-c",
+    `model_reasoning_effort=${JSON.stringify(start.reasoningEffort)}`,
+    "-o",
+    start.lastMessageFile,
+    "-",
+  ];
+}
+
 /** CLI for `.github/workflows/agent-jobs.yml`. */
 if (import.meta.main) {
   const startedAtMs = Date.now();
@@ -702,20 +727,7 @@ if (import.meta.main) {
     deadlineAtMs: startedAtMs + AGENT_JOBS_MAX_MINUTES * 60_000,
     ports: {
       remoteUrl: githubRemoteUrl,
-      agentCommand: (start) => [
-        "codex",
-        "exec",
-        "--dangerously-bypass-approvals-and-sandbox",
-        "-C",
-        start.checkout,
-        "-m",
-        start.model,
-        "-c",
-        'model_reasoning_effort="max"',
-        "-o",
-        start.lastMessageFile,
-        "-",
-      ],
+      agentCommand: codexExecCommand,
       prepareClient: async (start) => {
         await Deno.mkdir(start.clientHome, { recursive: true, mode: 0o700 });
         const tokenFile = `${start.clientHome}/model.token`;

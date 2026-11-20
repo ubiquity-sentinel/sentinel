@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { relative } from "node:path";
 import {
   type AgentJobsCellPorts,
+  codexExecCommand,
   runAgentJobsCell,
 } from "../../ops/agent-jobs-cell.ts";
 import { gitOk } from "../../ops/agent-jobs-git.ts";
@@ -111,6 +112,56 @@ Deno.test("agent jobs plan refuses invalid requests", () => {
   refuse([job("x")], /maxCells/, { maxCells: 257 });
 });
 
+Deno.test("agent jobs plan persists supported reasoning efforts and defaults to max", () => {
+  const efforts = [
+    "none",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+    "ultra",
+  ];
+  const request = [
+    job("old-inbox"),
+    ...efforts.map((reasoningEffort) =>
+      job(reasoningEffort, "ubiquity/a", { reasoningEffort })
+    ),
+  ];
+  const plan = planAgentJobs(request);
+  const serialized = JSON.parse(JSON.stringify(plan)) as AgentJobsPlanV1;
+  assert.deepEqual(
+    serialized.cells.flatMap((cell) =>
+      cell.jobs.map((item) => item.reasoningEffort)
+    ),
+    ["max", ...efforts],
+  );
+});
+
+Deno.test("agent jobs plan refuses invalid reasoning efforts", () => {
+  for (
+    const reasoningEffort of [
+      null,
+      false,
+      1,
+      ["ultra"],
+      {},
+      "",
+      "ULTRA",
+      "ultra ",
+      "extra-high",
+      'max"\nmodel="other',
+    ]
+  ) {
+    assert.throws(
+      () =>
+        planAgentJobs([job("bad-effort", "ubiquity/a", { reasoningEffort })]),
+      /job bad-effort: reasoningEffort must be one of/,
+    );
+  }
+});
+
 Deno.test("agent jobs cell bundles agent work and publish pushes it", async () => {
   const root = await Deno.makeTempDir({ prefix: "agent-jobs-" });
   const originalCwd = Deno.cwd();
@@ -127,17 +178,18 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
     await gitOk(["push", "--quiet", remote, "main"], { cwd: seed });
     const baseSha = await gitOk(["rev-parse", "HEAD"], { cwd: seed });
 
-    // The fake agent reads its prompt on stdin and acts on the first word.
-    const agent = `${root}/agent.sh`;
+    // The fake Codex records its arguments and acts on the first prompt word.
     await Deno.writeTextFile(
-      agent,
+      `${root}/codex`,
       [
+        "#!/usr/bin/env bash",
         "set -eu",
+        'printf "%s\\n" "$@"',
         "read -r mode rest || true",
         'test -f setup-ran || { echo "setup did not run" >&2; exit 3; }',
         'test -z "${UOS_AI_TOKEN:-}${GITHUB_TOKEN:-}"',
         'case "$mode" in',
-        '  write) echo "$rest" > work.txt; echo "summary: $rest" > "$1";;',
+        '  write) echo "$rest" > work.txt; echo "summary: $rest" > "${10}";;',
         "  idle) ;;",
         "  fail) echo 'working' >&2",
         "    echo 'ERROR: unexpected status 400: flagged token sk-abcdefghijklmnopqrstuvwxyz0123456789ABCD end' >&2; exit 7;;",
@@ -157,6 +209,7 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
         "      exit 1; fi;;",
         "esac",
       ].join("\n"),
+      { mode: 0o700 },
     );
     const base = {
       repository: "ubiquity/a",
@@ -166,7 +219,7 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
       model: null,
       runner: "linux-x64" as const,
     };
-    const plan: AgentJobsPlanV1 = {
+    const serializedPlan = JSON.stringify({
       schema: "sentinel.agent-jobs.plan/v1",
       cells: [{
         cellId: "c01",
@@ -180,9 +233,22 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
           { ...base, id: "fails", prompt: "fail", pr: false },
           { ...base, id: "hangs", prompt: "hang", pr: false, minutes: 0.02 },
           { ...base, id: "commits", prompt: "own", pr: false },
-          { ...base, id: "limited", prompt: "limit", pr: false },
+          {
+            ...base,
+            id: "limited",
+            prompt: "limit",
+            pr: false,
+            model: "gpt-6.2-astra",
+            reasoningEffort: "ultra",
+          },
           { ...base, id: "starved", prompt: "starve", pr: false, minutes: 3 },
-          { ...base, id: "dropped", prompt: "drop", pr: false },
+          {
+            ...base,
+            id: "dropped",
+            prompt: "drop",
+            pr: false,
+            reasoningEffort: "low",
+          },
           {
             ...base,
             id: "nosetup",
@@ -190,18 +256,27 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
             pr: false,
             setup: ["exit 9"],
           },
+          {
+            ...base,
+            id: "bad-effort",
+            prompt: "idle",
+            pr: false,
+            reasoningEffort: null,
+          },
         ],
       }],
-    };
+    });
     const delays: number[] = [];
     const lines: string[] = [];
     const published: { jobId: string; sequence: number; text: string }[] = [];
     const ports: AgentJobsCellPorts = {
       remoteUrl: () => remote,
-      agentCommand: (start) => ["bash", agent, start.lastMessageFile],
+      agentCommand: codexExecCommand,
       prepareClient: (start) =>
         Deno.mkdir(start.clientHome, { recursive: true }),
-      agentEnv: () => ({ PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" }),
+      agentEnv: () => ({
+        PATH: `${root}:${Deno.env.get("PATH") ?? "/usr/bin:/bin"}`,
+      }),
       sleep: (seconds) => {
         delays.push(seconds);
         return Promise.resolve();
@@ -213,10 +288,11 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
       },
     };
     const outDir = `${root}/out`;
+    const workRoot = `${root}/work`;
     const cell = await runAgentJobsCell({
-      plan,
+      plan: JSON.parse(serializedPlan) as AgentJobsPlanV1,
       cellId: "c01",
-      workRoot: `${root}/work`,
+      workRoot,
       outDir,
       readToken: null,
       defaultModel: "fake",
@@ -238,8 +314,46 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
         ["starved", "agent_failed"],
         ["dropped", "changed"],
         ["nosetup", "setup_failed"],
+        ["bad-effort", "host_failed"],
       ],
     );
+    assert.match(
+      byId["bad-effort"].detail,
+      /job bad-effort: reasoningEffort must be one of/,
+    );
+    await assert.rejects(
+      Deno.stat(`${workRoot}/bad-effort`),
+      Deno.errors.NotFound,
+    );
+
+    const assertAttempt = async (
+      id: string,
+      attempt: number,
+      model: string,
+      reasoningEffort: string,
+    ) => {
+      const jobRoot = `${workRoot}/${id}`;
+      const log = await Deno.readTextFile(`${jobRoot}/agent-${attempt}.log`);
+      assert.deepEqual(log.trimEnd().split("\n"), [
+        "exec",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "-C",
+        `${jobRoot}/checkout`,
+        "-m",
+        model,
+        "-c",
+        `model_reasoning_effort="${reasoningEffort}"`,
+        "-o",
+        `${jobRoot}/last-message.md`,
+        "-",
+      ]);
+    };
+    await assertAttempt("writes", 0, "fake", "max");
+    for (const attempt of [0, 1]) {
+      await assertAttempt("limited", attempt, "gpt-6.2-astra", "ultra");
+      await assertAttempt("dropped", attempt, "fake", "low");
+    }
+
     assert.equal(
       byId.fails.detail,
       "exit 7: ERROR: unexpected status 400: flagged token <redacted> end",
@@ -351,6 +465,7 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
         ["starved", null],
         ["dropped", "agent-jobs/dropped-77-1"],
         ["nosetup", null],
+        ["bad-effort", null],
       ],
     );
     const pushed = (ref: string, path: string) =>

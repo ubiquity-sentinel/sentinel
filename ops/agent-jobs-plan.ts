@@ -34,6 +34,20 @@ const REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,199}$/;
 const MODEL_PATTERN =
   /^(?=.{1,96}$)[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)*$/;
 
+// Effort values advertised in the gateway's Codex model catalog.
+const AGENT_JOB_REASONING_EFFORTS = [
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultra",
+] as const;
+export type AgentJobReasoningEffort =
+  typeof AGENT_JOB_REASONING_EFFORTS[number];
+
 /**
  * Hosted runner kinds a job may ask for, and the `runs-on` label of each.
  * The default stays the x64 Linux runner every job used before this field.
@@ -60,6 +74,8 @@ export interface AgentJobV1 {
   minutes: number;
   /** Gateway model override; `null` keeps the workflow's model. */
   model: string | null;
+  /** Codex effort. Older serialized plans may omit it. */
+  reasoningEffort?: AgentJobReasoningEffort;
   /** Open a draft pull request for the pushed branch. */
   pr: boolean;
   /** Hosted runner kind the agent runs on. */
@@ -84,6 +100,24 @@ export interface AgentJobsPlanV1 {
 
 function fail(message: string): never {
   throw new Error(`agent jobs request refused: ${message}`);
+}
+
+export function resolveAgentJobReasoningEffort(
+  value: unknown,
+  jobId: string,
+): AgentJobReasoningEffort {
+  if (value === undefined) return "max";
+  const effort = AGENT_JOB_REASONING_EFFORTS.find((allowed) =>
+    allowed === value
+  );
+  if (effort === undefined) {
+    fail(
+      `job ${jobId}: reasoningEffort must be one of ${
+        AGENT_JOB_REASONING_EFFORTS.join(", ")
+      }`,
+    );
+  }
+  return effort;
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -116,6 +150,7 @@ function parseJob(value: unknown): AgentJobV1 {
     "setup",
     "minutes",
     "model",
+    "reasoningEffort",
     "pr",
     "runner",
   ];
@@ -172,6 +207,7 @@ function parseJob(value: unknown): AgentJobV1 {
       `job ${id}: minutes`,
     ),
     model: model ?? null,
+    reasoningEffort: resolveAgentJobReasoningEffort(value.reasoningEffort, id),
     pr: pr ?? false,
     runner: (runner ?? "linux-x64") as AgentJobRunner,
   };
