@@ -1,0 +1,54 @@
+{
+  "jobs": [
+    {
+      "id": "pvt-p-54-1120",
+      "repository": "ubiquity/prospector",
+      "base": "development",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "pr": false,
+      "minutes": 75,
+      "prompt": "Include the downloadable release in local dashboard snapshots.\n\nUpdate the local dashboard snapshot builder so it copies the staged release archive and its metadata. With a synthetic archive, check the version, timestamp, byte count and digest of the snapshot download. With no release, the dashboard must still open and indicate that the download is unavailable. Add focused coverage to scripts/dashboard_test.ts and run deno test -A scripts/dashboard_test.ts.\n\nTarget issue #54. You are the Astra ultra orchestrator. Delegate a bounded portion to a gpt-6.2-sol developer at max effort and a separate local verification task to a second Sol max developer if useful. Use collaboration.spawn_agent with fork_turns set to none, model gpt-6.2-sol, and reasoning_effort max. Supply a self-contained child brief and wait for completion. If the built-in delegation tool cannot pin both, launch a child with codex exec -m gpt-6.2-sol -c 'model_reasoning_effort=\"max\"' in this isolated checkout; give each child exclusive file ownership. Report which children actually ran and their checks. Keep changes focused. Verify on the checkout, use synthetic fixtures, and do not change external services or deploy. If already satisfied on the base branch, provide evidence and finish without a change."
+    },
+    {
+      "id": "pvt-p-113-1120",
+      "repository": "ubiquity/prospector",
+      "base": "development",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "pr": false,
+      "minutes": 75,
+      "prompt": "Stop release staging when the destination already exists.\n\nIn docs/vps-release.md ensure the documented staging block stops before any copy or ownership change if the destination already exists, even in ordinary Bash. With an isolated temporary directory and stubbed privileged commands, exercise both the existing and new destination paths. Verify the marker and contents survive untouched, the status indicates failure, and a fresh directory stages normally. Exercise the documentation only in the disposable fixture.\n\nTarget issue #113. You are the Astra ultra orchestrator. Delegate a bounded portion to a gpt-6.2-sol developer at max effort and a separate local verification task to a second Sol max developer if useful. Use collaboration.spawn_agent with fork_turns set to none, model gpt-6.2-sol, and reasoning_effort max. Supply a self-contained child brief and wait for completion. If the built-in delegation tool cannot pin both, launch a child with codex exec -m gpt-6.2-sol -c 'model_reasoning_effort=\"max\"' in this isolated checkout; give each child exclusive file ownership. Report which children actually ran and their checks. Keep changes focused. Verify on the checkout, use synthetic fixtures, and do not change external services or deploy. If already satisfied on the base branch, provide evidence and finish without a change."
+    },
+    {
+      "id": "pvt-p-188-1120",
+      "repository": "ubiquity/prospector",
+      "base": "development",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "pr": false,
+      "minutes": 75,
+      "prompt": "Preserve keyboard focus after selecting campaign members.\n\nKeep focus on the campaign-member table header's selection checkbox when selection redraws the table. In a local regression test, focus the header and press Space twice. Check that the first press selects all loaded members, the second clears them, focus stays on the header, and partial selection remains indeterminate. Run the relevant dashboard tests and git diff --check.\n\nTarget issue #188. You are the Astra ultra orchestrator. Delegate a bounded portion to a gpt-6.2-sol developer at max effort and a separate local verification task to a second Sol max developer if useful. Use collaboration.spawn_agent with fork_turns set to none, model gpt-6.2-sol, and reasoning_effort max. Supply a self-contained child brief and wait for completion. If the built-in delegation tool cannot pin both, launch a child with codex exec -m gpt-6.2-sol -c 'model_reasoning_effort=\"max\"' in this isolated checkout; give each child exclusive file ownership. Report which children actually ran and their checks. Keep changes focused. Verify on the checkout, use synthetic fixtures, and do not change external services or deploy. If already satisfied on the base branch, provide evidence and finish without a change."
+    },
+    {
+      "id": "pvt-p-chrome-extension-96-1120",
+      "repository": "ubiquity/prospector-chrome-extension",
+      "base": "development",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "pr": false,
+      "minutes": 75,
+      "prompt": "Show disabled actions consistently in both extension views.\n\nFix the cascade in the popup and capture panel so disabled actions receive the disabled foreground, background and border colors. Cover a pending request with Start or Stop disabled and verify both views restore their normal styling once enabled. Use the repo's local fixture, run the focused regression and the package check script.\n\nTarget issue #96. You are the Astra ultra orchestrator. Delegate a bounded portion to a gpt-6.2-sol developer at max effort and a separate local verification task to a second Sol max developer if useful. Use collaboration.spawn_agent with fork_turns set to none, model gpt-6.2-sol, and reasoning_effort max. Supply a self-contained child brief and wait for completion. If the built-in delegation tool cannot pin both, launch a child with codex exec -m gpt-6.2-sol -c 'model_reasoning_effort=\"max\"' in this isolated checkout; give each child exclusive file ownership. Report which children actually ran and their checks. Keep changes focused. Verify on the checkout, use synthetic fixtures, and do not change external services or deploy. If already satisfied on the base branch, provide evidence and finish without a change."
+    },
+    {
+      "id": "pvt-p-monorepo-135-1120",
+      "repository": "ubiquity/prospector-monorepo",
+      "base": "development",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "pr": false,
+      "minutes": 75,
+      "prompt": "Explain how to verify a lease expiry.\n\nCorrect the lease expiry rows of the customer launch monitoring guide. Describe lease-state counts as a snapshot of current statuses and explain how reassignment can leave the expired count flat or lower even if a lease expired. Direct operators to the affected job's lease or terminal receipt to verify an expiry. Search the guide for all lease expiry instructions and run git diff --check. Documentation only.\n\nTarget issue #135. You are the Astra ultra orchestrator. Delegate a bounded portion to a gpt-6.2-sol developer at max effort and a separate local verification task to a second Sol max developer if useful. Use collaboration.spawn_agent with fork_turns set to none, model gpt-6.2-sol, and reasoning_effort max. Supply a self-contained child brief and wait for completion. If the built-in delegation tool cannot pin both, launch a child with codex exec -m gpt-6.2-sol -c 'model_reasoning_effort=\"max\"' in this isolated checkout; give each child exclusive file ownership. Report which children actually ran and their checks. Keep changes focused. Verify on the checkout, use synthetic fixtures, and do not change external services or deploy. If already satisfied on the base branch, provide evidence and finish without a change."
+    }
+  ]
+}
