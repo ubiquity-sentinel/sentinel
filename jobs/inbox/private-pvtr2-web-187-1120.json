@@ -1,0 +1,14 @@
+{
+  "jobs": [
+    {
+      "id": "pvtr2-web-187-1120",
+      "repository": "ubiquity/prospector",
+      "base": "agent-jobs/pvtr-web-187-1120-44679296088-1",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "minutes": 65,
+      "pr": false,
+      "prompt": "Keep keyed bulk writes working with a large legacy history.\n\nIndependent review of the #186/#187 result found a release blocker. The 129th eligible historical receipt in one authorized scope/operation makes genuinely fresh keyed writes, exact modern replays, and valid legacy retries all return 409, even for unrelated records. Both stores throw above a fixed candidate count before digest matching. The size of history is not an idempotency conflict.\n\nCorrect this through the normal endpoint and production store. Preserve exact-key, scope and payload validation and genuine ambiguity conflicts. Remove the correctness cutoff. Use an indexed, scoped and stable paginated read of the finite legacy population with bounded memory and cancellation as appropriate, or a more selective correct lookup. A per-page size may bound resource use; it must never deny a new write based only on the number of historical rows, or stop before a matching or second ambiguous receipt on a later page. Keep contemporary writes out of the legacy population. Do not introduce external services or require an operator migration outside existing schema preparation.\n\nAdd production-path and persistent storage regressions with more than 128 eligible historical rows, a fresh unrelated key, an existing modern-key result, a valid historical match beyond the first page and genuine ambiguity across pages. Keep the prior upgrade controls and exact-ID coverage. Run focused tests against disposable PostgreSQL and in-memory fixtures. Report any remaining historical data limitations precisely.\n\nYou are the Astra ultra orchestrator. Delegate a bounded portion to a gpt-6.2-sol developer at max effort and a separate local verification task to a second Sol max developer if useful. Use collaboration.spawn_agent with fork_turns set to none, model gpt-6.2-sol, and reasoning_effort max. Supply a self-contained child brief and wait for completion. If the built-in delegation tool cannot pin both, launch a child with codex exec -m gpt-6.2-sol -c 'model_reasoning_effort=\"max\"' in this isolated checkout; give each child exclusive file ownership. Report which children actually ran and their checks. Keep changes focused. Verify on the checkout, use synthetic fixtures, and do not change external services or deploy. If already satisfied on the base branch, provide evidence and finish without a change."
+    }
+  ]
+}
