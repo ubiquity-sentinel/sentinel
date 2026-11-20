@@ -1,0 +1,14 @@
+{
+  "jobs": [
+    {
+      "id": "pvtr-web-187-1120",
+      "repository": "ubiquity/prospector",
+      "base": "agent-jobs/pvt3-web-186-1120-44676611052-1",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "minutes": 75,
+      "pr": false,
+      "prompt": "Replay completed operations created before the idempotency fix.\n\nThe branch for #186/#187 passes exact-ID assignments and same-key retries for new records. An upgrade test found that a people or company archive proposed and confirmed before the change yields a new pending proposal on the same authorized retry. Recover the original completed result without running or proposing another write. Legacy records retain a scope-bound digest that incorporates the original key; do not guess based on payload, or create a history-wide unbounded scan. Inspect the previous operationCallId and actionIdempotencyKey derivations and the older preparation/target shape. Recomputing the historical digest with the submitted key and stored scope, operation, inputs, target and original time bucket matched real legacy-format synthetic fixtures for both archive cases. Support supported inputs safely, return explicit conflicts for genuine ambiguities, and preserve tenant, owner and confirmation checks.\n\nCommit deterministic tests constructed through the old-format creation/confirmation semantics, sharing state with the upgraded retry. Cover a later time bucket, boundary timing, an already-archived target, different keys and scopes, and ensure fresh completed writes and exact campaign/stage IDs still work. Run the affected local handler and persistence suites with fixtures only. Report any remaining legacy cases.\n\nYou are the Astra ultra orchestrator. Delegate a bounded portion to a gpt-6.2-sol developer at max effort and a separate local verification task to a second Sol max developer if useful. Use collaboration.spawn_agent with fork_turns set to none, model gpt-6.2-sol, and reasoning_effort max. Supply a self-contained child brief and wait for completion. If the built-in delegation tool cannot pin both, launch a child with codex exec -m gpt-6.2-sol -c 'model_reasoning_effort=\"max\"' in this isolated checkout; give each child exclusive file ownership. Report which children actually ran and their checks. Keep changes focused. Verify on the checkout, use synthetic fixtures, and do not change external services or deploy. If already satisfied on the base branch, provide evidence and finish without a change."
+    }
+  ]
+}
