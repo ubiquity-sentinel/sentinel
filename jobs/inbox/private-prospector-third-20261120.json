@@ -1,0 +1,44 @@
+{
+  "jobs": [
+    {
+      "id": "pvt3-mono-136-1120",
+      "repository": "ubiquity/prospector-monorepo",
+      "base": "development",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "minutes": 80,
+      "pr": false,
+      "prompt": "Correct the historical rollout approval record.\n\nReconcile the archived rollout guide with the contemporary checked-in distribution decision. Correct each claim about approval of the exact credit cap or the post-deployment snapshot. Identify the approved predeployment target and describe the subsequent snapshot as an observation. Search the guide for every occurrence, cite the checked-in evidence, and run git diff --check. Keep this a historical documentation correction; do not authorize or perform a release.\n\nTarget #136. You are the Astra ultra orchestrator. Delegate a bounded portion to a gpt-6.2-sol developer at max effort and a separate local verification task to a second Sol max developer if useful. Use collaboration.spawn_agent with fork_turns set to none, model gpt-6.2-sol, and reasoning_effort max. Supply a self-contained child brief and wait for completion. If the built-in delegation tool cannot pin both, launch a child with codex exec -m gpt-6.2-sol -c 'model_reasoning_effort=\"max\"' in this isolated checkout; give each child exclusive file ownership. Report which children actually ran and their checks. Keep changes focused. Verify on the checkout, use synthetic fixtures, and do not change external services or deploy. If already satisfied on the base branch, provide evidence and finish without a change."
+    },
+    {
+      "id": "pvt3-ext-119-1120",
+      "repository": "ubiquity/prospector-chrome-extension",
+      "base": "development",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "minutes": 80,
+      "pr": false,
+      "prompt": "Keep a visibly rendered loader blocking empty-page readiness.\n\nFix the local loading-indicator detector for an aria-hidden but visible progress bar. Test a synthetic fixture with the progress bar beside stale empty-state text, then remove the bar and verify the stable empty state can complete. Preserve handling of genuinely hidden indicators. Run the focused regression and the package check; use only local fixtures.\n\nTarget #119. You are the Astra ultra orchestrator. Delegate a bounded portion to a gpt-6.2-sol developer at max effort and a separate local verification task to a second Sol max developer if useful. Use collaboration.spawn_agent with fork_turns set to none, model gpt-6.2-sol, and reasoning_effort max. Supply a self-contained child brief and wait for completion. If the built-in delegation tool cannot pin both, launch a child with codex exec -m gpt-6.2-sol -c 'model_reasoning_effort=\"max\"' in this isolated checkout; give each child exclusive file ownership. Report which children actually ran and their checks. Keep changes focused. Verify on the checkout, use synthetic fixtures, and do not change external services or deploy. If already satisfied on the base branch, provide evidence and finish without a change."
+    },
+    {
+      "id": "pvt3-web-186-1120",
+      "repository": "ubiquity/prospector",
+      "base": "development",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "minutes": 80,
+      "pr": false,
+      "prompt": "Preserve exact assignment IDs and replay completed bulk writes.\n\nFix the two related defects in the authorized all-account bulk handler. Preserve validated campaign/stage IDs through assignment even when names collide. For people and company bulk writes, a retry using the same confirmed idempotency key and authorized scope must return its stored result without a second mutation. Keep all existing workspace and ownership checks and pending-confirmation behavior. Use only local synthetic data. Add focused regressions covering duplicate names, exact target and mismatched scope, pending response, completed replay and single mutation. Run the affected handler suite.\n\nTarget #186, #187. You are the Astra ultra orchestrator. Delegate a bounded portion to a gpt-6.2-sol developer at max effort and a separate local verification task to a second Sol max developer if useful. Use collaboration.spawn_agent with fork_turns set to none, model gpt-6.2-sol, and reasoning_effort max. Supply a self-contained child brief and wait for completion. If the built-in delegation tool cannot pin both, launch a child with codex exec -m gpt-6.2-sol -c 'model_reasoning_effort=\"max\"' in this isolated checkout; give each child exclusive file ownership. Report which children actually ran and their checks. Keep changes focused. Verify on the checkout, use synthetic fixtures, and do not change external services or deploy. If already satisfied on the base branch, provide evidence and finish without a change."
+    },
+    {
+      "id": "pvt3-ext-136-1120",
+      "repository": "ubiquity/prospector-chrome-extension",
+      "base": "development",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "minutes": 80,
+      "pr": false,
+      "prompt": "Preserve canonical vocabulary casing in selected facet readback.\n\nPreserve the canonical casing of offered vocabulary values when reading a selected facet. With a synthetic mixed-case token such as Director, verify that discovery, definition creation, selected-value readback and fingerprint comparison agree. Retain existing behavior for unrelated filters. Run focused local regressions and the package check.\n\nTarget #136. You are the Astra ultra orchestrator. Delegate a bounded portion to a gpt-6.2-sol developer at max effort and a separate local verification task to a second Sol max developer if useful. Use collaboration.spawn_agent with fork_turns set to none, model gpt-6.2-sol, and reasoning_effort max. Supply a self-contained child brief and wait for completion. If the built-in delegation tool cannot pin both, launch a child with codex exec -m gpt-6.2-sol -c 'model_reasoning_effort=\"max\"' in this isolated checkout; give each child exclusive file ownership. Report which children actually ran and their checks. Keep changes focused. Verify on the checkout, use synthetic fixtures, and do not change external services or deploy. If already satisfied on the base branch, provide evidence and finish without a change."
+    }
+  ]
+}
