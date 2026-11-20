@@ -1,0 +1,14 @@
+{
+  "jobs": [
+    {
+      "id": "pvtr-ext-96-1120",
+      "repository": "ubiquity/prospector-chrome-extension",
+      "base": "agent-jobs/pvt-p-chrome-extension-96-1120-44675140471-1",
+      "model": "gpt-6.2-astra",
+      "reasoningEffort": "ultra",
+      "pr": false,
+      "minutes": 60,
+      "prompt": "Wait for the disabled-action browser fixture to finish.\n\nIssue #96 already has the styling fix. The stock bun scripts/check-disabled-actions.ts command returned the initial placeholder three times on Chromium 154, while an independent real-time browser with an explicit wait got passing assertions. Repair fixture execution portably: wait with a bounded real-time deadline for a terminal result, propagate assertion failures and clean up resources. Prefer an existing browser helper or a loopback completion callback over new dependencies. Exercise the stock command on the fixed head multiple times, then show the negative control catches the old CSS, and run the package check. Keep production styles intact.\n\nYou are the Astra ultra orchestrator. Delegate a bounded portion to a gpt-6.2-sol developer at max effort and a separate local verification task to a second Sol max developer if useful. Use collaboration.spawn_agent with fork_turns set to none, model gpt-6.2-sol, and reasoning_effort max. Supply a self-contained child brief and wait for completion. If the built-in delegation tool cannot pin both, launch a child with codex exec -m gpt-6.2-sol -c 'model_reasoning_effort=\"max\"' in this isolated checkout; give each child exclusive file ownership. Report which children actually ran and their checks. Keep changes focused. Verify on the checkout, use synthetic fixtures, and do not change external services or deploy. If already satisfied on the base branch, provide evidence and finish without a change."
+    }
+  ]
+}
