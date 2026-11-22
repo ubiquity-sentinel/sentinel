@@ -76,8 +76,10 @@ const HOP_BY_HOP = new Set([
 const redact = (text: string) =>
   text.replace(/[A-Za-z0-9_\-]{32,}/g, "<redacted>").slice(0, 200);
 
-/** Start the proxy in front of `upstreamBase` (for example `https://host/v1`). */
-export function startTraceProxy(upstreamBase: string): TraceProxy {
+export function createTraceProxyHandler(
+  upstreamBase: string,
+  fetchUpstream: typeof fetch,
+) {
   const upstream = new URL(upstreamBase);
   const upstreamPath = upstream.pathname.replace(/\/+$/, "");
   const records = new Map<string, TracedRequestV1[]>();
@@ -104,15 +106,8 @@ export function startTraceProxy(upstreamBase: string): TraceProxy {
     totals.set(record.job, total);
   };
 
-  const server = Deno.serve(
-    {
-      hostname: "127.0.0.1",
-      port: 0,
-      onListen: () => {},
-      // A broken stream is recorded on its request; keep it out of the log.
-      onError: () => new Response("proxy error", { status: 502 }),
-    },
-    async (request) => {
+  return {
+    async handle(request: Request): Promise<Response> {
       const url = new URL(request.url);
       const match = /^\/j\/([a-z0-9-]{1,64})(\/.*)?$/.exec(url.pathname);
       if (match === null) return new Response("not found", { status: 404 });
@@ -154,7 +149,7 @@ export function startTraceProxy(upstreamBase: string): TraceProxy {
         const body = request.method === "GET" || request.method === "HEAD"
           ? undefined
           : await request.arrayBuffer();
-        response = await fetch(target, {
+        response = await fetchUpstream(target, {
           method: request.method,
           headers,
           body,
@@ -267,11 +262,7 @@ export function startTraceProxy(upstreamBase: string): TraceProxy {
       });
       return new Response(stream, { status: response.status, headers: out });
     },
-  );
-  const port = (server.addr as Deno.NetAddr).port;
-  return {
-    baseFor: (jobId) => `http://127.0.0.1:${port}/j/${jobId}`,
-    summary: (jobId) => {
+    summary(jobId: string): TraceSummaryV1 {
       const total = totals.get(jobId) ??
         { requests: 0, ms: 0, byEnd: {}, incomplete: 0 };
       return {
@@ -282,6 +273,26 @@ export function startTraceProxy(upstreamBase: string): TraceProxy {
         recent: [...(records.get(jobId) ?? [])],
       };
     },
+  };
+}
+
+/** Start the proxy in front of `upstreamBase` (for example `https://host/v1`). */
+export function startTraceProxy(upstreamBase: string): TraceProxy {
+  const { handle, summary } = createTraceProxyHandler(upstreamBase, fetch);
+  const server = Deno.serve(
+    {
+      hostname: "127.0.0.1",
+      port: 0,
+      onListen: () => {},
+      // A broken stream is recorded on its request; keep it out of the log.
+      onError: () => new Response("proxy error", { status: 502 }),
+    },
+    handle,
+  );
+  const port = (server.addr as Deno.NetAddr).port;
+  return {
+    baseFor: (jobId) => `http://127.0.0.1:${port}/j/${jobId}`,
+    summary,
     close: () => server.shutdown(),
   };
 }
