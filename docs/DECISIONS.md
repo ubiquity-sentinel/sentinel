@@ -6769,3 +6769,114 @@ workflow mints the public repository's self token again.
 
 Rollback: `git revert` the commit. The name then returns to both files, and
 every mint fails again until GitHub resolves it.
+
+## 2026-11-22: one unreachable target costs only that target; a pre-runtime failure loop backs off
+
+Owner, verbatim: "Make it more resilient so this problem never crashes it
+again", then "Don't notify me just handle it automatically" (no issue or
+notice is filed; the run carries on without the target and logs it).
+
+- Where the 2026-11-20 outage came from: the first job of every supervisor run
+  (`maintenance`) and the jobs after it mint the foreign App token with the
+  pinned upstream `actions/create-github-app-token` (maintenance, prepare,
+  matrix_cell, repair_cell, finalize, and `backup-ci.yml`) or the vendored
+  `.github/actions/sentinel-app-token` (matrix_plan, repair), always for every
+  committed name. GitHub refuses the whole list (HTTP 422) when one name was
+  renamed, deleted, transferred or removed from the installation, so no
+  runtime code ran. Every failed run still chained the next dispatcher run,
+  which looped about every 90 s until the API quota ran out.
+- Auto-follow compares only the `.github/workflows` tree id
+  (`hosted-runtime-follow-api.ts` `workflowsTree`), so a change under
+  `.github/actions/` installs automatically; a change under
+  `.github/workflows/` still needs one manual launcher advance.
+- Dispatcher backoff (code only; the dispatcher runs from `development`, so
+  it is live without a launcher advance): `supervisor-dispatch-backoff.ts`
+  reads the newest completed supervisor runs once. Three or more newest
+  `failure`/`startup_failure` runs, each completed within 3 minutes of its
+  start (the outage's failures took 38-50 s; a green idle run can take about
+  nine minutes), at the launcher SHA the follow step just read make the next
+  dispatch due 5, 10, 20, then at most 30 minutes after the newest of them.
+  Before it is due the hop first dispatches the dispatcher workflow itself
+  (the chain can never end; GitHub's cron has run 4-9 h apart) and then holds
+  at most 150 s inside its 5-minute job. Each hop runs auto-follow first, so
+  a fix is installed within one hop, and a new launcher SHA or one success has
+  no streak and dispatches at once. An unreadable or malformed listing, or a
+  refused self-dispatch, fails open to the ordinary dispatch. The saving is
+  about two failing supervisor runs an hour instead of forty; the dispatcher
+  itself still hops about 15-17 times an hour (a few GITHUB_TOKEN reads and
+  one dispatch each). One text-free `dispatch_backoff` line names the
+  decision, a closed reason and the streak. The module joins the protected
+  authority paths with the dispatcher.
+- Tolerant mint (vendored action, code under `.github/actions/`; explicit
+  opt-in input `tolerate-inaccessible-repositories: "true"`): the upstream
+  request pair runs first, so a reachable list is byte-identical with no
+  extra request. Only GitHub's refusal of the list (422 "not accessible to
+  the parent installation", or a first-name installation lookup that is
+  missing or belongs to another account) starts a bisection by probe mints
+  for subsets of the same list with the same permissions (at most 64, each
+  masked and revoked at once), always against the requested owner's own
+  installation: lookups never follow a redirect and are accepted only when
+  `account.login` is the requested owner, because a repository transferred to
+  another account where this App is installed would otherwise yield that
+  account's token. A token naming any repository outside the request is
+  revoked and fails. The token covers exactly the reachable names, never
+  more; permissions are unchanged; `unavailable-repositories` and one warning
+  line (`repositories_unavailable`, the count and the listed slugs) name the
+  dropped ones. Ceiling: at most 3 names and at most a quarter of the list may
+  be dropped (one rename, transfer, deletion or uninstall costs one name;
+  more is an installation-wide change or a partial GitHub view, so the mint
+  fails as before instead of silently shrinking the fleet). No reachable name
+  or a spent probe bound also fails. Self mints never select it, so an
+  unreachable Sentinel repository fails closed. The seed's closed action file
+  list (`SELF_ACTION_FILES`) gains `lib/tolerant-mint.js`, without which
+  every self-test dependency seal would refuse.
+- Cost: with the ceiling, one tolerant mint of the 28 foreign names spends at
+  most about 26 token POSTs (and about 12 revocations) when 3 names are bad,
+  about 12 for one. Only maintenance searches: it publishes its dropped names
+  as a job output, and every later supervisor job passes them as the
+  `known-unavailable` hint (it can only remove listed names; a stale hint
+  costs only that target for one run), so each later job mints directly with
+  one POST. Worst case per run: about 26 POSTs in maintenance's first seconds,
+  then one per job (up to 20 cells 6 s apart, about 10 a minute); backup CI
+  searches alone, at most about 26 POSTs a pass. Even both searches in one
+  minute stay under GitHub's 80-per-minute content guidance.
+- A dropped target is excluded for the run explicitly, closed reason
+  `token_scope` (`src/host/target-token-scope.ts`), because a read alone does
+  not prove it: an installation token can read any public repository, so a
+  public target removed from the installation would otherwise be configured,
+  planned and charged until the native App principal refused at publication.
+  The runtime jobs (matrix_plan, repair) take the token's repository names
+  from the same-mint grant they already hold
+  (`SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT`) and skip an uncovered foreign
+  target before any read; maintenance takes its own mint's
+  `unavailable-repositories` (`SENTINEL_UNAVAILABLE_TARGETS`) and the launcher
+  gate hides it without a read (no surface, rows restored byte-identical,
+  nothing parked or charged). Each prints one text-free
+  `sentinel_target_token_scope` line. Without that evidence (an older
+  workflow, no grant names, an unset variable) nothing is excluded: today's
+  behaviour. A target that is simply unreadable is still skipped by the
+  loader and hidden by the gate as before. Following a rename to a new name is
+  out of scope (state is keyed by the old name): renaming or removing it in
+  `sentinel.targets.json` and `sentinel.backup-ci-targets.json` stays an owner
+  decision.
+- Workflows (own, final commit; needs one manual launcher advance): every
+  foreign mint in `supervisor.yml` (seven jobs) and the `backup-ci.yml` target
+  read mint use the vendored action with the opt-in; the six supervisor jobs
+  after maintenance pass its hint; maintenance's autonomy step receives
+  `SENTINEL_UNAVAILABLE_TARGETS`. maintenance, prepare, finalize and backup-ci
+  gain a credential-free locked `npm ci` step with three bounded attempts (the
+  runner's own npm; no setup-node, which the maintenance contract forbids).
+  There is no committed bundle of the action and the mint path needs its
+  locked dependencies, so the first job of every run now also needs the npm
+  registry. Self mints are unchanged. Until that advance only the backoff
+  protects: an unreachable name still fails every run before the runtime, but
+  at the cost above, and the chain survives to install the next fix.
+- Expected side effect, by design: an open Sentinel self-target pull request
+  whose `.github/actions/sentinel-app-token` files differ from the launcher's
+  cannot prepare its self-test dependencies (the seed compares them) until it
+  is refreshed onto `development`; #307, #421 and #424 need that refresh.
+
+Rollback: revert the commits newest first (the workflow commit first; it
+needs the same manual launcher advance). Reverting the backoff restores the
+immediate re-dispatch; reverting the action restores the all-or-nothing mint;
+reverting the scope exclusion restores read-only target selection.
