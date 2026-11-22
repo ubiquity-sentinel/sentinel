@@ -47,10 +47,9 @@ import type {
 import {
   classifyReviewTerminalDisposition,
   TASK_ACCEPTANCE_MISSING_DETAIL,
-  TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL,
   TASK_ACCEPTANCE_UNCERTAIN_DETAIL,
-  taskAcceptanceRefusal,
 } from "./review-gate.ts";
+import { decideReviewDisposition } from "./review-disposition.ts";
 import {
   TASK_ACCEPTANCE_OWNER_GATE_DETAIL,
   withAcceptanceFinding,
@@ -302,7 +301,14 @@ export async function applyObservedReview(
       ),
     );
   }
-  let unresolved = hasBlockingFindings(receipt);
+  const taskBinding = {
+    issueNumber: record.related.issueNumber,
+    acceptance: receipt.taskAcceptance,
+  };
+  let decision = decideReviewDisposition(receipt, {
+    ...taskBinding,
+    task: "unavailable",
+  });
   // A completed code-quality verdict is still not a delivery. For an
   // issue-backed record the receipt must also carry the reviewer's POSITIVE
   // task acceptance bound to this exact source issue AND to the TRUSTED live
@@ -313,7 +319,7 @@ export async function applyObservedReview(
   // honest NO-DELIVERY disposition persisted with its static reason. Nothing
   // is merged, no issue is closed and the unrelated PR never becomes repair
   // evidence.
-  if (!unresolved) {
+  if (decision.kind !== "correct") {
     // Missing context (transient read failure, vanished issue, over-bound
     // text) fails closed as a bounded wait: no delivery is ever authorized
     // against an unverifiable task.
@@ -334,15 +340,17 @@ export async function applyObservedReview(
         ),
       );
     }
-    const disposition = classifyReviewTerminalDisposition(
-      receipt,
-      record,
-      deps.github.reviewerIdentity,
-      task,
-    );
+    decision = decideReviewDisposition(receipt, { ...taskBinding, task });
     if (
-      disposition.kind === "qualified_already_satisfied" &&
-      record.source.kind === "issue" && record.target.branch !== null
+      decision.kind === "already_satisfied" &&
+      record.source.kind === "issue" && record.target.branch !== null &&
+      classifyReviewTerminalDisposition(
+          receipt,
+          record,
+          deps.github.reviewerIdentity,
+          task,
+        )
+          .kind === "qualified_already_satisfied"
     ) {
       const next = setIntent(advanceToDelivery(clearIntent(record, now), now), {
         kind: "already_satisfied_closure",
@@ -369,8 +377,7 @@ export async function applyObservedReview(
         }
       });
     }
-    const refusal = taskAcceptanceRefusal(receipt, record, task);
-    if (refusal === TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL) {
+    if (decision.kind === "correct") {
       // JAM B6: the reviewer judged THIS issue's live text and found the
       // candidate does not satisfy it. That is a P1 (an unaccepted candidate
       // never merges), so the receipt carries the reviewer's acceptance
@@ -389,8 +396,8 @@ export async function applyObservedReview(
         );
       }
       receipt = corrected;
-      unresolved = true;
-    } else if (refusal !== null) {
+    } else if (decision.kind !== "accept") {
+      const refusal = decision.reason;
       if (
         refusal === TASK_ACCEPTANCE_MISSING_DETAIL ||
         (isPassportWorkTrial(record.repository) &&
@@ -430,7 +437,7 @@ export async function applyObservedReview(
   };
   return persistTransition(deps, context, (draft) => {
     const index = draft.work.findIndex((work) => work.id === record.id);
-    draft.work[index] = unresolved
+    draft.work[index] = decision.kind === "correct"
       ? advanceToCorrection(clearIntent(withEvidence, now), now)
       : advanceToDelivery(clearIntent(withEvidence, now), now);
     if (!draft.reviews.some((review) => review.id === receipt.id)) {

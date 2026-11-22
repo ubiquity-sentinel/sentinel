@@ -38,6 +38,7 @@ import {
   type ReviewTaskAcceptanceV1,
 } from "../contracts/review-receipt.ts";
 import { MaxItems } from "../contracts/validation.ts";
+import { MAX_CORRECTION_FINDING_CHARS } from "./review-feedback.ts";
 
 /** Fixed id of the normalized acceptance finding (never a reviewer id). */
 export const TASK_ACCEPTANCE_FINDING_ID = "task-acceptance-not-fulfilled";
@@ -50,7 +51,7 @@ export const TASK_ACCEPTANCE_FINDING_PREFIX = "Task acceptance not fulfilled: ";
  * (`MAX_CORRECTION_FINDING_CHARS`), so the receipt finding and the finding a
  * correction session receives are the same bytes.
  */
-export const TASK_ACCEPTANCE_FINDING_MAX_CHARS = 2_000;
+export const TASK_ACCEPTANCE_FINDING_MAX_CHARS = MAX_CORRECTION_FINDING_CHARS;
 
 /**
  * The one owner-gated terminal park of a not-fulfilled acceptance that no
@@ -72,10 +73,15 @@ const TRUNCATED = " [statement truncated]";
  */
 export function acceptanceFindingMessage(
   acceptance: ReviewTaskAcceptanceV1,
+  taskKind: "issue" | "operator-job" = "issue",
 ): string {
+  const source = taskKind === "issue"
+    ? `source issue #${acceptance.issueNumber}`
+    : "the original operator job";
+  const noun = taskKind === "issue" ? "issue" : "job";
   const text = `${TASK_ACCEPTANCE_FINDING_PREFIX}the review found that the ` +
-    `candidate does not satisfy source issue #${acceptance.issueNumber}. ` +
-    "Change the candidate so it satisfies everything the issue requires; " +
+    `candidate does not satisfy ${source}. ` +
+    `Change the candidate so it satisfies everything the ${noun} requires; ` +
     "the reviewer's acceptance evidence:" +
     acceptance.evidence.map((item) => `\n- ${item}`).join("");
   return text.length <= TASK_ACCEPTANCE_FINDING_MAX_CHARS

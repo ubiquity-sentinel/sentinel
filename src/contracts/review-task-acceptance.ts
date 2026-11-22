@@ -150,8 +150,11 @@ export const TASK_ACCEPTANCE_UNCERTAIN_DETAIL =
 export function reviewTaskAcceptanceRefusal(input: {
   /** The record's own source issue number, or null for incident work. */
   issueNumber: number | null;
-  /** Trusted live task statement, or "unavailable" when it cannot be read. */
-  task: ReviewTaskStatementV1 | null | "unavailable";
+  /** Identity from the independently validated task, or "unavailable". */
+  task:
+    | Pick<ReviewTaskStatementV1, "issueNumber" | "digest">
+    | null
+    | "unavailable";
   /**
    * The acceptance carried by the durable review receipt: an acceptance, an
    * explicit null, or undefined when the legacy record omitted the field.
