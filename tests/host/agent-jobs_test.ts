@@ -31,7 +31,7 @@ import {
   publishAgentJobsCell,
 } from "../../ops/agent-jobs-publish.ts";
 import {
-  AGENT_JOB_REVIEW_STATUS,
+  AGENT_JOB_REVIEW_COMMENT,
   githubAgentJobsPublishPorts,
 } from "../../ops/agent-jobs-publish-github.ts";
 import type { ReviewedAgentJobResultV1 } from "../../ops/agent-jobs-review-contract.ts";
@@ -576,11 +576,17 @@ Deno.test("agent jobs cell bundles agent work and publishes only reviewed heads"
       )),
       modelStarts: [],
     };
-    const statuses = new Map<string, Record<string, string>>();
+    const comments = new Map<string, {
+      id: number;
+      body: string;
+      commit_id: string;
+      user: { login: string; type: string };
+    }>();
     const pullRequests: Array<Record<string, unknown>> = [];
     const fetchResponse: typeof fetch = (url, options) => {
       const response = (body: unknown) => Promise.resolve(Response.json(body));
-      const path = new URL(String(url)).pathname;
+      const endpoint = new URL(String(url));
+      const path = endpoint.pathname;
       assert.match(path, /^\/repos\/ubiquity\/a(?:\/|$)/);
       const method = options?.method;
       if (path === "/repos/ubiquity/a") {
@@ -590,20 +596,45 @@ Deno.test("agent jobs cell bundles agent work and publishes only reviewed heads"
           visibility: "public",
         });
       }
-      const head = /\/(?:commits|statuses)\/([0-9a-f]{40})(?:\/|$)/.exec(path)
-        ?.[1];
-      if (head && path.includes("/commits/")) {
-        const row = statuses.get(head);
-        return response({ sha: head, statuses: row ? [row] : [] });
+      const head = /\/commits\/([0-9a-f]{40})\/comments$/.exec(path)?.[1];
+      if (head && method === "GET") {
+        const row = comments.get(head);
+        if (
+          head === byId.writes.headSha &&
+          endpoint.searchParams.get("page") === "1"
+        ) {
+          // An unrelated user can copy the marker. Only the App's own exact
+          // comment, on the following page, can reconcile publication.
+          return Promise.resolve(Response.json(
+            row
+              ? [{ ...row, user: { login: "contributor", type: "User" } }]
+              : [],
+            { headers: { link: '<https://api.github.com/next>; rel="next"' } },
+          ));
+        }
+        return response(row ? [row] : []);
       }
       if (head && method === "POST") {
         assert.equal(
-          statuses.has(head),
+          comments.has(head),
           false,
-          "status is written at most once per head",
+          "the App writes one comment per head",
         );
-        statuses.set(head, JSON.parse(String(options?.body)));
-        return response({ ok: true });
+        assert.equal(
+          new Headers(options?.headers).get("authorization"),
+          "Bearer fixture-token",
+        );
+        const comment = {
+          id: comments.size + 1,
+          commit_id: head,
+          body: JSON.parse(String(options?.body)).body,
+          user: { login: "ubiquity-sentinel[bot]", type: "Bot" },
+        };
+        comments.set(head, comment);
+        if (head === byId.writes.headSha) {
+          return Promise.reject(new TypeError("local fixture response lost"));
+        }
+        return response(comment);
       }
       assert.equal(path, "/repos/ubiquity/a/pulls");
       if (method === "GET") return response(pullRequests);
@@ -680,15 +711,20 @@ Deno.test("agent jobs cell bundles agent work and publishes only reviewed heads"
       await gitOk(["--git-dir", remote, "rev-parse", "main"]),
       baseSha,
     );
-    assert.deepEqual([...statuses.keys()], [
+    assert.deepEqual([...comments.keys()], [
       byId.writes.headSha,
       byId.commits.headSha,
       byId.dropped.headSha,
     ]);
     assert.ok(
-      [...statuses.values()].every((row) =>
-        row.context === AGENT_JOB_REVIEW_STATUS && row.state === "success"
+      [...comments.values()].every(({ body }) =>
+        body.includes(AGENT_JOB_REVIEW_COMMENT) &&
+        body.includes("verdict: **accepted**")
       ),
+    );
+    assert.equal(
+      publications[0].reviewCommentUrl,
+      `https://github.com/ubiquity/a/commit/${byId.writes.headSha}#commitcomment-1`,
     );
     assert.equal(
       publications[0].pullRequest,
@@ -707,6 +743,31 @@ Deno.test("agent jobs cell bundles agent work and publishes only reviewed heads"
       plan: { ...plan, cells: [{ ...plan.cells[0], jobs: [pinned[0]] }] },
       reviewed: { ...reviewed, results: [reviewed.results[0]] },
     };
+    const deniedFetch: typeof fetch = (url, options) => {
+      if (new URL(String(url)).pathname.endsWith("/comments")) {
+        return Promise.resolve(
+          options?.method === "POST"
+            ? new Response(null, { status: 403 })
+            : Response.json([]),
+        );
+      }
+      return fetchResponse(url, options);
+    };
+    const [deniedComment] = await publishAgentJobsCell({
+      ...one,
+      ports: githubAgentJobsPublishPorts(
+        "fixture-token",
+        () => remote,
+        deniedFetch,
+      ),
+    });
+    assert.equal(deniedComment.status, "blocked");
+    assert.equal(
+      deniedComment.detail,
+      "review commit comment refused (HTTP 403)",
+    );
+    assert.equal(deniedComment.branch, "agent-jobs/writes-77-1");
+    assert.equal(deniedComment.reviewCommentUrl, null);
     const forged = structuredClone(one.reviewed);
     forged.results[0].review.rounds[0].headSha = baseSha;
     const [refused] = await publishAgentJobsCell({ ...one, reviewed: forged });

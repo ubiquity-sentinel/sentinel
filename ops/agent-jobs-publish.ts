@@ -51,17 +51,20 @@ export interface AgentJobPublicationV1 {
   reviewedHeadSha: string | null;
   branch: string | null;
   headSha: string | null;
+  reviewCommentUrl: string | null;
   pullRequest: string | null;
   detail: string;
 }
 
-export interface AgentJobCommitStatusInput {
+export interface AgentJobCommitReviewInput {
+  id: string;
   repository: string;
   headSha: string;
   runTag: string;
+  taskDigest: string;
 }
 
-export interface AgentJobDraftInput extends AgentJobCommitStatusInput {
+export interface AgentJobDraftInput extends AgentJobCommitReviewInput {
   head: string;
   base: string;
   baseSha: string;
@@ -72,7 +75,7 @@ export interface AgentJobDraftInput extends AgentJobCommitStatusInput {
 export interface AgentJobsPublishPorts {
   remoteUrl: RemoteUrl;
   repositoryVisibility: (repository: string) => Promise<TargetVisibilityV1>;
-  setCommitStatus: (input: AgentJobCommitStatusInput) => Promise<void>;
+  ensureReviewComment: (input: AgentJobCommitReviewInput) => Promise<string>;
   ensureDraftPullRequest: (input: AgentJobDraftInput) => Promise<string>;
   log: (line: string) => void;
 }
@@ -421,12 +424,19 @@ async function publishOne(
   publication.branch = branch;
   publication.headSha = head;
   await checkCurrentBase(input, job, url, base, baseSha, env);
-  const statusInput = {
+  if (await readRemoteRef(url, ref, env) !== head) {
+    refuse("result branch moved before review comment creation");
+  }
+  const reviewInput = {
+    id: job.id,
     repository: job.repository,
     headSha: head,
     runTag: input.runTag,
+    taskDigest: review.taskDigest,
   };
-  await input.ports.setCommitStatus(statusInput);
+  publication.reviewCommentUrl = await input.ports.ensureReviewComment(
+    reviewInput,
+  );
   if (job.pr) {
     await checkCurrentBase(input, job, url, base, baseSha, env);
     if (await readRemoteRef(url, ref, env) !== head) {
@@ -434,7 +444,7 @@ async function publishOne(
     }
     const firstLine = job.prompt.trim().split("\n")[0].trim();
     publication.pullRequest = await input.ports.ensureDraftPullRequest({
-      ...statusInput,
+      ...reviewInput,
       head: branch,
       base,
       baseSha,
@@ -486,6 +496,7 @@ export async function publishAgentJobsCell(
       reviewedHeadSha: null,
       branch: null,
       headSha: null,
+      reviewCommentUrl: null,
       pullRequest: null,
       detail: "",
     };

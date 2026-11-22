@@ -1,13 +1,13 @@
 import { repositoryVisibilityV1 } from "../src/repair/target-visibility.ts";
 import type { RemoteUrl } from "./agent-jobs-git.ts";
 import type {
-  AgentJobCommitStatusInput,
+  AgentJobCommitReviewInput,
   AgentJobDraftInput,
   AgentJobsPublishPorts,
 } from "./agent-jobs-publish.ts";
 
-export const AGENT_JOB_REVIEW_STATUS = "sentinel/agent-job-review";
-const DESCRIPTION = "Native review accepted the exact on-demand candidate";
+export const AGENT_JOB_REVIEW_COMMENT = "sentinel-agent-job-review";
+const MAX_COMMENT_PAGES = 5;
 const PUBLISHER = "ubiquity-sentinel[bot]";
 
 export class AgentJobPublicationRefusal extends Error {}
@@ -17,15 +17,39 @@ function sameRepository(value: unknown, repository: string): boolean {
     value.toLowerCase() === repository.toLowerCase();
 }
 
-function statusFor(input: AgentJobCommitStatusInput) {
+interface CommitComment {
+  id?: number;
+  commit_id?: string;
+  body?: string;
+  user?: { login?: string; type?: string };
+}
+
+function reviewMarker(input: AgentJobCommitReviewInput): string {
+  return `<!-- ${AGENT_JOB_REVIEW_COMMENT} job=${input.id} run=${input.runTag} head=${input.headSha} task=${input.taskDigest} -->`;
+}
+
+function reviewBody(input: AgentJobCommitReviewInput): string {
   const [run, attempt] = input.runTag.split("-");
-  return {
-    state: "success",
-    context: AGENT_JOB_REVIEW_STATUS,
-    description: DESCRIPTION,
-    target_url:
-      `https://github.com/ubiquity-sentinel/sentinel/actions/runs/${run}/attempts/${attempt}`,
-  };
+  return `${
+    reviewMarker(input)
+  }\nNative review verdict: **accepted** for Sentinel on-demand job \`${input.id}\`.\n\nReviewed commit: \`${input.headSha}\`.\n\n[Actions review run](https://github.com/ubiquity-sentinel/sentinel/actions/runs/${run}/attempts/${attempt})`;
+}
+
+function exactComment(
+  input: AgentJobCommitReviewInput,
+  row: CommitComment | null,
+): string {
+  if (
+    !row || typeof row.id !== "number" || !Number.isSafeInteger(row.id) ||
+    row.id < 1 || row.commit_id !== input.headSha ||
+    row.user?.login !== PUBLISHER || row.user.type !== "Bot" ||
+    row.body !== reviewBody(input)
+  ) {
+    throw new AgentJobPublicationRefusal(
+      "commit comment does not match the reviewed candidate and App author",
+    );
+  }
+  return `https://github.com/${input.repository}/commit/${input.headSha}#commitcomment-${row.id}`;
 }
 
 export function githubAgentJobsPublishPorts(
@@ -46,39 +70,43 @@ export function githubAgentJobsPublishPorts(
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-  const readStatus = async (
-    input: AgentJobCommitStatusInput,
-  ): Promise<boolean> => {
-    const response = await request(
-      `${input.repository}/commits/${input.headSha}/status`,
-    );
-    if (!response.ok) {
-      await response.body?.cancel();
-      throw new AgentJobPublicationRefusal(
-        `commit status lookup refused (HTTP ${response.status})`,
+  const commentPath = (input: AgentJobCommitReviewInput) =>
+    `${input.repository}/commits/${input.headSha}/comments`;
+  const readComment = async (
+    input: AgentJobCommitReviewInput,
+  ): Promise<string | null> => {
+    const marker = reviewMarker(input);
+    for (let page = 1; page <= MAX_COMMENT_PAGES; page++) {
+      const response = await request(
+        `${commentPath(input)}?per_page=100&page=${page}`,
       );
-    }
-    const body: {
-      sha?: string;
-      statuses?: {
-        context?: string;
-        state?: string;
-        description?: string;
-        target_url?: string;
-      }[];
-    } | null = await response.json();
-    if (body?.sha !== input.headSha || !Array.isArray(body.statuses)) {
-      throw new AgentJobPublicationRefusal(
-        "commit status did not identify the reviewed commit",
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw new AgentJobPublicationRefusal(
+          `review commit comment lookup refused (HTTP ${response.status})`,
+        );
+      }
+      const rows: (CommitComment | null)[] = await response.json();
+      if (!Array.isArray(rows)) {
+        throw new AgentJobPublicationRefusal(
+          "review commit comment list is malformed",
+        );
+      }
+      const matches = rows.filter((row) =>
+        row?.user?.login === PUBLISHER &&
+        typeof row.body === "string" && row.body.startsWith(`${marker}\n`)
       );
+      if (matches.length > 1) {
+        throw new AgentJobPublicationRefusal(
+          "multiple App comments claim the same review verdict",
+        );
+      }
+      if (matches.length === 1) return exactComment(input, matches[0]);
+      if (!response.headers.get("link")?.includes('rel="next"')) return null;
     }
-    const actual = body.statuses.find((status) =>
-      status?.context === AGENT_JOB_REVIEW_STATUS
+    throw new AgentJobPublicationRefusal(
+      "review commit comment lookup exceeded its page bound",
     );
-    const expected = statusFor(input);
-    return actual?.state === expected.state &&
-      actual.description === expected.description &&
-      actual.target_url === expected.target_url;
   };
   const exactDraft = (input: AgentJobDraftInput, draft: unknown): string => {
     const row = draft as {
@@ -146,19 +174,29 @@ export function githubAgentJobsPublishPorts(
         ? repositoryVisibilityV1(body)
         : "unknown";
     },
-    setCommitStatus: async (input) => {
-      if (await readStatus(input)) return;
-      const written = await request(
-        `${input.repository}/statuses/${input.headSha}`,
-        "POST",
-        statusFor(input),
-      ).catch(() => null);
-      await written?.body?.cancel();
-      // A lost response can still leave the status on the exact commit.
-      if (await readStatus(input)) return;
-      const failure = written ? ` (HTTP ${written.status})` : "";
+    ensureReviewComment: async (input) => {
+      const existing = await readComment(input);
+      if (existing !== null) return existing;
+      const created = await request(commentPath(input), "POST", {
+        body: reviewBody(input),
+      }).catch(() => null);
+      if (created?.ok) {
+        const row = await created.json().catch(() => null);
+        if (row !== null) return exactComment(input, row);
+      } else if (created && created.status < 500) {
+        await created.body?.cancel();
+        throw new AgentJobPublicationRefusal(
+          `review commit comment refused (HTTP ${created.status})`,
+        );
+      } else {
+        await created?.body?.cancel();
+      }
+      // A lost response can still leave an App comment on the exact commit.
+      const reconciled = await readComment(input);
+      if (reconciled !== null) return reconciled;
+      const failure = created ? ` (HTTP ${created.status})` : "";
       throw new AgentJobPublicationRefusal(
-        `review commit status was not confirmed${failure}`,
+        `review commit comment was not confirmed${failure}`,
       );
     },
     ensureDraftPullRequest: async (input) => {
