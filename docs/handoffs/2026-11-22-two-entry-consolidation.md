@@ -1,10 +1,6 @@
 # Sentinel two-entry consolidation
 
-Phase 1 report, 2026-11-22. The consolidation worktree is on
-`consolidate/two-entry-modes`, based on development
-`a896fa14b0e473106f8f2a4940326d6f3710b7dd`. This report records both existing
-execution paths and the proposed integration. Implementation, environment
-admission, branch cutover, and hosted acceptance are later phases.
+Consolidation handoff, 2026-11-22. Phase 1 mapped both entry paths against development `a896fa14b0e473106f8f2a4940326d6f3710b7dd` on `consolidate/two-entry-modes`. Its inventory and proposed design below are historical. Phase 2 implementation, local receipts and owner cutover follow. Full native CI at the final integrated SHA and consolidation draft publication are pending.
 
 ## Branch inventory
 
@@ -59,8 +55,10 @@ own `SENTINEL_AGENT_JOBS_CODEX_VERSION` setting.
    dependencies and assignment against trusted state.
    `prepareImplementationStart` reserves each start durably and binds its
    evidence and candidate. Implementation results settle the attempt, preserve
-   the operation-bound candidate and feed trusted publication. The issue PR
-   carries `Resolves #N` and its exact head is reconciled before delivery.
+   the operation-bound candidate and feed trusted publication. Issue work uses
+   the deterministic `sentinel/repair/issue-*` branch assigned by `candidateBranch`.
+   The issue PR carries `Resolves #N` and its exact head is reconciled before delivery.
+   [Branch naming](../../src/repair/keys.ts#L62) ·
    [Target loader](https://github.com/ubiquity-sentinel/sentinel/blob/a896fa14b0e4/src/host/targets.ts#L472)
    ·
    [Issue intake](https://github.com/ubiquity-sentinel/sentinel/blob/a896fa14b0e4/src/repair/loop-intake.ts#L365)
@@ -259,7 +257,7 @@ UTC. Delivery remained unverified at that observation.
   truthful blocked or unavailable result if any binding or review gate fails.
   [Current write boundary](https://github.com/ubiquity-sentinel/sentinel/blob/9962a4901438/.github/workflows/agent-jobs.yml#L220)
 
-## Public visibility and cutover
+## Proposed public visibility and cutover
 
 The public controller admits only GitHub-proven public repositories. Apply the
 same fail-closed decision to operator jobs before scheduling a cell or uploading
@@ -314,7 +312,7 @@ gh workflow run agent-jobs.yml --repo ubiquity-sentinel/sentinel \
   --ref development -f "jobs=$(jq -c . /tmp/new-agent-jobs.json)"
 ```
 
-## Live risks and proof still due
+## Phase 1 risks and proof requirements
 
 - **Artifact trust and reruns.** The current publisher casts `result.json`
   directly and downloads an attempt-named cell artifact. Verify strict
@@ -345,3 +343,98 @@ gh workflow run agent-jobs.yml --repo ubiquity-sentinel/sentinel \
   path still uses its existing current-head gates. The historical smoke and
   stacking results do not cover this integration, and the proposed
   branch/environment transition has not been exercised.
+
+## Phase 2 implementation
+
+- The phase 1 report is committed at `87e4323c23`. The ancestry merge `80040f7186` retains the side tip and selectively imports its lane source. The 137 historical inbox requests and three cleanup requests remain in side-ref history. Development's `.github/workflows/supervisor.yml` is byte-identical to its baseline.
+- On-demand intake on `development` selects fresh push additions across the event's before-to-after range or accepts explicit JSON dispatch. Trusted admission confirms each repository is public and resolves its exact base before model work. The original prompt and dispatch identity bind the review task. The planner rejects prompts longer than 16,384 UTF-16 code units and records the first trusted admission timestamp. Queue and setup consume the original job deadline. [Operator guide](../../jobs/README.md) · [Entry workflow](../../.github/workflows/agent-jobs.yml)
+- Inbox, cleanup and manual requests enter through the authorized human GitHub account with write access to `development` used by the live coding agent. The intake decision follows GitHub's authenticated `User` sender. App and bot events are ignored by on-demand intake, so issue-mode App auto-merges retain their existing authority. [Operator submission](../../jobs/README.md#submit-a-request)
+- The workflow initially checks out `refs/heads/sentinel-supervisor` as its controller and records its exact Git HEAD. A separate push checkout at the event's exact `github.sha` supplies request data. The run pins the controller SHA across planning, implementation, review and publication. Cleanup likewise pins its controller SHA between plan and deletion. A protected revision without the lane fails closed. The consolidated authority list adds `jobs/inbox/`, `jobs/cleanup/` and the privileged on-demand code, with workflow definitions already covered. It feeds issue-mode `ownerLandingTouch` and `neverMergedChange` and the operator review gate's publication guard for the Sentinel repository. [Authority policy](../../src/host/hosted-authority-protected-paths.ts) · [Issue merge guard](../../src/github/merge-content-gate.ts)
+- The delivery workflow separates implementation, review and publication. The gate verifies the plan, Git objects and pinned base. Both entries use the same native review and disposition. Changed jobs require a completed native verdict, positive exact-task acceptance and zero unresolved P0s. A rejected task or P0 feeds an isolated correction and a fresh native review within the remaining deadline. Attempt counts record starts. `review:false` is allowed only for a Git-verified empty diff, which produces a result without a branch. [Delivery workflow](../../.github/workflows/agent-jobs-delivery.yml) · [Shared disposition](../../src/repair/review-disposition.ts)
+- Trusted publication uses the exact accepted commit and records an authenticated Sentinel App verdict comment on that SHA. The publication result carries the comment URL. `pr:false` remains the default. An explicit `pr:true` creates or reuses a draft that carries the verdict. The issue supervisor owns its current CI and expected-head merge. The on-demand operator owns CI verification and any merge. Public target visibility is rechecked before publication. [Publisher](../../ops/agent-jobs-publish.ts) · [Shared review and delivery](../../README.md#review-and-delivery)
+
+## Phase 2 local evidence
+
+| Surface                                | Source revision                                        | Observed result                                                                                                                                    |
+| -------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Native review and shared disposition   | `2865701a01`                                           | Four fake app-server lifecycle tests passed, 51 issue/consumer tests passed, and two composed discovered-issue through merge/release tests passed. |
+| Isolated correction                    | `82533b03af`                                           | Five correction tests passed.                                                                                                                      |
+| Review gate                            | `6ae7016cec`                                           | Four lifecycle cases using real temporary Git repositories passed.                                                                                 |
+| Publication                            | `a051363fd5`                                           | Ten agent-job and cleanup consumer tests passed on an interim overlay. This predates the commit-comment change.                                    |
+| Workflow and intake                    | `1a180576a5`                                           | Six workflow and plan tests passed before the trusted admission-clock correction.                                                                  |
+| Offline trace proxy                    | `c2d1746982`                                           | Four passed and one network canary skipped under the declared offline test permissions.                                                            |
+| Canonical CI dependency setup          | Action tree `209653b35a61e7656b2903c62bcb9b722e37545f` | Locked workspace-local npm install exited 0 and added 24 packages. Tracked files were clean.                                                       |
+| Full native CI and consolidation draft | Final integrated candidate pending                     | Final command results, exact SHA, and draft URL pending.                                                                                           |
+
+The native and issue scopes used `deno run --frozen --allow-env=PATH --allow-run=deno,git --allow-write test-local.ts --tests` with the targets below. Each command had a 300-second process bound and exited 0.
+
+- Four native fixture cases used `tests/host/agent-jobs-native-review_test.ts`. Evidence `26c6cf008cdb65262171683ae1ea38a8d64599b2af1465c5a12b58783e7d521d/e62d1e19-6279-465a-ad5f-ec38deeb6206`.
+- The 51-case issue boundary used `tests/repair/review-gate_test.ts`, `tests/repair/acceptance-correction_test.ts`, `tests/repair/model-port-prompt_test.ts` and `tests/github/codex-reviewer-results_test.ts`. Evidence `26c6cf008cdb65262171683ae1ea38a8d64599b2af1465c5a12b58783e7d521d/16a68aaa-6b2b-4dd8-9441-915f9b40c041`.
+- Two composed cases used `tests/integration/composed-lifecycle_test.ts` on exact commit `2865701a010024a4a9e12321905d80c2376268f8`. Evidence `26c6cf008cdb65262171683ae1ea38a8d64599b2af1465c5a12b58783e7d521d/b0fa3a53-4503-42e9-84b9-a7b2dbea9cfc`.
+
+Correction and review gate commands exited 0. Correction tested the owned worktree diff committed at `82533b03af`. The review gate used an interim overlay containing the gate and its dependent adapters. Evidence `26c6cf008cdb65262171683ae1ea38a8d64599b2af1465c5a12b58783e7d521d/5685dee3-04c7-40d4-be3e-21f88c0a85f1` and `26c6cf008cdb65262171683ae1ea38a8d64599b2af1465c5a12b58783e7d521d/b53a30d8-33cd-40fa-a4b5-dc9e0a291b95`.
+
+```sh
+timeout --kill-after=3s 297s deno test --frozen --allow-read=.,/usr,/bin,/tmp,/private/tmp --allow-run --allow-write --allow-env=PATH,NODE_V8_COVERAGE tests/host/agent-jobs-correct_test.ts
+timeout --signal=TERM --kill-after=3s 297s deno test --frozen --allow-read=.,/usr,/bin --allow-run --allow-write --allow-env=PATH,NODE_V8_COVERAGE /tmp/sentinel-gate-overlay.1j2pGzbo/tests/host/agent-jobs-review_test.ts
+```
+
+Publication overlay command exited 0. It exercised candidate identity, exact-head draft and then-current status readback, and refused forged, stale, private and conflicting inputs. Evidence `26c6cf008cdb65262171683ae1ea38a8d64599b2af1465c5a12b58783e7d521d/8debd566-211c-4fcf-85c2-7b48d013c464`.
+
+```sh
+timeout --kill-after=3s 297s deno test --no-prompt --allow-read=.,/usr,/bin --allow-write --allow-run --allow-env=PATH,NODE_V8_COVERAGE tests/host/agent-jobs_test.ts tests/host/agent-jobs-cleanup_test.ts
+```
+
+Workflow and plan command exited 0. Evidence `26c6cf008cdb65262171683ae1ea38a8d64599b2af1465c5a12b58783e7d521d/1453f86f-6dbe-4ece-9c82-65cf4a570dfd`.
+
+```sh
+timeout --signal=TERM --kill-after=3s 297s deno test --frozen --cached-only --allow-read --allow-write --allow-run --allow-env=PATH tests/host/agent-jobs-workflow_test.ts tests/host/agent-jobs-plan_test.ts
+```
+
+The commit-comment patch `77d52a520a` passed 18 connected publication, review, native-review and cleanup tests. The workflow patch `80d5d7c81c` passed 14 workflow, plan and agent-job tests covering the admission deadline and removal of the status-write grant. Both commands exited 0 against their respective patch on exact integration base `0bb8404f9a2953413cacfb3ad6bef3aba32b0af8`. Evidence `26c6cf008cdb65262171683ae1ea38a8d64599b2af1465c5a12b58783e7d521d/e91c34ba-e91b-444e-b8fa-e2529a2ef4ba` and `26c6cf008cdb65262171683ae1ea38a8d64599b2af1465c5a12b58783e7d521d/2ed04c37-70b1-40a1-9229-b7d26da0e6bf`.
+
+```sh
+timeout --kill-after=3s 297s deno test --frozen --no-prompt --allow-read=.,/usr,/bin --allow-write --allow-run --allow-env=PATH,NODE_V8_COVERAGE tests/host/agent-jobs_test.ts tests/host/agent-jobs-review_test.ts tests/host/agent-jobs-native-review_test.ts tests/host/agent-jobs-cleanup_test.ts
+timeout --signal=TERM --kill-after=3s 297s deno test --frozen --cached-only --allow-read=.,/usr,/bin,/usr/local/bin/deno --allow-write --allow-run --allow-env=PATH,NODE_V8_COVERAGE tests/host/agent-jobs-workflow_test.ts tests/host/agent-jobs-plan_test.ts tests/host/agent-jobs_test.ts
+```
+
+The full native CI run is in progress. Exact final integrated evidence and the consolidation draft URL remain pending.
+
+The locked App action install ran `npm ci --omit=dev --ignore-scripts --no-audit --no-fund --prefix .github/actions/sentinel-app-token` with a `/tmp` npm cache and a 300-second process bound. The action tree matched the requested checkout even after the integration branch advanced. Evidence `26c6cf008cdb65262171683ae1ea38a8d64599b2af1465c5a12b58783e7d521d/5e4b2135-76ad-427d-9a03-92ca7e29c746`.
+
+Offline trace and harness command exited 0 in 3.244 seconds. Evidence `26c6cf008cdb65262171683ae1ea38a8d64599b2af1465c5a12b58783e7d521d/2bb6f8da-9174-4334-b752-7b89a3daab78` covers the exact two files committed at `c2d1746982`.
+
+```sh
+deno run --frozen --allow-env=PATH --allow-run=deno,git --allow-write test-local.ts --tests tests/host/agent-jobs-trace-proxy_test.ts tests/contracts/harness_test.ts
+```
+
+The original trace-proxy suite failed at its loopback listener under the declared offline permissions. Evidence `26c6cf008cdb65262171683ae1ea38a8d64599b2af1465c5a12b58783e7d521d/ff99415e-ec8a-42dc-9826-afee6f5c6862`.
+
+```text
+NotCapable: Requires net access to "127.0.0.1:0", run again with the --allow-net flag
+```
+
+The accepted repair at `c2d1746982` uses a fake transport for the offline cases. The real-listener canary runs only with existing loopback permission. The two diagnostic runs with temporary grants are outside acceptance. The CI test permission declarations are unchanged.
+
+Local Codex CLI `0.171.0` initialized and then failed at restricted correction-thread startup, before any model turn. Evidence `26c6cf008cdb65262171683ae1ea38a8d64599b2af1465c5a12b58783e7d521d/ee644fc4-10e2-46f9-b019-f0757f4184cb`.
+
+```text
+error creating thread: failed to load AGENTS.md instructions for environment `local`: fs sandbox helper failed with status exit status: 1: bwrap: Can't mount on symlink destination /usr/local/bin/bun
+```
+
+The separate scratch-config diagnostic is outside acceptance. The host Node and Bun paths are symlinks, and host Node 24.20.0 differs from the CI pin of 24.19.0. The optional Docker feasibility read returned the exact error below. The dependency setup continued with host tools only.
+
+```text
+permission denied while trying to connect to the docker API at unix:///run/docker.sock
+```
+
+## Owner cutover
+
+1. Merge the reviewed consolidation draft into `development` when its acceptance checks pass.
+2. Separately advance the trusted `sentinel-supervisor` launcher to the exact approved CI-green revision containing the on-demand controller. The workflow tree changed, so existing auto-follow requires manual advancement. Apply the existing protected-path rules and verify the protected ref, installed runtime SHA and generation, model-disabled bootstrap and required rollback evidence. An old launcher lacking the operator lane refuses the run. [Master plan](../../MASTER-PLAN.md)
+3. Admit the exact `development` branch to the publisher and cleanup environment, retaining the existing policies. The observed environment policies admit `sentinel-supervisor` and `claude/great-ride-tu5r70`. Use the existing App permissions. Live App metadata matched the workflow client ID and reported Contents write, Pull requests write, Statuses read and Checks read. The on-demand verdict is an App commit comment using existing Contents access. The publisher and cleanup mint from the selected environment's App key. The on-demand caller forwards repository or organization-scoped `UOS_AI_TOKEN` only to implementation and review. A repository-scoped secret was observed. [GitHub App Contents permissions](https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps#repository-permissions-for-contents)
+4. Submit a fresh request on the admitted development ref, then check the pinned controller SHA, exact published head, and App comment identity and URL. Keep existing inbox producers and their history on `claude/great-ride-tu5r70` until explicitly migrated. A migrated helper uses a dedicated checkout and only fresh requests. [Helper cutover and stdin dispatch](../../jobs/README.md#submit-a-request)
+
+Operator results are manually merged. A future request for job-authorized auto-merge needs an explicit request opt-in, authorized target and base scope, a current CI rule and a trusted expected-head merge owner.
+
+This consolidation changed no live supervisor, launcher or runtime pointer. Hosted dispatch and model calls were outside this validation. Operator end-to-end delivery, exact-SHA comment and draft readback, and continued natural supervisor acceptance remain to be established on the admitted refs.
