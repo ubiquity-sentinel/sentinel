@@ -91,6 +91,12 @@ import {
   isHostedSelf,
 } from "./hosted-autonomy-policy.ts";
 import { readTargetSlugsV1 } from "../src/host/targets.ts";
+import {
+  reportedTokenScopeV1,
+  scopedVisibilityReaderV1,
+  tokenScopeLineV1,
+  UNAVAILABLE_TARGETS_ENV,
+} from "../src/host/target-token-scope.ts";
 import { resolveSentinelHostV1 } from "../src/repair/target-visibility.ts";
 import type {
   HostedAutonomyDepsV1,
@@ -492,9 +498,24 @@ async function runHostedAutonomyMainResult(
       // Owner decision 2026-11-18: one gate for the whole run. The runner
       // routes every pass through it; the queue coordinator and its
       // publication get the gated state and surfaces here.
+      // A listed target the tolerant mint dropped from this job's token is
+      // hidden for the run without a read (`target-token-scope.ts`), even
+      // when it is public; an unset report hides nothing.
+      const reported = env(UNAVAILABLE_TARGETS_ENV);
+      const outOfScope = reported === null ? [] : reportedTokenScopeV1(
+        (await readTargetSlugsV1({ root: Deno.cwd() })).map((target) =>
+          target.slug
+        ),
+        reported,
+      );
+      const scopeLine = tokenScopeLineV1(outOfScope);
+      if (scopeLine !== null) console.log(JSON.stringify(scopeLine));
       const privateTargets = createPrivateTargetGateV1({
-        readVisibility: async (repository) =>
-          await githubFor(repository).readVisibility?.() ?? "unknown",
+        readVisibility: scopedVisibilityReaderV1(
+          async (repository) =>
+            await githubFor(repository).readVisibility?.() ?? "unknown",
+          outOfScope,
+        ),
         // The deployment rule (`target-visibility.ts`): `GITHUB_REPOSITORY`
         // is the self scope (`isHostedControllerMaintenanceIdentity` above).
         // A checkout whose setting lists it never reads it; otherwise the

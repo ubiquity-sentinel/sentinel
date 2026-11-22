@@ -104,6 +104,9 @@ export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
     "src/host/hosted-app-grant.ts",
     "src/host/actions-target-cycles.ts",
     "src/host/actions-repair-host.ts",
+    // Which committed targets the run's minted token covers (the tolerant
+    // mint's dropped names are excluded before any read).
+    "src/host/target-token-scope.ts",
     // Its per-target mirror preparation: which remote each foreign mirror is
     // seeded and fetched from with the selected write credential.
     "src/host/actions-target-preparation.ts",
