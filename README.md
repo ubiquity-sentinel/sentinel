@@ -4,7 +4,7 @@ Sentinel runs coding work on GitHub-hosted runners through two entries. Both use
 
 ## Issue mode
 
-Open an eligible GitHub issue in a public repository configured for the supervisor. The protected supervisor discovers it on its scheduled run and publishes a repair PR. Follow the issue and PR for progress. Sentinel merges qualifying repairs through its review and CI gates. [Supervisor targets](sentinel.targets.json)
+Open an eligible GitHub issue in a public repository configured for the supervisor. The protected supervisor discovers it on its scheduled run and publishes a repair PR from a deterministic `sentinel/repair/issue-*` branch. Follow the issue and PR for progress. Sentinel merges qualifying repairs through its review and CI gates. [Supervisor targets](sentinel.targets.json) · [Branch naming via `candidateBranch`](src/repair/keys.ts#L62)
 
 ## On-demand mode
 
@@ -14,7 +14,7 @@ Submit a JSON request on `development` after the repository owner admits that re
 
 Both entries capture and review the exact candidate against the task that authorized it. Issue repair uses the live issue statement. Operator jobs use the original, pinned request prompt. Changed candidates need completed native Codex review with a positive task assessment and all findings accounted for. P0 is the only severity-based blocker. Lower-severity findings remain visible in the outcome, and issue repair files receipt-bound follow-ups through its existing path. A P0 or negative task assessment can trigger isolated correction and another review within the deadline. Review rounds and ordinary CI-fix attempts are accounting, with a separate three-attempt CI-fix limit for base repair. [Review policy](docs/DECISIONS.md#review-round-ceiling-and-ci-fix-cap-retired-2026-10-3031) · [Base-repair policy](src/repair/base-repair.ts)
 
-Issue repair requires current-head review and applicable CI at the expected-head merge. Operator jobs report the verdict in the run result. Accepted changes also carry a `sentinel/agent-job-review` commit status on the exact published SHA and the verdict on the optional draft PR. To merge an operator result, check that the reviewed SHA still matches the result, verify the target's CI and requirements, and merge it yourself. [Operator job results](jobs/README.md#results)
+Issue repair requires current-head review and applicable CI at the expected-head merge. Operator jobs report the verdict in the run result. Accepted changes also carry an authenticated Sentinel App verdict comment on the exact published SHA and the verdict on the optional draft PR. To merge an operator result, check that the reviewed SHA still matches the result, verify the target's CI and requirements, and merge it yourself. [Operator job results](jobs/README.md#results)
 
 ## Supervisor operation
 
