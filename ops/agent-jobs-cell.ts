@@ -15,6 +15,7 @@
  */
 import { cloneBranch, git, githubRemoteUrl, gitOk } from "./agent-jobs-git.ts";
 import type { RemoteUrl } from "./agent-jobs-git.ts";
+import { AGENT_JOB_SHA } from "./agent-jobs-admission.ts";
 import {
   startTraceProxy,
   type TraceProxy,
@@ -379,11 +380,16 @@ async function runJob(
       directory: checkout,
       token: input.readToken,
     });
-    result.base = base.branch;
-    result.baseSha = base.sha;
-    await gitOk(["checkout", "--quiet", "-b", AGENT_JOB_BRANCH], {
+    if (
+      job.baseSha !== undefined &&
+      (job.base !== base.branch || !AGENT_JOB_SHA.test(job.baseSha))
+    ) throw new Error("job base does not match the admitted plan");
+    const baseSha = job.baseSha ?? base.sha;
+    await gitOk(["checkout", "--quiet", "-b", AGENT_JOB_BRANCH, baseSha], {
       cwd: checkout,
     });
+    result.base = base.branch;
+    result.baseSha = baseSha;
 
     const remainingSeconds = () =>
       Math.max(1, Math.floor((input.deadlineAtMs - Date.now()) / 1000));
@@ -449,7 +455,7 @@ async function runJob(
             const line = await agentHeartbeat({
               id: job.id,
               checkout,
-              baseSha: base.sha,
+              baseSha,
               logFile,
               startedAtMs: jobStartedAtMs,
               restarts: attempt,
@@ -475,7 +481,7 @@ async function runJob(
               (beats - 1) % HEARTBEAT_PROGRESS_EVERY === 0
             ) {
               const commits = await new Deno.Command("git", {
-                args: ["log", "--format=%h %cI %s", `${base.sha}..HEAD`],
+                args: ["log", "--format=%h %cI %s", `${baseSha}..HEAD`],
                 cwd: checkout,
                 stdout: "piped",
                 stderr: "null",
@@ -592,7 +598,7 @@ async function runJob(
       );
     }
     const head = await gitOk(["rev-parse", "HEAD"], { cwd: checkout });
-    if (head !== base.sha) {
+    if (head !== baseSha) {
       await gitOk(["update-ref", `refs/heads/${AGENT_JOB_BRANCH}`, head], {
         cwd: checkout,
       });
@@ -603,7 +609,7 @@ async function runJob(
         "create",
         "--quiet",
         `${input.outDir}/${result.bundle}`,
-        `${base.sha}..refs/heads/${AGENT_JOB_BRANCH}`,
+        `${baseSha}..refs/heads/${AGENT_JOB_BRANCH}`,
       ], { cwd: checkout });
     }
     await Deno.copyFile(start.lastMessageFile, `${input.outDir}/${job.id}.md`)
@@ -722,7 +728,7 @@ if (import.meta.main) {
     cellId: env("AGENT_JOBS_CELL_ID"),
     workRoot: `${env("RUNNER_TEMP") || "/tmp"}/agent-jobs`,
     outDir: `${workspace}/.agent-jobs/out`,
-    readToken: env("AGENT_JOBS_READ_TOKEN") || null,
+    readToken: null,
     defaultModel: env("SENTINEL_MODEL_ID") || "gpt-6.1-sol",
     deadlineAtMs: startedAtMs + AGENT_JOBS_MAX_MINUTES * 60_000,
     ports: {
