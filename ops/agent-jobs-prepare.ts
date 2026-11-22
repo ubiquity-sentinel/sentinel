@@ -9,6 +9,7 @@ import {
 import {
   parseAgentJobJson,
   readAgentJobsPushRequests,
+  requireAgentJobOperator,
 } from "./agent-jobs-intake.ts";
 import { mergeAgentJobRequests, planAgentJobs } from "./agent-jobs-plan.ts";
 
@@ -29,12 +30,21 @@ async function prepare() {
   if (!manual && eventName !== "push") {
     throw new Error("unsupported agent jobs event");
   }
+  const event = parseAgentJobJson(
+    await Deno.readTextFile(env("GITHUB_EVENT_PATH")),
+  );
+  requireAgentJobOperator(event, env("GITHUB_ACTOR"));
+  const requestCheckout = env("AGENT_JOBS_REQUEST_CHECKOUT");
+  if (!manual && !requestCheckout) {
+    throw new Error("agent jobs push is missing its request checkout");
+  }
   const documents = manual
     ? [parseAgentJobJson(env("AGENT_JOBS_JSON"))]
     : await readAgentJobsPushRequests(
       kind,
-      parseAgentJobJson(await Deno.readTextFile(env("GITHUB_EVENT_PATH"))),
+      event,
       env("GITHUB_SHA"),
+      requestCheckout,
     );
   const output = env("GITHUB_OUTPUT");
   if (documents.length === 0) {

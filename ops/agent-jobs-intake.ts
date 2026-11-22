@@ -3,6 +3,17 @@ import { git, gitOk } from "./agent-jobs-git.ts";
 
 type Inbox = "inbox" | "cleanup";
 
+/** Require the authenticated sender of the GitHub event, independent of any commit attribution. */
+export function requireAgentJobOperator(event: unknown, actor: string): void {
+  const envelope = event as { sender?: { type?: unknown; login?: unknown } };
+  if (
+    envelope?.sender?.type !== "User" ||
+    envelope.sender.login !== actor ||
+    !actor ||
+    /\[bot\]$/i.test(actor)
+  ) throw new Error("agent jobs requires a matching GitHub User sender");
+}
+
 function validSha(sha: unknown): sha is string {
   return typeof sha === "string" && AGENT_JOB_SHA.test(sha) &&
     sha !== "0".repeat(40);

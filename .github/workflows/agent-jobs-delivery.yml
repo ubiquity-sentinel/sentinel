@@ -4,6 +4,9 @@ name: Sentinel agent-job delivery
 on:
   workflow_call:
     inputs:
+      control-sha:
+        type: string
+        required: true
       plan-artifact-id:
         type: string
         required: true
@@ -42,6 +45,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          ref: ${{ inputs.control-sha }}
           fetch-depth: 1
           persist-credentials: false
       # The cell host bounds each agent with coreutils `timeout`, which macOS
@@ -158,6 +162,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          ref: ${{ inputs.control-sha }}
           persist-credentials: false
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
@@ -237,6 +242,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          ref: ${{ inputs.control-sha }}
           persist-credentials: false
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
