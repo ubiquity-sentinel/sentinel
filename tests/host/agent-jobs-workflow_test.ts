@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { parse } from "@std/yaml";
+import { requireAgentJobOperator } from "../../ops/agent-jobs-intake.ts";
 
 type Step = {
   id?: string;
@@ -8,6 +9,7 @@ type Step = {
   uses?: string;
   env?: Record<string, string>;
   with?: Record<string, string>;
+  "working-directory"?: string;
 };
 type Job = {
   if?: string;
@@ -49,6 +51,9 @@ Deno.test("agent job intake runs on development and skips empty push plans", asy
     });
     const { plan, ...jobs } = input.jobs;
     assert.match(plan.if!, /github.ref == 'refs\/heads\/development'/);
+    assert.match(plan.if!, /github\.event\.sender\.type == 'User'/);
+    assert.match(plan.if!, /github\.event\.sender\.login == github\.actor/);
+    assert.match(plan.if!, /!endsWith\(github\.actor, '\[bot\]'\)/);
     assert.match(
       plan.steps.find((step) => step.id === "plan")!.run!,
       /agent-jobs-prepare\.ts/,
@@ -57,6 +62,89 @@ Deno.test("agent job intake runs on development and skips empty push plans", asy
     for (const job of Object.values(jobs)) {
       assert.match(job.if!, /needs\.plan\.outputs\.has-work == 'true'/);
     }
+  }
+});
+
+Deno.test("agent job operators must be GitHub User senders matching the actor", () => {
+  requireAgentJobOperator({
+    sender: { type: "User", login: "authorized-operator" },
+    head_commit: { author: { username: "bot[bot]" } },
+  }, "authorized-operator");
+  for (
+    const [sender, actor] of [
+      [
+        { type: "Bot", login: "ubiquity-sentinel[bot]" },
+        "ubiquity-sentinel[bot]",
+      ],
+      [{ type: "User", login: "app[bot]" }, "app[bot]"],
+      [{ type: "User", login: "other-user" }, "authorized-operator"],
+      [{ login: "authorized-operator" }, "authorized-operator"],
+      [undefined, "authorized-operator"],
+    ] as const
+  ) {
+    assert.throws(
+      () =>
+        requireAgentJobOperator({
+          sender,
+          head_commit: { author: { username: "authorized-operator" } },
+        }, actor),
+      /matching GitHub User sender/,
+    );
+  }
+});
+
+Deno.test("agent job control code is pinned separately from development request data", async () => {
+  for (const name of ["agent-jobs", "agent-jobs-cleanup"]) {
+    const { jobs } = await workflow(name);
+    const { plan } = jobs;
+    const checkouts = plan.steps.filter((step) =>
+      step.uses?.startsWith("actions/checkout@")
+    );
+    assert.deepEqual(checkouts.map((step) => step.with?.ref), [
+      "refs/heads/sentinel-supervisor",
+      "${{ github.sha }}",
+    ]);
+    assert.deepEqual(checkouts.map((step) => step.with?.path), [
+      "control",
+      "request",
+    ]);
+    assert(
+      checkouts.every((step) =>
+        Object.is(step.with?.["persist-credentials"], false)
+      ),
+    );
+    assert.equal(
+      plan.outputs?.["control-sha"],
+      "${{ steps.control.outputs.sha }}",
+    );
+    const bind = plan.steps.find((step) => step.id === "control")!;
+    assert.equal(bind["working-directory"], "control");
+    assert.match(bind.run!, /git rev-parse --verify HEAD/);
+    const prep = plan.steps.find((step) => step.id === "plan")!;
+    assert.equal(prep["working-directory"], "control");
+    assert.equal(
+      prep.env?.AGENT_JOBS_REQUEST_CHECKOUT,
+      "${{ github.workspace }}/request",
+    );
+    if (name === "agent-jobs") {
+      assert.equal(
+        jobs.delivery.with?.["control-sha"],
+        "${{ needs.plan.outputs.control-sha }}",
+      );
+    } else {
+      assert.equal(
+        jobs.delete.steps[0].with?.ref,
+        "${{ needs.plan.outputs.control-sha }}",
+      );
+    }
+  }
+  const { jobs } = await workflow("agent-jobs-delivery");
+  for (const job of [jobs.cell, jobs.review, jobs.publish]) {
+    const checkout = job.steps.find((step) =>
+      step.uses?.startsWith("actions/checkout@")
+    )!;
+    assert.equal(checkout.with?.ref, "${{ inputs.control-sha }}");
+    assert(Object.is(checkout.with?.["persist-credentials"], false));
   }
 });
 

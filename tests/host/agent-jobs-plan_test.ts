@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { pinAgentJobsPlan } from "../../ops/agent-jobs-admission.ts";
 import { runAgentJobsCell } from "../../ops/agent-jobs-cell.ts";
 import { gitOk } from "../../ops/agent-jobs-git.ts";
-import { freshAgentJobRequests } from "../../ops/agent-jobs-intake.ts";
+import {
+  freshAgentJobRequests,
+  readAgentJobsPushRequests,
+} from "../../ops/agent-jobs-intake.ts";
 import {
   mergeAgentJobRequests,
   planAgentJobs,
@@ -126,13 +129,29 @@ Deno.test("agent jobs consume fresh files across a push and refuse old or unrela
     await commit(cwd);
     await Deno.remove(restored);
     const before = await commit(cwd);
-    await Deno.writeTextFile(cwd + "/jobs/inbox/early.json", "{}");
+    await Deno.writeTextFile(
+      cwd + "/jobs/inbox/early.json",
+      '{"event": "early"}',
+    );
     await commit(cwd);
     await Deno.writeTextFile(old, "[]");
     await Deno.writeTextFile(restored, "{}");
     await Deno.writeTextFile(cwd + "/jobs/inbox/late.json", "{}");
     await Deno.writeTextFile(cwd + "/jobs/cleanup/cleanup.json", "{}");
     const after = await commit(cwd);
+    await Deno.writeTextFile(
+      cwd + "/jobs/inbox/early.json",
+      "uncommitted contents",
+    );
+    assert.deepEqual(
+      await readAgentJobsPushRequests(
+        "inbox",
+        { before, after, ref: "refs/heads/development" },
+        after,
+        cwd,
+      ),
+      [{ event: "early" }, {}],
+    );
     assert.deepEqual(
       await freshAgentJobRequests("inbox", before, after, after, cwd),
       [
