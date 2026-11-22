@@ -42,7 +42,9 @@
  *    holds. A queued or in-progress run observed by this pass blocks dispatch
  *    unless this pass canceled that exact run; an incomplete filtered read can
  *    never erase the positive observation. The process exit code reports the
- *    dispatch outcome (0 accepted, 1 not accepted).
+ *    dispatch outcome (0 accepted, 1 not accepted). After a streak of fast
+ *    pre-runtime failures at one launcher SHA the dispatch is backed off
+ *    instead, with the chain kept alive (`supervisor-dispatch-backoff.ts`).
  *
  * Capability boundary: the follow step supplies only its SHA/readiness outputs;
  * no App secret, model call, state write or external service. Every read and
@@ -65,6 +67,7 @@ import {
   type HttpTransportV1,
 } from "../github/http.ts";
 import { dispatchFollowedSupervisor } from "./hosted-runtime-follow-dispatch.ts";
+import { supervisorDispatchBackoff } from "./supervisor-dispatch-backoff.ts";
 import {
   defaultListPause,
   FOLLOW_LIST_ATTEMPTS,
@@ -127,6 +130,8 @@ export interface SupervisorDispatchDepsV1 {
   follow?: { expectedSha: string; ready: boolean; pause?: () => Promise<void> };
   /** Pause before re-reading an inconsistent listing; tests inject one. */
   pause?: () => Promise<void>;
+  /** The fast-failure backoff hold (`supervisor-dispatch-backoff.ts`). */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 /** Bounded recovery outcome of one pass. */
@@ -276,6 +281,19 @@ export async function runSupervisorDispatch(
   const observedActiveRunIds = scan.observedActiveRunIds.filter((runId) =>
     runId !== cancelledRunId
   );
+  // A supervisor failing before its runtime is re-dispatched with bounded
+  // backoff; a held hop has already chained its successor.
+  if (
+    deps.follow?.ready === true && observedActiveRunIds.length === 0 &&
+    await supervisorDispatchBackoff({
+        ...deps,
+        launcherSha: deps.follow.expectedSha,
+        log,
+      }) === "held"
+  ) {
+    log({ event: "dispatch_pass", recovery, dispatches: false, exitCode: 0 });
+    return { exitCode: 0, dispatched: false, recovery, cancelledRunId };
+  }
   const dispatched = deps.follow === undefined
     ? await dispatchSupervisor(deps)
     : await dispatchFollowedSupervisor(

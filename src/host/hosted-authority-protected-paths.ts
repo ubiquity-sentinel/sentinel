@@ -16,6 +16,9 @@ export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
     // default branch every five minutes with `actions: write` and
     // `contents: write`) and the pre-merge CI dispatch on the target token.
     "src/host/supervisor-dispatch.ts",
+    // Its fast-failure backoff: whether the supervisor is dispatched now, and
+    // the dispatcher's own successor dispatch on the same token.
+    "src/host/supervisor-dispatch-backoff.ts",
     "src/host/actions-premerge-ci.ts",
     // Native-token auto-follow: the launcher SHA choice, the exact-head CI and
     // ancestry proof, the `actions: write` dispatch that advances
