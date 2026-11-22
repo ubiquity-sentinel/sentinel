@@ -55,6 +55,9 @@ jobs:
       # #324/#338: the repair-tier step's read/demoted/promoted/cold/superseded
       # counts (or none).
       tierCounts: ${{ steps.autonomy.outputs.tierCounts }}
+      # The listed repositories the tolerant mint dropped from this run's
+      # token (or empty); later jobs mint without them directly.
+      unavailableRepositories: ${{ steps.app-token.outputs.unavailable-repositories }}
     # The scoped generation-68 verification settled healthy, so the maintenance
     # writer is restored to its protected-ref condition; it performs bounded
     # self-upkeep (retries and reviewed-head delivery) before prepare.
@@ -120,18 +123,32 @@ jobs:
             exit 1
           fi
           echo "repositories=$repositories" >> "$GITHUB_OUTPUT"
+      # The vendored mint below needs its locked dependencies, installed
+      # without credentials as the coordinator jobs install them (the runner's
+      # own npm; the action itself runs on the runner's node24).
+      - name: Install the locked App token action dependencies
+        run: |
+          for attempt in 1 2 3; do
+            npm ci --omit=dev --ignore-scripts --no-audit --no-fund --prefix .github/actions/sentinel-app-token && exit 0
+            [ "$attempt" = 3 ] || sleep 15
+          done
+          exit 1
       # This mint passes no `permission-*` input on purpose: the token inherits
       # the whole installation grant (contents, pull requests, issues, actions,
       # checks, statuses) so every code change this pass writes is
       # authenticated as `ubiquity-sentinel[bot]`.
       - name: Mint the scoped sentinel App token
         id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: ./.github/actions/sentinel-app-token
         with:
           client-id: Iv23liHUJNXds9mU3j7Q
           private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
           owner: ubiquity
           repositories: ${{ steps.targets.outputs.repositories }}
+          # A listed repository the installation cannot reach (renamed,
+          # deleted, transferred or uninstalled; at most 3) is dropped from this
+          # token, never widened, instead of failing the whole run.
+          tolerate-inaccessible-repositories: "true"
       - name: Mint the scoped self installation token
         id: self-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -154,13 +171,16 @@ jobs:
           SENTINEL_MODEL_ID: ${{ vars.SENTINEL_IMPLEMENTATION_MODEL_ID || 'gpt-6.1-sol' }}
           SENTINEL_MODEL_FALLBACK: ${{ vars.SENTINEL_MODEL_FALLBACK }}
           SENTINEL_BACKUP_CI: ${{ vars.SENTINEL_BACKUP_CI || 'on' }}
+          # The listed targets this job's tolerant mint dropped: hidden for
+          # the run even when public (`src/host/target-token-scope.ts`).
+          SENTINEL_UNAVAILABLE_TARGETS: ${{ steps.app-token.outputs.unavailable-repositories }}
         run: >-
           deno run --no-lock
           --allow-read
           --allow-write
           --allow-run
           --allow-net="api.github.com,*.blob.core.windows.net"
-          --allow-env=GITHUB_OUTPUT,GITHUB_STEP_SUMMARY,HOME,PATH,NODE_V8_COVERAGE,GITHUB_TOKEN,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_WORKFLOW_REF,GITHUB_JOB,SENTINEL_SUPERVISOR_TOKEN,SENTINEL_SELF_TOKEN,SENTINEL_SELF_TOKEN_MINT_GRANT,SENTINEL_COOLDOWN_MODE,SENTINEL_MERGE_QUEUE,SENTINEL_BACKUP_CI,SENTINEL_MODEL_BASE_URL,SENTINEL_MODEL_ID,SENTINEL_MODEL_FALLBACK
+          --allow-env=GITHUB_OUTPUT,GITHUB_STEP_SUMMARY,HOME,PATH,NODE_V8_COVERAGE,GITHUB_TOKEN,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_WORKFLOW_REF,GITHUB_JOB,SENTINEL_SUPERVISOR_TOKEN,SENTINEL_SELF_TOKEN,SENTINEL_SELF_TOKEN_MINT_GRANT,SENTINEL_COOLDOWN_MODE,SENTINEL_MERGE_QUEUE,SENTINEL_BACKUP_CI,SENTINEL_MODEL_BASE_URL,SENTINEL_MODEL_ID,SENTINEL_MODEL_FALLBACK,SENTINEL_UNAVAILABLE_TARGETS
           ops/hosted-autonomy.ts
 
   prepare:
@@ -207,15 +227,32 @@ jobs:
             exit 1
           fi
           echo "repositories=$repositories" >> "$GITHUB_OUTPUT"
+      # The vendored mint below needs its locked dependencies, installed
+      # without credentials as the coordinator jobs install them (the runner's
+      # own npm; the action itself runs on the runner's node24).
+      - name: Install the locked App token action dependencies
+        run: |
+          for attempt in 1 2 3; do
+            npm ci --omit=dev --ignore-scripts --no-audit --no-fund --prefix .github/actions/sentinel-app-token && exit 0
+            [ "$attempt" = 3 ] || sleep 15
+          done
+          exit 1
       - name: Mint the scoped supervisor installation token
         id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: ./.github/actions/sentinel-app-token
         with:
           client-id: Iv23liHUJNXds9mU3j7Q
           private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
           owner: ubiquity
           repositories: ${{ steps.targets.outputs.repositories }}
           permission-contents: write
+          # A listed repository the installation cannot reach (renamed,
+          # deleted, transferred or uninstalled; at most 3) is dropped from this
+          # token, never widened, instead of failing the whole run.
+          tolerate-inaccessible-repositories: "true"
+          # Maintenance's dropped names: removed up front so this job mints
+          # directly; a hint can only remove listed names, never add.
+          known-unavailable: ${{ needs.maintenance.outputs.unavailableRepositories }}
       - name: Mint the scoped self installation token
         id: self-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -340,6 +377,13 @@ jobs:
           private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
           owner: ubiquity
           repositories: ${{ steps.targets.outputs.repositories }}
+          # A listed repository the installation cannot reach (renamed,
+          # deleted, transferred or uninstalled; at most 3) is dropped from this
+          # token, never widened, instead of failing the whole run.
+          tolerate-inaccessible-repositories: "true"
+          # Maintenance's dropped names: removed up front so this job mints
+          # directly; a hint can only remove listed names, never add.
+          known-unavailable: ${{ needs.maintenance.outputs.unavailableRepositories }}
       - name: Mint the scoped self installation token
         id: self-token
         uses: ./launcher/.github/actions/sentinel-app-token
@@ -528,12 +572,19 @@ jobs:
         run: sleep $(( ${{ strategy.job-index }} % 20 * 6 ))
       - name: Mint the scoped sentinel App token
         id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: ./launcher/.github/actions/sentinel-app-token
         with:
           client-id: Iv23liHUJNXds9mU3j7Q
           private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
           owner: ubiquity
           repositories: ${{ steps.targets.outputs.repositories }}
+          # A listed repository the installation cannot reach (renamed,
+          # deleted, transferred or uninstalled; at most 3) is dropped from this
+          # token, never widened, instead of failing the whole run.
+          tolerate-inaccessible-repositories: "true"
+          # Maintenance's dropped names: removed up front so this job mints
+          # directly; a hint can only remove listed names, never add.
+          known-unavailable: ${{ needs.maintenance.outputs.unavailableRepositories }}
           permission-contents: read
           permission-issues: read
           permission-pull-requests: read
@@ -709,12 +760,19 @@ jobs:
           echo "repositories=$repositories" >> "$GITHUB_OUTPUT"
       - name: Mint the scoped sentinel App token
         id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: ./launcher/.github/actions/sentinel-app-token
         with:
           client-id: Iv23liHUJNXds9mU3j7Q
           private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
           owner: ubiquity
           repositories: ${{ steps.targets.outputs.repositories }}
+          # A listed repository the installation cannot reach (renamed,
+          # deleted, transferred or uninstalled; at most 3) is dropped from this
+          # token, never widened, instead of failing the whole run.
+          tolerate-inaccessible-repositories: "true"
+          # Maintenance's dropped names: removed up front so this job mints
+          # directly; a hint can only remove listed names, never add.
+          known-unavailable: ${{ needs.maintenance.outputs.unavailableRepositories }}
           permission-contents: read
           permission-issues: read
           permission-pull-requests: read
@@ -921,6 +979,13 @@ jobs:
           private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
           owner: ubiquity
           repositories: ${{ steps.targets.outputs.repositories }}
+          # A listed repository the installation cannot reach (renamed,
+          # deleted, transferred or uninstalled; at most 3) is dropped from this
+          # token, never widened, instead of failing the whole run.
+          tolerate-inaccessible-repositories: "true"
+          # Maintenance's dropped names: removed up front so this job mints
+          # directly; a hint can only remove listed names, never add.
+          known-unavailable: ${{ needs.maintenance.outputs.unavailableRepositories }}
       - name: Mint the scoped self installation token
         id: self-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -1021,15 +1086,32 @@ jobs:
             exit 1
           fi
           echo "repositories=$repositories" >> "$GITHUB_OUTPUT"
+      # The vendored mint below needs its locked dependencies, installed
+      # without credentials as the coordinator jobs install them (the runner's
+      # own npm; the action itself runs on the runner's node24).
+      - name: Install the locked App token action dependencies
+        run: |
+          for attempt in 1 2 3; do
+            npm ci --omit=dev --ignore-scripts --no-audit --no-fund --prefix .github/actions/sentinel-app-token && exit 0
+            [ "$attempt" = 3 ] || sleep 15
+          done
+          exit 1
       - name: Mint the scoped supervisor installation token
         id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: ./.github/actions/sentinel-app-token
         with:
           client-id: Iv23liHUJNXds9mU3j7Q
           private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
           owner: ubiquity
           repositories: ${{ steps.targets.outputs.repositories }}
           permission-contents: write
+          # A listed repository the installation cannot reach (renamed,
+          # deleted, transferred or uninstalled; at most 3) is dropped from this
+          # token, never widened, instead of failing the whole run.
+          tolerate-inaccessible-repositories: "true"
+          # Maintenance's dropped names: removed up front so this job mints
+          # directly; a hint can only remove listed names, never add.
+          known-unavailable: ${{ needs.maintenance.outputs.unavailableRepositories }}
       - name: Mint the scoped self installation token
         id: self-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0

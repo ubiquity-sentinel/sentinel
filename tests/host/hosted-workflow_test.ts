@@ -1047,7 +1047,9 @@ function namedStepRange(job: readonly string[], name: string): BlockV1 {
 function mintStepRange(job: readonly string[]): BlockV1 {
   const uses = job.findIndex((line) =>
     line.startsWith("        uses: actions/create-github-app-token@") ||
-    line === "        uses: ./launcher/.github/actions/sentinel-app-token"
+    /^ {8}uses: \.\/(launcher\/)?\.github\/actions\/sentinel-app-token$/.test(
+      line,
+    )
   );
   if (uses < 0) throw new Error("the App-token mint step is missing");
   let start = uses;
@@ -1073,7 +1075,9 @@ Deno.test("hosted workflow: every code-writing job mints the ubiquity-sentinel A
   );
   assert.equal(
     workflow.split("uses: actions/create-github-app-token@").length - 1 +
-      workflow.split("uses: ./launcher/.github/actions/sentinel-app-token")
+      workflow.split(
+        /uses: \.\/(?:launcher\/)?\.github\/actions\/sentinel-app-token\n/,
+      )
         .length -
       1,
     14,
@@ -1093,10 +1097,11 @@ Deno.test("hosted workflow: every code-writing job mints the ubiquity-sentinel A
   ) {
     const lines = jobLines(workflow, job);
     const mint = blockText(lines, mintStepRange(lines));
-    assert.equal(
-      mint.includes("uses: ./launcher/.github/actions/sentinel-app-token"),
-      job === "matrix_plan" || job === "repair",
-      `${job} uses the metadata-producing action only for trusted coordination`,
+    assert.ok(
+      /sentinel-app-token\n[^]*tolerate-inaccessible-repositories: "true"/.test(
+        mint,
+      ),
+      `${job} narrows a refused target list with the vendored mint, never widens`,
     );
     assert.ok(
       mint.includes("client-id: Iv23liHUJNXds9mU3j7Q"),
@@ -1122,7 +1127,8 @@ Deno.test("hosted workflow: every code-writing job mints the ubiquity-sentinel A
     );
     assert.ok(
       selfMint.includes("owner: ubiquity-sentinel") &&
-        selfMint.includes("repositories: sentinel"),
+        selfMint.includes("repositories: sentinel") &&
+        !/tolerate/.test(selfMint),
       `${job} mints the self token from the new organization`,
     );
     assert.ok(

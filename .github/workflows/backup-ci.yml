@@ -49,15 +49,29 @@ jobs:
       - name: Read the backup targets
         id: targets
         run: echo "repositories=$(jq -r '[.[].repository|select(startswith("ubiquity/"))|split("/")[1]]|join(",")' sentinel.backup-ci-targets.json)" >> "$GITHUB_OUTPUT"
+      # The vendored mint below needs its locked dependencies, installed
+      # without credentials as the supervisor jobs install them (the runner's
+      # own npm; the action itself runs on the runner's node24).
+      - name: Install the locked App token action dependencies
+        if: steps.targets.outputs.repositories != ''
+        run: |
+          for attempt in 1 2 3; do
+            npm ci --omit=dev --ignore-scripts --no-audit --no-fund --prefix .github/actions/sentinel-app-token && exit 0
+            [ "$attempt" = 3 ] || sleep 15
+          done
+          exit 1
       - name: Mint the target read token
         id: target-token
         if: steps.targets.outputs.repositories != ''
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: ./.github/actions/sentinel-app-token
         with:
           client-id: Iv23liHUJNXds9mU3j7Q
           private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
           owner: ubiquity
           repositories: ${{ steps.targets.outputs.repositories }}
+          # A listed repository the installation cannot reach is dropped from
+          # this read token, never widened, instead of failing the pass.
+          tolerate-inaccessible-repositories: "true"
           permission-contents: read
           permission-pull-requests: read
           permission-checks: read
