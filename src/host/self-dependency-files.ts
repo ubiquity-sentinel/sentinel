@@ -17,6 +17,7 @@ export const SELF_ACTION_FILES = [
   "lib/mint-grant.js",
   "lib/post.js",
   "lib/request.js",
+  "lib/tolerant-mint.js",
   "main.js",
   "package-lock.json",
   "package.json",

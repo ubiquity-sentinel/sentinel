@@ -29,6 +29,20 @@ The action is dormant until a reviewed workflow explicitly selects this local
 path from its clean protected launcher checkout. No workflow or runtime policy
 is activated by adding these files.
 
+A second adaptation (`lib/tolerant-mint.js`) is selected only by the explicit
+`tolerate-inaccessible-repositories: "true"` input of a repository mint. The
+upstream request pair runs first and is unchanged for a reachable list. Only
+GitHub's refusal of the list as not accessible to the installation (or a
+first-name installation lookup that is missing or belongs to another account;
+lookups never follow a redirect) starts a bounded bisection by revoked probe
+mints for subsets of the same list with the same permissions, against the
+requested owner's own installation. The token then covers exactly the reachable
+names, never more (a token naming anything else is revoked and fails), and
+`unavailable-repositories` plus one warning line name the dropped ones. An
+optional `known-unavailable` hint (an earlier job's output) only removes listed
+names up front. No reachable name, more than three dropped names or more than a
+quarter of the list, or a spent probe bound still fails the mint.
+
 Upstream source formatting follows the repository formatter. Entry functions use
 explicit await for the existing asynchronous operation. Credential-consumer
 failure, retry and revocation diagnostics use static messages without exception
