@@ -1,5 +1,43 @@
 # Sentinel decisions
 
+## Protected authority dependencies: review follow-up #240 (2026-11-18)
+
+The protected set remains scoped to the owner's 2026-10-30 categories:
+credential selection, write-token dispatch, merge authorization and promotion,
+plus the protection policy itself. The canonical inventory is
+`src/host/hosted-authority-protected-paths.ts`, consumed by the local template,
+Sentinel target policy and owner-landing/merge enforcement; prose inventories
+are not another source of configuration.
+
+The #240 follow-up includes these direct dependencies in that inventory:
+
+- Merge authorization: `src/repair/review-gate.ts` and
+  `src/github/review-normalize.ts`. The latter is not just a parser: its
+  `completedReviewMatchesReceipt` predicate authorizes the protected merge
+  executor's independently observed current-head receipt.
+- Promotion state and transition validation:
+  `src/host/actions-supervisor-state.ts`,
+  `src/host/actions-supervisor-installation-state.ts` and
+  `src/contracts/hosted-supervisor-installation.ts`.
+- App-principal issuance proofs: `src/host/hosted-app-principal-source.ts` and
+  `src/host/hosted-app-principal-native.ts`.
+
+This is not blanket protection of every caller. The proposed merge/delivery
+orchestrators (`hosted-autonomy-delivery-pass`, `loop-carried-delivery`,
+`carried-review`, `loop-merge`), protected-touch callers
+(`loop-implementation-result`, `loop-conflict-resolution`,
+`actions-candidates-proof`, `review-snapshot`) and policy/data files
+(`passport-work-trial.ts`, `sentinel.targets.json`, `codex-review-rubric.ts`)
+remain ordinary work, consistent with the later 2026-11-17/18 decision not to
+make every caller owner-merged. The vendored rubric's separate read-only rule
+and historical pin/hash remain unchanged.
+
+The registry itself is protected, so this extension requires repository-owner
+landing. Under the 2026-11-17/18 publication policy, protected Sentinel source
+changes publish, pass CI and native review, and wait for the owner to merge;
+Sentinel's own `.github/` changes remain unpublished. No admission, accounting,
+credential-selection, runtime-model or severity policy is changed here.
+
 ## ai.ubq.fi source, auth, ops and tooling are ordinary work (2026-11-05)
 
 Owner directive (2026-11-05, "remove the policy"): the gateway's protected-path

@@ -3,8 +3,9 @@
  *
  * Owner directive 2026-10-30: keep only the files that mint or select
  * credentials, dispatch with write tokens, evaluate the merge gate, or promote.
- * Review parsing, queue plumbing, retention, notification and base-review files
- * are ordinary candidate work.
+ * Include direct authorization, state-transition and principal-proof
+ * dependencies, not every caller. Other review plumbing, queue plumbing,
+ * retention, notification and base-review files are ordinary candidate work.
  */
 export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
   .freeze([
@@ -34,6 +35,11 @@ export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
     "src/github/port-evidence.ts",
     "src/github/port-merge-policy.ts",
     "src/github/port-merge.ts",
+    // Review authorization, not just review plumbing: the loop/supervisor's
+    // accepted-receipt predicate and the merge executor's independently
+    // re-observed receipt match must not be weakened by an ordinary change.
+    "src/repair/review-gate.ts",
+    "src/github/review-normalize.ts",
     "src/repair/loop-checks.ts",
     "src/repair/merge-gate-checks.ts",
     "src/repair/ci-rejection.ts",
@@ -106,7 +112,15 @@ export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
     "src/host/actions-target-preparation.ts",
     "src/host/actions-supervisor-host.ts",
     "src/host/hosted-app-principal.ts",
+    // These proofs decide whether the issuer may grant the App principal.
+    "src/host/hosted-app-principal-source.ts",
+    "src/host/hosted-app-principal-native.ts",
     "src/contracts/hosted-supervisor-verification.ts",
+    // Hosted promotion's state readers, bootstrap/rollback settlement and
+    // installation-transition validation are part of the same authority.
+    "src/host/actions-supervisor-state.ts",
+    "src/host/actions-supervisor-installation-state.ts",
+    "src/contracts/hosted-supervisor-installation.ts",
   ]);
 
 /**
@@ -142,8 +156,8 @@ export const LOCAL_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
 
 /**
  * Sentinel's own authority (owner decision 2026-10-30): every entry above.
- * A configured protected change to one of these stays forbidden AND
- * unpublished; it never becomes an owner-landing publication.
+ * Protected source changes publish for owner landing and are never merged
+ * autonomously. Sentinel's own `.github/` changes remain unpublished.
  */
 export const SENTINEL_AUTHORITY_PATHS: readonly string[] = Object.freeze([
   ...HOSTED_AUTHORITY_PROTECTED_PATHS,
