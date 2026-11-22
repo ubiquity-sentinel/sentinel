@@ -143,6 +143,19 @@ export function extractSelfFailureSignature(
       summary: "a test assertion failed",
     };
   }
+  // The App action reports this API refusal without Deno's `error:` prefix.
+  // Keep only the closed cause, never the repository names or response URL.
+  if (
+    /There is at least one repository that does not exist or is not accessible to the parent installation/
+      .test(
+        logText,
+      )
+  ) {
+    return {
+      key: keyOf("app-token", context, "repository-access"),
+      summary: "the App token mint could not access a configured repository",
+    };
+  }
   // Actions prefixes raw log lines with UTC timestamps and error annotations.
   const genericError = logText.match(
     /^(?:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z )?(?:##\[error\])?error: ([^\n]+)$/m,
@@ -170,6 +183,17 @@ export function extractSelfFailureSignature(
     return {
       key: keyOf("cancelled", context),
       summary: "the job was cancelled before it completed",
+    };
+  }
+  // JavaScript Actions emit annotations directly, without an `error:` prefix.
+  // Preserve the more specific exit/cancellation signatures above.
+  if (
+    /^(?:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z )?##\[error\][^\n]+$/m
+      .test(logText)
+  ) {
+    return {
+      key: keyOf("error", context),
+      summary: "the job reported an error",
     };
   }
   return {
