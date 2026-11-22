@@ -1,6 +1,24 @@
 # Sentinel
 
-Sentinel repairs eligible GitHub issues with isolated concurrent workers, durable candidate/accounting state, current-head structured review and trusted integration/release controllers. Current targets are `ubiquity-sentinel/sentinel`, `ubiquity/ai.ubq.fi` and `ubiquity/passport.ubq.fi`; AI and Passport are limited to issue repairs for now. Passport is a private target, so its target state, evidence and logs are subject to this public controller's visibility. Captured-incident and deployment activation remain separate scope. The implementation uses Deno and TypeScript; runtime workers cannot access credential, state or promotion authority.
+Sentinel runs coding work on GitHub-hosted runners through two entries. Both use Deno and TypeScript and review exact candidate commits in native Codex review mode.
+
+## Issue mode
+
+Open an eligible GitHub issue in a public repository configured for the supervisor. The protected supervisor discovers it on its scheduled run and publishes a repair PR. Follow the issue and PR for progress. Sentinel merges qualifying repairs through its review and CI gates. [Supervisor targets](sentinel.targets.json)
+
+## On-demand mode
+
+Submit a JSON request on `development` after the repository owner admits that ref to the protected environment. Name an admitted public repository, the task and any specific base branch. Sentinel returns an accepted result branch and an optional draft PR. You control the merge. [Operator job guide](jobs/README.md)
+
+## Review and delivery
+
+Both entries capture and review the exact candidate against the task that authorized it. Issue repair uses the live issue statement. Operator jobs use the original, pinned request prompt. Changed candidates need completed native Codex review with a positive task assessment and all findings accounted for. P0 is the only severity-based blocker. Lower-severity findings remain visible in the outcome, and issue repair files receipt-bound follow-ups through its existing path. A P0 or negative task assessment can trigger isolated correction and another review within the deadline. Review rounds and ordinary CI-fix attempts are accounting, with a separate three-attempt CI-fix limit for base repair. [Review policy](docs/DECISIONS.md#review-round-ceiling-and-ci-fix-cap-retired-2026-10-3031) · [Base-repair policy](src/repair/base-repair.ts)
+
+Issue repair requires current-head review and applicable CI at the expected-head merge. Operator jobs report the verdict in the run result. Accepted changes also carry a `sentinel/agent-job-review` commit status on the exact published SHA and the verdict on the optional draft PR. To merge an operator result, check that the reviewed SHA still matches the result, verify the target's CI and requirements, and merge it yourself. [Operator job results](jobs/README.md#results)
+
+## Supervisor operation
+
+The supervisor runs isolated issue workers and keeps durable candidate and accounting state. Trusted controllers own GitHub writes and release decisions. Captured-incident and deployment activation follow separate gates.
 
 Start with [the current master plan](MASTER-PLAN.md), [project instructions](AGENTS.md) and [owner decisions](docs/DECISIONS.md). [The build ledger](docs/build-status.md) is the sole source of current task ownership and acceptance; [the active memory plan](docs/sentinel-memory-plan.md) covers durable attempt memory and self-healing. Historical plans and receipts remain available in Git history.
 
@@ -20,7 +38,7 @@ The report ends with a Thresholds table: the throughput watchdog's own evaluatio
 
 The 2026-10-20 owner grant authorizes the orchestrator's hosted workflow control, direct development pushes, launcher/runtime/state updates and gated autonomous merges for this effort without repeated approval. The default per-attempt boundary remains for future efforts without equivalent authorization; see the [hosted approval boundary](AGENTS.md#hosted-approval-boundary). Worker assignments retain their narrower permissions.
 
-Runtime updates use exact CI-green launcher self-install and dispatcher auto-follow, whose source default is on; an explicit repository override can hold it off and workflow changes require a manual advance. Documented implementation policy, source defaults, hosted configuration and actual routes are distinguished in [owner decisions](docs/DECISIONS.md#runtime-model-policy-and-trusted-route-configuration). Autonomous PRs require completed current-head native Codex review, positive task acceptance and current CI. P0 is the only severity-based merge blocker; P1 and lower findings remain receipt-bound issue follow-ups. Acceptance is green scheduled cycles plus an issue → PR → native review → merge per target; `sentinel-release` stays disabled.
+Runtime updates use exact CI-green launcher self-install and dispatcher auto-follow, whose source default is on; an explicit repository override can hold it off and workflow changes require a manual advance. Documented implementation policy, source defaults, hosted configuration and actual routes are distinguished in [owner decisions](docs/DECISIONS.md#runtime-model-policy-and-trusted-route-configuration). Operational acceptance is green scheduled cycles plus an issue → PR → native review → merge per target. `sentinel-release` stays disabled.
 
 [Shared contracts](docs/contracts.md) define records, ports, producer/consumer wire shapes and evidence custody. [The activation checklist](docs/activation-checklist.md) preserves target ownership, current VPS release boundaries and required live proofs. [Reviewer alignment](docs/codex-review-rubric-alignment-2026-10-08.md) identifies the historical vendored rubric pin and the current native-review path. [Source adaptation pins](docs/third-party-reuse.md) and [license notices](THIRD_PARTY_NOTICES.md) cover reused components.
 

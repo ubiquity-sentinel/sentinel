@@ -3,6 +3,8 @@
 Date: 2026-11-17. Repository: `ubiquity-sentinel/sentinel`. Branch:
 `claude/great-ride-tu5r70` (all work is pushed; nothing is on `development`).
 
+This handoff records the November 17 side-ref setup. For the reviewed operator entry on `development` and its protected admission prerequisite, see the [operator job guide](../../jobs/README.md).
+
 ## Goal
 
 The owner's VPS is out of compute for coding agents. This branch adds a lane
