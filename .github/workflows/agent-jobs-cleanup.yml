@@ -1,0 +1,87 @@
+# EXPERIMENTAL manual agent-job lane: delete result branches (jobs/README.md).
+#
+# A commit that adds `jobs/cleanup/<name>.json` deletes the
+# `agent-jobs/<job>-<run>-<attempt>` branches it names. The script refuses any
+# other branch name. No model runs here.
+name: sentinel-agent-jobs-cleanup
+run-name: sentinel-agent-jobs-cleanup ${{ github.sha }}
+
+on:
+  push:
+    branches:
+      - claude/great-ride-tu5r70
+      - "experimental/**"
+    paths:
+      - "jobs/cleanup/**.json"
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    if: github.repository == 'ubiquity-sentinel/sentinel'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.x
+      - name: Plan the cleanup
+        id: plan
+        run: |
+          set -euo pipefail
+          # The request files the pushed head commit added or changed.
+          mapfile -t files < <(git diff-tree --no-commit-id --name-only \
+            --diff-filter=AM -r HEAD -- 'jobs/cleanup/*.json')
+          deno run --no-lock \
+            --allow-read=. --allow-write="$GITHUB_OUTPUT" \
+            --allow-env=GITHUB_OUTPUT \
+            ops/agent-jobs-cleanup.ts plan "${files[@]}"
+
+  delete:
+    name: delete (${{ matrix.owner }})
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: ${{ vars.SENTINEL_AGENT_JOBS_ENVIRONMENT || 'sentinel-supervisor' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.x
+      - name: Mint the write App token
+        id: write-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: Iv23liHUJNXds9mU3j7Q
+          private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
+          owner: ${{ matrix.owner }}
+          repositories: ${{ matrix.repositories }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Delete agent branches
+        env:
+          AGENT_JOBS_CLEANUP_OWNER: ${{ matrix.owner }}
+          AGENT_JOBS_WRITE_TOKEN: ${{ steps.write-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(git diff-tree --no-commit-id --name-only \
+            --diff-filter=AM -r HEAD -- 'jobs/cleanup/*.json')
+          deno run --no-lock \
+            --allow-read=. --allow-write="$GITHUB_STEP_SUMMARY" \
+            --allow-net=api.github.com \
+            --allow-env=AGENT_JOBS_CLEANUP_OWNER,AGENT_JOBS_WRITE_TOKEN,GITHUB_STEP_SUMMARY \
+            ops/agent-jobs-cleanup.ts delete "${files[@]}"
