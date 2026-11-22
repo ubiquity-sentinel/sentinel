@@ -9,12 +9,17 @@
  *
  * Packing uses width before depth: every job gets its own runner until the
  * cell budget is spent, and only then do cells take a second, third... agent.
- * A cell holds jobs of one repository owner, because one App installation
- * token is minted per cell.
+ * A cell holds jobs of one repository owner and runner kind. The separate
+ * publisher mints an App token for the cell's admitted repositories.
  *
  * The only bounds are platform facts: a matrix holds 256 jobs and a hosted
  * job ends after six hours.
  */
+
+import {
+  isBoundedTaskText,
+  MAX_REVIEW_TASK_BODY,
+} from "../src/contracts/review-task-acceptance.ts";
 
 /** GitHub's matrix size limit. */
 export const AGENT_JOBS_MAX_CELLS = 256;
@@ -68,6 +73,8 @@ export interface AgentJobV1 {
   repository: string;
   /** Base branch; `null` means the repository default branch. */
   base: string | null;
+  /** Exact Git object resolved by the hosted planner. Never a request field. */
+  baseSha?: string;
   prompt: string;
   /** Host commands run in the checkout before the model starts. */
   setup: string[];
@@ -78,6 +85,8 @@ export interface AgentJobV1 {
   reasoningEffort?: AgentJobReasoningEffort;
   /** Open a draft pull request for the pushed branch. */
   pr: boolean;
+  /** Run native code review unless the operator explicitly opts out. */
+  review?: boolean;
   /** Hosted runner kind the agent runs on. */
   runner: AgentJobRunner;
 }
@@ -95,6 +104,8 @@ export interface AgentJobsCellV1 {
 
 export interface AgentJobsPlanV1 {
   schema: "sentinel.agent-jobs.plan/v1";
+  /** First admission time used by the hosted review deadline. */
+  createdAtMs?: number;
   cells: AgentJobsCellV1[];
 }
 
@@ -122,6 +133,21 @@ export function resolveAgentJobReasoningEffort(
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function requestBody(request: unknown): Record<string, unknown> & {
+  jobs: unknown[];
+} {
+  const body = Array.isArray(request) ? { jobs: request } : request;
+  if (!record(body) || !Array.isArray(body.jobs)) {
+    fail('expected {"jobs":[...]} with at least one job');
+  }
+  if (
+    Object.keys(body).some((key) =>
+      !["jobs", "agentsPerCell", "maxCells"].includes(key)
+    )
+  ) fail("unknown request field");
+  return { ...body, jobs: body.jobs };
 }
 
 function boundedInt(
@@ -152,12 +178,14 @@ function parseJob(value: unknown): AgentJobV1 {
     "model",
     "reasoningEffort",
     "pr",
+    "review",
     "runner",
   ];
   for (const key of Object.keys(value)) {
-    if (!known.includes(key)) fail(`unknown job field ${key}`);
+    if (!known.includes(key)) fail("unknown job field");
   }
-  const { id, repository, base, prompt, setup, model, pr, runner } = value;
+  const { id, repository, base, prompt, setup, model, pr, review, runner } =
+    value;
   if (typeof id !== "string" || !ID_PATTERN.test(id)) {
     fail("job id must match [a-z0-9][a-z0-9-]{0,39}");
   }
@@ -171,6 +199,9 @@ function parseJob(value: unknown): AgentJobV1 {
   if (typeof prompt !== "string" || prompt.trim().length === 0) {
     fail(`job ${id}: prompt must not be empty`);
   }
+  if (!isBoundedTaskText(prompt, MAX_REVIEW_TASK_BODY)) {
+    fail(`job ${id}: prompt exceeds the task receipt text bounds`);
+  }
   const commands = setup ?? [];
   if (
     !Array.isArray(commands) ||
@@ -182,6 +213,9 @@ function parseJob(value: unknown): AgentJobV1 {
   ) fail(`job ${id}: model is not a plain model id`);
   if (pr !== undefined && typeof pr !== "boolean") {
     fail(`job ${id}: pr must be a boolean`);
+  }
+  if (review !== undefined && typeof review !== "boolean") {
+    fail(`job ${id}: review must be a boolean`);
   }
   if (
     runner !== undefined && runner !== null &&
@@ -209,6 +243,7 @@ function parseJob(value: unknown): AgentJobV1 {
     model: model ?? null,
     reasoningEffort: resolveAgentJobReasoningEffort(value.reasoningEffort, id),
     pr: pr ?? false,
+    review: review ?? true,
     runner: (runner ?? "linux-x64") as AgentJobRunner,
   };
 }
@@ -218,8 +253,8 @@ export function planAgentJobs(
   request: unknown,
   overrides: { agentsPerCell?: unknown; maxCells?: unknown } = {},
 ): AgentJobsPlanV1 {
-  const body = Array.isArray(request) ? { jobs: request } : request;
-  if (!record(body) || !Array.isArray(body.jobs) || body.jobs.length === 0) {
+  const body = requestBody(request);
+  if (body.jobs.length === 0) {
     fail('expected {"jobs":[...]} with at least one job');
   }
   const agentsPerCell = boundedInt(
@@ -240,7 +275,7 @@ export function planAgentJobs(
   const ids = new Set(jobs.map((job) => job.id));
   if (ids.size !== jobs.length) fail("job ids must be unique");
 
-  // A cell is one runner with one App token: one owner and one runner kind.
+  // A cell holds one owner and one runner kind.
   const byOwner = new Map<string, AgentJobV1[]>();
   for (const job of jobs) {
     const owner = `${job.repository.split("/")[0]}\n${job.runner}`;
@@ -295,54 +330,5 @@ export function planAgentJobs(
 
 /** Merge several request documents (push-triggered inbox files) into one. */
 export function mergeAgentJobRequests(documents: unknown[]): unknown {
-  const jobs: unknown[] = [];
-  for (const document of documents) {
-    const list = Array.isArray(document)
-      ? document
-      : record(document) && Array.isArray(document.jobs)
-      ? document.jobs
-      : fail("a request document has no jobs array");
-    jobs.push(...list);
-  }
-  return { jobs };
-}
-
-/**
- * CLI: `AGENT_JOBS_JSON` (dispatch input) or request file paths as arguments
- * (pushed inbox files). Writes `plan.json` and the matrix output.
- */
-if (import.meta.main) {
-  const inline = Deno.env.get("AGENT_JOBS_JSON") ?? "";
-  const documents = inline.trim().length > 0
-    ? [JSON.parse(inline)]
-    : await Promise.all(
-      Deno.args.map(async (path) => JSON.parse(await Deno.readTextFile(path))),
-    );
-  if (documents.length === 0) fail("no job request was supplied");
-  const plan = planAgentJobs(mergeAgentJobRequests(documents), {
-    agentsPerCell: Deno.env.get("AGENT_JOBS_PER_CELL"),
-    maxCells: Deno.env.get("AGENT_JOBS_MAX_CELLS"),
-  });
-  await Deno.mkdir(".agent-jobs", { recursive: true });
-  await Deno.writeTextFile(".agent-jobs/plan.json", JSON.stringify(plan));
-  const matrix = {
-    include: plan.cells.map((cell) => ({
-      cellId: cell.cellId,
-      owner: cell.owner,
-      repositories: cell.repositories,
-      runner: cell.runner,
-      timeoutMinutes: cell.timeoutMinutes,
-    })),
-  };
-  const output = Deno.env.get("GITHUB_OUTPUT");
-  if (output) {
-    await Deno.writeTextFile(output, `matrix=${JSON.stringify(matrix)}\n`, {
-      append: true,
-    });
-  }
-  const agents = plan.cells.reduce((sum, cell) => sum + cell.jobs.length, 0);
-  console.log(`planned ${agents} agents in ${plan.cells.length} cells`);
-  for (const cell of plan.cells) {
-    console.log(`${cell.cellId}: ${cell.jobs.map((job) => job.id).join(", ")}`);
-  }
+  return { jobs: documents.flatMap((document) => requestBody(document).jobs) };
 }

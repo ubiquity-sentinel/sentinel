@@ -1,30 +1,15 @@
-# EXPERIMENTAL manual agent-job lane (jobs/README.md).
-#
-# An operator hands Sentinel a list of coding jobs; each job is one Codex
-# agent working on one repository, unsandboxed and with network access, for up
-# to the six hours a hosted job may run. Jobs are packed several agents to a
-# runner, and each agent's work is pushed to a fresh
-# `agent-jobs/<job>-<run>` branch of its target.
-#
-# This lane is separate from the supervisor: it reads and writes no Sentinel
-# state ref, reserves and settles nothing, reviews nothing and merges nothing.
-# Its cells share the account's concurrent-job limit with the supervisor.
-#
-# Two ways to start it:
-#   - push a commit that adds `jobs/inbox/<name>.json` to an experimental
-#     branch (works from the branch itself), or
-#   - workflow_dispatch with the `jobs` input (GitHub only offers this once
-#     this file also exists on the default branch).
+# Operator job lane (jobs/README.md). Public implementation cells share hosted
+# capacity with the supervisor. Independent review and publication run on
+# fresh runners and leave Sentinel issue state untouched.
 name: sentinel-agent-jobs
 run-name: sentinel-agent-jobs ${{ github.event_name }} ${{ github.sha }}
 
 on:
   push:
     branches:
-      - claude/great-ride-tu5r70
-      - "experimental/**"
+      - development
     paths:
-      - "jobs/inbox/**.json"
+      - "jobs/inbox/*.json"
   workflow_dispatch:
     inputs:
       jobs:
@@ -47,16 +32,17 @@ permissions:
 
 jobs:
   plan:
-    if: github.repository == 'ubiquity-sentinel/sentinel'
+    if: github.repository == 'ubiquity-sentinel/sentinel' && github.ref == 'refs/heads/development'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
+      has-work: ${{ steps.plan.outputs.has-work }}
       matrix: ${{ steps.plan.outputs.matrix }}
       artifact-id: ${{ steps.plan-artifact.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          fetch-depth: 2
+          fetch-depth: 0
           persist-credentials: false
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
@@ -64,202 +50,40 @@ jobs:
       - name: Plan cells
         id: plan
         env:
+          AGENT_JOBS_PREP_DIR: ${{ runner.temp }}/agent-job-plan
           AGENT_JOBS_JSON: ${{ inputs.jobs }}
           AGENT_JOBS_PER_CELL: ${{ inputs.agents_per_cell || vars.SENTINEL_AGENT_JOBS_PER_CELL }}
           AGENT_JOBS_MAX_CELLS: ${{ inputs.max_cells || vars.SENTINEL_AGENT_JOBS_MAX_CELLS }}
-        run: |
-          set -euo pipefail
-          files=()
-          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
-            # The request files the pushed head commit added or changed.
-            mapfile -t files < <(git diff-tree --no-commit-id --name-only \
-              --diff-filter=AM -r HEAD -- 'jobs/inbox/*.json')
-          fi
-          deno run --no-lock \
-            --allow-read=. --allow-write=.agent-jobs,"$GITHUB_OUTPUT" \
-            --allow-env=AGENT_JOBS_JSON,AGENT_JOBS_PER_CELL,AGENT_JOBS_MAX_CELLS,GITHUB_OUTPUT \
-            ops/agent-jobs-plan.ts "${files[@]}"
-      - uses: actions/upload-artifact@v4
+        run: >-
+          deno run --frozen
+          --allow-read="$GITHUB_EVENT_PATH"
+          --allow-write="$AGENT_JOBS_PREP_DIR,$GITHUB_OUTPUT"
+          --allow-run=git --allow-net=api.github.com
+          --allow-env=PATH,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_EVENT_NAME,GITHUB_EVENT_PATH,GITHUB_SHA,GITHUB_OUTPUT,AGENT_JOBS_JSON,AGENT_JOBS_PER_CELL,AGENT_JOBS_MAX_CELLS,AGENT_JOBS_PREP_DIR
+          ops/agent-jobs-prepare.ts inbox
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: steps.plan.outputs.has-work == 'true'
         id: plan-artifact
         with:
           name: agent-jobs-plan-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .agent-jobs/plan.json
+          path: ${{ runner.temp }}/agent-job-plan/plan.json
           if-no-files-found: error
           include-hidden-files: true
           retention-days: 7
 
-  # The model runs here, unsandboxed. The cell holds a read-only App token for
-  # cloning and the gateway model token; it never holds a write credential.
-  cell:
-    name: cell (${{ matrix.cellId }})
+  delivery:
+    name: delivery (${{ matrix.cellId }})
     needs: plan
-    # The job's `runner` field picks the hosted runner kind (jobs/README.md).
-    runs-on: ${{ matrix.runner || 'ubuntu-latest' }}
-    timeout-minutes: 360
-    environment:
-      name: ${{ vars.SENTINEL_AGENT_JOBS_ENVIRONMENT || 'sentinel-supervisor' }}
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.has-work == 'true' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-      # The cell host bounds each agent with coreutils `timeout`, which macOS
-      # does not ship.
-      - name: Install coreutils (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew install coreutils
-          echo "$(brew --prefix coreutils)/libexec/gnubin" >> "$GITHUB_PATH"
-      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
-        with:
-          deno-version: v2.x
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 24.19.0
-      - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
-        with:
-          bun-version: 1.4.0
-          no-cache: true
-      # Follows the latest Codex release, like the supervisor (0.154.0 exits on
-      # the first HTTP 429; 0.169 and later wait by Retry-After).
-      # Set the repository variable to an exact version to hold one back.
-      - name: Install Codex
-        env:
-          CODEX_VERSION: ${{ vars.SENTINEL_AGENT_JOBS_CODEX_VERSION || 'latest' }}
-        run: |
-          npm install --global "@openai/codex@${CODEX_VERSION}"
-          codex --version
-      - name: Mint the read-only App token
-        id: read-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: Iv23liHUJNXds9mU3j7Q
-          private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
-          owner: ${{ matrix.owner }}
-          repositories: ${{ matrix.repositories }}
-          permission-contents: read
-      - uses: actions/download-artifact@v4
-        with:
-          # A failed-only rerun reuses the successful plan's original artifact.
-          artifact-ids: ${{ needs.plan.outputs.artifact-id }}
-          path: .agent-jobs
-          merge-multiple: true
-      # Progress probe: the API serves neither the log nor the annotations of a
-      # running job, so the cell uploads a small text artifact per job every 15
-      # minutes (liveness lines and commit subjects). The runtime token reaches
-      # this run's artifacts only, and the cell withholds it from the agents.
-      # Both steps are best effort: without them the cell just skips the probe.
-      - name: Expose the artifact endpoint to the progress probe
-        continue-on-error: true
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
-        with:
-          script: |
-            core.exportVariable("ACTIONS_RUNTIME_TOKEN", process.env.ACTIONS_RUNTIME_TOKEN);
-            core.exportVariable("ACTIONS_RESULTS_URL", process.env.ACTIONS_RESULTS_URL);
-      - name: Install the progress probe
-        continue-on-error: true
-        run: |
-          probe="$RUNNER_TEMP/agent-jobs-progress-probe"
-          mkdir -p "$probe"
-          cp ops/agent-jobs-progress.mjs "$probe/"
-          npm install --prefix "$probe" --no-audit --no-fund @actions/artifact@6.3.1
-          echo "AGENT_JOBS_PROGRESS_SCRIPT=$probe/agent-jobs-progress.mjs" >> "$GITHUB_ENV"
-      # Build cache: compiled objects from earlier jobs of the same owner on the
-      # same runner kind (jobs/README.md). Best effort; a miss only costs time.
-      - name: Restore the build cache
-        id: build-cache
-        continue-on-error: true
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ${{ runner.temp }}/agent-jobs-cache
-          key: agent-jobs-cache-${{ matrix.runner || 'ubuntu-latest' }}-${{ matrix.owner }}-${{ github.run_id }}-${{ matrix.cellId }}
-          restore-keys: |
-            agent-jobs-cache-${{ matrix.runner || 'ubuntu-latest' }}-${{ matrix.owner }}-
-      - name: Prepare the build cache
-        continue-on-error: true
-        run: |
-          mkdir -p "$RUNNER_TEMP/agent-jobs-cache/ccache"
-          {
-            echo "AGENT_JOBS_CACHE_DIR=$RUNNER_TEMP/agent-jobs-cache"
-            echo "CCACHE_DIR=$RUNNER_TEMP/agent-jobs-cache/ccache"
-            echo "CCACHE_MAXSIZE=3G"
-            echo "CCACHE_COMPILERCHECK=content"
-          } >> "$GITHUB_ENV"
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            sudo apt-get install -y --no-install-recommends ccache >/dev/null 2>&1 || true
-          fi
-      - name: Run the cell's agents
-        env:
-          AGENT_JOBS_PLAN: .agent-jobs/plan.json
-          AGENT_JOBS_CELL_ID: ${{ matrix.cellId }}
-          AGENT_JOBS_READ_TOKEN: ${{ steps.read-token.outputs.token }}
-          UOS_AI_TOKEN: ${{ secrets.UOS_AI_TOKEN }}
-          SENTINEL_MODEL_BASE_URL: ${{ vars.SENTINEL_MODEL_BASE_URL }}
-          SENTINEL_MODEL_ID: ${{ vars.SENTINEL_IMPLEMENTATION_MODEL_ID || 'gpt-6.1-sol' }}
-        run: >-
-          deno run --no-lock --allow-all ops/agent-jobs-cell.ts
-      - name: Save the build cache
-        if: ${{ !cancelled() }}
-        continue-on-error: true
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ${{ runner.temp }}/agent-jobs-cache
-          key: ${{ steps.build-cache.outputs.cache-primary-key }}
-      - uses: actions/upload-artifact@v4
-        if: ${{ !cancelled() }}
-        with:
-          name: agent-jobs-cell-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.cellId }}
-          path: .agent-jobs/out
-          if-no-files-found: error
-          include-hidden-files: true
-          retention-days: 7
-
-  # No model runs here. This is the only job that holds a write token.
-  publish:
-    name: publish (${{ matrix.cellId }})
-    needs: [plan, cell]
-    if: ${{ !cancelled() && needs.plan.result == 'success' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    environment:
-      name: ${{ vars.SENTINEL_AGENT_JOBS_ENVIRONMENT || 'sentinel-supervisor' }}
-    strategy:
-      fail-fast: false
-      max-parallel: 4
-      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
-        with:
-          deno-version: v2.x
-      - uses: actions/download-artifact@v4
-        with:
-          name: agent-jobs-cell-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.cellId }}
-          path: .agent-jobs/out
-      - name: Mint the write App token
-        id: write-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: Iv23liHUJNXds9mU3j7Q
-          private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
-          owner: ${{ matrix.owner }}
-          repositories: ${{ matrix.repositories }}
-          permission-contents: write
-          permission-pull-requests: write
-          permission-workflows: write
-      - name: Push agent branches
-        env:
-          AGENT_JOBS_ARTIFACT_DIR: .agent-jobs/out
-          AGENT_JOBS_WRITE_TOKEN: ${{ steps.write-token.outputs.token }}
-        run: >-
-          deno run --no-lock
-          --allow-read --allow-write --allow-run
-          --allow-net=api.github.com
-          --allow-env=PATH,AGENT_JOBS_ARTIFACT_DIR,AGENT_JOBS_WRITE_TOKEN,RUNNER_TEMP,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_STEP_SUMMARY
-          ops/agent-jobs-publish.ts
+    uses: ./.github/workflows/agent-jobs-delivery.yml
+    with:
+      plan-artifact-id: ${{ needs.plan.outputs.artifact-id }}
+      cell-id: ${{ matrix.cellId }}
+      runner: ${{ matrix.runner }}
+      owner: ${{ matrix.owner }}
+      repositories: ${{ matrix.repositories }}
+    secrets:
+      UOS_AI_TOKEN: ${{ secrets.UOS_AI_TOKEN }}

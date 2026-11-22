@@ -1,0 +1,284 @@
+# One call per cell keeps the trusted review artifact ID scoped to its publisher.
+name: Sentinel agent-job delivery
+
+on:
+  workflow_call:
+    inputs:
+      plan-artifact-id:
+        type: string
+        required: true
+      cell-id:
+        type: string
+        required: true
+      runner:
+        type: string
+        required: true
+      owner:
+        type: string
+        required: true
+      repositories:
+        type: string
+        required: true
+    secrets:
+      UOS_AI_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  # The initial model runs here, unsandboxed. Target clones are anonymous.
+  cell:
+    name: cell (${{ inputs.cell-id }})
+    if: >-
+      github.repository == 'ubiquity-sentinel/sentinel' &&
+      github.ref == 'refs/heads/development' &&
+      github.workflow_ref == 'ubiquity-sentinel/sentinel/.github/workflows/agent-jobs.yml@refs/heads/development'
+    # The job's `runner` field picks the hosted runner kind (jobs/README.md).
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 360
+    outputs:
+      artifact-id: ${{ steps.cell-artifact.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      # The cell host bounds each agent with coreutils `timeout`, which macOS
+      # does not ship.
+      - name: Install coreutils (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install coreutils
+          echo "$(brew --prefix coreutils)/libexec/gnubin" >> "$GITHUB_PATH"
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.x
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
+        with:
+          bun-version: 1.4.0
+          no-cache: true
+      # The initial cell follows the latest Codex release (0.154.0 exits on
+      # the first HTTP 429; 0.169 and later wait by Retry-After).
+      # Set the repository variable to an exact version to hold one back.
+      - name: Install Codex
+        env:
+          CODEX_VERSION: ${{ vars.SENTINEL_AGENT_JOBS_CODEX_VERSION || 'latest' }}
+        run: |
+          npm install --global "@openai/codex@${CODEX_VERSION}"
+          codex --version
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          # A failed-only rerun reuses the successful plan's original artifact.
+          artifact-ids: ${{ inputs.plan-artifact-id }}
+          path: .agent-jobs
+          merge-multiple: true
+      # Progress probe: the API serves neither the log nor the annotations of a
+      # running job, so the cell uploads a small text artifact per job every 15
+      # minutes (liveness lines and commit subjects). The runtime token reaches
+      # this run's artifacts only, and the cell withholds it from the agents.
+      # Both steps are best effort: without them the cell just skips the probe.
+      - name: Expose the artifact endpoint to the progress probe
+        continue-on-error: true
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            core.exportVariable("ACTIONS_RUNTIME_TOKEN", process.env.ACTIONS_RUNTIME_TOKEN);
+            core.exportVariable("ACTIONS_RESULTS_URL", process.env.ACTIONS_RESULTS_URL);
+      - name: Install the progress probe
+        continue-on-error: true
+        run: |
+          probe="$RUNNER_TEMP/agent-jobs-progress-probe"
+          mkdir -p "$probe"
+          cp ops/agent-jobs-progress.mjs "$probe/"
+          npm install --prefix "$probe" --no-audit --no-fund @actions/artifact@6.3.1
+          echo "AGENT_JOBS_PROGRESS_SCRIPT=$probe/agent-jobs-progress.mjs" >> "$GITHUB_ENV"
+      # Build cache: compiled objects from earlier jobs of the same owner on the
+      # same runner kind (jobs/README.md). Best effort; a miss only costs time.
+      - name: Restore the build cache
+        id: build-cache
+        continue-on-error: true
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/agent-jobs-cache
+          key: agent-jobs-cache-${{ inputs.runner }}-${{ inputs.owner }}-${{ github.run_id }}-${{ inputs.cell-id }}
+          restore-keys: |
+            agent-jobs-cache-${{ inputs.runner }}-${{ inputs.owner }}-
+      - name: Prepare the build cache
+        continue-on-error: true
+        run: |
+          mkdir -p "$RUNNER_TEMP/agent-jobs-cache/ccache"
+          {
+            echo "AGENT_JOBS_CACHE_DIR=$RUNNER_TEMP/agent-jobs-cache"
+            echo "CCACHE_DIR=$RUNNER_TEMP/agent-jobs-cache/ccache"
+            echo "CCACHE_MAXSIZE=3G"
+            echo "CCACHE_COMPILERCHECK=content"
+          } >> "$GITHUB_ENV"
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get install -y --no-install-recommends ccache >/dev/null 2>&1 || true
+          fi
+      - name: Run the cell's agents
+        env:
+          AGENT_JOBS_PLAN: .agent-jobs/plan.json
+          AGENT_JOBS_CELL_ID: ${{ inputs.cell-id }}
+          UOS_AI_TOKEN: ${{ secrets.UOS_AI_TOKEN }}
+          SENTINEL_MODEL_BASE_URL: ${{ vars.SENTINEL_MODEL_BASE_URL }}
+          SENTINEL_MODEL_ID: ${{ vars.SENTINEL_IMPLEMENTATION_MODEL_ID || 'gpt-6.1-sol' }}
+        run: >-
+          deno run --no-lock --allow-all ops/agent-jobs-cell.ts
+      - name: Save the build cache
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/agent-jobs-cache
+          key: ${{ steps.build-cache.outputs.cache-primary-key }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        id: cell-artifact
+        if: ${{ !cancelled() }}
+        with:
+          name: agent-jobs-cell-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.cell-id }}
+          path: .agent-jobs/out
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7
+
+  review:
+    name: review (${{ inputs.cell-id }})
+    needs: cell
+    if: needs.cell.result == 'success' && needs.cell.outputs.artifact-id != ''
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 360
+    outputs:
+      artifact-id: ${{ steps.reviewed.outputs.artifact-id }}
+      run-tag: ${{ steps.gate.outputs.run-tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.x
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
+        with:
+          bun-version: 1.4.0
+          no-cache: true
+      - name: Expose Node and Bun to the Linux permission profile
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          sudo install -m755 "$(command -v node)" /usr/local/bin/node
+          sudo install -m755 "$(command -v bun)" /usr/local/bin/bun
+      - name: Install the Codex issue reviewer version
+        run: |
+          npm install --global @openai/codex@0.154.0
+          codex --version
+      - name: Enable Linux user namespaces for bubblewrap
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
+        run: |
+          set -euo pipefail
+          current_userns=$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || true)
+          if [ -n "$current_userns" ] && [ "$current_userns" != "1" ]; then
+            sudo sysctl -w kernel.unprivileged_userns_clone=1
+          fi
+          current_apparmor=$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true)
+          if [ -n "$current_apparmor" ] && [ "$current_apparmor" != "0" ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ inputs.plan-artifact-id }}
+          path: ${{ runner.temp }}/agent-job-plan
+          merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.cell.outputs.artifact-id }}
+          path: ${{ runner.temp }}/agent-job-cell
+          merge-multiple: true
+      - name: Validate and review cell results
+        id: gate
+        env:
+          AGENT_JOBS_PLAN: ${{ runner.temp }}/agent-job-plan/plan.json
+          AGENT_JOBS_CELL_ID: ${{ inputs.cell-id }}
+          AGENT_JOBS_ARTIFACT_DIR: ${{ runner.temp }}/agent-job-cell
+          AGENT_JOBS_REVIEWED_DIR: ${{ runner.temp }}/agent-job-reviewed
+          UOS_AI_TOKEN: ${{ secrets.UOS_AI_TOKEN }}
+          SENTINEL_CODEX_BASE_URL: ${{ vars.SENTINEL_MODEL_BASE_URL || 'https://ai.ubq.fi/v1' }}
+          SENTINEL_MODEL_ID: ${{ vars.SENTINEL_IMPLEMENTATION_MODEL_ID || 'gpt-6.1-sol' }}
+        run: |
+          set -euo pipefail
+          deno run --frozen \
+            --allow-read --allow-write --allow-run --allow-net=api.github.com \
+            --allow-env=PATH,HOME,TMPDIR,NODE_V8_COVERAGE,RUNNER_TEMP,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,AGENT_JOBS_PLAN,AGENT_JOBS_CELL_ID,AGENT_JOBS_ARTIFACT_DIR,AGENT_JOBS_REVIEWED_DIR,UOS_AI_TOKEN,SENTINEL_CODEX_BASE_URL,SENTINEL_MODEL_ID \
+            ops/agent-jobs-review.ts
+          printf 'run-tag=%s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        id: reviewed
+        with:
+          name: agent-jobs-reviewed-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.cell-id }}
+          path: ${{ runner.temp }}/agent-job-reviewed
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: publish (${{ inputs.cell-id }})
+    needs: review
+    if: needs.review.result == 'success' && needs.review.outputs.artifact-id != '' && needs.review.outputs.run-tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: ${{ vars.SENTINEL_AGENT_JOBS_ENVIRONMENT || 'sentinel-supervisor' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.x
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ inputs.plan-artifact-id }}
+          path: ${{ runner.temp }}/agent-job-plan
+          merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.review.outputs.artifact-id }}
+          path: ${{ runner.temp }}/agent-job-reviewed
+          merge-multiple: true
+      - name: Mint the publication App token
+        id: write-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: Iv23liHUJNXds9mU3j7Q
+          private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
+          owner: ${{ inputs.owner }}
+          repositories: ${{ inputs.repositories }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-statuses: write
+      - name: Publish verified agent branches and statuses
+        env:
+          AGENT_JOBS_PLAN: ${{ runner.temp }}/agent-job-plan/plan.json
+          AGENT_JOBS_CELL_ID: ${{ inputs.cell-id }}
+          AGENT_JOBS_REVIEWED_DIR: ${{ runner.temp }}/agent-job-reviewed
+          AGENT_JOBS_REVIEW_RUN_TAG: ${{ needs.review.outputs.run-tag }}
+          AGENT_JOBS_PUBLICATION_DIR: ${{ runner.temp }}/agent-job-publication
+          AGENT_JOBS_WRITE_TOKEN: ${{ steps.write-token.outputs.token }}
+        run: >-
+          deno run --frozen
+          --allow-read --allow-write --allow-run --allow-net=api.github.com
+          --allow-env=PATH,NODE_V8_COVERAGE,RUNNER_TEMP,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_STEP_SUMMARY,AGENT_JOBS_PLAN,AGENT_JOBS_CELL_ID,AGENT_JOBS_REVIEWED_DIR,AGENT_JOBS_REVIEW_RUN_TAG,AGENT_JOBS_PUBLICATION_DIR,AGENT_JOBS_WRITE_TOKEN
+          ops/agent-jobs-publish.ts
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: agent-jobs-publication-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.cell-id }}
+          path: ${{ runner.temp }}/agent-job-publication
+          if-no-files-found: error
+          retention-days: 7
