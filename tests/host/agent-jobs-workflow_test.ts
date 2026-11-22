@@ -117,6 +117,6 @@ Deno.test("agent job review produces an attempt-bound artifact ID for the scoped
     ),
   );
   const mint = publish.steps.find((step) => step.id === "write-token")!;
-  assert.equal(mint.with!["permission-statuses"], "write");
+  assert.equal(mint.with!["permission-statuses"], undefined);
   assert.equal(mint.with!["permission-workflows"], undefined);
 });

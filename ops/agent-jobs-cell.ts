@@ -40,6 +40,8 @@ export const START_STAGGER_SECONDS = 3;
 const MODEL_MAX_RETRIES = 12;
 const MODEL_PROVIDER = "uos";
 const KILL_GRACE_SECONDS = 30;
+/** Leave time for command teardown and host result assembly. */
+const WORK_EXIT_RESERVE_SECONDS = KILL_GRACE_SECONDS + 5;
 /**
  * Codex exits with this line once it gives up on HTTP 429 (measured against a
  * local endpoint: 0.154 after one request, 0.169 after its retry budget). The
@@ -243,6 +245,7 @@ export interface AgentJobsCellPorts {
   prepareClient: (start: AgentStartV1) => Promise<void>;
   /** The runner environment handed to setup commands and agents. */
   agentEnv: () => Record<string, string>;
+  now?: () => number;
   sleep: (seconds: number) => Promise<void>;
   log: (line: string) => void;
   /**
@@ -343,8 +346,20 @@ async function runJob(
   job: AgentJobV1,
   startDelaySeconds: number,
 ): Promise<AgentJobResultV1> {
-  const started = Date.now();
   const { ports } = input;
+  const now = ports.now ?? Date.now;
+  const started = now();
+  const createdAtMs = input.plan.createdAtMs;
+  const admitted = createdAtMs !== undefined;
+  const workDeadlineAtMs = admitted
+    ? Math.min(input.deadlineAtMs, createdAtMs + job.minutes * 60_000)
+    : input.deadlineAtMs;
+  const remainingSeconds = () => {
+    const seconds = Math.floor((workDeadlineAtMs - now()) / 1000);
+    return admitted
+      ? Math.max(0, seconds - WORK_EXIT_RESERVE_SECONDS)
+      : Math.max(1, seconds);
+  };
   const result: AgentJobResultV1 = {
     id: job.id,
     repository: job.repository,
@@ -361,7 +376,7 @@ async function runJob(
   const settle = (status: AgentJobStatus, detail: string) => {
     result.status = status;
     result.detail = detail;
-    result.elapsedSeconds = Math.round((Date.now() - started) / 1000);
+    result.elapsedSeconds = Math.round((now() - started) / 1000);
     ports.log(`${job.id}: ${status}${detail ? ` (${detail})` : ""}`);
     return result;
   };
@@ -369,6 +384,14 @@ async function runJob(
   const checkout = `${root}/checkout`;
   const tmpDir = `${root}/tmp`;
   try {
+    if (
+      admitted &&
+      (!Number.isSafeInteger(createdAtMs) || createdAtMs <= 0 ||
+        createdAtMs > started)
+    ) throw new Error("job admission time is invalid");
+    if (remainingSeconds() === 0) {
+      return settle("timed_out", "work deadline before checkout");
+    }
     const reasoningEffort = resolveAgentJobReasoningEffort(
       job.reasoningEffort,
       job.id,
@@ -391,17 +414,22 @@ async function runJob(
     result.base = base.branch;
     result.baseSha = baseSha;
 
-    const remainingSeconds = () =>
-      Math.max(1, Math.floor((input.deadlineAtMs - Date.now()) / 1000));
     const env = { ...ports.agentEnv(), TMPDIR: tmpDir };
     for (const command of job.setup) {
+      const seconds = remainingSeconds();
+      if (seconds === 0) {
+        return settle("timed_out", "work deadline before setup");
+      }
       const setup = await bounded(["bash", "-c", command], {
-        seconds: remainingSeconds(),
+        seconds,
         cwd: checkout,
         env,
         stdin: null,
         logFile: `${root}/setup.log`,
       });
+      if (admitted && setup.timedOut) {
+        return settle("timed_out", "work deadline during setup");
+      }
       if (setup.code !== 0) {
         return settle("setup_failed", `exit ${setup.code}: ${command}`);
       }
@@ -415,11 +443,21 @@ async function runJob(
       reasoningEffort,
       lastMessageFile: `${root}/last-message.md`,
     };
+    if (admitted && remainingSeconds() <= startDelaySeconds) {
+      return settle("timed_out", "work deadline before model stagger");
+    }
     await ports.sleep(startDelaySeconds);
+    if (remainingSeconds() === 0) {
+      return settle("timed_out", "work deadline before preparing model");
+    }
     await ports.prepareClient(start);
     const deadlineSeconds = Math.min(job.minutes * 60, remainingSeconds());
     let spentSeconds = 0;
-    const jobStartedAtMs = Date.now();
+    const canWait = (wait: number) =>
+      admitted
+        ? wait < remainingSeconds()
+        : spentSeconds + wait < deadlineSeconds;
+    const jobStartedAtMs = now();
     let attempt = 0;
     let limited = false;
     let rateLimitAttempts = 0;
@@ -439,12 +477,19 @@ async function runJob(
       heartbeats: [] as string[],
       requests: null as TraceSummaryV1 | null,
     };
-    let agent: { code: number; timedOut: boolean };
+    let agent = { code: 124, timedOut: true };
     for (;;) {
+      const seconds = admitted
+        ? remainingSeconds()
+        : Math.max(1, deadlineSeconds - spentSeconds);
+      if (seconds === 0) {
+        agent = { code: 124, timedOut: true };
+        break;
+      }
       const logFile = `${root}/agent-${attempt}.log`;
-      const attemptStarted = Date.now();
+      const attemptStarted = now();
       agent = await bounded(ports.agentCommand(start), {
-        seconds: Math.max(1, deadlineSeconds - spentSeconds),
+        seconds,
         cwd: checkout,
         env: { ...env, CODEX_HOME: start.clientHome },
         stdin: job.prompt + restartNote,
@@ -527,12 +572,12 @@ async function runJob(
           },
         },
       });
-      spentSeconds += (Date.now() - attemptStarted) / 1000;
+      spentSeconds += (now() - attemptStarted) / 1000;
       const cause: Interruption = !agent.timedOut && agent.code !== 0
         ? await interruption(`${logFile}.err`)
         : null;
       limited = cause === "rate_limit";
-      const attemptSeconds = Math.round((Date.now() - attemptStarted) / 1000);
+      const attemptSeconds = Math.round((now() - attemptStarted) / 1000);
       const errors = await agentErrorLines(`${logFile}.err`);
       telemetry.attempts.push({
         attempt,
@@ -554,7 +599,7 @@ async function runJob(
       if (cause === "disconnect") {
         if (disconnects >= DISCONNECT_RESTART_LIMIT) break;
         const wait = DISCONNECT_BACKOFF_SECONDS;
-        if (spentSeconds + wait >= deadlineSeconds) break;
+        if (!canWait(wait)) break;
         disconnects += 1;
         ports.log(
           `${job.id}: model stream dropped, restart ${disconnects} in ${wait}s`,
@@ -569,7 +614,7 @@ async function runJob(
         RATE_LIMIT_BACKOFF_MAX_SECONDS,
         RATE_LIMIT_BACKOFF_SECONDS * 2 ** rateLimitAttempts,
       );
-      if (spentSeconds + wait >= deadlineSeconds) break;
+      if (!canWait(wait)) break;
       ports.log(`${job.id}: model 429, restarting in ${wait}s`);
       await ports.sleep(wait);
       spentSeconds += wait;
@@ -617,7 +662,9 @@ async function runJob(
     if (agent.timedOut) {
       return settle(
         "timed_out",
-        `deadline ${Math.round(deadlineSeconds / 60)} min`,
+        admitted
+          ? "admitted work deadline"
+          : `deadline ${Math.round(deadlineSeconds / 60)} min`,
       );
     }
     if (agent.code !== 0) {

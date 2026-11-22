@@ -110,7 +110,10 @@ async function commit(cwd: string): Promise<string> {
 }
 
 Deno.test("agent jobs consume fresh files across a push and refuse old or unrelated intake", async () => {
-  const cwd = await Deno.makeTempDir({ prefix: "agent-jobs-intake-" });
+  const cwd = await Deno.makeTempDir({
+    dir: Deno.cwd(),
+    prefix: ".agent-jobs-intake-",
+  });
   try {
     await gitOk(["init", "--quiet", "-b", "development"], { cwd });
     for (const dir of ["inbox", "cleanup"]) {
@@ -159,7 +162,10 @@ Deno.test("agent jobs consume fresh files across a push and refuse old or unrela
 });
 
 Deno.test("agent job cell starts at the admitted base after the branch advances", async () => {
-  const cwd = await Deno.makeTempDir({ prefix: "agent-jobs-base-" });
+  const cwd = await Deno.makeTempDir({
+    dir: Deno.cwd(),
+    prefix: ".agent-jobs-base-",
+  });
   try {
     await gitOk(["init", "--quiet", "-b", "main"], { cwd });
     await Deno.writeTextFile(cwd + "/README.md", "pinned");
@@ -196,6 +202,94 @@ Deno.test("agent job cell starts at the admitted base after the branch advances"
       JSON.stringify(result.results[0]),
     );
     assert.equal(result.results[0].baseSha, pinned);
+  } finally {
+    await Deno.remove(cwd, { recursive: true });
+  }
+});
+
+Deno.test("admitted agent job charges setup, stagger and retry time to one deadline", async () => {
+  const cwd = await Deno.makeTempDir({
+    dir: Deno.cwd(),
+    prefix: ".agent-jobs-deadline-",
+  });
+  try {
+    await gitOk(["init", "--quiet", "-b", "main"], { cwd });
+    await Deno.writeTextFile(cwd + "/README.md", "fixture");
+    const baseSha = await commit(cwd);
+    for (const stage of ["checkout", "setup", "stagger", "retry"] as const) {
+      const plan = planAgentJobs([
+        job({ id: "first", base: "main" }),
+        job({
+          id: "second",
+          base: "main",
+          minutes: 2,
+          setup: ["touch setup-ran"],
+        }),
+      ]);
+      plan.createdAtMs = 100_000;
+      const cell = plan.cells[1];
+      cell.jobs[0].baseSha = baseSha;
+      const root = cwd + "/" + stage;
+      let now = stage === "checkout" ? 187_000 : 140_000;
+      let clones = 0;
+      let preparations = 0;
+      let attempts = 0;
+      const delays: number[] = [];
+      const result = await runAgentJobsCell({
+        plan,
+        cellId: cell.cellId,
+        workRoot: root,
+        outDir: root + "/out",
+        readToken: null,
+        defaultModel: "fixture",
+        deadlineAtMs: 400_000,
+        ports: {
+          now: () => now,
+          remoteUrl: () => {
+            clones++;
+            return cwd;
+          },
+          agentEnv: () => {
+            if (stage === "setup") now = 221_000;
+            return { PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" };
+          },
+          prepareClient: () => {
+            preparations++;
+            return Promise.resolve();
+          },
+          sleep: (seconds) => {
+            delays.push(seconds);
+            now += seconds * 1000;
+            if (stage === "stagger" || seconds === 15) now = 221_000;
+            return Promise.resolve();
+          },
+          agentCommand: () => {
+            attempts++;
+            return [
+              "bash",
+              "-c",
+              'cat >/dev/null; echo "stream disconnected before completion" >&2; exit 1',
+            ];
+          },
+          log: () => {},
+        },
+      });
+      assert.equal(result.results[0].status, "timed_out", stage);
+      assert.equal(clones, stage === "checkout" ? 0 : 1, stage);
+      assert.equal(preparations, stage === "retry" ? 1 : 0, stage);
+      assert.equal(attempts, stage === "retry" ? 1 : 0, stage);
+      assert.deepEqual(
+        delays,
+        stage === "retry" ? [3, 15] : stage === "stagger" ? [3] : [],
+        stage,
+      );
+      if (stage === "setup") {
+        await assert.rejects(
+          Deno.stat(root + "/second/checkout/setup-ran"),
+          Deno.errors.NotFound,
+        );
+      }
+    }
   } finally {
     await Deno.remove(cwd, { recursive: true });
   }

@@ -261,8 +261,7 @@ jobs:
           repositories: ${{ inputs.repositories }}
           permission-contents: write
           permission-pull-requests: write
-          permission-statuses: write
-      - name: Publish verified agent branches and statuses
+      - name: Publish verified agent branches and commit comments
         env:
           AGENT_JOBS_PLAN: ${{ runner.temp }}/agent-job-plan/plan.json
           AGENT_JOBS_CELL_ID: ${{ inputs.cell-id }}
