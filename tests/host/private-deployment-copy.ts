@@ -30,11 +30,10 @@ async function rewrite(
   await Deno.writeTextFile(path, text);
 }
 
-/** The committed private entry with test workflow ids, wired. */
+/** The committed (wired) private entry with test workflow ids. */
 const BINDING: readonly (readonly [string, string])[] = [
   ["supervisorWorkflowId: null,", "supervisorWorkflowId: 793001,"],
   ["ciWorkflowId: null,", "ciWorkflowId: 793002,"],
-  ["const PRIVATE_ROLE_WIRED = false;", "const PRIVATE_ROLE_WIRED = true;"],
 ];
 
 /** Runs `cases` in a bound private copy; resolves to the combined output. */

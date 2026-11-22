@@ -95,10 +95,12 @@ export type HostedControllerSelectionV1 =
 // (tests/host/private-deployment-role_test.ts: own identity and remotes, no
 // request naming the public repository, no backup CI, its self installation
 // only, owner-install refusal, a reviewed target merged through its own
-// surface, the closed reason for its own tracker). Its issue-to-pull-request
-// half has no private-role proof yet, so a private selection still refuses to
-// start even with bound workflow ids; the change that adds it sets this.
-const PRIVATE_ROLE_WIRED = false;
+// surface, the closed reason for its own tracker;
+// tests/host/private-deployment-lifecycle_test.ts: a private target's issue
+// from intake through implementation, publication and native review request
+// to a reviewed merge). A private selection still refuses to start while
+// either workflow id above is null (`workflow_ids_unfilled`).
+const PRIVATE_ROLE_WIRED = true;
 
 /**
  * Pure selection over a closed list (the committed one in production). The
