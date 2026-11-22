@@ -1,11 +1,15 @@
 /**
  * Experimental manual agent-job lane: request validation and packing, then
- * one connected plan -> cell -> publish lifecycle against temporary local Git
- * repositories with a fake agent process. No model, network or credential.
+ * one connected plan -> cell -> reviewed publication lifecycle against local
+ * Git repositories with a fake agent process and native-review receipts.
  */
 import assert from "node:assert/strict";
 import { relative } from "node:path";
+import { canonicalStringifySha256 } from "../../src/contracts/canonical.ts";
+import type { ReviewResultV1 } from "../../src/github/review-result-contracts.ts";
+import { reviewResultDigest } from "../../src/github/review-result-parser.ts";
 import {
+  type AgentJobResultV1,
   type AgentJobsCellPorts,
   codexExecCommand,
   runAgentJobsCell,
@@ -13,10 +17,24 @@ import {
 import { gitOk } from "../../ops/agent-jobs-git.ts";
 import {
   type AgentJobsPlanV1,
+  type AgentJobV1,
   mergeAgentJobRequests,
   planAgentJobs,
 } from "../../ops/agent-jobs-plan.ts";
-import { publishAgentJobsCell } from "../../ops/agent-jobs-publish.ts";
+import {
+  type AgentJobReviewRound,
+  agentJobTask,
+} from "../../ops/agent-jobs-native-review.ts";
+import {
+  agentJobsPublicationRunTag,
+  type AgentJobsPublishInput,
+  publishAgentJobsCell,
+} from "../../ops/agent-jobs-publish.ts";
+import {
+  AGENT_JOB_REVIEW_STATUS,
+  githubAgentJobsPublishPorts,
+} from "../../ops/agent-jobs-publish-github.ts";
+import type { ReviewedAgentJobResultV1 } from "../../ops/agent-jobs-review-contract.ts";
 
 function job(id: string, repository = "ubiquity/a", extra = {}) {
   return { id, repository, prompt: `Do ${id}\nmore detail`, ...extra };
@@ -162,8 +180,107 @@ Deno.test("agent jobs plan refuses invalid reasoning efforts", () => {
   }
 });
 
-Deno.test("agent jobs cell bundles agent work and publish pushes it", async () => {
-  const root = await Deno.makeTempDir({ prefix: "agent-jobs-" });
+async function reviewedRow(
+  row: AgentJobResultV1,
+  job: AgentJobV1 & { base: string; baseSha: string },
+  verdict: ReviewedAgentJobResultV1["review"]["verdict"],
+  runTag = "77-1",
+): Promise<ReviewedAgentJobResultV1> {
+  const task = await agentJobTask(job, runTag);
+  const headSha = verdict === "accepted" ? row.headSha! : job.baseSha;
+  const rounds: AgentJobReviewRound[] = [];
+  if (verdict === "accepted" || verdict === "already_satisfied") {
+    const binding = {
+      baseSha: job.baseSha,
+      headSha,
+      taskDigest: task.digest,
+      round: 1,
+    };
+    const requestId = `agent-job-review:${await canonicalStringifySha256({
+      domain: "sentinel-operator-job-review-request-v1",
+      ...binding,
+    })}`;
+    const result: ReviewResultV1 = {
+      verdict: "clean",
+      summary: "Task checked",
+      findings: [],
+      taskAcceptance: {
+        issueNumber: task.issueNumber,
+        taskDigest: task.digest,
+        verdict: verdict === "accepted"
+          ? "fulfilled"
+          : "already_satisfied_at_base",
+        evidence: ["Fixture evidence"],
+      },
+    };
+    const targetDigest = "b".repeat(64);
+    rounds.push({
+      ...binding,
+      requestId,
+      result,
+      resultSha256: await reviewResultDigest(result),
+      disposition: verdict,
+      detail: "",
+      feedback: "",
+      snapshotDigest: "c".repeat(64),
+      execution: {
+        ownerRunId: `agent-job:${runTag}:${job.id}`,
+        invocationId: requestId,
+        threadId: "thread-1",
+        submittedProvider: "uos",
+        model: null,
+        reasoning: null,
+        nativeReview: { mode: "review/start", targetDigest },
+        startMayOccur: true,
+        turnId: "turn-1",
+        resultId: "result-1",
+        actual: {
+          evidenceKind: "native-review",
+          provider: "uos",
+          threadId: "thread-1",
+          turnId: "turn-1",
+          terminalOrigin: "runtime",
+          observedTerminalStatus: "completed",
+          observedModel: null,
+          observedReasoning: null,
+          nativeReview: {
+            targetDigest,
+            reviewThreadId: "thread-1",
+            enteredItemId: "entered-review-1",
+            exitedItemId: "result-1",
+          },
+          durationMs: 5,
+          outputChars: 10,
+        },
+      },
+    });
+  }
+  return {
+    ...row,
+    base: job.base,
+    baseSha: job.baseSha,
+    headSha: verdict === "accepted" ? headSha : null,
+    bundle: verdict === "accepted" ? row.bundle : null,
+    review: {
+      id: job.id,
+      repository: job.repository,
+      base: job.base,
+      baseSha: job.baseSha,
+      headSha,
+      taskDigest: task.digest,
+      runTag,
+      verdict,
+      rounds,
+      detail: "",
+    },
+  };
+}
+
+Deno.test("agent jobs cell bundles agent work and publishes only reviewed heads", async () => {
+  const root = await Deno.makeTempDir({
+    dir: Deno.cwd(),
+    prefix: ".agent-jobs-test-",
+  });
   const originalCwd = Deno.cwd();
   try {
     Deno.chdir(root);
@@ -289,8 +406,16 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
     };
     const outDir = `${root}/out`;
     const workRoot = `${root}/work`;
+    const plan = JSON.parse(serializedPlan) as AgentJobsPlanV1;
+    const pinned = plan.cells[0].jobs.map((item) => ({
+      ...item,
+      base: "main",
+      baseSha,
+      review: !["idles", "limited"].includes(item.id),
+    }));
+    plan.cells[0].jobs = pinned;
     const cell = await runAgentJobsCell({
-      plan: JSON.parse(serializedPlan) as AgentJobsPlanV1,
+      plan,
       cellId: "c01",
       workRoot,
       outDir,
@@ -436,44 +561,112 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
       cell,
     );
 
-    const pulls: Array<Record<string, string>> = [];
-    const publications = await publishAgentJobsCell({
-      cell,
+    const reviewed = {
+      ...cell,
+      results: await Promise.all(pinned.map((item) =>
+        reviewedRow(
+          byId[item.id],
+          item,
+          ["writes", "commits", "limited", "dropped", "hangs"].includes(item.id)
+            ? "accepted"
+            : item.id === "idles"
+            ? "skipped_no_diff"
+            : "blocked",
+        )
+      )),
+      modelStarts: [],
+    };
+    const statuses = new Map<string, Record<string, string>>();
+    const pullRequests: Array<Record<string, unknown>> = [];
+    const fetchResponse: typeof fetch = (url, options) => {
+      const response = (body: unknown) => Promise.resolve(Response.json(body));
+      const path = new URL(String(url)).pathname;
+      assert.match(path, /^\/repos\/ubiquity\/a(?:\/|$)/);
+      const method = options?.method;
+      if (path === "/repos/ubiquity/a") {
+        return response({
+          full_name: "ubiquity/a",
+          private: false,
+          visibility: "public",
+        });
+      }
+      const head = /\/(?:commits|statuses)\/([0-9a-f]{40})(?:\/|$)/.exec(path)
+        ?.[1];
+      if (head && path.includes("/commits/")) {
+        const row = statuses.get(head);
+        return response({ sha: head, statuses: row ? [row] : [] });
+      }
+      if (head && method === "POST") {
+        assert.equal(
+          statuses.has(head),
+          false,
+          "status is written at most once per head",
+        );
+        statuses.set(head, JSON.parse(String(options?.body)));
+        return response({ ok: true });
+      }
+      assert.equal(path, "/repos/ubiquity/a/pulls");
+      if (method === "GET") return response(pullRequests);
+      assert.equal(method, "POST");
+      const body = JSON.parse(String(options?.body));
+      const pull = {
+        number: 1,
+        state: "open",
+        draft: body.draft,
+        title: body.title,
+        body: body.body,
+        user: { login: "ubiquity-sentinel[bot]", type: "Bot" },
+        head: {
+          sha: byId.writes.headSha,
+          ref: body.head,
+          repo: { full_name: "ubiquity/a" },
+        },
+        base: {
+          sha: baseSha,
+          ref: body.base,
+          repo: { full_name: "ubiquity/a" },
+        },
+      };
+      pullRequests.push(pull);
+      // The first response was lost after the effect. The publisher must
+      // reconcile the existing exact draft without submitting a second POST.
+      return Promise.reject(new TypeError("local fixture response lost"));
+    };
+    const publishInput: AgentJobsPublishInput = {
+      plan,
+      cellId: "c01",
+      reviewed,
       // The workflow passes a relative directory; Git runs in another clone.
       artifactDir: relative(Deno.cwd(), outDir),
       workRoot: `${root}/publish`,
-      runTag: "77-1",
+      runTag: agentJobsPublicationRunTag("77", "2", "77-1"),
       writeToken: null,
-      ports: {
-        remoteUrl: () => remote,
-        openPullRequest: (request) => {
-          pulls.push(request);
-          return Promise.resolve("https://example.invalid/pull/1");
-        },
-        log: () => {},
-      },
-    });
+      ports: githubAgentJobsPublishPorts(
+        "fixture-token",
+        () => remote,
+        fetchResponse,
+      ),
+    };
+    const publications = await publishAgentJobsCell(publishInput);
     assert.deepEqual(
-      publications.map((row) => [row.id, row.branch]),
+      publications.map((row) => [row.id, row.status, row.branch]),
       [
-        ["writes", "agent-jobs/writes-77-1"],
-        ["idles", null],
-        ["fails", null],
-        ["hangs", "agent-jobs/hangs-77-1"],
-        ["commits", "agent-jobs/commits-77-1"],
-        ["limited", "agent-jobs/limited-77-1"],
-        ["starved", null],
-        ["dropped", "agent-jobs/dropped-77-1"],
-        ["nosetup", null],
-        ["bad-effort", null],
+        ["writes", "published", "agent-jobs/writes-77-1"],
+        ["idles", "skipped_no_diff", null],
+        ["fails", "blocked", null],
+        ["hangs", "blocked", null],
+        ["commits", "published", "agent-jobs/commits-77-1"],
+        ["limited", "blocked", null],
+        ["starved", "blocked", null],
+        ["dropped", "published", "agent-jobs/dropped-77-1"],
+        ["nosetup", "blocked", null],
+        ["bad-effort", "blocked", null],
       ],
     );
     const pushed = (ref: string, path: string) =>
       gitOk(["--git-dir", remote, "show", `${ref}:${path}`]);
     assert.equal(await pushed("agent-jobs/writes-77-1", "work.txt"), "hello");
-    // Work the agent committed itself is published as it stands.
     assert.equal(await pushed("agent-jobs/commits-77-1", "own.txt"), "mine");
-    // The restarted agent continued in the checkout its first attempt left.
     assert.equal(
       await pushed("agent-jobs/dropped-77-1", "work.txt"),
       "resumed",
@@ -482,45 +675,87 @@ Deno.test("agent jobs cell bundles agent work and publish pushes it", async () =
       await pushed("agent-jobs/dropped-77-1", "partial.txt"),
       "partial",
     );
-    assert.equal(
-      await pushed("agent-jobs/hangs-77-1", "partial.txt"),
-      "partial",
-    );
-    assert.equal(
-      await gitOk([
-        "--git-dir",
-        remote,
-        "rev-parse",
-        "agent-jobs/writes-77-1~1",
-      ]),
-      baseSha,
-    );
+    await assert.rejects(pushed("agent-jobs/hangs-77-1", "partial.txt"));
     assert.equal(
       await gitOk(["--git-dir", remote, "rev-parse", "main"]),
       baseSha,
     );
-    assert.equal(pulls.length, 1);
-    assert.equal(pulls[0].head, "agent-jobs/writes-77-1");
-    assert.equal(pulls[0].base, "main");
-    assert.match(pulls[0].body, /summary: hello/);
+    assert.deepEqual([...statuses.keys()], [
+      byId.writes.headSha,
+      byId.commits.headSha,
+      byId.dropped.headSha,
+    ]);
+    assert.ok(
+      [...statuses.values()].every((row) =>
+        row.context === AGENT_JOB_REVIEW_STATUS && row.state === "success"
+      ),
+    );
+    assert.equal(
+      publications[0].pullRequest,
+      "https://github.com/ubiquity/a/pull/1",
+    );
+    assert.equal(pullRequests.length, 1);
+    assert.match(
+      String(pullRequests[0].body),
+      /Native review verdict: \*\*accepted\*\*/,
+    );
+    assert.deepEqual(await publishAgentJobsCell(publishInput), publications);
+    assert.equal(pullRequests.length, 1);
 
-    // A bundle whose tip is not the recorded commit is refused, not pushed.
-    const forged = structuredClone(cell);
-    forged.results = [{ ...byId.writes, headSha: baseSha }];
-    const refused = await publishAgentJobsCell({
-      cell: forged,
-      artifactDir: outDir,
-      workRoot: `${root}/publish-forged`,
-      runTag: "78-1",
-      writeToken: null,
+    const one = {
+      ...publishInput,
+      plan: { ...plan, cells: [{ ...plan.cells[0], jobs: [pinned[0]] }] },
+      reviewed: { ...reviewed, results: [reviewed.results[0]] },
+    };
+    const forged = structuredClone(one.reviewed);
+    forged.results[0].review.rounds[0].headSha = baseSha;
+    const [refused] = await publishAgentJobsCell({ ...one, reviewed: forged });
+    assert.match(refused.detail, /native review evidence/);
+    assert.equal(refused.branch, null);
+    assert.throws(
+      () => agentJobsPublicationRunTag("77", "1", "77-2"),
+      /workflow run/,
+    );
+    assert.throws(
+      () => agentJobsPublicationRunTag("78", "2", "77-1"),
+      /workflow run/,
+    );
+
+    await gitOk([
+      "--git-dir",
+      remote,
+      "update-ref",
+      "refs/heads/agent-jobs/writes-77-1",
+      baseSha,
+    ]);
+    const [collision] = await publishAgentJobsCell(one);
+    assert.equal(collision.status, "blocked");
+    assert.match(collision.detail, /different commit/);
+    assert.equal(
+      await gitOk(["--git-dir", remote, "rev-parse", "agent-jobs/writes-77-1"]),
+      baseSha,
+    );
+
+    await gitOk([
+      "--git-dir",
+      remote,
+      "update-ref",
+      "refs/heads/main",
+      byId.commits.headSha!,
+    ]);
+    const [stale] = await publishAgentJobsCell(one);
+    assert.equal(stale.status, "blocked");
+    assert.match(stale.detail, /base changed since review/);
+
+    const [hidden] = await publishAgentJobsCell({
+      ...one,
       ports: {
-        remoteUrl: () => remote,
-        openPullRequest: () => Promise.reject(new Error("unreachable")),
-        log: () => {},
+        ...one.ports,
+        repositoryVisibility: () => Promise.resolve("private"),
       },
     });
-    assert.match(refused[0].detail, /publish failed: bundle tip/);
-    assert.equal(refused[0].branch, null);
+    assert.equal(hidden.status, "blocked");
+    assert.match(hidden.detail, /visibility is private or unavailable/);
   } finally {
     Deno.chdir(originalCwd);
     await Deno.remove(root, { recursive: true });
