@@ -4,7 +4,10 @@ import {
   canonicalStringify,
   canonicalStringifySha256,
 } from "../src/contracts/canonical.ts";
-import { hasBlockingSeverity } from "../src/contracts/review-receipt.ts";
+import {
+  BLOCKING_SEVERITIES,
+  hasBlockingSeverity,
+} from "../src/contracts/review-receipt.ts";
 import {
   checkReviewTaskStatement,
   MAX_REVIEW_TASK_BODY,
@@ -164,6 +167,11 @@ function correctionGroup(result: ReviewResultV1) {
     message: findingMessage(finding),
     resolved: false,
   }));
+  // Put blockers first before the shared prompt drops overflow findings.
+  findings.sort((left, right) =>
+    Number(BLOCKING_SEVERITIES.includes(right.severity)) -
+    Number(BLOCKING_SEVERITIES.includes(left.severity))
+  );
   if (
     !hasBlockingFindings(result) &&
     result.taskAcceptance?.verdict === "not_fulfilled"

@@ -8,6 +8,7 @@ import {
 import { gitOk } from "../../ops/agent-jobs-git.ts";
 import { prioritySeverity } from "../../src/github/review-normalize.ts";
 import type { ReviewResultV1 } from "../../src/github/review-result-contracts.ts";
+import { MAX_CORRECTION_FINDINGS } from "../../src/repair/review-feedback.ts";
 import {
   classifyReviewTerminalDisposition,
   type ReviewTerminalDispositionV1,
@@ -282,6 +283,35 @@ Deno.test("operator job feeds P0 and exact task rejection back through bounded i
       ),
       null,
     );
+  });
+});
+
+Deno.test("operator correction feedback prioritizes a P0 after the lower findings fill the prompt", async () => {
+  await fixture(async (input) => {
+    const result = await reviewResult(input, "fulfilled", 0);
+    const blocking = result.findings[0];
+    const lower = Array.from(
+      { length: MAX_CORRECTION_FINDINGS },
+      (_, index) => ({
+        ...blocking,
+        priority: index % 2 === 0 ? 1 as const : 2 as const,
+        title: `Lower priority finding ${index + 1}`,
+      }),
+    );
+    result.findings = [...lower, blocking];
+    const receipt = await reviewAgentJobHead(
+      input,
+      () => nativeSession(result),
+    );
+    assert.equal(receipt.disposition, "correct");
+    assert.deepEqual(receipt.result?.findings, result.findings);
+    const feedbackLines = receipt.feedback.match(/^- \[P[0-3]\].*$/gm) ?? [];
+    assert.equal(feedbackLines.length, MAX_CORRECTION_FINDINGS);
+    assert.match(
+      feedbackLines[0],
+      /^- \[P0\] title\.txt: Fix incorrect candidate title$/,
+    );
+    assert.match(feedbackLines[1], /Lower priority finding 1$/);
   });
 });
 
