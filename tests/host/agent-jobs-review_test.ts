@@ -9,6 +9,7 @@ import {
   AGENT_JOB_BUNDLE_REF,
   fetchAgentJobBase,
   importAgentJobBundle,
+  validateAgentJobPublication,
 } from "../../ops/agent-jobs-review-git.ts";
 import { git, gitOk } from "../../ops/agent-jobs-git.ts";
 import { planAgentJobs } from "../../ops/agent-jobs-plan.ts";
@@ -172,6 +173,38 @@ function roundResult(
     detail: "fixture native judgment",
   };
 }
+
+Deno.test("dispatch agent-job authority: the same path is protected only in the controller", async () => {
+  await fixture(async ({ baseSha, remote }) => {
+    const cwd = { cwd: remote };
+    await gitOk(["checkout", "--quiet", "--detach", baseSha], cwd);
+    await Deno.mkdir(resolve(remote, "ops"));
+    await Deno.writeTextFile(
+      resolve(remote, "ops", "agent-jobs-git.ts"),
+      "export const fixture = true;\n",
+    );
+    await gitOk(["add", "ops/agent-jobs-git.ts"], cwd);
+    await gitOk(["commit", "--quiet", "-m", "fixture authority change"], cwd);
+    const headSha = await gitOk(["rev-parse", "HEAD"], cwd);
+    const candidate = {
+      sourcePath: remote,
+      baseSha,
+      headSha,
+      deadlineAtMs: Date.now() + 20_000,
+    };
+    await assert.rejects(
+      validateAgentJobPublication({
+        ...candidate,
+        repository: "ubiquity-sentinel/sentinel",
+      }),
+      /protected/,
+    );
+    await validateAgentJobPublication({
+      ...candidate,
+      repository: REPOSITORY,
+    });
+  });
+});
 
 Deno.test("dispatch gate reviews an exact correction and seals only the accepted commit", async () => {
   await fixture(async ({ input, baseSha, rawHead, remote, gitFixtureDir }) => {

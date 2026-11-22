@@ -1,4 +1,5 @@
 import { type GitSha, isGitSha } from "../src/contracts/brands.ts";
+import { isHostedControllerDeploymentSlugV1 } from "../src/contracts/hosted-controller-deployment.ts";
 import { GitReviewSnapshot } from "../src/github/review-snapshot.ts";
 import { SENTINEL_AUTHORITY_PATHS } from "../src/host/hosted-authority-protected-paths.ts";
 import { DenoReplayRuntime } from "../src/replay/runtime.ts";
@@ -277,29 +278,8 @@ export async function validateAgentJobPublication(
       "publication is not one exact commit on the pinned base",
     );
   }
-  const self = [
-    "ubiquity-sentinel/sentinel",
-    "ubiquity-sentinel-private/sentinel",
-  ].includes(input.repository.toLowerCase());
-  const protectedPaths = self
-    ? [
-      ...SENTINEL_AUTHORITY_PATHS,
-      ".github/workflows/agent-jobs.yml",
-      ".github/workflows/agent-jobs-delivery.yml",
-      ".github/workflows/agent-jobs-cleanup.yml",
-      "ops/agent-jobs-admission.ts",
-      "ops/agent-jobs-cleanup.ts",
-      "ops/agent-jobs-correct.ts",
-      "ops/agent-jobs-intake.ts",
-      "ops/agent-jobs-native-review.ts",
-      "ops/agent-jobs-plan.ts",
-      "ops/agent-jobs-prepare.ts",
-      "ops/agent-jobs-publish.ts",
-      "ops/agent-jobs-publish-github.ts",
-      "ops/agent-jobs-review.ts",
-      "ops/agent-jobs-review-contract.ts",
-      "ops/agent-jobs-review-git.ts",
-    ]
+  const protectedPaths = isHostedControllerDeploymentSlugV1(input.repository)
+    ? SENTINEL_AUTHORITY_PATHS
     : [];
   const check = await new GitReviewSnapshot({
     repositoryDir: input.sourcePath,
