@@ -6733,3 +6733,39 @@ and the private one again cannot select itself.
 Rollback: revert the commits; the private role then re-points the Sentinel
 paths at its own repository again (it cannot start either way), and the
 workflow mints the public repository's self token again.
+
+## 2026-11-22: the vanished `ubiquity/passport.ubq.fi` leaves the committed target files
+
+- Outage: from 2026-11-20 02:50Z every `supervisor.yml` run failed at "Mint
+  the scoped sentinel App token" (and every `backup-ci.yml` run at "Mint the
+  target read token") with HTTP 422 "There is at least one repository that
+  does not exist or is not accessible to the parent installation". Both mints
+  take their repository list only from the committed files
+  (`sentinel.targets.json` through "Resolve the committed target
+  repositories", `sentinel.backup-ci-targets.json` through "Read the backup
+  targets"), so one name the installation cannot resolve fails the whole mint
+  and the run before the runtime starts.
+- Cause: `ubiquity/passport.ubq.fi` no longer exists under that name (the
+  organization's repository listing no longer has it). It was private and,
+  since the 2026-11-18 "no private repos" decision, not worked here.
+- Change: that one name is removed from both files (29 committed targets: 28
+  foreign mint names and 28 backup rows; the two-file sync holds). Nothing
+  else changes: no workflow edit, so auto-follow can install it, and the
+  Passport-specific policy code (named policy, work trial, deploy-check
+  filter, CI-minute policy rows) stays, inert without the target. No other
+  name is added.
+- Existing records (its work rows, receipts and any other rows in state) are
+  left untouched: not rewritten, parked, charged, commented on, merged or
+  closed. The runtime never reads or configures a repository the setting does
+  not list, so its records rank `unconfigured`. The launcher's private-target
+  gate still reads each repository the state names once per run; for this
+  one that read now answers 404 (the name is gone, and outside the minted
+  token), so its visibility is unknown and it is hidden for the run: no
+  surface, no write, its rows restored byte-identical on every write, no
+  `view_invalid`, and no second read in the run
+  (`tests/host/removed-target-records_test.ts`).
+- Re-adding the repository under any name, a renamed one included, is an
+  owner decision, made in both committed files.
+
+Rollback: `git revert` the commit. The name then returns to both files, and
+every mint fails again until GitHub resolves it.

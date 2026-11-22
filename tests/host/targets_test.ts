@@ -78,11 +78,15 @@ Deno.test("targets: the shipped setting is a plain array", async () => {
   assert.ok(Array.isArray(parsed), "the setting is a plain array");
 });
 
-/** The 2026-11-01 owner directive: every active ubiquity code repository. */
+/**
+ * The 2026-11-01 owner directive: every active ubiquity code repository.
+ * `ubiquity/passport.ubq.fi` left on 2026-11-22: the name no longer exists,
+ * and one name the App installation cannot resolve fails every token mint
+ * built from this list (docs/DECISIONS.md, 2026-11-22).
+ */
 const SHIPPED_TARGETS = [
   "ubiquity-sentinel/sentinel",
   "ubiquity/ai.ubq.fi",
-  "ubiquity/passport.ubq.fi",
   "ubiquity/prospector",
   "ubiquity/prospector-chrome-extension",
   "ubiquity/ubiquity-dollar",

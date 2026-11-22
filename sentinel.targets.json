@@ -1,7 +1,6 @@
 [
   "ubiquity-sentinel/sentinel",
   "ubiquity/ai.ubq.fi",
-  "ubiquity/passport.ubq.fi",
   "ubiquity/prospector",
   "ubiquity/prospector-chrome-extension",
   "ubiquity/ubiquity-dollar",

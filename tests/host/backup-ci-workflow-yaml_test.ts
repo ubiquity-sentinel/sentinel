@@ -183,7 +183,7 @@ Deno.test("the backup targets enrol every ubiquity committed target, never the s
     JSON.parse(await Deno.readTextFile("sentinel.backup-ci-targets.json")),
   );
   // Parse through the committed-setting validator: the 2026-11-01 expanded
-  // set (30 targets) must still be a valid bounded slug array.
+  // set (29 targets since 2026-11-22) must still be a valid bounded slug array.
   const committed = parseTargetSlugsV1(
     JSON.parse(await Deno.readTextFile("sentinel.targets.json")),
   ).map((entry) => entry.slug);
@@ -202,15 +202,16 @@ Deno.test("the backup targets enrol every ubiquity committed target, never the s
     targets.map((target) => target.repository).sort(),
     committed.filter((slug) => slug.startsWith("ubiquity/")).sort(),
   );
-  // Passport stays listed with its committed id, which is identity only
-  // (owner decision 2026-11-18, "no private repos"): the pass re-reads its
-  // visibility and plans nothing for it while it is private, and no receipt
-  // stands in for a private target. Listed, its never-started runs keep
-  // reading as no evidence (its PRs wait), never as red.
+  // `ubiquity/passport.ubq.fi` no longer exists under that name (2026-11-22,
+  // docs/DECISIONS.md): it left both files together, because one name the
+  // installation cannot resolve fails this whole read-token mint. It is no
+  // committed target either, so no gate reads its runs; its store receipts
+  // stay on the branch, inert.
   assert.equal(
-    targets.find((t) => t.repository === "ubiquity/passport.ubq.fi")?.id,
-    1254699258,
+    targets.some((t) => t.repository === "ubiquity/passport.ubq.fi"),
+    false,
   );
+  // A row must still name its `id` key, even as null.
   assert.throws(() =>
     parseBackupCiTargets([{ repository: "ubiquity/passport.ubq.fi" }])
   );
