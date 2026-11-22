@@ -26,5 +26,6 @@
   { "repository": "ubiquity/partner.ubq.fi", "id": null },
   { "repository": "ubiquity/notifications.ubq.fi", "id": null },
   { "repository": "ubiquity/github-labels-processor", "id": null },
-  { "repository": "ubiquity/card-issuance", "id": null }
+  { "repository": "ubiquity/card-issuance", "id": null },
+  { "repository": "ubiquity/auth.ubq.fi", "id": null }
 ]

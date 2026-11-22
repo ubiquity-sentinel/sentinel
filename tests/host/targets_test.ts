@@ -114,6 +114,9 @@ const SHIPPED_TARGETS = [
   "ubiquity/notifications.ubq.fi",
   "ubiquity/github-labels-processor",
   "ubiquity/card-issuance",
+  // The renamed Passport (2026-11-22, owner): private, so only the private
+  // deployment works it; the public host reads it private and skips it.
+  "ubiquity/auth.ubq.fi",
 ];
 
 Deno.test("targets: the shipped setting names every active ubiquity repository", async () => {

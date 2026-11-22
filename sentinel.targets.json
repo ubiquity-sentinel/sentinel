@@ -27,5 +27,6 @@
   "ubiquity/partner.ubq.fi",
   "ubiquity/notifications.ubq.fi",
   "ubiquity/github-labels-processor",
-  "ubiquity/card-issuance"
+  "ubiquity/card-issuance",
+  "ubiquity/auth.ubq.fi"
 ]
