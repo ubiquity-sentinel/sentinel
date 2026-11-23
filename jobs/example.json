@@ -1,0 +1,10 @@
+{
+  "jobs": [
+    {
+      "id": "example-job",
+      "repository": "ubiquity/pay.ubq.fi",
+      "prompt": "Describe the change you want here. The first line becomes the commit title.",
+      "pr": false
+    }
+  ]
+}

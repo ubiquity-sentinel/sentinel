@@ -1,0 +1,114 @@
+# Operator job lane (jobs/README.md). Public implementation cells share hosted
+# capacity with the supervisor. Independent review and publication run on
+# fresh runners and leave Sentinel issue state untouched.
+name: sentinel-agent-jobs
+run-name: sentinel-agent-jobs ${{ github.event_name }} ${{ github.sha }}
+
+on:
+  push:
+    branches:
+      - development
+    paths:
+      - "jobs/inbox/*.json"
+  workflow_dispatch:
+    inputs:
+      jobs:
+        description: 'Job request JSON: {"jobs":[{"id","repository","prompt",...}]}'
+        required: true
+        type: string
+      agents_per_cell:
+        description: Agents sharing one runner
+        required: false
+        type: string
+        default: "4"
+      max_cells:
+        description: Runner cells this request may use (1-256; 20 run at once)
+        required: false
+        type: string
+        default: "20"
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    if: >-
+      github.repository == 'ubiquity-sentinel/sentinel' &&
+      github.ref == 'refs/heads/development' &&
+      github.event.sender.type == 'User' &&
+      github.event.sender.login == github.actor &&
+      !endsWith(github.actor, '[bot]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      has-work: ${{ steps.plan.outputs.has-work }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      artifact-id: ${{ steps.plan-artifact.outputs.artifact-id }}
+      control-sha: ${{ steps.control.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: refs/heads/sentinel-supervisor
+          path: control
+          persist-credentials: false
+      - name: Bind the protected control checkout
+        id: control
+        working-directory: control
+        run: |
+          set -euo pipefail
+          sha=$(git rev-parse --verify HEAD)
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
+          printf 'sha=%s\n' "$sha" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: github.event_name == 'push'
+        with:
+          ref: ${{ github.sha }}
+          path: request
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.x
+      - name: Plan cells
+        id: plan
+        working-directory: control
+        env:
+          AGENT_JOBS_REQUEST_CHECKOUT: ${{ github.workspace }}/request
+          AGENT_JOBS_PREP_DIR: ${{ runner.temp }}/agent-job-plan
+          AGENT_JOBS_JSON: ${{ inputs.jobs }}
+          AGENT_JOBS_PER_CELL: ${{ inputs.agents_per_cell || vars.SENTINEL_AGENT_JOBS_PER_CELL }}
+          AGENT_JOBS_MAX_CELLS: ${{ inputs.max_cells || vars.SENTINEL_AGENT_JOBS_MAX_CELLS }}
+        run: >-
+          deno run --frozen
+          --allow-read="$GITHUB_EVENT_PATH"
+          --allow-write="$AGENT_JOBS_PREP_DIR,$GITHUB_OUTPUT"
+          --allow-run=git --allow-net=api.github.com
+          --allow-env=PATH,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_ACTOR,GITHUB_EVENT_NAME,GITHUB_EVENT_PATH,GITHUB_SHA,GITHUB_OUTPUT,AGENT_JOBS_JSON,AGENT_JOBS_PER_CELL,AGENT_JOBS_MAX_CELLS,AGENT_JOBS_PREP_DIR,AGENT_JOBS_REQUEST_CHECKOUT
+          ops/agent-jobs-prepare.ts inbox
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: steps.plan.outputs.has-work == 'true'
+        id: plan-artifact
+        with:
+          name: agent-jobs-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/agent-job-plan/plan.json
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7
+
+  delivery:
+    name: delivery (${{ matrix.cellId }})
+    needs: plan
+    if: github.repository == 'ubiquity-sentinel/sentinel' && !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.has-work == 'true' && needs.plan.outputs.control-sha != ''
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    uses: ./.github/workflows/agent-jobs-delivery.yml
+    with:
+      control-sha: ${{ needs.plan.outputs.control-sha }}
+      plan-artifact-id: ${{ needs.plan.outputs.artifact-id }}
+      cell-id: ${{ matrix.cellId }}
+      runner: ${{ matrix.runner }}
+      owner: ${{ matrix.owner }}
+      repositories: ${{ matrix.repositories }}
+    secrets:
+      UOS_AI_TOKEN: ${{ secrets.UOS_AI_TOKEN }}

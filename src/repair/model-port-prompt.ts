@@ -11,6 +11,7 @@ import {
 } from "./model-port-policy.ts";
 import { renderCiEvidenceUnavailable } from "./ci-evidence-render.ts";
 import { unpublishablePath } from "./owner-landing.ts";
+import { renderCorrectionFeedback } from "./review-feedback.ts";
 import {
   MAX_CHANGED_PATHS,
   MAX_FILE_BYTES,
@@ -181,17 +182,7 @@ export function buildPrompt(
   ) {
     // A correction must resolve the EXACT findings of the review that rejected
     // the current candidate; without them the same change is re-implemented.
-    parts.push(
-      "Unresolved findings of the review that rejected this candidate " +
-        "(fix these in the current checkout):\n" +
-        request.reviewFindings
-          .map((finding) =>
-            `- [${finding.severity}] ${
-              finding.path === null ? "(no file)" : finding.path
-            }: ${finding.message}`
-          )
-          .join("\n"),
-    );
+    parts.push(renderCorrectionFeedback(request.reviewFindings));
   }
   if (request.mergeBase !== undefined) {
     // A base-refresh conflict resolution: the trusted host prepared the merge

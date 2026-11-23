@@ -6881,6 +6881,12 @@ needs the same manual launcher advance). Reverting the backoff restores the
 immediate re-dispatch; reverting the action restores the all-or-nothing mint;
 reverting the scope exclusion restores read-only target selection.
 
+## 2026-11-22: separate issue and operator entries share native review
+
+- The protected supervisor continues to discover configured issue repairs and owns its current CI and expected-head merge gates. Operators submit a separate JSON job to the development workflow for a GitHub-proven public target with Sentinel App access. The planner pins its base ref, base SHA, and original prompt before implementation. The protected environment needs owner admission of the exact development ref. Existing producers on `claude/great-ride-tu5r70` stay on that ref until explicitly migrated, and their historical inbox and cleanup inputs remain there.
+- Both entries use the native Codex review and exact snapshot path. A changed operator candidate needs a completed, current bound verdict with positive task acceptance and no unresolved P0. An isolated correction and fresh review can repeat within the original deadline. Counts record attempts. The job's explicit `review:false` applies only when Git proves an empty diff against the pinned base. With default review, an empty diff needs an already-satisfied native verdict.
+- Trusted operator publication writes the exact accepted SHA, an authenticated App verdict comment attached to it, the workflow result with the comment URL, and an optional draft PR. An operator owns any merge and target CI verification. Operator job App write credentials stay in trusted publication and the explicit cleanup workflow. This policy records the code contract. Hosted admission and acceptance are established separately in the build ledger. [Operator guide](../jobs/README.md) · [Consolidation inventory](handoffs/2026-11-22-two-entry-consolidation.md)
+
 ## 2026-11-22: the private deployment runs on GitHub's free tier: one cycle a day, a weekly fast-forward, its own CI
 
 - Owner, verbatim: "Private deploy if it isn't free then no go. If theee is a

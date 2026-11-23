@@ -458,7 +458,7 @@ function structuredFindings(
   }));
 }
 
-function prioritySeverity(priority: 0 | 1 | 2 | 3): SeverityV1 {
+export function prioritySeverity(priority: 0 | 1 | 2 | 3): SeverityV1 {
   switch (priority) {
     case 0:
       return "P0";
