@@ -6888,8 +6888,9 @@ reverting the scope exclusion restores read-only target selection.
   minutes a month for private repositories; with no payment method the
   spending limit is $0, so runs stop when the minutes run out and nothing is
   billed. Measured on the public deployment: an idle supervisor cycle is
-  about 30 billed minutes (10 jobs, each rounded up), a `ci.yml` run about
-  30. Agreed: one supervisor cycle a day and a code sync about once a week.
+  about 30 billed minutes (10 jobs, each rounded up), a `ci.yml` push run
+  about 37. Agreed: one supervisor cycle a day and a code sync about once a
+  week.
 - Code (auto-installs on the public deployment; public behaviour unchanged):
   - Proof first (`tests/host/private-deployment-lifecycle_test.ts`): a bound
     copy run as the private deployment takes one private target's owner
@@ -6984,8 +6985,12 @@ reverting the scope exclusion restores read-only target selection.
     month's billed minutes must be under 1,800, summed from GitHub's own run
     and job listings (`supervisor.yml` and `ci.yml` jobs, each rounded up to
     the minute, plus one per daily and sync run; `actions: read` on
-    `GITHUB_TOKEN`). Only then it dispatches `supervisor.yml` at
-    `sentinel-supervisor`.
+    `GITHUB_TOKEN`). Every listing is captured before a loop or a sum uses
+    it, so a failed read (an HTTP error with or without a body, a timeout, a
+    failed later page) or a non-numeric answer ends the day green with one
+    line and never dispatches (fails closed; `private-daily-guard_test.ts`
+    runs the step with a fake `gh`). Only then it dispatches
+    `supervisor.yml` at `sentinel-supervisor`.
   - `private-sync.yml` (Sunday 02:17 UTC and manual; private only): it reads
     the public `sentinel-supervisor` SHA with no credential and
     fast-forwards the private `development` and `sentinel-supervisor` to it in
@@ -7005,19 +7010,19 @@ reverting the scope exclusion restores read-only target selection.
   ordinary work the day after, and a SHA that failed there cannot reinstall.
   Auto-follow never runs on the private deployment (its dispatcher job is
   gated off), so `ciWorkflowId` only identifies its own `ci.yml`.
-- Budget, billed minutes a month on the private repository (CI 4 x 30 = 120,
-  daily 30 x 1 = 30, sync about 4 x 1 = 4, all gated workflows 0):
-  - idle (every cycle idle, about 30): about 1,054;
+- Budget, billed minutes a month on the private repository (CI 4 x 37 =
+  148, daily 30 x 1 = 30, sync about 4 x 1 = 4, all gated workflows 0):
+  - idle (every cycle idle, about 30): about 1,082;
   - one working cell every day (assumed about 90 a cycle: an idle cycle plus
-    about 40 of model session and 20 more in the aggregate): about 2,854, so
-    the guard stops new cycles at 1,800, around day 18-19 (without it, about
-    day 21);
+    about 40 of model session and 20 more in the aggregate): about 2,882, so
+    the guard stops new cycles at 1,800: the last on about day 19 (without
+    it, 2,000 runs out during about day 21);
   - worst case, every job at its private timeout (15 + 10 + 120 + 120 +
     2 x 120 + 120 + 10 = 635, plus the daily minute): the guard admits days
-    1-3 (0, 636 and 1,272 before each) and refuses day 4 (1,908, at most
-    1,938 with a CI run). Without the guard 2,000 runs out during day 4's
-    cycle. A worst-case cycle started just under 1,800 can still reach 2,000;
-    then GitHub stops the remaining jobs and nothing is billed.
+    1-3 (about 0, 673 and 1,309 before each, counting one CI run) and
+    refuses day 4 (about 1,945). Without the guard 2,000 runs out during day
+    4's cycle. A worst-case cycle started just under 1,800 can still reach
+    2,000; then GitHub stops the remaining jobs and nothing is billed.
 - Prospector: in the rig its work step defers with the exact decision
   `{"kind":"unavailable","reason":"private_ci_authority_unavailable"}` for
   its `head_push` CI effect: prospector is a CI-minute policy target
@@ -7070,3 +7075,55 @@ reverting the scope exclusion restores read-only target selection.
 Rollback: revert the workflow commit first (it needs the same manual
 launcher advance), then the code commits. The public deployment is unchanged
 either way; the private one then refuses to start again.
+
+## 2026-11-23: the special CI-minute policy is removed (owner decision)
+
+- Owner, verbatim: "Remove the special policy. We will deploy a private
+  sentinel for all private repos". This settles the prospector blocker in
+  the entry above.
+- Removed: every target row of the CI-minute policy, both the accepted one
+  (`ACCEPTED_CI_MINUTE_POLICY`: `ubiquity/prospector`, repository 1337190500,
+  and `ubiquity/passport.ubq.fi`, 1254699258) and the inactive proposal
+  (`INACTIVE_CI_MINUTE_POLICY`). No row is renamed or replaced.
+- Kept, inert: the controller, store, reconciler and private CI composition.
+  A policy without a target row manages nothing (`ciMinutePolicyInactive`):
+  `createCiMinuteController` and `composePrivateCiMinutes` (the runtime's
+  `runtimeCiMinutes` and the launcher's composition) return the inactive
+  coordinator before any capability, store, clock, read or write, so every
+  CI effect of every repository is `inactive` and every work step proceeds
+  under the normal rules only (P0 review, current-head CI not red, custody,
+  accounting). The policy validator still refuses an empty list, and no
+  production path digests one. The empty policy has no digest, and nothing
+  persisted is checked against the current policy digest outside the
+  ledger, which is no longer read.
+- Ledger history: untouched. Nothing reads, writes or deletes
+  `sentinel-state/ci-minutes` on `ubiquity/prospector` any more; its rows stay
+  as they are, inert.
+- Public deployment: its targets' effects were already `inactive` (they had
+  no row) and stay so. What stops: every runtime job and launcher run used to
+  reconcile the ledger (reads of prospector and its `sentinel-state/ci-minutes`
+  branch, and writes to it); now none does. Proof: the public role's effect
+  for a public target is identical with the retired rows and without
+  (`ci-minute-policy-removed_test.ts`, which also shows nothing is touched).
+- Private deployment: prospector goes from intake to a reviewed merge like
+  any other private target (`private-deployment-lifecycle_test.ts`).
+- Tests: the machinery's own tests use the retired rows as a test fixture
+  (`tests/state/retired-ci-minute-policy.ts`), never production source.
+- Other repository special cases, left as they are because none prevents or
+  distorts work on the private deployment (each matches the exact old name
+  `passport.ubq.fi`, which is no committed target, or is reachable only
+  through the removed policy): the Passport work trial
+  (`src/repair/passport-work-trial.ts` and its launcher passes), the named
+  Passport verify policy (`src/host/target-policy.ts`), the dependency
+  preparer (`src/host/passport-dependencies.ts`), the Passport merge-gate
+  check filter (`src/repair/merge-gate-checks.ts`), the base-review CI read
+  (`src/github/base-review-ci.ts`, `base-review-service.ts`,
+  `client-reads.ts`), telemetry names (`ops/telemetry-*.ts`), and the
+  private CI capability for prospector (`src/host/hosted-app-principal.ts`,
+  `hosted-app-principal-native.ts`, `ops/hosted-autonomy-main.ts`), which is
+  no longer called. `ubiquity/auth.ubq.fi` gets none of them and is worked
+  with the generic policy from its own tree; whether its dispatch-only
+  deployment checks need the Passport merge-gate filter is not verified.
+
+Rollback: revert the commit; the rows return and prospector is held again
+until the Passport row is repaired.

@@ -65,13 +65,14 @@ const PUBLIC_BODY =
 // The committed setting of the private deployment lists private targets
 // only; the public Sentinel and a public target listed beside them stay with
 // the public deployment and are never read.
-const SETTING = JSON.stringify([TARGET, PUBLIC, "ubiquity/ai.ubq.fi"]);
+const setting = (target: string) =>
+  JSON.stringify([target, PUBLIC, "ubiquity/ai.ubq.fi"]);
 
 /** GitHub as the private deployment sees it; every request is recorded. */
-function privateGithub(urls: string[]): HttpTransportV1 {
+function privateGithub(urls: string[], target: string): HttpTransportV1 {
   const bodies: Record<string, string> = {
     [`/repos/${PRIVATE}`]: PRIVATE_BODY,
-    [`/repos/${TARGET}`]: PRIVATE_BODY,
+    [`/repos/${target}`]: PRIVATE_BODY,
     "/repos/ubiquity/ai.ubq.fi": PUBLIC_BODY,
   };
   return (request) => {
@@ -85,7 +86,7 @@ function privateGithub(urls: string[]): HttpTransportV1 {
     // public repository's rules to any token.
     if (
       request.method === "GET" &&
-      (path === `/repos/${TARGET}/rules/branches/development` ||
+      (path === `/repos/${target}/rules/branches/development` ||
         path === "/repos/ubiquity/ai.ubq.fi/rules/branches/development")
     ) return Promise.resolve(response([]));
     if (
@@ -118,12 +119,15 @@ function privatePort(r: Rig, slug: string): TargetGithub {
 function privateJobs(
   r: Rig,
   seen: { urls: string[]; composed: string[]; remotes: string[] },
-  setting = SETTING,
+  target = TARGET,
 ) {
   return async (name: string, role: string) => {
     const deps = await r.job(name, role);
     assert.equal(deps.env.GITHUB_REPOSITORY, PRIVATE);
-    await Deno.writeTextFile(`${deps.workDir}/sentinel.targets.json`, setting);
+    await Deno.writeTextFile(
+      `${deps.workDir}/sentinel.targets.json`,
+      setting(target),
+    );
     seen.remotes.push(deps.stateRemoteUrl);
     return {
       ...deps,
@@ -131,7 +135,7 @@ function privateJobs(
       // The production resolvers read the host and the target over `http`.
       resolveRepository: undefined,
       http: servingJobLogs(
-        privateGithub(seen.urls),
+        privateGithub(seen.urls, target),
         new Map([[101, QUIET_LOG]]),
       ),
       composeGithub: (
@@ -147,7 +151,12 @@ function privateJobs(
   };
 }
 
-Deno.test("private role: a private target's owner issue goes from intake to a reviewed merge without naming the public repository", async () => {
+/**
+ * Intake to a reviewed merge for `TARGET`. Since the owner removed the
+ * special CI-minute policy (2026-11-23), `ubiquity/prospector` takes exactly
+ * this path too: its CI effects are `inactive` like any other target's.
+ */
+async function issueToMerge(TARGET: string): Promise<void> {
   assert.equal(HOSTED_CONTROLLER_ROLE, "private");
   assert.equal(HOSTED_CONTROLLER_REPOSITORY, PRIVATE);
   assert.equal(HOSTED_CONTROLLER_REMOTE, `https://github.com/${PRIVATE}.git`);
@@ -157,7 +166,7 @@ Deno.test("private role: a private target's owner issue goes from intake to a re
   const remotes: string[] = [];
   try {
     const port = privatePort(r, TARGET);
-    const job = privateJobs(r, { urls, composed, remotes });
+    const job = privateJobs(r, { urls, composed, remotes }, TARGET);
 
     // Intake: the planner admits the private target's owner issue.
     const planDeps = await job("plan", "matrix_plan");
@@ -212,7 +221,7 @@ Deno.test("private role: a private target's owner issue goes from intake to a re
           TARGET,
         );
         const source = deps.workDir +
-          "/.sentinel-actions-state/sources/ubiquity-auth.ubq.fi";
+          "/.sentinel-actions-state/sources/" + TARGET.replace("/", "-");
         remotes.push(
           await checked(source, ["remote", "get-url", "origin"], r.env),
         );
@@ -366,7 +375,13 @@ Deno.test("private role: a private target's owner issue goes from intake to a re
   } finally {
     await r.cleanup();
   }
-});
+}
+
+Deno.test("private role: a private target's owner issue goes from intake to a reviewed merge without naming the public repository", () =>
+  issueToMerge(TARGET));
+
+Deno.test("private role: prospector, no longer under a CI-minute policy, goes from intake to a reviewed merge", () =>
+  issueToMerge("ubiquity/prospector"));
 
 Deno.test("private role: one planner pass grants at most one implementation cell (free tier)", async () => {
   assert.equal(HOSTED_CONTROLLER_ROLE, "private");

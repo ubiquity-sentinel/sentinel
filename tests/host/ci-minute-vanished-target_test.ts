@@ -1,14 +1,15 @@
 /**
- * Why prospector would be held on the private deployment (2026-11-22,
- * docs/DECISIONS.md): the accepted CI-minute policy still names the vanished
- * `ubiquity/passport.ubq.fi`. The reconciler lists each policy target's runs
- * by name, so a target whose listing cannot be read (a renamed repository
- * answers a redirect, which is never followed; a name outside the token is
- * not found) keeps every reconciliation incomplete, turn after turn, while
- * the readable target's discovery finishes. The controller holds every CI
- * effect while a reconciliation is incomplete (`held`, `reconciliation`).
- * This pins the mechanism with the production reconciler; the policy rows
- * themselves are owner policy and are not changed here.
+ * The (now inert) CI-minute reconciler's coverage rule. It lists each policy
+ * target's runs by name, so a target whose listing cannot be read (a renamed
+ * repository answers a redirect, which is never followed; a name outside the
+ * token is not found) keeps every reconciliation incomplete, turn after
+ * turn, while a readable target's discovery finishes; the controller holds
+ * every CI effect while a reconciliation is incomplete (`held`,
+ * `reconciliation`). That is how the vanished `ubiquity/passport.ubq.fi` row
+ * would have held prospector on the private deployment (2026-11-22). The
+ * owner then removed the special policy (2026-11-23): the accepted policy has
+ * no row, so no production composition reconciles at all
+ * (`ci-minute-policy-removed_test.ts`); this rule stays true of the machinery.
  */
 import assert from "node:assert/strict";
 import { createCiMinuteReconciler } from "../../ops/ci-minute-reconciliation.ts";
