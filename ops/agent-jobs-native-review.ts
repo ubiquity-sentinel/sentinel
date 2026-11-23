@@ -60,6 +60,8 @@ import type { AgentJobV1 } from "./agent-jobs-plan.ts";
 const OPERATOR_JOB_TASK_SLOT = 1;
 const REVIEW_PROFILE = "sentinel-review";
 const SHA256 = /^[0-9a-f]{64}$/;
+const MAX_UNAVAILABLE_DETAIL = 512;
+export const AGENT_JOB_REVIEW_ATTEMPTS_PER_HEAD = 3;
 type AgentJobAtBase = AgentJobV1 & { baseSha?: string };
 
 export interface AgentJobReviewRound {
@@ -217,6 +219,52 @@ async function reviewRequestId(
   })}`;
 }
 
+export async function unavailableAgentJobReviewRound(
+  binding: Pick<
+    AgentJobReviewRound,
+    "round" | "headSha" | "baseSha" | "taskDigest"
+  >,
+  detail: string,
+  snapshotDigest?: string | null,
+): Promise<AgentJobReviewRound> {
+  return {
+    ...binding,
+    requestId: await reviewRequestId(binding),
+    disposition: "blocked",
+    result: null,
+    execution: null,
+    resultSha256: null,
+    snapshotDigest: typeof snapshotDigest === "string" &&
+        SHA256.test(snapshotDigest)
+      ? snapshotDigest
+      : null,
+    feedback: "",
+    detail: detail.replaceAll("\r", " ").replaceAll("\n", " ").trim()
+      .slice(0, MAX_UNAVAILABLE_DETAIL) || "native review unavailable",
+  };
+}
+
+export async function agentJobReviewRoundIsUnavailable(
+  input: unknown,
+  expected: Pick<AgentJobReviewRound, "baseSha" | "headSha" | "taskDigest">,
+): Promise<boolean> {
+  const row = asRecord(input);
+  const round = row?.round;
+  return row !== null && typeof round === "number" &&
+    Number.isSafeInteger(round) && round >= 1 &&
+    row.baseSha === expected.baseSha && row.headSha === expected.headSha &&
+    row.taskDigest === expected.taskDigest && row.disposition === "blocked" &&
+    row.result === null && row.execution === null &&
+    row.resultSha256 === null &&
+    (row.snapshotDigest === null ||
+      typeof row.snapshotDigest === "string" &&
+        SHA256.test(row.snapshotDigest)) &&
+    row.feedback === "" && typeof row.detail === "string" &&
+    row.detail.trim().length > 0 &&
+    row.detail.length <= MAX_UNAVAILABLE_DETAIL &&
+    row.requestId === await reviewRequestId({ ...expected, round });
+}
+
 /** Re-derive the disposition before trusting a serialized review round. */
 export async function agentJobReviewRoundVerdict(
   input: unknown,
@@ -225,8 +273,9 @@ export async function agentJobReviewRoundVerdict(
     headSha: string;
     taskDigest: string;
     snapshotDigest?: string;
+    ownerRunId?: string;
   },
-): Promise<"accepted" | "already_satisfied" | "correct" | null> {
+): Promise<AgentJobReviewRound["disposition"] | null> {
   const row = asRecord(input);
   const round = row?.round;
   if (
@@ -246,15 +295,20 @@ export async function agentJobReviewRoundVerdict(
     const execution = parseReadyExecution(row.execution, "$.execution");
     if (
       execution.invocationId !== requestId ||
+      (expected.ownerRunId !== undefined &&
+        execution.ownerRunId !== expected.ownerRunId) ||
       execution.nativeReview?.mode !== "review/start" ||
       execution.actual.observedTerminalStatus !== "completed"
     ) return null;
     const result = parseReviewResultV1(row.result);
-    if (await reviewResultDigest(result) !== row.resultSha256) return null;
+    if (
+      result.verdict === "unavailable" ||
+      result.taskAcceptance?.issueNumber !== OPERATOR_JOB_TASK_SLOT ||
+      result.taskAcceptance.taskDigest !== expected.taskDigest ||
+      await reviewResultDigest(result) !== row.resultSha256
+    ) return null;
     const disposition = dispositionFor(result, expected);
-    return disposition !== "blocked" && disposition === row.disposition
-      ? disposition
-      : null;
+    return disposition === row.disposition ? disposition : null;
   } catch {
     return null;
   }
@@ -302,6 +356,7 @@ export async function reviewAgentJobHead(
       head: headSha,
       scratch: input.workRoot,
       trustedPath,
+      deadlineAtMs,
     });
     if (!checkout.ok) return blocked(checkout.error.detail);
     const remaining = deadlineAtMs - Date.now();
@@ -402,8 +457,10 @@ async function openReviewSession(
     trustedPath,
     baseUrl: input.baseUrl,
   });
-  return ({ cwd }) =>
-    new CodexSubprocessSession({
+  return ({ cwd }) => {
+    const remaining = input.deadlineAtMs - Date.now();
+    if (remaining <= 0) throw new Error("operator job review deadline elapsed");
+    return new CodexSubprocessSession({
       command: [codexExecutable, "app-server"],
       cwd,
       env: codexChildEnv(
@@ -412,6 +469,7 @@ async function openReviewSession(
         reviewDenoDir,
         trustedPath,
       ),
-      operationDeadlineMs: MAX_REVIEW_TOTAL_MS,
+      operationDeadlineMs: Math.min(remaining, MAX_REVIEW_TOTAL_MS),
     });
+  };
 }

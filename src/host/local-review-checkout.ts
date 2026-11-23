@@ -25,6 +25,8 @@ export interface PrepareReviewCheckoutInputV1 {
   trustedPath: string;
   /** Private scratch HOME for trusted Git invocations. */
   scratch: string;
+  /** Optional absolute host deadline shared by all checkout Git commands. */
+  deadlineAtMs?: number;
 }
 
 /**
@@ -234,6 +236,7 @@ export async function prepareReviewCheckout(
       cwd: parent,
       scratch: input.scratch,
       trustedPath: input.trustedPath,
+      deadlineAtMs: input.deadlineAtMs,
     });
   const trustedMetadata = async (): Promise<boolean> => {
     if (!(await reviewCheckoutMetadataSafe(input.reviewCheckout))) return false;

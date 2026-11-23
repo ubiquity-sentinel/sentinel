@@ -455,3 +455,9 @@ permission denied while trying to connect to the docker API at unix:///run/docke
 Operator results are manually merged. A future request for job-authorized auto-merge needs an explicit request opt-in, authorized target and base scope, a current CI rule and a trusted expected-head merge owner.
 
 This consolidation changed no live supervisor, launcher or runtime pointer. Validation used repository CI and local fixtures. It did not dispatch the supervisor or operator workflows or call a hosted model. Operator end-to-end delivery, exact-SHA comment and draft readback, and continued natural supervisor acceptance remain to be established on the admitted refs.
+
+## 2026-11-23 operator smoke and retry fix
+
+The hosted cell reported `changed` for `two-entry-smoke-20261123` on `ubiquity/ts-template`. The agent's `git commit` failed because its Git identity was empty. The review log's `closer=result_keys` diagnostic means the envelope parsed after adding the missing outer brace, and `result` failed the check for an object containing all required fields. The review artifact recorded one `blocked` round with `structured review unavailable: the structured result was malformed [json_syntax]`. GitHub separately denied the publisher job at the protected environment. [Hosted run 45134273158](https://github.com/ubiquity-sentinel/sentinel/actions/runs/45134273158)
+
+The cell sets the checkout's repository-local Git identity before starting the agent, using the same identity as cell-created commits. An unavailable review can trigger fresh native reviews of the exact same head, up to three total attempts with brief backoff within the original deadline. Each review attempt is recorded in `rounds` and `modelStarts`. Completed verdicts and corrections follow the existing gate. [Operator guide](../../jobs/README.md#results)

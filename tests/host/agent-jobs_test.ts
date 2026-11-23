@@ -23,7 +23,9 @@ import {
 } from "../../ops/agent-jobs-plan.ts";
 import {
   type AgentJobReviewRound,
+  agentJobReviewRoundVerdict,
   agentJobTask,
+  unavailableAgentJobReviewRound,
 } from "../../ops/agent-jobs-native-review.ts";
 import {
   agentJobsPublicationRunTag,
@@ -35,6 +37,7 @@ import {
   githubAgentJobsPublishPorts,
 } from "../../ops/agent-jobs-publish-github.ts";
 import type { ReviewedAgentJobResultV1 } from "../../ops/agent-jobs-review-contract.ts";
+import { reviewAgentJobsCell } from "../../ops/agent-jobs-review.ts";
 
 function job(id: string, repository = "ubiquity/a", extra = {}) {
   return { id, repository, prompt: `Do ${id}\nmore detail`, ...extra };
@@ -185,6 +188,7 @@ async function reviewedRow(
   job: AgentJobV1 & { base: string; baseSha: string },
   verdict: ReviewedAgentJobResultV1["review"]["verdict"],
   runTag = "77-1",
+  round = 1,
 ): Promise<ReviewedAgentJobResultV1> {
   const task = await agentJobTask(job, runTag);
   const headSha = verdict === "accepted" ? row.headSha! : job.baseSha;
@@ -194,7 +198,7 @@ async function reviewedRow(
       baseSha: job.baseSha,
       headSha,
       taskDigest: task.digest,
-      round: 1,
+      round,
     };
     const requestId = `agent-job-review:${await canonicalStringifySha256({
       domain: "sentinel-operator-job-review-request-v1",
@@ -312,7 +316,7 @@ Deno.test("agent jobs cell bundles agent work and publishes only reviewed heads"
         "    echo 'ERROR: unexpected status 400: flagged token sk-abcdefghijklmnopqrstuvwxyz0123456789ABCD end' >&2; exit 7;;",
         "  hang) echo partial > partial.txt; sleep 30;;",
         "  own) echo mine > own.txt; git add own.txt",
-        "    git -c user.name=a -c user.email=a@b.c commit -q -m own;;",
+        "    git commit -q -m own;;",
         "  limit)",
         '    if test -f "$TMPDIR/limited-once"; then echo recovered > work.txt',
         '    else touch "$TMPDIR/limited-once"',
@@ -393,6 +397,11 @@ Deno.test("agent jobs cell bundles agent work and publishes only reviewed heads"
         Deno.mkdir(start.clientHome, { recursive: true }),
       agentEnv: () => ({
         PATH: `${root}:${Deno.env.get("PATH") ?? "/usr/bin:/bin"}`,
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_CONFIG_SYSTEM: "/dev/null",
+        GIT_CONFIG_COUNT: "1",
+        GIT_CONFIG_KEY_0: "user.useConfigOnly",
+        GIT_CONFIG_VALUE_0: "true",
       }),
       sleep: (seconds) => {
         delays.push(seconds);
@@ -427,6 +436,17 @@ Deno.test("agent jobs cell bundles agent work and publishes only reviewed heads"
     });
 
     const byId = Object.fromEntries(cell.results.map((row) => [row.id, row]));
+    assert.equal(byId.commits.status, "changed", byId.commits.detail);
+    const workerCheckout = { cwd: `${workRoot}/commits/checkout` };
+    assert.equal(
+      await gitOk(["log", "-1", "--format=%s"], workerCheckout),
+      "own",
+    );
+    const identities = ["log", "-1", "--format=%an <%ae>%n%cn <%ce>"];
+    assert.equal(
+      await gitOk(identities, workerCheckout),
+      await gitOk(identities, { cwd: `${workRoot}/writes/checkout` }),
+    );
     assert.deepEqual(
       cell.results.map((row) => [row.id, row.status]),
       [
@@ -773,6 +793,106 @@ Deno.test("agent jobs cell bundles agent work and publishes only reviewed heads"
     const [refused] = await publishAgentJobsCell({ ...one, reviewed: forged });
     assert.match(refused.detail, /native review evidence/);
     assert.equal(refused.branch, null);
+
+    const retryJob = pinned.find((item) => item.id === "dropped")!;
+    const retryPlan = {
+      ...plan,
+      cells: [{ ...plan.cells[0], jobs: [retryJob] }],
+      createdAtMs: Date.now(),
+    };
+    const runTag = "79-1";
+    const retryInput = `${root}/retry-input`;
+    const reviewedDir = `${root}/retry-reviewed`;
+    await Deno.mkdir(retryInput);
+    await Deno.copyFile(
+      `${outDir}/dropped.bundle`,
+      `${retryInput}/dropped.bundle`,
+    );
+    await Deno.writeTextFile(
+      `${retryInput}/result.json`,
+      JSON.stringify({ ...cell, results: [byId.dropped] }),
+    );
+    const withRetries = await reviewAgentJobsCell({
+      plan: retryPlan,
+      cellId: "c01",
+      runTag,
+      artifactDir: retryInput,
+      reviewedDir,
+      workRoot: `${root}/retry-work`,
+      modelToken: "",
+      defaultModel: "fixture",
+      baseUrl: "https://example.invalid/v1",
+      ports: {
+        publicRepository: () => Promise.resolve(),
+        remoteUrl: () => remote,
+        task: agentJobTask,
+        verdict: agentJobReviewRoundVerdict,
+        correct: () => assert.fail("unavailable review requested correction"),
+        sleep: () => Promise.resolve(),
+        log: () => {},
+        review: async ({ headSha, round }) => {
+          if (round === 1) throw new Error("fixture transport failure");
+          const receipt = (await reviewedRow(
+            { ...byId.dropped, headSha },
+            retryJob,
+            "accepted",
+            runTag,
+            round,
+          )).review.rounds[0];
+          return round === 2
+            ? await unavailableAgentJobReviewRound(
+              receipt,
+              "fixture unavailable review",
+              receipt.snapshotDigest,
+            )
+            : receipt;
+        },
+      },
+    });
+    const retryPublication = {
+      ...one,
+      plan: retryPlan,
+      runTag,
+      artifactDir: reviewedDir,
+      reviewed: withRetries,
+    };
+    const [retried] = withRetries.results;
+    const [recovered] = await publishAgentJobsCell(retryPublication);
+    assert.equal(recovered.status, "published", recovered.detail);
+    assert.equal(recovered.headSha, retried.review.headSha);
+    assert.equal(recovered.branch, "agent-jobs/dropped-79-1");
+    assert.equal(await pushed(recovered.branch, "work.txt"), "resumed");
+    assert.deepEqual(
+      withRetries.modelStarts.map(({ headSha, kind, round }) => [
+        headSha,
+        kind,
+        round,
+      ]),
+      [1, 2, 3].map((round) => [recovered.headSha, "review", round]),
+    );
+
+    const missingStart = structuredClone(withRetries);
+    missingStart.modelStarts.shift();
+    const [unaccounted] = await publishAgentJobsCell({
+      ...retryPublication,
+      reviewed: missingStart,
+    });
+    assert.equal(unaccounted.branch, null);
+    assert.match(unaccounted.detail, /retry accounting/);
+
+    const unavailableFinal = structuredClone(withRetries);
+    unavailableFinal.results[0].review.rounds[2] =
+      await unavailableAgentJobReviewRound(
+        retried.review.rounds[2],
+        "fixture unavailable final review",
+      );
+    const [unsettled] = await publishAgentJobsCell({
+      ...retryPublication,
+      reviewed: unavailableFinal,
+    });
+    assert.equal(unsettled.branch, null);
+    assert.match(unsettled.detail, /native review evidence/);
+
     assert.throws(
       () => agentJobsPublicationRunTag("77", "1", "77-2"),
       /workflow run/,

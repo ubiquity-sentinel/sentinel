@@ -10,15 +10,18 @@ export interface CommandResult {
   stderr: string;
 }
 
+const GIT_USER_NAME = "ubiquity-sentinel[bot]";
+const GIT_USER_EMAIL = "ubiquity-sentinel[bot]@users.noreply.github.com";
+
 const HOST_GIT_CONFIG = [
   "-c",
   "core.hooksPath=/dev/null",
   "-c",
   "commit.gpgsign=false",
   "-c",
-  "user.name=ubiquity-sentinel[bot]",
+  `user.name=${GIT_USER_NAME}`,
   "-c",
-  "user.email=ubiquity-sentinel[bot]@users.noreply.github.com",
+  `user.email=${GIT_USER_EMAIL}`,
   "-c",
   "protocol.file.allow=always",
 ];
@@ -73,6 +76,12 @@ export async function gitOk(
     );
   }
   return result.stdout;
+}
+
+/** Set the host's commit identity in the agent's disposable clone. */
+export async function configureCheckoutIdentity(cwd: string): Promise<void> {
+  await gitOk(["config", "--local", "user.name", GIT_USER_NAME], { cwd });
+  await gitOk(["config", "--local", "user.email", GIT_USER_EMAIL], { cwd });
 }
 
 /** Remote URL of a repository; tests substitute local bare repositories. */
