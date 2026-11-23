@@ -95,10 +95,12 @@ export type HostedControllerSelectionV1 =
 // (tests/host/private-deployment-role_test.ts: own identity and remotes, no
 // request naming the public repository, no backup CI, its self installation
 // only, owner-install refusal, a reviewed target merged through its own
-// surface, the closed reason for its own tracker). Its issue-to-pull-request
-// half has no private-role proof yet, so a private selection still refuses to
-// start even with bound workflow ids; the change that adds it sets this.
-const PRIVATE_ROLE_WIRED = false;
+// surface, the closed reason for its own tracker;
+// tests/host/private-deployment-lifecycle_test.ts: a private target's issue
+// from intake through implementation, publication and native review request
+// to a reviewed merge). A private selection still refuses to start while
+// either workflow id above is null (`workflow_ids_unfilled`).
+const PRIVATE_ROLE_WIRED = true;
 
 /**
  * Pure selection over a closed list (the committed one in production). The
@@ -170,6 +172,31 @@ export const HOSTED_CONTROLLER_RETIRED_RUNTIME_ID: string | null =
 /** Committed App self installation of the selected entry, when committed. */
 export const HOSTED_CONTROLLER_SELF_INSTALLATION_ID: number | null =
   SELECTED.binding.selfInstallationId;
+
+/** Per-cycle cell ceilings of one deployment; null is the platform bound. */
+export interface HostedControllerCycleCellsV1 {
+  /** Implementation (matrix) cells one planner pass may grant. */
+  readonly matrix: number;
+  /** Repository repair cells one fan-out plan may hold. */
+  readonly repair: number;
+}
+
+/**
+ * GitHub Free (owner, 2026-11-22: "Private deploy if it isn't free then no
+ * go"): the private role runs one supervisor cycle a day, and a cycle costs
+ * about one billed minute per job minute, so its cells are bounded. One
+ * implementation cell lets one issue start each day; two repair cells let the
+ * records already in flight (review observation, CI read, merge) of two
+ * repositories progress beside it, and every record a cell does not take
+ * stays with the serial pass. The public role keeps the platform bounds (the
+ * owner lifted artificial caps there).
+ */
+export const PRIVATE_CYCLE_CELLS: HostedControllerCycleCellsV1 = Object.freeze(
+  { matrix: 1, repair: 2 },
+);
+export const HOSTED_CONTROLLER_CYCLE_CELLS:
+  | HostedControllerCycleCellsV1
+  | null = SELECTED.binding.role === "private" ? PRIVATE_CYCLE_CELLS : null;
 
 export const HOSTED_CONTROLLER_DEPLOYMENT = Object.freeze(
   SELECTED.binding.deployment,

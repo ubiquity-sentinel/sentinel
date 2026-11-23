@@ -114,6 +114,16 @@ const SHIPPED_TARGETS = [
   "ubiquity/notifications.ubq.fi",
   "ubiquity/github-labels-processor",
   "ubiquity/card-issuance",
+  // The renamed Passport (2026-11-22, owner): private, so only the private
+  // deployment works it; the public host reads it private and skips it.
+  "ubiquity/auth.ubq.fi",
+  // Owner, 2026-11-23: every non-archived private ubiquity repository is a
+  // target of the private deployment ("App installed to all"). The public
+  // host reads each private and skips it. `ubiquity/.github-private` is left
+  // out: the committed slug rule refuses a name that starts with a dot.
+  "ubiquity/google-apps-script",
+  "ubiquity/arbitrage-uusd",
+  "ubiquity/ubiquibot-config",
 ];
 
 Deno.test("targets: the shipped setting names every active ubiquity repository", async () => {

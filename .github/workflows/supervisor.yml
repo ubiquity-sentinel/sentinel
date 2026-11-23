@@ -155,7 +155,7 @@ jobs:
         with:
           client-id: Iv23liHUJNXds9mU3j7Q
           private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
-          owner: ubiquity-sentinel
+          owner: ${{ github.repository == 'ubiquity-sentinel-private/sentinel' && 'ubiquity-sentinel-private' || 'ubiquity-sentinel' }}
           repositories: sentinel
       - name: Run hosted autonomy (retry transient failures, deliver reviewed heads)
         id: autonomy
@@ -259,7 +259,7 @@ jobs:
         with:
           client-id: Iv23liHUJNXds9mU3j7Q
           private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
-          owner: ubiquity-sentinel
+          owner: ${{ github.repository == 'ubiquity-sentinel-private/sentinel' && 'ubiquity-sentinel-private' || 'ubiquity-sentinel' }}
           repositories: sentinel
       - name: Prepare hosted supervisor run
         id: prepare
@@ -390,7 +390,7 @@ jobs:
         with:
           client-id: Iv23liHUJNXds9mU3j7Q
           private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
-          owner: ubiquity-sentinel
+          owner: ${{ github.repository == 'ubiquity-sentinel-private/sentinel' && 'ubiquity-sentinel-private' || 'ubiquity-sentinel' }}
           repositories: sentinel
       - name: Plan isolated issue matrix
         id: matrix_plan
@@ -460,7 +460,9 @@ jobs:
     needs: [maintenance, prepare, matrix_plan]
     if: ${{ !cancelled() && needs.maintenance.result == 'success' && needs.prepare.result == 'success' && github.ref == 'refs/heads/sentinel-supervisor' && needs.prepare.outputs.run == 'true' && needs.matrix_plan.result == 'success' && needs.matrix_plan.outputs.hasCells == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    # Private deployment (free tier): the runtime's own 110-minute window
+    # plus margin, like every other runtime job; public unchanged.
+    timeout-minutes: ${{ github.repository == 'ubiquity-sentinel-private/sentinel' && 120 || 300 }}
     environment:
       name: sentinel-supervisor
     permissions:
@@ -599,7 +601,7 @@ jobs:
         with:
           client-id: Iv23liHUJNXds9mU3j7Q
           private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
-          owner: ubiquity-sentinel
+          owner: ${{ github.repository == 'ubiquity-sentinel-private/sentinel' && 'ubiquity-sentinel-private' || 'ubiquity-sentinel' }}
           repositories: sentinel
       - name: Download immutable matrix plan
         uses: actions/download-artifact@v4
@@ -784,7 +786,7 @@ jobs:
         with:
           client-id: Iv23liHUJNXds9mU3j7Q
           private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
-          owner: ubiquity-sentinel
+          owner: ${{ github.repository == 'ubiquity-sentinel-private/sentinel' && 'ubiquity-sentinel-private' || 'ubiquity-sentinel' }}
           repositories: sentinel
       - name: Download immutable repair fan-out plan
         uses: actions/download-artifact@v4
@@ -992,7 +994,7 @@ jobs:
         with:
           client-id: Iv23liHUJNXds9mU3j7Q
           private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
-          owner: ubiquity-sentinel
+          owner: ${{ github.repository == 'ubiquity-sentinel-private/sentinel' && 'ubiquity-sentinel-private' || 'ubiquity-sentinel' }}
           repositories: sentinel
       # #328: the serial pass never steps the records the repository cells
       # step; it reads the delegation from the same verified plan.
@@ -1118,7 +1120,7 @@ jobs:
         with:
           client-id: Iv23liHUJNXds9mU3j7Q
           private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
-          owner: ubiquity-sentinel
+          owner: ${{ github.repository == 'ubiquity-sentinel-private/sentinel' && 'ubiquity-sentinel-private' || 'ubiquity-sentinel' }}
           repositories: sentinel
       - name: Finalize hosted supervisor run
         env:
@@ -1139,7 +1141,9 @@ jobs:
           SENTINEL_REPAIR_PLAN_DIGEST: ${{ needs.matrix_plan.outputs.hasRepairCells == 'true' && needs.matrix_plan.outputs.repairPlanDigest || '' }}
         run: deno task supervisor:run
       - name: Chain the next dispatcher run
-        if: always() && github.ref == 'refs/heads/sentinel-supervisor'
+        if: >-
+          always() && github.ref == 'refs/heads/sentinel-supervisor' &&
+          github.repository == 'ubiquity-sentinel/sentinel'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}

@@ -78,7 +78,11 @@ Deno.test("tolerant mint workflows: every foreign mint is the vendored action wi
     // Every self mint stays strict.
     for (const other of list) {
       const given = other.with as Obj | undefined;
-      if (given?.owner === "ubiquity-sentinel") {
+      if (
+        given !== undefined &&
+        (given.owner === "ubiquity-sentinel" ||
+          String(given.owner).includes("'ubiquity-sentinel'"))
+      ) {
         assert.equal(given["tolerate-inaccessible-repositories"], undefined);
         assert.equal(given["known-unavailable"], undefined);
       }

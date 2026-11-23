@@ -1126,7 +1126,12 @@ Deno.test("hosted workflow: every code-writing job mints the ubiquity-sentinel A
       namedStepRange(lines, "Mint the scoped self installation token"),
     );
     assert.ok(
-      selfMint.includes("owner: ubiquity-sentinel") &&
+      // Each deployment's own organization, a closed choice of two committed
+      // literals (never empty); on the public repository exactly
+      // `ubiquity-sentinel`, as before.
+      selfMint.includes(
+        "owner: ${{ github.repository == 'ubiquity-sentinel-private/sentinel' && 'ubiquity-sentinel-private' || 'ubiquity-sentinel' }}",
+      ) &&
         selfMint.includes("repositories: sentinel") &&
         !/tolerate/.test(selfMint),
       `${job} mints the self token from the new organization`,

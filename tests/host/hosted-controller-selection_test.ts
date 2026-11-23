@@ -136,14 +136,14 @@ Deno.test("controller selection: only an exact committed repository selects, unb
     reason: "workflow_ids_unfilled",
     repository: PRIVATE,
   });
-  // Bound ids alone do not start the unwired private role.
-  assert.deepEqual(
-    selectHostedControllerDeploymentV1(
-      PRIVATE,
-      bound(HOSTED_CONTROLLER_DEPLOYMENTS),
-    ),
-    { ok: false, reason: "private_role_unwired", repository: PRIVATE },
+  // The committed private role is wired: bound ids are the only missing edit.
+  const privateSelected = selectHostedControllerDeploymentV1(
+    PRIVATE,
+    bound(HOSTED_CONTROLLER_DEPLOYMENTS),
   );
+  assert(privateSelected.ok);
+  assert.equal(privateSelected.binding.role, "private");
+  assert.equal(privateSelected.binding.selfInstallationId, 183425201);
   const publicSelected = selectHostedControllerDeploymentV1(
     PUBLIC,
     bound(HOSTED_CONTROLLER_DEPLOYMENTS),
@@ -350,20 +350,9 @@ Deno.test("controller selection: a bound private entry rebinds identity, refs, r
       )
       .replace("ciWorkflowId: null,", `ciWorkflowId: ${BOUND_CI_ID},`);
     assert.notEqual(boundSource, original);
+    // The committed role is wired, so the two ids are the only edit.
+    assert.ok(original.includes("const PRIVATE_ROLE_WIRED = true;"));
     await Deno.writeTextFile(file, boundSource);
-    // Bound ids alone: the unwired private role still refuses to start.
-    const unwired = await probe(copy, PRIVATE, true);
-    assert.notEqual(unwired.code, 0);
-    assert.match(
-      unwired.stderr,
-      /hosted controller binding refused: private_role_unwired ubiquity-sentinel-private\/sentinel/,
-    );
-    const wiredSource = boundSource.replace(
-      "const PRIVATE_ROLE_WIRED = false;",
-      "const PRIVATE_ROLE_WIRED = true;",
-    );
-    assert.notEqual(wiredSource, boundSource);
-    await Deno.writeTextFile(file, wiredSource);
     const privateRun = await probe(copy, PRIVATE, true);
     assert.equal(privateRun.code, 0, privateRun.stderr);
     const remote = "https://github.com/ubiquity-sentinel-private/sentinel.git";

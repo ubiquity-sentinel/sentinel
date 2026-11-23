@@ -6886,3 +6886,275 @@ reverting the scope exclusion restores read-only target selection.
 - The protected supervisor continues to discover configured issue repairs and owns its current CI and expected-head merge gates. Operators submit a separate JSON job to the development workflow for a GitHub-proven public target with Sentinel App access. The planner pins its base ref, base SHA, and original prompt before implementation. The protected environment needs owner admission of the exact development ref. Existing producers on `claude/great-ride-tu5r70` stay on that ref until explicitly migrated, and their historical inbox and cleanup inputs remain there.
 - Both entries use the native Codex review and exact snapshot path. A changed operator candidate needs a completed, current bound verdict with positive task acceptance and no unresolved P0. An isolated correction and fresh review can repeat within the original deadline. Counts record attempts. The job's explicit `review:false` applies only when Git proves an empty diff against the pinned base. With default review, an empty diff needs an already-satisfied native verdict.
 - Trusted operator publication writes the exact accepted SHA, an authenticated App verdict comment attached to it, the workflow result with the comment URL, and an optional draft PR. An operator owns any merge and target CI verification. Operator job App write credentials stay in trusted publication and the explicit cleanup workflow. This policy records the code contract. Hosted admission and acceptance are established separately in the build ledger. [Operator guide](../jobs/README.md) · [Consolidation inventory](handoffs/2026-11-22-two-entry-consolidation.md)
+
+## 2026-11-22: the private deployment runs on GitHub's free tier: one cycle a day, a weekly fast-forward, its own CI
+
+- Owner, verbatim: "Private deploy if it isn't free then no go. If theee is a
+  free tier then lets do it". GitHub Free gives an organization 2,000 Actions
+  minutes a month for private repositories; with no payment method the
+  spending limit is $0, so runs stop when the minutes run out and nothing is
+  billed. Measured on the public deployment: an idle supervisor cycle is
+  about 30 billed minutes (10 jobs, each rounded up), a `ci.yml` push run
+  about 37. Agreed: one supervisor cycle a day and a code sync about once a
+  week.
+- Code (auto-installs on the public deployment; public behaviour unchanged):
+  - Proof first (`tests/host/private-deployment-lifecycle_test.ts`): a bound
+    copy run as the private deployment takes one private target's owner
+    issue (`ubiquity/auth.ubq.fi`) through the real planner (intake), an
+    isolated cell with a fake model port in the target's real Git mirror
+    (implementation), the aggregate (publication, native review request) and
+    the next run's aggregate (completed review with no finding, merge). Every
+    HTTP request is recorded; the state and target remotes are temporary Git
+    directories; no request, remote or composed surface names
+    `ubiquity-sentinel/sentinel`. Then `PRIVATE_ROLE_WIRED` became `true`; the
+    committed private entry still refuses at module load while either
+    workflow id is `null` (`workflow_ids_unfilled`).
+  - `ubiquity/auth.ubq.fi` (the renamed Passport, private) joins
+    `sentinel.targets.json` and, because the two-file sync test requires it,
+    `sentinel.backup-ci-targets.json` (id null; backup CI refuses private
+    repositories). On the public host it reads private and is skipped; the
+    old `passport.ubq.fi` rows are untouched.
+  - Free-tier cell ceilings, private role only, in the authority file
+    (`PRIVATE_CYCLE_CELLS`, `HOSTED_CONTROLLER_CYCLE_CELLS`; null on the
+    public role, so the platform bounds stay there): at most ONE
+    implementation (matrix) cell per planner pass and at most TWO repository
+    repair cells per fan-out plan. One implementation cell is the smallest
+    number that lets an issue start each day; review observation, CI reads
+    and merges of records already in flight are stepped by repair cells or,
+    beyond the second repository, by the trusted serial pass (a record no
+    cell takes stays with it), so an issue moves implement → review → merge
+    across days. Proven on the private role: three ready issues, one grant,
+    one reservation (`private-deployment-lifecycle_test.ts`); the fan-out
+    ceiling keeps the first cells and delegates nothing else
+    (`tests/repair/repair-fanout-cycle-cells_test.ts`).
+  - Launcher install on the private role (`actions-supervisor-controller.ts`,
+    `PRIVATE_LAUNCHER_NOT_INSTALLED`): a launcher is installed only when its
+    own repository's `test-local` check is complete and successful
+    (`verifyLauncherCi`, unchanged). When it is not (skipped, absent, still
+    running or red) and the launcher is not the installed runtime, the
+    private role starts NOTHING: no ordinary, bootstrap or release execution
+    and no state write; prepare ends with that closed hold, so the cycle
+    costs maintenance, prepare and finalize only. On the public role the
+    same input still runs ordinary work on the installed revision, as
+    before. Proven by `private-deployment-install_test.ts` (green private
+    check: generation+1 model-disabled bootstrap, then ordinary, every read
+    on the private repository; the four other cases: hold, no write) and
+    `hosted-supervisor-launcher-mismatch_test.ts` (public unchanged).
+- Workflows (final commit; needs one manual launcher advance on the public
+  repository):
+  - Every automatically triggered job is gated to the public repository by
+    prefixing `github.repository == 'ubiquity-sentinel/sentinel' &&` to its
+    former condition (or adding only that condition): the five-minute crons
+    (`supervisor-dispatch.yml` both jobs, `release.yml`,
+    `sentinel-scheduler.yml`), the `workflow_run` completions,
+    `gateway-source-verify.yml` (push), and the dispatch-only `backup-ci.yml`,
+    `backup-ci-leg.yml` and `repair.yml` (`queue-canary.yml` was already
+    gated). On the public repository the prefix is true, so each condition is
+    exactly today's; a skipped job takes no runner and bills 0 minutes.
+  - `ci.yml` (three jobs) runs on the public repository exactly as before
+    (`public || ...` is true there) and on the private one only for a push to
+    `development` (`github.event_name == 'push' && github.ref ==
+    'refs/heads/development'`): no pull requests, no other branch. The weekly
+    fast-forward pushes `development` with an App token, which starts that
+    run, so each launcher the private deployment installs has its own green
+    `test-local`. Nothing in that run depends on the public repository, a
+    secret or `GITHUB_REPOSITORY`: the shards and the harness are
+    credential-free, and `ops/native-ci-proof.ts` reads
+    `GITHUB_REPOSITORY` only for a `pull_request` event (a push ends after
+    the aggregate status), so the same SHA that is green on the public
+    repository goes green on the private one unless a test is flaky.
+  - The finalize step "Chain the next dispatcher run" also requires the
+    public repository, so the private deployment never chains.
+  - The seven self mints in `supervisor.yml` name `owner: ${{
+    github.repository == 'ubiquity-sentinel-private/sentinel' &&
+    'ubiquity-sentinel-private' || 'ubiquity-sentinel' }}`, a closed choice of
+    two committed non-empty literals (exactly `ubiquity-sentinel` on the
+    public repository); `repositories: sentinel` stays literal (both
+    repositories are named `sentinel`), so no mint can omit the list and get
+    every repository of an installation.
+  - `matrix_cell` stops at 120 minutes on the private repository
+    (`timeout-minutes: ${{ github.repository ==
+    'ubiquity-sentinel-private/sentinel' && 120 || 300 }}`; expressions are
+    allowed in a job's `timeout-minutes`, and on the public repository it is
+    300, as before). Every other runtime job already stops at 120. They are
+    not shortened further: every runtime job keeps its 110-minute run window
+    (`RUN_DEADLINE_MS`), so a shorter job timeout would kill a model session
+    or a review wait mid-step; the monthly guard bounds the cost instead.
+  - `private-daily.yml` (03:41 UTC and manual; private only): it loads the
+    committed binding first, and while the ids are unfilled the day ends
+    green with one line and no further step (no failure notice). Then, each
+    ending the day green: no second supervisor run created this UTC day; the
+    launcher (`sentinel-supervisor`) must have its own complete, successful
+    `test-local` (a red or still-running CI waits for the next day: the sync
+    runs Sunday 02:17, its CI takes about 15-20 minutes, so it is normally
+    green by 03:41; a red one waits for a re-run or the next sync); and the
+    month's billed minutes must be under 1,800, summed from GitHub's own run
+    and job listings (`supervisor.yml` and `ci.yml` jobs, each rounded up to
+    the minute, plus one per daily and sync run; `actions: read` on
+    `GITHUB_TOKEN`). Every listing is captured before a loop or a sum uses
+    it, so a failed read (an HTTP error with or without a body, a timeout, a
+    failed later page) or a non-numeric answer ends the day green with one
+    line and never dispatches (fails closed; `private-daily-guard_test.ts`
+    runs the step with a fake `gh`). Only then it dispatches
+    `supervisor.yml` at `sentinel-supervisor`.
+  - `private-sync.yml` (Sunday 02:17 UTC and manual; private only): it reads
+    the public `sentinel-supervisor` SHA with no credential and
+    fast-forwards the private `development` and `sentinel-supervisor` to it in
+    one atomic, never-forced push, only when both are ancestors (on
+    divergence it fails and nothing moves). The token is minted with the
+    pinned upstream action for `ubiquity-sentinel-private`/`sentinel` only,
+    with contents and workflows write (the default `GITHUB_TOKEN` cannot push
+    a commit that changes `.github/workflows`); a missing Workflows
+    permission on that installation fails the mint red and nothing moves. It
+    uses no environment.
+- Install rule, corrected: private CI IS needed. The private launcher is
+  always a SHA the public launcher already runs (green on the public
+  `ci.yml`), and the private deployment installs it only after its OWN
+  `test-local` for that SHA is green, exactly as `verifyLauncherCi` demands
+  of every deployment; then the unchanged release state gives it a
+  model-disabled bootstrap at generation+1 on the next daily cycle and
+  ordinary work the day after, and a SHA that failed there cannot reinstall.
+  Auto-follow never runs on the private deployment (its dispatcher job is
+  gated off), so `ciWorkflowId` only identifies its own `ci.yml`.
+- Budget, billed minutes a month on the private repository (CI 4 x 37 =
+  148, daily 30 x 1 = 30, sync about 4 x 1 = 4, all gated workflows 0):
+  - idle (every cycle idle, about 30): about 1,082;
+  - one working cell every day (assumed about 90 a cycle: an idle cycle plus
+    about 40 of model session and 20 more in the aggregate): about 2,882, so
+    the guard stops new cycles at 1,800: the last on about day 19 (without
+    it, 2,000 runs out during about day 21);
+  - worst case, every job at its private timeout (15 + 10 + 120 + 120 +
+    2 x 120 + 120 + 10 = 635, plus the daily minute): the guard admits days
+    1-3 (about 0, 673 and 1,309 before each, counting one CI run) and
+    refuses day 4 (about 1,945). Without the guard 2,000 runs out during day
+    4's cycle. A worst-case cycle started just under 1,800 can still reach
+    2,000; then GitHub stops the remaining jobs and nothing is billed.
+- Prospector: in the rig its work step defers with the exact decision
+  `{"kind":"unavailable","reason":"private_ci_authority_unavailable"}` for
+  its `head_push` CI effect: prospector is a CI-minute policy target
+  (`ACCEPTED_CI_MINUTE_POLICY`), every CI effect of it needs the App
+  principal's private CI capability (`createHostedPrivateCiCapabilities`),
+  and the rig composes no principal. On the private deployment the native
+  principal exists, but the accepted policy's second row still names
+  `ubiquity/passport.ubq.fi` (repositoryId 1254699258, workflowBlob
+  `f2c61d693d8439a7f42b47d35ebaedb37173b1c7`, job `deno`, 30 minutes). The
+  reconciliation lists each policy target's runs by name
+  (`/repos/ubiquity/passport.ubq.fi/actions/runs`; no redirect is followed and
+  the name is outside the minted token), so it cannot complete, and an
+  incomplete reconciliation holds every CI effect for five minutes (`held`,
+  `reconciliation`): prospector's pull requests would be held on every run,
+  and an implemented prospector issue could keep the day's one cell busy
+  for nothing. The reconciler half is pinned by
+  `tests/host/ci-minute-vanished-target_test.ts` (an unreadable policy
+  target keeps every turn incomplete; readable targets complete); the hold
+  on an incomplete reconciliation is the controller's existing rule. The smallest change
+  is an owner decision on the owner-merged policy rows
+  (`src/contracts/ci-minute-budget.ts`): replace the Passport row with
+  `ubiquity/auth.ubq.fi` (its id, CI workflow blob, job and timeout read from
+  GitHub) or remove it, and confirm prospector's own row (blob
+  `bacb73da71714a27d76918771d06ff4ce1f45b82`, job `validation`, 20 minutes)
+  still matches. `ubiquity/auth.ubq.fi` is no policy target by name, so its
+  CI effects are `inactive` (neither refused nor accounted); the
+  reconciliation's ceiling lookup by repository id matters only once a row
+  names it.
+- Operator, in order: on the private repository add the repository secrets
+  `SENTINEL_SUPERVISOR_APP_PRIVATE_KEY`, `UOS_AI_TOKEN` and
+  `SENTINEL_DEEPSEEK_API_KEY` (repository secrets, readable by the
+  supervisor jobs that name an environment too) and the repository
+  variables `SENTINEL_BACKUP_CI=off` and `SENTINEL_AUTO_FOLLOW=off`; check
+  the App's installation on `ubiquity-sentinel-private` has Contents and
+  Workflows write; after the public launcher advance, fast-forward the
+  private `development` and `sentinel-supervisor` once by hand to the public
+  `sentinel-supervisor` SHA; make `development` the default branch; enable
+  Actions; read the two ids (`GET
+  /repos/ubiquity-sentinel-private/sentinel/actions/workflows`, the entries
+  whose path is `.github/workflows/supervisor.yml` and
+  `.github/workflows/ci.yml`) and commit them as the private entry's
+  `supervisorWorkflowId` and `ciWorkflowId` on the public `development` (a
+  two-number edit of an owner-merged authority file); after the public
+  install, run `sentinel-private-sync` (or wait for Sunday), let its CI go
+  green, then run `sentinel-private-daily` (or wait for 03:41 UTC).
+- Known limits: the gateway merge-queue custody pass still reads the public
+  `ubiquity/ai.ubq.fi` branch rules on every host; a launcher whose install
+  failed after green CI holds (about 5 minutes a day) until the next sync.
+
+Rollback: revert the workflow commit first (it needs the same manual
+launcher advance), then the code commits. The public deployment is unchanged
+either way; the private one then refuses to start again.
+
+## 2026-11-23: the special CI-minute policy is removed (owner decision)
+
+- Owner, verbatim: "Remove the special policy. We will deploy a private
+  sentinel for all private repos". This settles the prospector blocker in
+  the entry above.
+- Removed: every target row of the CI-minute policy, both the accepted one
+  (`ACCEPTED_CI_MINUTE_POLICY`: `ubiquity/prospector`, repository 1337190500,
+  and `ubiquity/passport.ubq.fi`, 1254699258) and the inactive proposal
+  (`INACTIVE_CI_MINUTE_POLICY`). No row is renamed or replaced.
+- Kept, inert: the controller, store, reconciler and private CI composition.
+  A policy without a target row manages nothing (`ciMinutePolicyInactive`):
+  `createCiMinuteController` and `composePrivateCiMinutes` (the runtime's
+  `runtimeCiMinutes` and the launcher's composition) return the inactive
+  coordinator before any capability, store, clock, read or write, so every
+  CI effect of every repository is `inactive` and every work step proceeds
+  under the normal rules only (P0 review, current-head CI not red, custody,
+  accounting). The policy validator still refuses an empty list, and no
+  production path digests one. The empty policy has no digest, and nothing
+  persisted is checked against the current policy digest outside the
+  ledger, which is no longer read.
+- Ledger history: untouched. Nothing reads, writes or deletes
+  `sentinel-state/ci-minutes` on `ubiquity/prospector` any more; its rows stay
+  as they are, inert.
+- Public deployment: its targets' effects were already `inactive` (they had
+  no row) and stay so. What stops: every runtime job and launcher run used to
+  reconcile the ledger (reads of prospector and its `sentinel-state/ci-minutes`
+  branch, and writes to it); now none does. Proof: the public role's effect
+  for a public target is identical with the retired rows and without
+  (`ci-minute-policy-removed_test.ts`, which also shows nothing is touched).
+- Private deployment: prospector goes from intake to a reviewed merge like
+  any other private target (`private-deployment-lifecycle_test.ts`).
+- Tests: the machinery's own tests use the retired rows as a test fixture
+  (`tests/state/retired-ci-minute-policy.ts`), never production source.
+- Other repository special cases, left as they are because none prevents or
+  distorts work on the private deployment (each matches the exact old name
+  `passport.ubq.fi`, which is no committed target, or is reachable only
+  through the removed policy): the Passport work trial
+  (`src/repair/passport-work-trial.ts` and its launcher passes), the named
+  Passport verify policy (`src/host/target-policy.ts`), the dependency
+  preparer (`src/host/passport-dependencies.ts`), the Passport merge-gate
+  check filter (`src/repair/merge-gate-checks.ts`), the base-review CI read
+  (`src/github/base-review-ci.ts`, `base-review-service.ts`,
+  `client-reads.ts`), telemetry names (`ops/telemetry-*.ts`), and the
+  private CI capability for prospector (`src/host/hosted-app-principal.ts`,
+  `hosted-app-principal-native.ts`, `ops/hosted-autonomy-main.ts`), which is
+  no longer called. `ubiquity/auth.ubq.fi` gets none of them and is worked
+  with the generic policy from its own tree; whether its dispatch-only
+  deployment checks need the Passport merge-gate filter is not verified.
+
+Rollback: revert the commit; the rows return and prospector is held again
+until the Passport row is repaired.
+
+## 2026-11-23: the private deployment targets every non-archived private ubiquity repository
+
+- Owner, verbatim: "Yah so we will make a sentinel for private repos only
+  and yeah target only ubiquity private repos" and, on the App installation
+  in the `ubiquity` organization, "App installed to all".
+- Added to `sentinel.targets.json` and, for the two-file sync,
+  `sentinel.backup-ci-targets.json` (id null; backup CI refuses private
+  repositories): `ubiquity/google-apps-script`, `ubiquity/arbitrage-uusd`,
+  `ubiquity/ubiquibot-config`. The private list is then seven: prospector,
+  prospector-chrome-extension, prospector-monorepo, auth.ubq.fi and these
+  three. Not added: `ubiquity/uad-ui-archived` (archived) and
+  `ubiquity/.github-private`: the committed slug rule (`parseTargetSlugsV1`)
+  accepts only names that start with a letter or digit and refuses the whole
+  setting otherwise, which would leave both deployments with no target;
+  supporting it needs a slug-rule change that is not made here.
+- Public host: each new name reads private and is skipped (the
+  `sentinel_private_targets` counts grow); nothing else changes. The foreign
+  mints list 32 names (GitHub accepts up to 500 repositories in one
+  installation-token request; the committed setting allows 64), and the
+  installation covers all of them, so the tolerant mint drops none.
+- A new target without a CI workflow or a local verify parks as
+  `no_ci_and_no_local_verify` on the private deployment (existing rule).
+
+Rollback: revert the commit; the three names leave both files.

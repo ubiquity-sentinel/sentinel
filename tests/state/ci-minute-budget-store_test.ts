@@ -1,5 +1,4 @@
 import {
-  acceptedCiMinutePolicy,
   CI_MINUTE_MAX_BYTES,
   CI_MINUTE_MAX_CATALOG_RUNS,
   CI_MINUTE_MAX_RECORDS,
@@ -7,6 +6,10 @@ import {
   parseCiMinuteLedger,
   validateCiMinuteTransition,
 } from "../../src/contracts/ci-minute-budget.ts";
+import {
+  retiredBasis,
+  retiredCiMinutePolicy,
+} from "./retired-ci-minute-policy.ts";
 import type {
   CiMinuteCoordinatorV1,
   CiMinuteObserverV1,
@@ -42,7 +45,6 @@ import {
   createCiMinuteController,
   proposedCiMinutePolicy,
 } from "../../src/budget/ci-minutes.ts";
-import { verifyCiMinuteSchedulingBasis } from "../../src/budget/ci-minutes.ts";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
 
 const ACCEPTANCE = "a".repeat(64);
@@ -78,7 +80,7 @@ async function fixture() {
   const ledger: CiMinuteLedgerV1 = {
     version: 1,
     month: "2028-01",
-    policyDigest: ciPolicyDigest(proposedCiMinutePolicy()),
+    policyDigest: ciPolicyDigest(retiredCiMinutePolicy()),
     updatedAt: NOW,
     sequence: 1,
     baselineMinutes: 0,
@@ -372,7 +374,7 @@ Deno.test("CI private scope: Scope200 alone, expired, wrong-repo, read-only and 
 });
 
 Deno.test("CI phase1 source policy is exact retained-estimate data and preserves explicit inactive fixtures", () => {
-  const policy = acceptedCiMinutePolicy();
+  const policy = retiredCiMinutePolicy();
   assert.equal(policy.activated, true);
   assert.equal(policy.accounting, "retained_estimates");
   assert.equal(policy.meterRefunds, false);
@@ -390,12 +392,12 @@ Deno.test("CI phase1 source policy is exact retained-estimate data and preserves
     [[1337190500, "validation", 20, 25], [1254699258, "deno", 30, 35]],
   );
   policy.targets[0].ceilingMinutes = 999;
-  assert.equal(acceptedCiMinutePolicy().targets[0].ceilingMinutes, 25);
+  assert.equal(retiredCiMinutePolicy().targets[0].ceilingMinutes, 25);
   assert.equal(INACTIVE_CI_MINUTE_POLICY.activated, false);
 });
 
 Deno.test("CI phase1 terminal estimate provenance retains debit and proves execution month only", () => {
-  const policy = acceptedCiMinutePolicy();
+  const policy = retiredCiMinutePolicy();
   const ledger: CiMinuteLedgerV1 = {
     version: 1,
     month: "2028-01",
@@ -441,7 +443,7 @@ Deno.test("CI phase1 terminal estimate provenance retains debit and proves execu
 });
 
 Deno.test("CI phase1 bootstrap is a conservative floor and catalog is finite monotonic private state", () => {
-  const policy = acceptedCiMinutePolicy();
+  const policy = retiredCiMinutePolicy();
   const ledger: CiMinuteLedgerV1 = {
     version: 1,
     month: "2028-01",
@@ -512,7 +514,7 @@ Deno.test("CI phase1 driver/observer APIs keep effect-only ports unchanged and r
     return observer;
   };
   const read = factory({
-    policy: acceptedCiMinutePolicy(),
+    policy: retiredCiMinutePolicy(),
     request: () => Promise.resolve(null),
     clock: { now: () => NOW },
   });
@@ -520,7 +522,7 @@ Deno.test("CI phase1 driver/observer APIs keep effect-only ports unchanged and r
 });
 
 Deno.test("CI phase1 explicit terminal-unmetered proof is not a fabricated actual quantity", () => {
-  const policy = acceptedCiMinutePolicy();
+  const policy = retiredCiMinutePolicy();
   const ledger: CiMinuteLedgerV1 = {
     version: 1,
     month: "2028-01",
@@ -663,7 +665,7 @@ Deno.test("CI capacity synthetic catalog and retained proofs serialize through r
 
 Deno.test("CI pacing production composition refuses changed source basis before authority or store work", async () => {
   let touched = 0;
-  const policy = acceptedCiMinutePolicy();
+  const policy = retiredCiMinutePolicy();
   policy.unmanagedReserve--;
   const controller = composePrivateCiMinutes({
     policy,
@@ -673,7 +675,7 @@ Deno.test("CI pacing production composition refuses changed source basis before 
       touched++;
       throw new Error("invalid source touched authority");
     },
-    billingBasis: verifyCiMinuteSchedulingBasis,
+    billingBasis: retiredBasis,
   });
   assert.equal((await controller.reconcile(NOW + 60000)).kind, "unavailable");
   assert.equal(
@@ -696,7 +698,7 @@ Deno.test("CI acceptance native composition reuses readiness and exempts public 
   let applied = false;
   let pendingRuns = false;
   const paths: string[] = [];
-  const policy = acceptedCiMinutePolicy();
+  const policy = retiredCiMinutePolicy();
   const capability = {
     verify: () => Promise.resolve(true),
     request(path: string) {
@@ -766,7 +768,7 @@ Deno.test("CI acceptance native composition reuses readiness and exempts public 
       scratch: `${f.path}/production/ci-minutes-private`,
       deadlineAt,
       authority: () => Promise.resolve(capability),
-      billingBasis: verifyCiMinuteSchedulingBasis,
+      billingBasis: retiredBasis,
     });
   const effect = {
     repository: { owner: "ubiquity", name: "prospector", installationId: 1 },
@@ -906,7 +908,7 @@ Deno.test("CI acceptance native composition reuses readiness and exempts public 
 });
 
 Deno.test("CI acceptance public composition effects bypass unavailable private authority and every private preflight", async () => {
-  const policy = acceptedCiMinutePolicy();
+  const policy = retiredCiMinutePolicy();
   const effect = {
     repository: { owner: "fixture", name: "public", installationId: 1 },
     kind: "pr_open" as const,
@@ -924,7 +926,7 @@ Deno.test("CI acceptance public composition effects bypass unavailable private a
       authorityCalls++;
       return Promise.resolve(null);
     },
-    billingBasis: verifyCiMinuteSchedulingBasis,
+    billingBasis: retiredBasis,
   });
   assert.equal((await capability.reconcile(NOW + 60000)).kind, "unavailable");
   assert.equal(authorityCalls, 1);
@@ -959,7 +961,7 @@ Deno.test("CI acceptance public composition effects bypass unavailable private a
 
 Deno.test("CI acceptance native request adapter allows only managed numeric workflow reads and carries exact rerun qualification", async () => {
   const f = principalNativeFixture(),
-    policy = acceptedCiMinutePolicy(),
+    policy = retiredCiMinutePolicy(),
     target = policy.targets[0];
   const scope = `/repos/${target.owner}/${target.name}`,
     sha = "a".repeat(40),
@@ -1048,7 +1050,7 @@ Deno.test("CI acceptance native request adapter allows only managed numeric work
   }, f.clock.now() + 1000);
   assert.ok(facts);
   assert.equal(
-    await verifyCiMinuteSchedulingBasis(policy, f.clock.now() + 1000, facts),
+    await retiredBasis(policy, f.clock.now() + 1000, facts),
     true,
   );
   assert.ok(paths.includes(`${scope}/actions/workflows/77`));
@@ -1056,7 +1058,7 @@ Deno.test("CI acceptance native request adapter allows only managed numeric work
 
 Deno.test("CI gap recovery real Git carries the same unresolved reservation across missing months until authenticated terminal closure", async () => {
   const f = await fixture();
-  const policy = acceptedCiMinutePolicy(), profile = policy.targets[0];
+  const policy = retiredCiMinutePolicy(), profile = policy.targets[0];
   const november = Date.UTC(2028, 10, 30, 23);
   let now = november;
   let jobs: NonNullable<CiMinuteLedgerV1["proofs"]> = [];
@@ -1073,7 +1075,7 @@ Deno.test("CI gap recovery real Git carries the same unresolved reservation acro
       policy,
       clock: { now: () => now },
       store: f.make(),
-      authorizePolicy: verifyCiMinuteSchedulingBasis,
+      authorizePolicy: retiredBasis,
       resolve: () =>
         Promise.resolve({
           repositoryId: profile.repositoryId,

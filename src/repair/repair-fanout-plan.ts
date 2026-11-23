@@ -108,6 +108,8 @@ export async function planRepairFanoutV1(input: {
   configs: readonly RepositoryConfigV1[];
   runId: number;
   runAttempt: number;
+  /** A deployment's lower per-cycle ceiling; omitted is the platform bound. */
+  maxCells?: number;
 }): Promise<RepairFanoutPlanV1> {
   const cells: RepairFanoutCellV1[] = [];
   const seen = new Set<string>();
@@ -144,7 +146,13 @@ export async function planRepairFanoutV1(input: {
     runId: input.runId,
     runAttempt: input.runAttempt,
     baseHead: input.head,
-    cells: cells.slice(0, MAX_REPAIR_FANOUT_CELLS),
+    cells: cells.slice(
+      0,
+      Math.min(
+        MAX_REPAIR_FANOUT_CELLS,
+        input.maxCells ?? MAX_REPAIR_FANOUT_CELLS,
+      ),
+    ),
   };
 }
 

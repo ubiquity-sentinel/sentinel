@@ -42,6 +42,7 @@ permissions: {}
 jobs:
   leg:
     if: >-
+      github.repository == 'ubiquity-sentinel/sentinel' &&
       github.ref == 'refs/heads/sentinel-backup-legs' && github.run_attempt == 1 &&
       contains(fromJSON('["ubuntu-latest","ubuntu-24.04","ubuntu-22.04"]'), inputs.runs_on)
     runs-on: ${{ inputs.runs_on }}

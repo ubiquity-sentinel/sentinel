@@ -1,0 +1,77 @@
+# Private deployment only (ubiquity-sentinel-private/sentinel). Once a week it
+# fast-forwards this repository's `development` and `sentinel-supervisor` to
+# the PUBLIC deployment's `sentinel-supervisor` SHA: the launcher the public
+# deployment already runs, CI-green and installed there by construction
+# (docs/DECISIONS.md, 2026-11-22). It never forces: unless both private
+# branches are ancestors of that SHA, the run fails and nothing moves; both
+# move in one atomic push. Reading the public repository needs no credential;
+# the push uses an App token for this private repository only, with
+# contents and workflows write (the default GITHUB_TOKEN cannot push a commit
+# that changes .github/workflows). That push to `development` starts this
+# repository's own ci.yml run, whose green `test-local` the launcher install
+# requires. On the public repository this job is skipped (no runner, 0 billed
+# minutes).
+name: sentinel-private-sync
+
+on:
+  schedule:
+    - cron: "17 2 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    if: github.repository == 'ubiquity-sentinel-private/sentinel'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # No environment: on the private repository the App key is a repository
+    # secret (one instruction for every job; environment secrets in private
+    # repositories need a paid plan). A missing Workflows permission on the
+    # private org's App installation fails this mint red and nothing moves.
+    concurrency:
+      group: sentinel-private-sync
+      cancel-in-progress: false
+    steps:
+      - name: Mint the private self token
+        id: self-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: Iv23liHUJNXds9mU3j7Q
+          private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
+          owner: ubiquity-sentinel-private
+          repositories: sentinel
+          permission-contents: write
+          permission-workflows: write
+      - name: Fast-forward both branches to the public launcher
+        env:
+          SELF_TOKEN: ${{ steps.self-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$SELF_TOKEN" | base64 -w0)"
+          echo "::add-mask::$(printf 'x-access-token:%s' "$SELF_TOKEN" | base64 -w0)"
+          git init -q "$RUNNER_TEMP/sync"
+          cd "$RUNNER_TEMP/sync"
+          git fetch -q --no-tags https://github.com/ubiquity-sentinel/sentinel.git refs/heads/sentinel-supervisor
+          target=$(git rev-parse FETCH_HEAD)
+          private="https://github.com/${GITHUB_REPOSITORY}.git"
+          moves=()
+          for branch in development sentinel-supervisor; do
+            git -c http.extraheader="$auth" fetch -q --no-tags "$private" "refs/heads/$branch"
+            current=$(git rev-parse FETCH_HEAD)
+            if [ "$current" = "$target" ]; then
+              echo "$branch is already at $target"
+              continue
+            fi
+            if ! git merge-base --is-ancestor "$current" "$target"; then
+              echo "::error::$branch ($current) is not an ancestor of the public launcher $target; nothing moved"
+              exit 1
+            fi
+            moves+=("$target:refs/heads/$branch")
+          done
+          if [ "${#moves[@]}" = 0 ]; then
+            exit 0
+          fi
+          git -c http.extraheader="$auth" push --atomic -q "$private" "${moves[@]}"
+          echo "fast-forwarded ${moves[*]}"

@@ -4,6 +4,7 @@ import {
   acceptedCiMinutePolicy,
   ciJobMinutes,
   ciMinuteDigest,
+  ciMinutePolicyInactive,
   ciMonth,
   ciPolicyDigest,
   ciTerminalEstimateDigest,
@@ -21,6 +22,7 @@ import type {
   CiMinutePolicyV1,
   CiMinuteReconcileDecisionV1,
   CiMinuteReservationV1,
+  CiMinuteSourcePolicyV1,
   CiMinuteStoreV1,
 } from "../contracts/ci-minute-budget.ts";
 
@@ -68,7 +70,7 @@ export interface CiMinuteControllerOptionsV1 {
 export function createCiMinuteController(
   options?: CiMinuteControllerOptionsV1,
 ): CiMinuteCoordinatorV1 {
-  if (options === undefined || options.policy.activated === false) {
+  if (options === undefined || ciMinutePolicyInactive(options.policy)) {
     return INACTIVE_CI_MINUTES;
   }
   return new CalendarCiMinutes(options);
@@ -83,9 +85,10 @@ export function verifyCiMinuteSchedulingBasis(
   policy: CiMinutePolicyV1,
   deadline: number,
   facts?: CiEffectFactsV1,
+  // Tests of the retired rows pass their fixture; production never does.
+  accepted: CiMinuteSourcePolicyV1 = acceptedCiMinutePolicy(),
 ): Promise<boolean> {
   try {
-    const accepted = acceptedCiMinutePolicy();
     if (
       !Number.isSafeInteger(deadline) ||
       ciPolicyDigest(policy) !== ciPolicyDigest(accepted)

@@ -46,6 +46,7 @@ permissions:
 jobs:
   backup_completion:
     if: >-
+      github.repository == 'ubiquity-sentinel/sentinel' &&
       github.event_name == 'workflow_run' &&
       (github.event.workflow_run.path == '.github/workflows/backup-ci-leg.yml' ||
       github.event.workflow_run.path == '.github/workflows/ci.yml') &&
@@ -77,10 +78,11 @@ jobs:
           ops/backup-ci-completion-main.ts
   dispatch:
     if: >-
-      github.event_name != 'workflow_run' ||
+      github.repository == 'ubiquity-sentinel/sentinel' &&
+      (github.event_name != 'workflow_run' ||
       (github.event.workflow_run.path == '.github/workflows/supervisor.yml' &&
       github.event.workflow_run.head_branch == 'sentinel-supervisor' &&
-      github.event.workflow_run.head_repository.full_name == github.repository)
+      github.event.workflow_run.head_repository.full_name == github.repository))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     concurrency:

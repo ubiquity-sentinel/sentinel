@@ -1,0 +1,111 @@
+# Private deployment only (ubiquity-sentinel-private/sentinel, GitHub Free:
+# 2,000 Actions minutes a month, spending limit $0). It starts at most one
+# supervisor cycle per UTC day (docs/DECISIONS.md, 2026-11-22). Every other
+# automatic trigger in this repository is gated to the public deployment, and
+# on the public deployment this job is skipped (no runner, 0 billed minutes).
+# A day without a cycle ends green with one log line: no notification.
+name: sentinel-private-daily
+
+on:
+  schedule:
+    # Off-peak UTC, after the Sunday 02:17 sync's CI (about 20 minutes) has
+    # finished; the line also fires on the public repository, where the job
+    # below is skipped.
+    - cron: "41 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  checks: read
+  contents: read
+
+jobs:
+  daily:
+    if: github.repository == 'ubiquity-sentinel-private/sentinel'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    concurrency:
+      group: sentinel-private-daily
+      cancel-in-progress: false
+    steps:
+      - name: Check out the launcher source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: sentinel-supervisor
+          persist-credentials: false
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.9.7
+      # The committed binding refuses at module load while either private
+      # workflow id is null (`workflow_ids_unfilled`): the day ends here,
+      # green, before any supervisor job.
+      - name: Refuse unless the committed private binding starts
+        id: binding
+        run: |
+          set -euo pipefail
+          if deno run --frozen --no-prompt --allow-env=GITHUB_REPOSITORY src/contracts/hosted-controller-deployment.ts 2> "$RUNNER_TEMP/binding.txt"; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          elif grep -q "hosted controller binding refused: workflow_ids_unfilled" "$RUNNER_TEMP/binding.txt"; then
+            echo "private deployment not bound yet (workflow ids unfilled); no cycle today"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            cat "$RUNNER_TEMP/binding.txt" >&2
+            exit 1
+          fi
+      # Every guard is state-free (GitHub's own listings) and ends the day
+      # green: one cycle per UTC day; only a launcher whose own test-local is
+      # green (a red or still-running CI waits for the next day); and the
+      # month's billed minutes (each job rounded up to the minute) stay
+      # below 1,800 of the 2,000.
+      - name: Start at most one supervisor cycle per UTC day
+        if: steps.binding.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        # Every listing is captured before it is used, and a failed read (an
+        # HTTP error with or without a body, a timeout, a failed later page)
+        # or a non-numeric answer ends the day here, green, with one line:
+        # the guard fails closed and never dispatches on missing evidence.
+        run: |
+          set -euo pipefail
+          none() {
+            echo "no cycle today: $1"
+            exit 0
+          }
+          number() {
+            [[ "$1" =~ ^[0-9]+$ ]] || none "unreadable $2"
+          }
+          today=$(date -u +%F)
+          month=$(date -u +%Y-%m-01)
+          started=$(gh api "repos/$GH_REPO/actions/workflows/supervisor.yml/runs?created=%3E%3D$today&per_page=1" --jq .total_count) || none "today's supervisor runs are unreadable"
+          number "$started" "supervisor run count"
+          if [ "$started" != 0 ]; then
+            none "a supervisor cycle already started on $today (UTC)"
+          fi
+          launcher=$(git rev-parse HEAD)
+          ci=$(gh api "repos/$GH_REPO/commits/$launcher/check-runs?check_name=test-local&filter=latest&per_page=100" --jq '[.check_runs[] | select(.app.slug == "github-actions")] | if length > 0 and all(.status == "completed" and .conclusion == "success") then "green" else "not_green" end') || none "the launcher's checks are unreadable"
+          if [ "$ci" != green ]; then
+            none "launcher $launcher has no green test-local yet (running, red or absent)"
+          fi
+          used=0
+          for workflow in supervisor.yml ci.yml; do
+            ids=$(gh api --paginate "repos/$GH_REPO/actions/workflows/$workflow/runs?created=%3E%3D$month&per_page=100" --jq '.workflow_runs[].id') || none "this month's $workflow runs are unreadable"
+            for run in $ids; do
+              number "$run" "$workflow run id"
+              durations=$(gh api --paginate "repos/$GH_REPO/actions/runs/$run/jobs?filter=all&per_page=100" --jq '.jobs[] | select(.started_at != null and .completed_at != null) | (((.completed_at | fromdateiso8601) - (.started_at | fromdateiso8601) + 59) / 60 | floor)') || none "the jobs of run $run are unreadable"
+              for minutes in $durations; do
+                number "$minutes" "job minutes of run $run"
+                used=$((used + minutes))
+              done
+            done
+          done
+          for workflow in private-daily.yml private-sync.yml; do
+            runs=$(gh api "repos/$GH_REPO/actions/workflows/$workflow/runs?created=%3E%3D$month&per_page=1" --jq .total_count) || none "this month's $workflow runs are unreadable"
+            number "$runs" "$workflow run count"
+            used=$((used + runs))
+          done
+          echo "month-to-date billed minutes (estimate): $used of 2000"
+          if [ "$used" -ge 1800 ]; then
+            none "free-tier guard: $used minutes used this month"
+          fi
+          gh workflow run supervisor.yml --repo "$GH_REPO" --ref sentinel-supervisor

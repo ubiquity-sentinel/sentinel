@@ -31,7 +31,11 @@ Deno.test("operator nonce workflow contract is optional and preserves empty-inpu
             "group: sentinel-supervisor\n  cancel-in-progress: false",
           ),
         );
-        assert.match(text, /timeout-minutes: 300/);
+        // 300 on the public repository (120 on the private deployment).
+        assert.match(
+          text,
+          /timeout-minutes: \$\{\{ github\.repository == 'ubiquity-sentinel-private\/sentinel' && 120 \|\| 300 \}\}/,
+        );
       } else if (target === "observe") {
         assert.ok(text.includes("permissions:\n  contents: read"));
         assert.match(

@@ -39,20 +39,9 @@ export const INACTIVE_CI_MINUTE_POLICY: Readonly<CiMinutePolicyV1> = Object
     managedLimit: 1450,
     securityReserve: 150,
     unmanagedReserve: 400,
-    targets: [
-      {
-        owner: "ubiquity",
-        name: "prospector",
-        repositoryId: 1337190500,
-        ceilingMinutes: 25,
-      },
-      {
-        owner: "ubiquity",
-        name: "passport.ubq.fi",
-        repositoryId: 1254699258,
-        ceilingMinutes: 35,
-      },
-    ],
+    // Owner, 2026-11-23: "Remove the special policy. We will deploy a private
+    // sentinel for all private repos". No repository has a CI-minute row.
+    targets: [],
     storageAcceptance: null,
     ceilingQualification: null,
   });
@@ -95,29 +84,20 @@ export const ACCEPTED_CI_MINUTE_POLICY: Readonly<CiMinuteSourcePolicyV1> =
       remote: CI_MINUTE_PRIVATE_REMOTE,
       ref: CI_MINUTE_REF,
     }),
-    targets: Object.freeze([
-      Object.freeze({
-        owner: "ubiquity",
-        name: "prospector",
-        repositoryId: 1337190500,
-        ceilingMinutes: 25,
-        workflowBlob: "bacb73da71714a27d76918771d06ff4ce1f45b82",
-        job: "validation",
-        runner: "ubuntu-latest" as const,
-        timeoutMinutes: 20,
-      }),
-      Object.freeze({
-        owner: "ubiquity",
-        name: "passport.ubq.fi",
-        repositoryId: 1254699258,
-        ceilingMinutes: 35,
-        workflowBlob: "f2c61d693d8439a7f42b47d35ebaedb37173b1c7",
-        job: "deno",
-        runner: "ubuntu-latest" as const,
-        timeoutMinutes: 30,
-      }),
-    ]),
+    // The special policy is removed (owner, 2026-11-23): no target row, so
+    // every composition is inert (`ciMinutePolicyInactive`) and every CI
+    // effect is `inactive`. The machinery and the ledger history on
+    // `sentinel-state/ci-minutes` stay as they are, unread and unwritten.
+    targets: Object.freeze([]),
   });
+
+/**
+ * True when a policy manages no repository: off, or without one target row.
+ * Such a policy is never digested, stored, reconciled or authorized.
+ */
+export function ciMinutePolicyInactive(policy: CiMinutePolicyV1): boolean {
+  return policy.activated === false || policy.targets.length === 0;
+}
 
 export function acceptedCiMinutePolicy(): CiMinuteSourcePolicyV1 {
   return structuredClone(ACCEPTED_CI_MINUTE_POLICY);
