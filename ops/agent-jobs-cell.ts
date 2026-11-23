@@ -13,8 +13,14 @@
  * private while this controller is public); only the bundle, the agent's
  * final message and a status row leave the runner.
  */
-import { cloneBranch, git, githubRemoteUrl, gitOk } from "./agent-jobs-git.ts";
-import type { RemoteUrl } from "./agent-jobs-git.ts";
+import {
+  cloneBranch,
+  configureCheckoutIdentity,
+  git,
+  githubRemoteUrl,
+  gitOk,
+  type RemoteUrl,
+} from "./agent-jobs-git.ts";
 import { AGENT_JOB_SHA } from "./agent-jobs-admission.ts";
 import {
   startTraceProxy,
@@ -413,6 +419,7 @@ async function runJob(
     });
     result.base = base.branch;
     result.baseSha = baseSha;
+    await configureCheckoutIdentity(checkout);
 
     const env = { ...ports.agentEnv(), TMPDIR: tmpDir };
     for (const command of job.setup) {
