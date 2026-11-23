@@ -98,7 +98,7 @@ jobs:
   delivery:
     name: delivery (${{ matrix.cellId }})
     needs: plan
-    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.has-work == 'true' && needs.plan.outputs.control-sha != '' }}
+    if: github.repository == 'ubiquity-sentinel/sentinel' && !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.has-work == 'true' && needs.plan.outputs.control-sha != ''
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}

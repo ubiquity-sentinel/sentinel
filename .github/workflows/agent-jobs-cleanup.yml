@@ -76,7 +76,7 @@ jobs:
   delete:
     name: delete (${{ matrix.owner }})
     needs: plan
-    if: needs.plan.outputs.has-work == 'true' && needs.plan.outputs.control-sha != ''
+    if: github.repository == 'ubiquity-sentinel/sentinel' && needs.plan.outputs.has-work == 'true' && needs.plan.outputs.control-sha != ''
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:

@@ -150,7 +150,21 @@ async function fixture<T>(
       gitFixtureDir: root,
     });
   } finally {
-    await Deno.remove(root, { recursive: true });
+    await removeFixture(root);
+  }
+}
+
+// A git child process can still be writing its object directory when the
+// test body returns; removal then fails once with "Directory not empty".
+async function removeFixture(root: string): Promise<void> {
+  for (let attempt = 0;; attempt++) {
+    try {
+      await Deno.remove(root, { recursive: true });
+      return;
+    } catch (error) {
+      if (attempt >= 4) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
   }
 }
 
