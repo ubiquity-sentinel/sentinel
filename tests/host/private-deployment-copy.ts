@@ -9,6 +9,7 @@
 import assert from "node:assert/strict";
 import { cp } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { HOSTED_CONTROLLER_DEPLOYMENTS } from "../../src/contracts/hosted-controller-deployment.ts";
 
 const SOURCE = fileURLToPath(new URL("../../", import.meta.url));
 export const PRIVATE_REPOSITORY = "ubiquity-sentinel-private/sentinel";
@@ -31,9 +32,13 @@ async function rewrite(
 }
 
 /** The committed (wired) private entry with test workflow ids. */
+const privateDeployment = HOSTED_CONTROLLER_DEPLOYMENTS[1].deployment;
 const BINDING: readonly (readonly [string, string])[] = [
-  ["supervisorWorkflowId: null,", "supervisorWorkflowId: 793001,"],
-  ["ciWorkflowId: null,", "ciWorkflowId: 793002,"],
+  [
+    `supervisorWorkflowId: ${privateDeployment.supervisorWorkflowId},`,
+    "supervisorWorkflowId: 793001,",
+  ],
+  [`ciWorkflowId: ${privateDeployment.ciWorkflowId},`, "ciWorkflowId: 793002,"],
 ];
 
 /** Runs `cases` in a bound private copy; resolves to the combined output. */

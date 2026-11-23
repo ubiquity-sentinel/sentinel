@@ -367,7 +367,13 @@ async function issueToMerge(TARGET: string): Promise<void> {
     // Nothing named the public deployment: no request, remote or surface.
     assert.ok(urls.length > 0);
     assert.ok(urls.some((url) => url.endsWith(`/repos/${PRIVATE}`)));
-    const leaked = [...urls, ...remotes, ...composed].filter((value) =>
+    const fixturePrefix = r.root + "/";
+    const remoteNames = remotes.map((remote) =>
+      remote.startsWith(fixturePrefix)
+        ? remote.slice(fixturePrefix.length)
+        : remote
+    );
+    const leaked = [...urls, ...remoteNames, ...composed].filter((value) =>
       value.includes(PUBLIC)
     );
     assert.deepEqual(leaked, [], [...urls, ...remotes].join("\n"));

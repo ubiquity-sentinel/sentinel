@@ -1,7 +1,7 @@
 /**
  * The committed two-entry controller list: GitHub's own GITHUB_REPOSITORY
  * selects an entry in a real process, the public entry keeps the exact former
- * constants, and the private entry refuses to start until its ids are bound.
+ * constants, and a private entry without both workflow ids refuses to start.
  */
 import assert from "node:assert/strict";
 import { cp } from "node:fs/promises";
@@ -15,7 +15,6 @@ import {
   HOSTED_CONTROLLER_RUNTIME_ID,
   HOSTED_CONTROLLER_SELF_INSTALLATION_ID,
   HOSTED_CONTROLLER_WORKFLOW_REF,
-  type HostedControllerEntryV1,
   selectHostedControllerDeploymentV1,
 } from "../../src/contracts/hosted-controller-deployment.ts";
 import {
@@ -25,8 +24,8 @@ import {
 
 const PUBLIC = "ubiquity-sentinel/sentinel";
 const PRIVATE = "ubiquity-sentinel-private/sentinel";
-const BOUND_SUPERVISOR_ID = 792001;
-const BOUND_CI_ID = 792002;
+const PRIVATE_SUPERVISOR_ID = 428313602;
+const PRIVATE_CI_ID = 428313556;
 const SOURCE = fileURLToPath(new URL("../../", import.meta.url));
 
 const PUBLIC_CONSTANTS = {
@@ -44,21 +43,6 @@ const PUBLIC_CONSTANTS = {
   retiredRepository: "ubiquity/sentinel",
   retiredRuntimeId: "ubiquity/sentinel:0:production",
 };
-
-function bound(entries: readonly HostedControllerEntryV1[]) {
-  return entries.map((entry) =>
-    entry.role === "private"
-      ? {
-        ...entry,
-        deployment: {
-          ...entry.deployment,
-          supervisorWorkflowId: BOUND_SUPERVISOR_ID,
-          ciWorkflowId: BOUND_CI_ID,
-        },
-      }
-      : entry
-  );
-}
 
 Deno.test("controller list: exactly the public and private entries, public first and unchanged", () => {
   assert.deepEqual(
@@ -80,9 +64,12 @@ Deno.test("controller list: exactly the public and private entries, public first
   });
   assert.equal(
     HOSTED_CONTROLLER_DEPLOYMENTS[1].deployment.supervisorWorkflowId,
-    null,
+    PRIVATE_SUPERVISOR_ID,
   );
-  assert.equal(HOSTED_CONTROLLER_DEPLOYMENTS[1].deployment.ciWorkflowId, null);
+  assert.equal(
+    HOSTED_CONTROLLER_DEPLOYMENTS[1].deployment.ciWorkflowId,
+    PRIVATE_CI_ID,
+  );
   assert(Object.isFrozen(HOSTED_CONTROLLER_DEPLOYMENTS));
   for (const entry of HOSTED_CONTROLLER_DEPLOYMENTS) {
     assert(Object.isFrozen(entry) && Object.isFrozen(entry.deployment));
@@ -111,7 +98,7 @@ Deno.test("controller list: exactly the public and private entries, public first
   });
 });
 
-Deno.test("controller selection: only an exact committed repository selects, unbound ids refuse", () => {
+Deno.test("controller selection: only the exact committed repository selects the private entry", () => {
   for (
     const repository of [
       PUBLIC,
@@ -126,41 +113,16 @@ Deno.test("controller selection: only an exact committed repository selects, unb
     const selected = selectHostedControllerDeploymentV1(repository);
     assert(selected.ok);
     assert.equal(selected.binding.role, "public");
+    assert.equal(selected.binding.selfInstallationId, null);
     assert.deepEqual(
       selected.binding.deployment,
       { ...HOSTED_CONTROLLER_DEPLOYMENTS[0].deployment },
     );
   }
-  assert.deepEqual(selectHostedControllerDeploymentV1(PRIVATE), {
-    ok: false,
-    reason: "workflow_ids_unfilled",
-    repository: PRIVATE,
-  });
-  // The committed private role is wired: bound ids are the only missing edit.
-  const privateSelected = selectHostedControllerDeploymentV1(
-    PRIVATE,
-    bound(HOSTED_CONTROLLER_DEPLOYMENTS),
-  );
+  const privateSelected = selectHostedControllerDeploymentV1(PRIVATE);
   assert(privateSelected.ok);
-  assert.equal(privateSelected.binding.role, "private");
-  assert.equal(privateSelected.binding.selfInstallationId, 183425201);
-  const publicSelected = selectHostedControllerDeploymentV1(
-    PUBLIC,
-    bound(HOSTED_CONTROLLER_DEPLOYMENTS),
-  );
-  assert(publicSelected.ok);
-  assert.equal(publicSelected.binding.selfInstallationId, null);
   assert.equal(HOSTED_CONTROLLER_SELF_INSTALLATION_ID, null);
-  const half = HOSTED_CONTROLLER_DEPLOYMENTS.map((entry) =>
-    entry.role === "private"
-      ? {
-        ...entry,
-        deployment: { ...entry.deployment, supervisorWorkflowId: 1 },
-      }
-      : entry
-  );
-  assert.equal(selectHostedControllerDeploymentV1(PRIVATE, half).ok, false);
-  assert.deepEqual({ ...HOSTED_CONTROLLER_DEPLOYMENTS[1] }, {
+  assert.deepEqual(privateSelected.binding, {
     role: "private",
     retiredRepository: null,
     retiredRuntimeId: null,
@@ -171,33 +133,36 @@ Deno.test("controller selection: only an exact committed repository selects, unb
       sourceBranch: "development",
       supervisorBranch: "sentinel-supervisor",
       supervisorWorkflowPath: ".github/workflows/supervisor.yml",
-      supervisorWorkflowId: null,
+      supervisorWorkflowId: PRIVATE_SUPERVISOR_ID,
       ciWorkflowPath: ".github/workflows/ci.yml",
-      ciWorkflowId: null,
+      ciWorkflowId: PRIVATE_CI_ID,
     },
   });
-  // Shape of a bound selection (role relabelled only to pass the unwired guard).
-  const relabelled = bound(HOSTED_CONTROLLER_DEPLOYMENTS).map((entry) =>
-    entry.role === "private" ? { ...entry, role: "public" as const } : entry
-  );
-  const selected = selectHostedControllerDeploymentV1(PRIVATE, relabelled);
-  assert(selected.ok);
-  assert.deepEqual({ ...selected.binding, role: "private" }, {
-    role: "private",
-    retiredRepository: null,
-    retiredRuntimeId: null,
-    selfInstallationId: 183425201,
-    deployment: {
-      owner: "ubiquity-sentinel-private",
-      name: "sentinel",
-      sourceBranch: "development",
-      supervisorBranch: "sentinel-supervisor",
-      supervisorWorkflowPath: ".github/workflows/supervisor.yml",
-      supervisorWorkflowId: BOUND_SUPERVISOR_ID,
-      ciWorkflowPath: ".github/workflows/ci.yml",
-      ciWorkflowId: BOUND_CI_ID,
-    },
-  });
+});
+
+Deno.test("controller selection: either missing private workflow id refuses selection", () => {
+  const [publicEntry, privateEntry] = HOSTED_CONTROLLER_DEPLOYMENTS;
+  for (
+    const [supervisorWorkflowId, ciWorkflowId] of [
+      [null, null],
+      [PRIVATE_SUPERVISOR_ID, null],
+      [null, PRIVATE_CI_ID],
+    ] as const
+  ) {
+    const entries = [publicEntry, {
+      ...privateEntry,
+      deployment: {
+        ...privateEntry.deployment,
+        supervisorWorkflowId,
+        ciWorkflowId,
+      },
+    }];
+    assert.deepEqual(selectHostedControllerDeploymentV1(PRIVATE, entries), {
+      ok: false,
+      reason: "workflow_ids_unfilled",
+      repository: PRIVATE,
+    });
+  }
 });
 
 const PROBE = `
@@ -272,6 +237,7 @@ async function probe(
         path,
         pathToFileURL(root).href,
       ],
+      clearEnv: true,
       env,
       stdout: "piped",
       stderr: "piped",
@@ -292,7 +258,7 @@ async function scratch(): Promise<string> {
   return dir;
 }
 
-Deno.test("controller selection: a real process selects by GITHUB_REPOSITORY and refuses an unbound private entry", async () => {
+Deno.test("controller selection: a real process uses the committed identity, refs, remotes and ids", async () => {
   const publicRun = await probe(SOURCE, PUBLIC, true);
   assert.equal(publicRun.code, 0, publicRun.stderr);
   assert.deepEqual(JSON.parse(publicRun.stdout), {
@@ -318,20 +284,33 @@ Deno.test("controller selection: a real process selects by GITHUB_REPOSITORY and
       acceptsPrivate: false,
     });
   }
-  // The committed private entry has no ids yet: every process refuses to start.
-  const unbound = await probe(SOURCE, PRIVATE, true);
-  assert.notEqual(unbound.code, 0);
-  assert.equal(unbound.stdout, "");
-  assert.match(
-    unbound.stderr,
-    /hosted controller binding refused: workflow_ids_unfilled ubiquity-sentinel-private\/sentinel/,
-  );
+  const privateRun = await probe(SOURCE, PRIVATE, true);
+  assert.equal(privateRun.code, 0, privateRun.stderr);
+  const remote = "https://github.com/ubiquity-sentinel-private/sentinel.git";
+  assert.deepEqual(JSON.parse(privateRun.stdout), {
+    role: "private",
+    repository: PRIVATE,
+    remote,
+    runtimeRemote: remote,
+    bootstrapRemote: remote,
+    workflowRef:
+      `${PRIVATE}/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor`,
+    runtimeId: `${PRIVATE}:0:production`,
+    supervisorWorkflowId: PRIVATE_SUPERVISOR_ID,
+    ciWorkflowId: PRIVATE_CI_ID,
+    followRepository: PRIVATE,
+    dispatchRepository: PRIVATE,
+    retiredRepository: null,
+    retiredRuntimeId: null,
+    acceptsPublic: false,
+    acceptsPrivate: true,
+  });
 });
 
-Deno.test("controller selection: a bound private entry rebinds identity, refs, remotes and ids to its own repository", async () => {
+Deno.test("controller selection: a real process refuses an unbound private entry", async () => {
   const root = await Deno.makeTempDir({
     dir: await scratch(),
-    prefix: "controller-bound-",
+    prefix: "controller-unbound-",
   });
   try {
     const copy = root + "/";
@@ -343,46 +322,23 @@ Deno.test("controller selection: a bound private entry rebinds identity, refs, r
     }
     const file = copy + "src/contracts/hosted-controller-deployment.ts";
     const original = await Deno.readTextFile(file);
-    const boundSource = original
-      .replace(
-        "supervisorWorkflowId: null,",
-        `supervisorWorkflowId: ${BOUND_SUPERVISOR_ID},`,
-      )
-      .replace("ciWorkflowId: null,", `ciWorkflowId: ${BOUND_CI_ID},`);
-    assert.notEqual(boundSource, original);
-    // The committed role is wired, so the two ids are the only edit.
-    assert.ok(original.includes("const PRIVATE_ROLE_WIRED = true;"));
-    await Deno.writeTextFile(file, boundSource);
-    const privateRun = await probe(copy, PRIVATE, true);
-    assert.equal(privateRun.code, 0, privateRun.stderr);
-    const remote = "https://github.com/ubiquity-sentinel-private/sentinel.git";
-    assert.deepEqual(JSON.parse(privateRun.stdout), {
-      role: "private",
-      repository: PRIVATE,
-      remote,
-      runtimeRemote: remote,
-      bootstrapRemote: remote,
-      workflowRef:
-        `${PRIVATE}/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor`,
-      runtimeId: `${PRIVATE}:0:production`,
-      supervisorWorkflowId: BOUND_SUPERVISOR_ID,
-      ciWorkflowId: BOUND_CI_ID,
-      followRepository: PRIVATE,
-      dispatchRepository: PRIVATE,
-      retiredRepository: null,
-      retiredRuntimeId: null,
-      acceptsPublic: false,
-      acceptsPrivate: true,
-    });
-    // The same bound tree on the public host is exactly the public deployment.
-    const publicRun = await probe(copy, PUBLIC, true);
-    assert.equal(publicRun.code, 0, publicRun.stderr);
-    assert.deepEqual(JSON.parse(publicRun.stdout), {
-      ...PUBLIC_CONSTANTS,
-      bootstrapRemote: PUBLIC_CONSTANTS.remote,
-      acceptsPublic: true,
-      acceptsPrivate: false,
-    });
+    const supervisorField = `supervisorWorkflowId: ${PRIVATE_SUPERVISOR_ID},`;
+    const ciField = `ciWorkflowId: ${PRIVATE_CI_ID},`;
+    assert(original.includes(supervisorField));
+    assert(original.includes(ciField));
+    await Deno.writeTextFile(
+      file,
+      original
+        .replace(supervisorField, "supervisorWorkflowId: null,")
+        .replace(ciField, "ciWorkflowId: null,"),
+    );
+    const unbound = await probe(copy, PRIVATE, true);
+    assert.notEqual(unbound.code, 0);
+    assert.equal(unbound.stdout, "");
+    assert.match(
+      unbound.stderr,
+      /hosted controller binding refused: workflow_ids_unfilled ubiquity-sentinel-private\/sentinel/,
+    );
   } finally {
     await Deno.remove(root, { recursive: true });
   }
