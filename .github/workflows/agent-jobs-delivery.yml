@@ -25,6 +25,9 @@ on:
     secrets:
       UOS_AI_TOKEN:
         required: true
+      # Resolved from the publish job's environment, never from the caller.
+      SENTINEL_SUPERVISOR_APP_PRIVATE_KEY:
+        required: false
 
 permissions:
   contents: read

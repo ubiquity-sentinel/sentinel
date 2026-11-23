@@ -154,7 +154,12 @@ Deno.test("agent job review produces an attempt-bound artifact ID for the scoped
     jobs.delivery.uses,
     "./.github/workflows/agent-jobs-delivery.yml",
   );
-  assert.deepEqual(Object.keys(jobs.delivery.secrets!), ["UOS_AI_TOKEN"]);
+  // The App key is named so the publish job's environment can supply it; the
+  // caller has no environment, so the value it forwards is empty.
+  assert.deepEqual(Object.keys(jobs.delivery.secrets!), [
+    "UOS_AI_TOKEN",
+    "SENTINEL_SUPERVISOR_APP_PRIVATE_KEY",
+  ]);
   assert.match(
     jobs.delivery.with!["plan-artifact-id"],
     /needs\.plan\.outputs\.artifact-id/,

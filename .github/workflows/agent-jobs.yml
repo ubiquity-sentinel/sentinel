@@ -112,3 +112,6 @@ jobs:
       repositories: ${{ matrix.repositories }}
     secrets:
       UOS_AI_TOKEN: ${{ secrets.UOS_AI_TOKEN }}
+      # Empty here (the caller has no environment). Naming it lets the publish
+      # job's own environment supply its value; no other job references it.
+      SENTINEL_SUPERVISOR_APP_PRIVATE_KEY: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
