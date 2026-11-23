@@ -1,6 +1,7 @@
 import { type GitSha, isGitSha } from "../contracts/brands.ts";
 import type { GitHubCooldownGateV1 } from "../contracts/ports.ts";
 import { DenoReplayRuntime } from "../replay/runtime.ts";
+import { STREAM_MARGIN_MS, TERM_GRACE_MS } from "../replay/runtime-process.ts";
 import {
   GIT_MAX_OUTPUT_BYTES,
   GIT_TIMEOUT_MS,
@@ -208,6 +209,7 @@ interface LocalGitInputV1 {
   trustedPath: string;
   scratch?: string;
   extraEnv?: Record<string, string>;
+  deadlineAtMs?: number;
 }
 
 /** Bounded trusted git result through the shared owned-group runtime. */
@@ -216,6 +218,15 @@ export async function runTrustedGitResult(
 ): Promise<{ code: number; stdout: string }> {
   const scratch = input.scratch ??
     joinPath(input.cwd, ".sentinel-git-home");
+  const maxDurationMs = input.deadlineAtMs === undefined
+    ? GIT_TIMEOUT_MS
+    : Math.min(
+      GIT_TIMEOUT_MS,
+      input.deadlineAtMs - Date.now() - 2 * (TERM_GRACE_MS + STREAM_MARGIN_MS),
+    );
+  if (!Number.isSafeInteger(maxDurationMs) || maxDurationMs <= 0) {
+    throw new Error(STATIC_GIT_FAILED);
+  }
   const result = await new DenoReplayRuntime(Deno.execPath()).run({
     executable: trustedGitPath(input.trustedPath),
     args: ["-c", "core.hooksPath=/dev/null", ...input.args],
@@ -228,7 +239,7 @@ export async function runTrustedGitResult(
       GIT_TERMINAL_PROMPT: "0",
       ...(input.extraEnv ?? {}),
     },
-    maxDurationMs: GIT_TIMEOUT_MS,
+    maxDurationMs,
     maxOutputBytes: GIT_MAX_OUTPUT_BYTES,
   });
   // Only a normal, fully settled, untruncated exit yields a usable result;

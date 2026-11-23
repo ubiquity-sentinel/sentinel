@@ -8,6 +8,8 @@ import type { TargetVisibilityV1 } from "../src/repair/target-visibility.ts";
 import { git, gitAuthEnv, githubRemoteUrl } from "./agent-jobs-git.ts";
 import type { RemoteUrl } from "./agent-jobs-git.ts";
 import {
+  AGENT_JOB_REVIEW_ATTEMPTS_PER_HEAD,
+  agentJobReviewRoundIsUnavailable,
   agentJobReviewRoundVerdict,
   agentJobTask,
 } from "./agent-jobs-native-review.ts";
@@ -17,7 +19,10 @@ import {
   importAgentJobBundle,
   validateAgentJobPublication,
 } from "./agent-jobs-review-contract.ts";
-import type { AgentJobReviewV1 } from "./agent-jobs-review-contract.ts";
+import type {
+  AgentJobModelStartV1,
+  AgentJobReviewV1,
+} from "./agent-jobs-review-contract.ts";
 import {
   AgentJobPublicationRefusal,
   githubAgentJobsPublishPorts,
@@ -170,12 +175,36 @@ function trustedJobs(input: AgentJobsPublishInput): AgentJobV1[] {
   return jobs;
 }
 
+type ReviewStart = Pick<AgentJobModelStartV1, "kind" | "headSha" | "round">;
+
+function checkRetryStarts(
+  value: unknown,
+  id: string,
+  expected: readonly ReviewStart[],
+): void {
+  const starts = Array.isArray(value)
+    ? value.map(record).filter((start) => start?.id === id)
+    : [];
+  if (
+    starts.length !== expected.length ||
+    starts.some((start, index) => {
+      const { kind, headSha, round } = expected[index];
+      return start?.kind !== kind || start.headSha !== headSha ||
+        start.round !== round || typeof start.at !== "number" ||
+        !Number.isSafeInteger(start.at) || start.at < 1;
+    })
+  ) {
+    refuse("native review retry accounting does not match its history");
+  }
+}
+
 async function checkReviewedRow(
   row: Record<string, unknown> | null,
   job: AgentJobV1,
   runTag: string,
   base: string,
   baseSha: GitSha,
+  modelStarts: unknown,
 ): Promise<AgentJobReviewV1> {
   const review = record(row?.review);
   const task = await agentJobTask(job, runTag);
@@ -214,33 +243,60 @@ async function checkReviewedRow(
   if (job.review === false || review.rounds.length === 0) {
     refuse("completed native review is required for this verdict");
   }
-  const requests = new Set<unknown>();
+  const ownerRunId = `agent-job:${runTag}:${job.id}`;
+  const expectedStarts: ReviewStart[] = [];
+  const settledHeads = new Set<string>();
+  let retryHead: GitSha | null = null;
+  let attemptsAtHead = 0;
+  let hasRetries = false;
+  let confirmingBase = false;
   for (const [index, value] of review.rounds.entries()) {
     const round = record(value);
     const final = index === review.rounds.length - 1;
     const headSha = final ? review.headSha : round?.headSha;
+    attemptsAtHead += 1;
     if (
       !round || round.round !== index + 1 || !isGitSha(headSha) ||
-      requests.has(round.requestId) ||
-      record(round.execution)?.ownerRunId !== `agent-job:${runTag}:${job.id}`
+      settledHeads.has(headSha) ||
+      (retryHead !== null && retryHead !== headSha) ||
+      (confirmingBase && headSha !== baseSha) ||
+      attemptsAtHead > AGENT_JOB_REVIEW_ATTEMPTS_PER_HEAD
     ) {
       refuse("native review history is malformed");
     }
-    const disposition = await agentJobReviewRoundVerdict(round, {
-      baseSha,
-      headSha,
-      taskDigest: task.digest,
-    });
+    const binding = { baseSha, headSha, taskDigest: task.digest };
+    expectedStarts.push({ kind: "review", headSha, round: round.round });
+    if (await agentJobReviewRoundIsUnavailable(round, binding)) {
+      if (final) {
+        refuse(
+          "native review evidence does not authorize the reported verdict",
+        );
+      }
+      hasRetries = true;
+      retryHead = headSha;
+      continue;
+    }
+    if (record(round.execution)?.ownerRunId !== ownerRunId) {
+      refuse("native review history is malformed");
+    }
+    const disposition = await agentJobReviewRoundVerdict(round, binding);
     if (
-      final ? disposition !== verdict : disposition !== "correct" &&
-        !(verdict === "already_satisfied" &&
-          disposition === "already_satisfied" &&
-          index === review.rounds.length - 2 && headSha !== baseSha)
+      final ? disposition !== verdict : confirmingBase ||
+        (disposition !== "correct" &&
+          !(verdict === "already_satisfied" &&
+            disposition === "already_satisfied" && headSha !== baseSha))
     ) {
       refuse("native review evidence does not authorize the reported verdict");
     }
-    requests.add(round.requestId);
+    if (disposition === "correct") {
+      expectedStarts.push({ kind: "correction", headSha, round: round.round });
+    }
+    settledHeads.add(headSha);
+    retryHead = null;
+    attemptsAtHead = 0;
+    confirmingBase = disposition === "already_satisfied";
   }
+  if (hasRetries) checkRetryStarts(modelStarts, job.id, expectedStarts);
   return review as unknown as AgentJobReviewV1;
 }
 
@@ -291,12 +347,20 @@ async function publishOne(
   row: Record<string, unknown> | null,
   job: AgentJobV1,
   publication: AgentJobPublicationV1,
+  modelStarts: unknown,
 ): Promise<void> {
   const { base, baseSha } = job;
   if (base === null || !isGitSha(baseSha)) {
     refuse("trusted base is unavailable");
   }
-  const review = await checkReviewedRow(row, job, input.runTag, base, baseSha);
+  const review = await checkReviewedRow(
+    row,
+    job,
+    input.runTag,
+    base,
+    baseSha,
+    modelStarts,
+  );
   publication.reviewVerdict = review.verdict;
   publication.taskDigest = review.taskDigest;
   publication.reviewedHeadSha = review.headSha;
@@ -501,7 +565,13 @@ export async function publishAgentJobsCell(
       detail: "",
     };
     try {
-      await publishOne(input, rows.get(job.id) ?? null, job, publication);
+      await publishOne(
+        input,
+        rows.get(job.id) ?? null,
+        job,
+        publication,
+        cell.modelStarts,
+      );
     } catch (error) {
       publication.detail = error instanceof AgentJobPublicationRefusal
         ? error.message

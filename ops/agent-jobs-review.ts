@@ -8,10 +8,13 @@ import type {
   ReviewedAgentJobResultV1,
   ReviewedAgentJobsCellResultV1,
 } from "./agent-jobs-review-contract.ts";
-import type {
-  agentJobReviewRoundVerdict,
-  agentJobTask,
-  reviewAgentJobHead,
+import {
+  AGENT_JOB_REVIEW_ATTEMPTS_PER_HEAD,
+  type AgentJobReviewRound,
+  type agentJobReviewRoundVerdict,
+  type agentJobTask,
+  type reviewAgentJobHead,
+  unavailableAgentJobReviewRound,
 } from "./agent-jobs-native-review.ts";
 import type { correctAgentJobHead } from "./agent-jobs-correct.ts";
 import { githubRemoteUrl } from "./agent-jobs-git.ts";
@@ -37,9 +40,15 @@ const JOB_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const REPOSITORY = /^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9._-]+$/;
 const CELL_ID = /^c[0-9]{2,3}$/;
 const RUN_TAG = /^[1-9][0-9]*-[1-9][0-9]*$/;
+const REVIEW_RETRY_BACKOFF_MS = 1_000;
 
 type ReviewPlan = AgentJobsPlanV1 & { createdAtMs?: number };
 type RecordValue = Record<string, unknown>;
+type RecordModelStart = (
+  kind: "review" | "correction",
+  headSha: string,
+  round: number,
+) => Promise<void>;
 
 export interface AgentJobsReviewInput {
   plan: ReviewPlan;
@@ -60,6 +69,7 @@ export interface AgentJobsReviewInput {
     correct: typeof correctAgentJobHead;
     log: (line: string) => void;
     now?: () => number;
+    sleep?: (ms: number) => Promise<void>;
   };
 }
 
@@ -228,17 +238,129 @@ async function normalizeInitialCandidate(
   return headSha;
 }
 
+async function reviewAttempt(
+  ports: AgentJobsReviewInput["ports"],
+  request: Parameters<typeof reviewAgentJobHead>[0],
+  taskDigest: string,
+): Promise<{
+  result: AgentJobReviewRound;
+  verdict: AgentJobReviewRound["disposition"] | null;
+}> {
+  const { round, headSha, deadlineAtMs } = request;
+  const binding = { round, headSha, baseSha: request.job.baseSha!, taskDigest };
+  const now = ports.now ?? Date.now;
+  if (now() >= deadlineAtMs) {
+    return {
+      result: await unavailableAgentJobReviewRound(
+        binding,
+        "original job deadline elapsed before native review launch",
+      ),
+      verdict: null,
+    };
+  }
+  let result: AgentJobReviewRound | undefined;
+  let verdict: AgentJobReviewRound["disposition"] | null = null;
+  let detail = "native review transport failed or returned no result";
+  let snapshotDigest: string | null = null;
+  try {
+    result = await ports.review(request);
+    if (result != null) {
+      if (
+        result.round !== round || result.headSha !== headSha ||
+        result.baseSha !== binding.baseSha || result.taskDigest !== taskDigest
+      ) {
+        detail = "native review evidence does not bind this candidate";
+      } else {
+        snapshotDigest = result.snapshotDigest;
+        detail = result.disposition === "blocked" &&
+            typeof result.detail === "string"
+          ? result.detail
+          : "native review did not produce a verified verdict";
+        verdict = await ports.verdict(result, {
+          ...binding,
+          ownerRunId: `agent-job:${request.runTag}:${request.job.id}`,
+        });
+      }
+    }
+  } catch {
+    // The native port is trusted to settle its owned session before returning.
+    // Transport errors are not verdicts and may contain unsafe raw text.
+  }
+  if (now() >= deadlineAtMs) {
+    detail = "original job deadline elapsed";
+  } else if (result != null && verdict != null) {
+    return { result, verdict };
+  }
+  return {
+    result: await unavailableAgentJobReviewRound(
+      binding,
+      detail,
+      snapshotDigest,
+    ),
+    verdict: null,
+  };
+}
+
+async function reviewCandidate(
+  input: AgentJobsReviewInput,
+  review: AgentJobReviewV1,
+  job: PinnedAgentJobV1,
+  git: AgentJobGitInput,
+  root: string,
+  confirmBase: () => Promise<void>,
+  recordStart: RecordModelStart,
+) {
+  const { ports } = input;
+  const { headSha, taskDigest } = review;
+  const now = ports.now ?? Date.now;
+  let lastDetail = "native review unavailable";
+  for (
+    let attempt = 0;
+    attempt < AGENT_JOB_REVIEW_ATTEMPTS_PER_HEAD;
+    attempt++
+  ) {
+    if (attempt > 0) {
+      const backoff = REVIEW_RETRY_BACKOFF_MS * attempt;
+      if (git.deadlineAtMs - now() <= backoff) {
+        throw new AgentJobGateRefusal(
+          `insufficient time to retry native review before the original job deadline. ${lastDetail}`,
+        );
+      }
+      await (ports.sleep?.(backoff) ??
+        new Promise<void>((resolve) => setTimeout(resolve, backoff)));
+    }
+    agentJobTimeLeft(git);
+    await confirmBase();
+    const round = review.rounds.length + 1;
+    const roundRoot = resolve(root, `round-${round}`);
+    await Deno.mkdir(roundRoot);
+    await recordStart("review", headSha, round);
+    const { result, verdict } = await reviewAttempt(ports, {
+      ...git,
+      job,
+      runTag: input.runTag,
+      headSha,
+      workRoot: resolve(roundRoot, "review"),
+      round,
+      history: review.rounds,
+      modelToken: input.modelToken,
+      baseUrl: input.baseUrl,
+    }, taskDigest);
+    review.rounds.push(result);
+    agentJobTimeLeft(git);
+    if (verdict !== null) return { result, verdict, roundRoot };
+    lastDetail = result.detail;
+  }
+  throw new AgentJobGateRefusal(lastDetail);
+}
+
 async function gateOne(
   input: AgentJobsReviewInput,
   row: ReviewedAgentJobResultV1,
   job: PinnedAgentJobV1,
   candidate: RecordValue | undefined,
   createdAtMs: number,
-  recordStart: (
-    kind: "review" | "correction",
-    headSha: string,
-    round: number,
-  ) => Promise<void>,
+  recordStart: RecordModelStart,
 ): Promise<void> {
   const { ports } = input;
   const task = await ports.task(job, input.runTag);
@@ -334,38 +456,15 @@ async function gateOne(
       headSha,
     };
     if (headSha !== job.baseSha) await validateAgentJobPublication(candidate);
-    await confirmAgentJobBase(upstream);
-    const round = row.review.rounds.length + 1;
-    const roundRoot = resolve(root, `round-${round}`);
-    await Deno.mkdir(roundRoot);
-    await recordStart("review", headSha, round);
-    agentJobTimeLeft(git);
-    const result = await ports.review({
+    const { result, verdict, roundRoot } = await reviewCandidate(
+      input,
+      row.review,
       job,
-      runTag: input.runTag,
-      sourcePath,
-      headSha,
-      workRoot: resolve(roundRoot, "review"),
-      deadlineAtMs,
-      round,
-      history: row.review.rounds,
-      modelToken: input.modelToken,
-      baseUrl: input.baseUrl,
-    });
-    if (
-      result.round !== round || result.headSha !== headSha ||
-      result.baseSha !== job.baseSha || result.taskDigest !== task.digest
-    ) {
-      throw new AgentJobGateRefusal(
-        "native review evidence does not bind this candidate",
-      );
-    }
-    row.review.rounds.push(result);
-    const verdict = await ports.verdict(result, {
-      baseSha: job.baseSha,
-      headSha,
-      taskDigest: task.digest,
-    });
+      git,
+      root,
+      () => confirmAgentJobBase(upstream),
+      recordStart,
+    );
     if (confirmingBaseSatisfaction && verdict !== "already_satisfied") {
       throw new AgentJobGateRefusal(
         "native review did not confirm the task at the pinned base",
@@ -386,7 +485,7 @@ async function gateOne(
       );
     }
     await confirmAgentJobBase(upstream);
-    await recordStart("correction", headSha, round);
+    await recordStart("correction", headSha, result.round);
     agentJobTimeLeft(git);
     const corrected = await ports.correct({
       job,
@@ -470,9 +569,18 @@ export async function reviewAgentJobsCell(
         },
       );
     } catch (error) {
-      row.detail = row.review.detail = error instanceof AgentJobGateRefusal
+      const detail = error instanceof AgentJobGateRefusal
         ? error.message
         : "trusted review gate could not verify candidate";
+      const unavailable = row.review.rounds.filter((round) =>
+        round.headSha === row.review.headSha &&
+        round.disposition === "blocked" && round.result === null
+      ).length;
+      row.detail = row.review.detail = unavailable === 0
+        ? detail
+        : `${detail} (${unavailable} unavailable native review attempt${
+          unavailable === 1 ? "" : "s"
+        } on this head)`;
     }
     row.elapsedSeconds = Math.max(0, Math.round((now() - started) / 1000));
     input.ports.log(`${row.id}: ${row.review.verdict} (${row.review.detail})`);
