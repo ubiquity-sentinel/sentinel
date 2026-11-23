@@ -12,5 +12,5 @@ Deno.test("private role: a bound copy takes a private target's issue from intake
     "private-lifecycle-",
   );
   assert.equal(code, 0, output);
-  assert.match(output, /ok \| 1 passed \| 0 failed/);
+  assert.match(output, /ok \| 2 passed \| 0 failed/);
 });

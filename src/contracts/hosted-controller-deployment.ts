@@ -173,6 +173,31 @@ export const HOSTED_CONTROLLER_RETIRED_RUNTIME_ID: string | null =
 export const HOSTED_CONTROLLER_SELF_INSTALLATION_ID: number | null =
   SELECTED.binding.selfInstallationId;
 
+/** Per-cycle cell ceilings of one deployment; null is the platform bound. */
+export interface HostedControllerCycleCellsV1 {
+  /** Implementation (matrix) cells one planner pass may grant. */
+  readonly matrix: number;
+  /** Repository repair cells one fan-out plan may hold. */
+  readonly repair: number;
+}
+
+/**
+ * GitHub Free (owner, 2026-11-22: "Private deploy if it isn't free then no
+ * go"): the private role runs one supervisor cycle a day, and a cycle costs
+ * about one billed minute per job minute, so its cells are bounded. One
+ * implementation cell lets one issue start each day; two repair cells let the
+ * records already in flight (review observation, CI read, merge) of two
+ * repositories progress beside it, and every record a cell does not take
+ * stays with the serial pass. The public role keeps the platform bounds (the
+ * owner lifted artificial caps there).
+ */
+export const PRIVATE_CYCLE_CELLS: HostedControllerCycleCellsV1 = Object.freeze(
+  { matrix: 1, repair: 2 },
+);
+export const HOSTED_CONTROLLER_CYCLE_CELLS:
+  | HostedControllerCycleCellsV1
+  | null = SELECTED.binding.role === "private" ? PRIVATE_CYCLE_CELLS : null;
+
 export const HOSTED_CONTROLLER_DEPLOYMENT = Object.freeze(
   SELECTED.binding.deployment,
 );

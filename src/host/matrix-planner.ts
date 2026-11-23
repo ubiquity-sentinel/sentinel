@@ -2,6 +2,7 @@ import { reconcileExistingPrs } from "../repair/loop-existing-pr.ts";
 /** Trusted serialized planning, decomposition and admission diagnostics. */
 import { deriveReservationId } from "../budget/mod.ts";
 import type { GitSha } from "../contracts/brands.ts";
+import { HOSTED_CONTROLLER_CYCLE_CELLS } from "../contracts/hosted-controller-deployment.ts";
 import {
   MATRIX_DECOMPOSE_AFTER_TIMEOUTS,
   MATRIX_PLAN_VERSION,
@@ -506,9 +507,12 @@ export async function planMatrixWave(
   // Grant publication precedes native scheduling and target preparation. Keep
   // one existing operation margin for that handoff; cells retain full bounds.
   bounds.runDeadline -= OPERATION_MARGIN_MS;
+  // The private role's free-tier ceiling (`HOSTED_CONTROLLER_CYCLE_CELLS`);
+  // the public role keeps the platform bound.
   const limit = Math.min(
     options.maxCells ?? MAX_MATRIX_CELLS,
     MAX_MATRIX_CELLS,
+    HOSTED_CONTROLLER_CYCLE_CELLS?.matrix ?? MAX_MATRIX_CELLS,
   );
   const attemptedIds = new Set<string>();
   const takeoverAttempted = new Set<string>();

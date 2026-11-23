@@ -27,6 +27,7 @@ import {
 } from "../contracts/repair-delta.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { GitSha } from "../contracts/brands.ts";
+import { HOSTED_CONTROLLER_CYCLE_CELLS } from "../contracts/hosted-controller-deployment.ts";
 import {
   delegatedRecordsV1,
   parseRepairFanoutPlanV1,
@@ -93,6 +94,8 @@ export async function publishRepairFanoutPlan(input: {
     configs: input.configs,
     runId: input.run.runId,
     runAttempt: input.run.runAttempt,
+    // The private role's free-tier ceiling; the public role keeps the bound.
+    maxCells: HOSTED_CONTROLLER_CYCLE_CELLS?.repair,
   });
   const root = repairFanoutRootOf(input.artifactRoot);
   await Deno.mkdir(root, { recursive: true, mode: 0o700 });

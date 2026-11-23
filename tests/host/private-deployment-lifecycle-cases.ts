@@ -40,6 +40,7 @@ import { scanStepLines } from "../../src/repair/step-line.ts";
 import { response, snapshotWire } from "../github/merge-queue-fixtures.ts";
 import {
   checked,
+  issue,
   PROVIDER,
   rig,
   TargetGithub,
@@ -95,6 +96,57 @@ function privateGithub(urls: string[]): HttpTransportV1 {
   };
 }
 
+type Rig = Awaited<ReturnType<typeof rig>>;
+
+/** The rig's only target surface: `slug`, with a real review lifecycle. */
+function privatePort(r: Rig, slug: string): TargetGithub {
+  const port = new TargetGithub({
+    baseSha: r.foreignSha,
+    candidateLifecycle: {
+      preserveCandidate: () => Promise.resolve(portOk(undefined)),
+    },
+  });
+  port.reviewStatus = "pending";
+  port.prepareBaseRefresh = () =>
+    Promise.reject(new Error("unchanged fixture base must not refresh"));
+  r.github.clear();
+  r.github.set(slug, port);
+  return port;
+}
+
+/** Jobs of the current run as the private deployment, on its own setting. */
+function privateJobs(
+  r: Rig,
+  seen: { urls: string[]; composed: string[]; remotes: string[] },
+  setting = SETTING,
+) {
+  return async (name: string, role: string) => {
+    const deps = await r.job(name, role);
+    assert.equal(deps.env.GITHUB_REPOSITORY, PRIVATE);
+    await Deno.writeTextFile(`${deps.workDir}/sentinel.targets.json`, setting);
+    seen.remotes.push(deps.stateRemoteUrl);
+    return {
+      ...deps,
+      env: { ...deps.env, SENTINEL_SELF_INSTALLATION_ID: SELF_INSTALLATION },
+      // The production resolvers read the host and the target over `http`.
+      resolveRepository: undefined,
+      http: servingJobLogs(
+        privateGithub(seen.urls),
+        new Map([[101, QUIET_LOG]]),
+      ),
+      composeGithub: (
+        config: { repository: { owner: string; name: string } },
+      ) => {
+        const slug = `${config.repository.owner}/${config.repository.name}`;
+        seen.composed.push(slug);
+        const target = r.github.get(slug);
+        assert.ok(target, `no surface composed for ${slug}`);
+        return target;
+      },
+    };
+  };
+}
+
 Deno.test("private role: a private target's owner issue goes from intake to a reviewed merge without naming the public repository", async () => {
   assert.equal(HOSTED_CONTROLLER_ROLE, "private");
   assert.equal(HOSTED_CONTROLLER_REPOSITORY, PRIVATE);
@@ -104,43 +156,8 @@ Deno.test("private role: a private target's owner issue goes from intake to a re
   const composed: string[] = [];
   const remotes: string[] = [];
   try {
-    const port = new TargetGithub({
-      baseSha: r.foreignSha,
-      candidateLifecycle: {
-        preserveCandidate: () => Promise.resolve(portOk(undefined)),
-      },
-    });
-    port.reviewStatus = "pending";
-    port.prepareBaseRefresh = () =>
-      Promise.reject(new Error("unchanged fixture base must not refresh"));
-    r.github.clear();
-    r.github.set(TARGET, port);
-    /** One private-deployment job of the current run, on its own setting. */
-    const job = async (name: string, role: string) => {
-      const deps = await r.job(name, role);
-      assert.equal(deps.env.GITHUB_REPOSITORY, PRIVATE);
-      await Deno.writeTextFile(
-        `${deps.workDir}/sentinel.targets.json`,
-        SETTING,
-      );
-      remotes.push(deps.stateRemoteUrl);
-      return {
-        ...deps,
-        env: { ...deps.env, SENTINEL_SELF_INSTALLATION_ID: SELF_INSTALLATION },
-        // The production resolvers read the host and the target over `http`.
-        resolveRepository: undefined,
-        http: servingJobLogs(privateGithub(urls), new Map([[101, QUIET_LOG]])),
-        composeGithub: (
-          config: { repository: { owner: string; name: string } },
-        ) => {
-          const slug = `${config.repository.owner}/${config.repository.name}`;
-          composed.push(slug);
-          const target = r.github.get(slug);
-          assert.ok(target, `no surface composed for ${slug}`);
-          return target;
-        },
-      };
-    };
+    const port = privatePort(r, TARGET);
+    const job = privateJobs(r, { urls, composed, remotes });
 
     // Intake: the planner admits the private target's owner issue.
     const planDeps = await job("plan", "matrix_plan");
@@ -346,6 +363,49 @@ Deno.test("private role: a private target's owner issue goes from intake to a re
     );
     assert.deepEqual(leaked, [], [...urls, ...remotes].join("\n"));
     assert.deepEqual([...new Set(composed)], [TARGET]);
+  } finally {
+    await r.cleanup();
+  }
+});
+
+Deno.test("private role: one planner pass grants at most one implementation cell (free tier)", async () => {
+  assert.equal(HOSTED_CONTROLLER_ROLE, "private");
+  const r = await rig();
+  const seen = {
+    urls: [] as string[],
+    composed: [] as string[],
+    remotes: [] as string[],
+  };
+  try {
+    const port = privatePort(r, TARGET);
+    const rows = [1, 2, 3].map(issue);
+    port.listOpenIssues = () => Promise.resolve(portOk(rows));
+    port.readIssue = (number) =>
+      Promise.resolve(portOk(rows[number - 1] ?? null));
+    const deps = await privateJobs(r, seen)("plan", "matrix_plan");
+    const { value: planner } = await quietly(() =>
+      runActionsMatrixHost({
+        ...deps,
+        model: {
+          modelId: "gpt-reserve",
+          runModel: () => {
+            throw Error("planner must not run a model");
+          },
+        },
+      })
+    );
+    assert.ok("plan" in planner, JSON.stringify(planner));
+    // Three ready owner issues; the private role's ceiling grants one.
+    assert.equal(planner.prepared, 1);
+    assert.equal(planner.plan.cells.length, 1);
+    const state = await r.store.readRepair();
+    assert.ok(state.ok && state.value.status === "found");
+    assert.equal(
+      state.value.snapshot.reservations.filter((row) =>
+        row.purpose === "implementation"
+      ).length,
+      1,
+    );
   } finally {
     await r.cleanup();
   }
