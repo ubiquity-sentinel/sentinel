@@ -7152,3 +7152,76 @@ until the Passport row is repaired.
   `no_ci_and_no_local_verify` on the private deployment (existing rule).
 
 Rollback: revert the commit; the three names leave both files.
+
+## 2026-11-23: the private deployment needs no variable and two secrets (owner decision)
+
+- Owner, verbatim: "Fuck your secrets no secrets it's too god damn
+  complicated just hard code in the behavior we need". Credentials are never
+  committed, so the private deployment (`ubiquity-sentinel-private/sentinel`)
+  takes no repository variable and the two secrets below. No production code
+  or workflow changes: every non-secret behaviour its role needs is already
+  the committed value an absent variable yields (the workflow's own `||`
+  fallback, an empty string, or the role gate).
+  `tests/host/private-zero-config_test.ts` pins every `vars.*` and
+  `secrets.*` read of the workflows that run there (`supervisor.yml`,
+  `private-daily.yml`, `private-sync.yml`, `ci.yml`) with its absent value.
+- Variables, absent on the private repository:
+  - `SENTINEL_BACKUP_CI`: `on` by the workflow fallback, and inert there:
+    the private role's backup targets list nothing, so no consumer is
+    composed (`readBackupCiTargets`; the role proof runs it with `on`), and
+    every backup job and dispatch step is gated to the public repository.
+  - `SENTINEL_AUTO_FOLLOW`: read only by the dispatcher's follow step
+    (`supervisor-dispatch.yml`, gated to the public repository); the daily
+    cycle, runtime and finalize never read it.
+  - Model route (`SENTINEL_MODEL_BASE_URL`, `SENTINEL_MODEL_FALLBACK`,
+    `SENTINEL_REVIEW_MODEL_ID` empty; `SENTINEL_IMPLEMENTATION_MODEL_ID`
+    gives `gpt-6.1-sol`): gateway `https://ai.ubq.fi/v1`, `gpt-6.1-sol`, 429
+    failover `gpt-6-luna`, max reasoning, key `UOS_AI_TOKEN`; review is
+    native Codex review mode (no hosted path selects a reviewer model; the
+    review id is read but unused). That is the public deployment's route
+    with its variables unset; whether its configured variables equal it is
+    not visible here (the 2026-10-29 capture was `gpt-6.1-sol`).
+  - Also read, never listed: `SENTINEL_MERGE_QUEUE` (empty; lower-only under
+    the committed ceiling `off`) and `SENTINEL_SELF_IMPROVE` (`on`; the
+    private role files no watchdog issue).
+- Secrets:
+  - `SENTINEL_SUPERVISOR_APP_PRIVATE_KEY`, required: every App token mint
+    of `supervisor.yml` and `private-sync.yml`; an empty key fails the mint.
+  - `UOS_AI_TOKEN`, required: the model gateway token for implementation
+    and native review; the runtime launcher refuses all four runtime jobs
+    without it (`hosted runtime launcher credentials are unavailable`).
+  - `SENTINEL_DEEPSEEK_API_KEY`, not needed: only the DeepSeek routes
+    (`SENTINEL_MODEL_BASE_URL` set, or `SENTINEL_MODEL_FALLBACK=deepseek`)
+    use it; absent, it is an empty step variable that is never forwarded or
+    required (its `--allow-env` grant just reads an empty value).
+  - `SENTINEL_GATEWAY_AUTH_JSON`, `SENTINEL_REPLAY_KEY_B64`: not needed;
+    only the manual `observe.yml` reads them.
+  - Neither required value can be committed: the repository is public, and
+    the App key signs write tokens for every installation of the App while
+    the gateway token spends paid model capacity.
+- Environment: the supervisor jobs keep `environment: sentinel-supervisor`.
+  GitHub's documentation says a GitHub Free organization cannot configure
+  environments or environment secrets in private repositories, that a
+  referenced missing environment is created, and that the rules and secrets
+  of environments in a repository made private are ignored; nothing
+  documents a refusal, and repository secrets reach every job either way. Not verified on the private
+  repository. If its first cycle shows a job refused for the environment,
+  the smallest fix is `name: ${{ github.repository ==
+  'ubiquity-sentinel/sentinel' && 'sentinel-supervisor' || '' }}` in the
+  seven jobs (public: today's name; an empty name's meaning is
+  undocumented too) with the two tests that pin the literal updated; no
+  OIDC claim or native check reads the environment.
+- Default branch: still a manual setting. `schedule` and `workflow_dispatch`
+  need the workflow file on the default branch, and `main` (unrelated
+  history) can take neither a fast-forward nor a force push, so
+  `development` must be made the default branch by hand.
+- Workflow ids: still committed by hand. Path-resolved identity would be as
+  strong on the private role (every id comparison is paired with the exact
+  path, repository, event, branch and head SHA), but the ids are
+  module-load constants read synchronously by persisted proof parsers and
+  run checks in every supervisor process (maintenance, prepare, finalize,
+  launcher, runtime child), so resolving them at run time needs network
+  access at module load (which the credential-free daily binding check does
+  not have) or a resolution in each entrypoint; not small, not done.
+
+Rollback: revert the commit; nothing else changes.
