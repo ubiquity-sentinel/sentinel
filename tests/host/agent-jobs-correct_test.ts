@@ -44,7 +44,8 @@ async function withCorrection(
   ) => Promise<void>,
 ): Promise<void> {
   const root = await Deno.makeTempDir({
-    prefix: "sentinel-test-job-correction-",
+    dir: Deno.cwd(),
+    prefix: "sentinel-test-local-job-correction-",
   });
   const path = Deno.env.get("PATH") ?? "/usr/bin:/bin";
   const source = join(root, "source");
