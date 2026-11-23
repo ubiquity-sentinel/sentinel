@@ -27,6 +27,7 @@ concurrency:
 jobs:
   backup_ci:
     if: >-
+      github.repository == 'ubiquity-sentinel/sentinel' &&
       github.ref == 'refs/heads/sentinel-supervisor' && github.run_attempt == 1 &&
       (contains(fromJSON('["shadow","on"]'), vars.SENTINEL_BACKUP_CI || 'on'))
     runs-on: ubuntu-latest
