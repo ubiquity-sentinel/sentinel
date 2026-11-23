@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
-import type { AgentJobReviewRound } from "../../ops/agent-jobs-native-review.ts";
+import {
+  type AgentJobReviewRound,
+  agentJobReviewRoundIsUnavailable,
+} from "../../ops/agent-jobs-native-review.ts";
 import {
   type AgentJobsReviewInput,
   reviewAgentJobsCell,
@@ -303,6 +306,134 @@ Deno.test("dispatch gate reviews an exact correction and seals only the accepted
       (await git(["cat-file", "-e", reviewed[0]], { cwd: output })).code,
       1,
     );
+  });
+});
+
+Deno.test("dispatch gate retries an unavailable native review on the same head", async () => {
+  await fixture(async ({ input }) => {
+    const heads: string[] = [];
+    const roots: string[] = [];
+    const backoff: number[] = [];
+    let now = input.plan.createdAtMs!;
+    input.ports.now = () => now;
+    input.ports.sleep = (ms) => {
+      backoff.push(ms);
+      now += ms;
+      return Promise.resolve();
+    };
+    input.ports.review = (request) => {
+      heads.push(request.headSha);
+      roots.push(request.workRoot);
+      if (request.round === 2) {
+        return Promise.reject(new Error("native transport disconnected"));
+      }
+      return Promise.resolve(
+        request.round === 1
+          ? {
+            ...roundResult(request, "blocked"),
+            detail: "native review result malformed [json_syntax]",
+            snapshotDigest: DIGEST,
+          }
+          : roundResult(request, "accepted"),
+      );
+    };
+    const result = await reviewAgentJobsCell(input);
+    const { review } = result.results[0];
+    assert.equal(review.verdict, "accepted", review.detail);
+    assert.equal(heads.length, 3);
+    assert.deepEqual(heads, [review.headSha, review.headSha, review.headSha]);
+    assert.equal(new Set(roots).size, 3);
+    assert.deepEqual(backoff, [1000, 2000]);
+    assert.deepEqual(review.rounds.map(({ disposition }) => disposition), [
+      "blocked",
+      "blocked",
+      "accepted",
+    ]);
+    assert.deepEqual(
+      result.modelStarts.map(({ kind, round }) => [kind, round]),
+      [
+        ["review", 1],
+        ["review", 2],
+        ["review", 3],
+      ],
+    );
+    assert.match(review.rounds[0].detail, /json_syntax/);
+    assert.equal(review.rounds[0].snapshotDigest, DIGEST);
+    assert.equal(review.rounds[1].snapshotDigest, null);
+    for (const round of review.rounds.slice(0, 2)) {
+      assert.ok(await agentJobReviewRoundIsUnavailable(round, review));
+    }
+  });
+});
+
+Deno.test("dispatch gate blocks after three stale or missing native reviews", async () => {
+  await fixture(async ({ input, baseSha }) => {
+    input.ports.sleep = () => Promise.resolve();
+    input.ports.review = (request) =>
+      Promise.resolve(
+        request.round === 2
+          ? undefined as unknown as AgentJobReviewRound
+          : { ...roundResult(request, "accepted"), headSha: baseSha },
+      );
+    const { modelStarts, results: [row] } = await reviewAgentJobsCell(input);
+    assert.equal(row.review.verdict, "blocked");
+    assert.match(
+      row.detail,
+      /3 unavailable native review attempts on this head/,
+    );
+    assert.equal(row.bundle, null);
+    assert.equal(row.review.rounds.length, 3);
+    assert.equal(modelStarts.length, 3);
+    for (const round of row.review.rounds) {
+      assert.ok(await agentJobReviewRoundIsUnavailable(round, row.review));
+      assert.notEqual(round.headSha, baseSha);
+    }
+    assert.ok(modelStarts.every(({ kind }) => kind === "review"));
+  });
+});
+
+Deno.test("dispatch gate stops retries when the original deadline cannot fit backoff", async () => {
+  await fixture(async ({ input }) => {
+    let now = input.plan.createdAtMs!;
+    input.ports.now = () => now;
+    input.ports.sleep = () => Promise.reject(new Error("unexpected sleep"));
+    input.ports.review = (request) => {
+      now = request.deadlineAtMs - 1_000;
+      return Promise.resolve(roundResult(request, "blocked"));
+    };
+    const { modelStarts, results: [row] } = await reviewAgentJobsCell(input);
+    assert.equal(row.review.verdict, "blocked");
+    assert.match(row.detail, /before the original job deadline/);
+    assert.match(
+      row.detail,
+      /1 unavailable native review attempt on this head/,
+    );
+    assert.equal(row.review.rounds.length, 1);
+    assert.equal(modelStarts.length, 1);
+  });
+});
+
+Deno.test("dispatch gate settles a recorded review intent when its deadline expires before launch", async () => {
+  await fixture(async ({ input }) => {
+    let now = input.plan.createdAtMs!;
+    let calls = 0;
+    input.ports.now = () => now;
+    input.ports.log = (line) => {
+      if (line.includes("agent_job_model_start_intent")) {
+        now = input.plan.createdAtMs! + 60_000;
+      }
+    };
+    input.ports.review = (request) => {
+      calls += 1;
+      return Promise.resolve(roundResult(request, "accepted"));
+    };
+    const { modelStarts, results: [row] } = await reviewAgentJobsCell(input);
+    assert.equal(calls, 0);
+    assert.equal(row.review.verdict, "blocked");
+    assert.equal(modelStarts.length, 1);
+    assert.equal(row.review.rounds.length, 1);
+    assert.match(row.review.rounds[0].detail, /deadline elapsed before/);
+    assert.equal(row.review.rounds[0].round, modelStarts[0].round);
   });
 });
 

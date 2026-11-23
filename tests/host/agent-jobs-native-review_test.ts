@@ -211,6 +211,13 @@ Deno.test("operator job retains native settled current-head evidence and permits
       await agentJobReviewRoundVerdict(receipt, binding),
       "accepted",
     );
+    assert.equal(
+      await agentJobReviewRoundVerdict(
+        receipt,
+        { ...binding, ownerRunId: "agent-job:another-run:review-fixture" },
+      ),
+      null,
+    );
     assertIssueDecision(receipt.result!, { kind: "qualified_new_repair" });
     assert.equal(
       await agentJobReviewRoundVerdict({
@@ -337,6 +344,10 @@ Deno.test("operator base assessment and unsettled or inconsistent native reviews
       workRoot: input.workRoot + "-base-fulfilled",
     }, () => baseFulfilled);
     assert.equal(received.disposition, "blocked");
+    assert.equal(
+      await agentJobReviewRoundVerdict(received, await expectedBinding(base)),
+      "blocked",
+    );
 
     const unsettled = nativeSession(await reviewResult(input, "fulfilled"));
     unsettled.settled = false;
@@ -371,5 +382,25 @@ Deno.test("operator base assessment and unsettled or inconsistent native reviews
       kind: "refused",
       reason: "incomplete receipt",
     });
+  });
+});
+
+Deno.test("operator native review ends a hanging handshake within the job deadline", async () => {
+  await fixture(async (input) => {
+    const session = new ScriptedCodexSession();
+    session.send = (method) => {
+      session.sent.push(method);
+      return new Promise(() => {});
+    };
+    const deadlineAtMs = Date.now() + 3_000;
+    const receipt = await reviewAgentJobHead(
+      { ...input, deadlineAtMs },
+      () => session,
+    );
+    assert.deepEqual(session.sent, ["initialize"]);
+    assert.equal(session.closed, 1);
+    assert.equal(receipt.disposition, "blocked");
+    assert.equal(receipt.execution, null);
+    assert.ok(Date.now() < deadlineAtMs + 1_000);
   });
 });
