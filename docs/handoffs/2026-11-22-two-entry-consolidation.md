@@ -355,7 +355,17 @@ gh workflow run agent-jobs.yml --repo ubiquity-sentinel/sentinel \
 
 ## Draft publication and native CI
 
-The consolidation was published as a draft against `development` through GitHub REST. Initial code head `bf2247c089150cb87a2223a62c48560af9a8a6c8` ran native CI `45086691656` attempt 1 on pull request merge SHA `ac27e9259fee1351ab0a7e5c08132779657dbd45`. The run concluded failure at 00:13:44 UTC on 2026-11-23. Across 894 files, 5,583 tests passed, one failed and 88 were ignored. Quality, integration and all three host shards passed. The modules shard had 2,644 passed, one failed and 47 ignored. The `test-local` aggregate exited 1 and emitted no CI proof. The failure was a stale `p.acceptanceCorrection` source anchor in `tests/model/decision-matrix_test.ts:110`. It still expected `if (refusal === TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL) {` in `src/repair/loop-review-result.ts` after that decision moved to the shared review path. [Draft PR #428](https://github.com/ubiquity-sentinel/sentinel/pull/428) · [Initial native CI run](https://github.com/ubiquity-sentinel/sentinel/actions/runs/45086691656) · [Modules shard](https://github.com/ubiquity-sentinel/sentinel/actions/runs/45086691656/job/137406838783) · [Aggregate job](https://github.com/ubiquity-sentinel/sentinel/actions/runs/45086691656/job/137409355746)
+GitHub REST published draft #428 against `development`. Native CI run `45087695922` attempt 1 passed at 00:23:05 UTC on 2026-11-23 for code head `25e1cd2a6e389a83cff95156feb25d55c4cd87eb`, base `a896fa14b0e473106f8f2a4940326d6f3710b7dd`, and pull request merge SHA `f9252254481347358dd7f79a9ac7f6e92c96567d`. All seven jobs passed on seven distinct `ubuntu-latest` runners. The `test-local` aggregate emitted `sentinel_native_ci_v1` for the exact merge and tree `55c43470b452d0467fee64a9d161527c7537e5c4`. The five shards covered 894 files and 2,343 test steps with 5,584 passed, zero failed and 88 ignored. Quality checked 1,846 files for formatting, 1,771 for lint and 1,970 for size with zero violations, and completed 21 type checks. [Draft PR #428](https://github.com/ubiquity-sentinel/sentinel/pull/428) · [Passing native CI](https://github.com/ubiquity-sentinel/sentinel/actions/runs/45087695922) · [Exact aggregate proof](https://github.com/ubiquity-sentinel/sentinel/actions/runs/45087695922/job/137412260286)
+
+| Shard       | Passed | Failed | Ignored |
+| ----------- | -----: | -----: | ------: |
+| Modules     |  2,645 |      0 |      47 |
+| Integration |    105 |      0 |       0 |
+| Host 1      |    980 |      0 |      14 |
+| Host 2      |    893 |      0 |      19 |
+| Host 3      |    961 |      0 |       8 |
+
+Initial code head `bf2247c089150cb87a2223a62c48560af9a8a6c8` ran native CI `45086691656` attempt 1 on pull request merge SHA `ac27e9259fee1351ab0a7e5c08132779657dbd45`. The run concluded failure at 00:13:44 UTC on 2026-11-23. Across 894 files, 5,583 tests passed, one failed and 88 were ignored. Quality, integration and all three host shards passed. The modules shard had 2,644 passed, one failed and 47 ignored. The `test-local` aggregate exited 1 and emitted no CI proof. The failure was a stale `p.acceptanceCorrection` source anchor in `tests/model/decision-matrix_test.ts:110`. It still expected `if (refusal === TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL) {` in `src/repair/loop-review-result.ts` after that decision moved to the shared review path. [Initial native CI run](https://github.com/ubiquity-sentinel/sentinel/actions/runs/45086691656) · [Modules shard](https://github.com/ubiquity-sentinel/sentinel/actions/runs/45086691656/job/137406838783) · [Aggregate job](https://github.com/ubiquity-sentinel/sentinel/actions/runs/45086691656/job/137409355746)
 
 The correction at `592d52b1e2f328e50192cf80aa0c1c8a05679d15` changes only the model anchor to the actual issue path, `const corrected = await withAcceptanceFinding(receipt);`. The same offline model harness first exited 1 with 11 passed and one failed, then exited 0 with all 12 passed in 33.092 seconds. Evidence `26c6cf008cdb65262171683ae1ea38a8d64599b2af1465c5a12b58783e7d521d/f59a73ba-1694-4597-9ad8-e8cdfe1aff80` and `26c6cf008cdb65262171683ae1ea38a8d64599b2af1465c5a12b58783e7d521d/6404f4cd-14a2-485f-a867-d0b8f0385de0`.
 
@@ -363,7 +373,7 @@ The correction at `592d52b1e2f328e50192cf80aa0c1c8a05679d15` changes only the mo
 timeout --kill-after=3s 297s deno run --frozen --allow-env=PATH --allow-run=deno,git --allow-write test-local.ts --tests tests/model/decision-matrix_test.ts
 ```
 
-For the corrected candidate, open the draft's Checks tab and select the `sentinel-ci` run tied to the current head. Verify its exact pull request merge SHA and the `test-local` aggregate, which requires quality and all five test shards. [Draft check history](https://github.com/ubiquity-sentinel/sentinel/pull/428/checks)
+For a subsequent draft head, the Checks tab lists its `sentinel-ci` run. Verify the exact pull request merge SHA and successful `test-local` aggregate, which requires quality and all five shards. [Draft check history](https://github.com/ubiquity-sentinel/sentinel/pull/428/checks)
 
 ## Local verification
 
@@ -404,10 +414,23 @@ NotCapable: Requires net access to "127.0.0.1:0", run again with the --allow-net
 
 ## Full local suite and host limits
 
-The local CI-equivalent attempt at pre-final `0bb8404f9a2953413cacfb3ad6bef3aba32b0af8` planned 894 test files. Static quality passed. The first two module batches passed 271 and 401 cases. Modules-3 had 333 pass, two fail and four ignored in 251.543 seconds. Both failures were in unchanged `tests/replay/dependency-cache_test.ts` cases at lines 117 and 194. Local `/usr/local/bin/node` resolves outside the harness allowlist. Modules-4 and Modules-5 exited 124 at the local 297-second deadline. The three-file Modules-4 suffix passed all 14 cases in isolation. Modules-5 stopped during `tests/repair/loop-incident-intake_test.ts` with no failed case before cutoff. Evidence namespace `1f073b6f2ac733285076b64632d272c9a04adba7ececd449078810724a7c50a7`, suffixes `47efa645-f562-4ed6-8043-41b7eabcf0cb`, `19647190-8847-4e7b-ab3e-045017341dea`, `23144637-cae3-4a98-9c5d-e5cc16eb1821` and `ef2f5790-692c-4ab9-918c-e6a361843b36`.
+The pre-final local CI-equivalent sweep at `0bb8404f9a2953413cacfb3ad6bef3aba32b0af8` reported results for 423 of 894 distinct files. Eleven primary batches settled, including two deadline cutoffs. The owner stopped the superseded sweep once the exact hosted CI had passed. The wrapper exited 143 on SIGTERM and its detached test process group was empty. Six files completed in the interrupted Host 1 batch without a new failed test. An untracked fixture remained in the isolated checkout and tracked source stayed clean. Interrupt receipt `1f073b6f2ac733285076b64632d272c9a04adba7ececd449078810724a7c50a7/a42bcf48-ad54-4fa8-b894-a36fcde1e5f4`.
+
+Static quality passed. The first two module batches passed 271 and 401 cases. Modules-3 had 333 pass, two fail and four ignored in 251.543 seconds. Both failures were in unchanged `tests/replay/dependency-cache_test.ts` cases at lines 117 and 194. Local `/usr/local/bin/node` resolves outside the harness allowlist. Modules-4 and Modules-5 exited 124 at the local 297-second deadline. The three-file Modules-4 suffix passed all 14 cases in isolation. Modules-5 stopped during `tests/repair/loop-incident-intake_test.ts` with no failed case before cutoff. Evidence namespace `1f073b6f2ac733285076b64632d272c9a04adba7ececd449078810724a7c50a7`, suffixes `47efa645-f562-4ed6-8043-41b7eabcf0cb`, `19647190-8847-4e7b-ab3e-045017341dea`, `23144637-cae3-4a98-9c5d-e5cc16eb1821` and `ef2f5790-692c-4ab9-918c-e6a361843b36`.
 
 ```text
 NotCapable: Requires read access to "/opt/node-lts/bin/node", run again with the --allow-read flag
+```
+
+The older sweep also reproduced the modeled acceptance-correction anchor failure documented above. Receipt `1f073b6f2ac733285076b64632d272c9a04adba7ececd449078810724a7c50a7/ac8c39f9-f9ae-48a2-b25d-e8bcd16acad6`.
+
+The local Host 1 dependency-preparation batch on `0bb8404f9a` had 98 passed and six failed in unchanged `tests/host/self-dependency-preparation_test.ts`. The cases reported `Error: self checkout dependencies unavailable` when dependency preparation refused the host's symlinked `/usr/local/bin/node`. The hosted workflow installs real binaries and its Host 1 shard passed. Local receipt `1f073b6f2ac733285076b64632d272c9a04adba7ececd449078810724a7c50a7/cfb5d42e-a45a-4020-abfd-9013bb068931`.
+
+The full-history local Host 1 rollback batch had 48 passed and one failed with two failing steps. The unchanged development baseline `a896fa14b0e473106f8f2a4940326d6f3710b7dd` reproduced both assertions under the standard one-file harness in 22.689 seconds, exit 1, zero passed and one failed with two failing steps. Candidate receipt `1f073b6f2ac733285076b64632d272c9a04adba7ececd449078810724a7c50a7/7d1a209a-ef6d-47d4-951f-cb9b353214fb`. Baseline receipt `26c6cf008cdb65262171683ae1ea38a8d64599b2af1465c5a12b58783e7d521d/284a328f-8440-467c-824f-42272fd29aa5`.
+
+```text
+tests/host/matrix-ci-correction-rollback_test.ts:169 AssertionError: [object Object]
+tests/host/matrix-ci-correction-rollback_test.ts:191 AssertionError: Error: matrix artifact provenance unavailable or conflicting
 ```
 
 Local Codex CLI `0.171.0` initialized and failed at restricted correction-thread startup, before any model turn. Evidence `26c6cf008cdb65262171683ae1ea38a8d64599b2af1465c5a12b58783e7d521d/ee644fc4-10e2-46f9-b019-f0757f4184cb`.
