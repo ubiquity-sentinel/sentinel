@@ -183,8 +183,9 @@ Deno.test("the backup targets enrol every ubiquity committed target, never the s
     JSON.parse(await Deno.readTextFile("sentinel.backup-ci-targets.json")),
   );
   // Parse through the committed-setting validator: the 2026-11-01 expanded
-  // set (30 targets since 2026-11-22: passport.ubq.fi left, the private
-  // auth.ubq.fi joined) must still be a valid bounded slug array.
+  // set (33 targets since 2026-11-23: passport.ubq.fi left; the private
+  // auth.ubq.fi, google-apps-script, arbitrage-uusd and ubiquibot-config
+  // joined) must still be a valid bounded slug array.
   const committed = parseTargetSlugsV1(
     JSON.parse(await Deno.readTextFile("sentinel.targets.json")),
   ).map((entry) => entry.slug);

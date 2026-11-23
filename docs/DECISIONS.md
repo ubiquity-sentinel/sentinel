@@ -7127,3 +7127,28 @@ either way; the private one then refuses to start again.
 
 Rollback: revert the commit; the rows return and prospector is held again
 until the Passport row is repaired.
+
+## 2026-11-23: the private deployment targets every non-archived private ubiquity repository
+
+- Owner, verbatim: "Yah so we will make a sentinel for private repos only
+  and yeah target only ubiquity private repos" and, on the App installation
+  in the `ubiquity` organization, "App installed to all".
+- Added to `sentinel.targets.json` and, for the two-file sync,
+  `sentinel.backup-ci-targets.json` (id null; backup CI refuses private
+  repositories): `ubiquity/google-apps-script`, `ubiquity/arbitrage-uusd`,
+  `ubiquity/ubiquibot-config`. The private list is then seven: prospector,
+  prospector-chrome-extension, prospector-monorepo, auth.ubq.fi and these
+  three. Not added: `ubiquity/uad-ui-archived` (archived) and
+  `ubiquity/.github-private`: the committed slug rule (`parseTargetSlugsV1`)
+  accepts only names that start with a letter or digit and refuses the whole
+  setting otherwise, which would leave both deployments with no target;
+  supporting it needs a slug-rule change that is not made here.
+- Public host: each new name reads private and is skipped (the
+  `sentinel_private_targets` counts grow); nothing else changes. The foreign
+  mints list 32 names (GitHub accepts up to 500 repositories in one
+  installation-token request; the committed setting allows 64), and the
+  installation covers all of them, so the tolerant mint drops none.
+- A new target without a CI workflow or a local verify parks as
+  `no_ci_and_no_local_verify` on the private deployment (existing rule).
+
+Rollback: revert the commit; the three names leave both files.

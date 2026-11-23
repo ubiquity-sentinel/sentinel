@@ -75,7 +75,7 @@ function waiting(id: string, name: string, n: number, since = T0) {
 }
 
 Deno.test("P7: idle enrolled targets cost no read and no store write", async () => {
-  assert.equal(TARGETS.length, 29);
+  assert.equal(TARGETS.length, 32);
   const world = passWorld();
   for (const run of [0, 1, 2]) {
     world.calls.clear();
