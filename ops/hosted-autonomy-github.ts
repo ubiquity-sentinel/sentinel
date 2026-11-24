@@ -768,6 +768,7 @@ export function createHostedAutonomyGitHub(
                 authorization: `Bearer ${token}`,
                 accept: "application/vnd.github+json",
                 "user-agent": "sentinel-hosted-autonomy",
+                range: `bytes=-${input.maxBytes}`,
               },
               signal: controller.signal,
             },
@@ -777,9 +778,12 @@ export function createHostedAutonomyGitHub(
           if (isRedirect && location === null) return null;
           const target = isRedirect ? location! : null;
           if (target !== null && !target.startsWith("https://")) return null;
+          // Failures and exit annotations are at the end of long job logs.
+          // Request only that bounded suffix, still without the App token.
           const response = target === null ? head : await fetch(target, {
             method: "GET",
             redirect: "manual",
+            headers: { range: `bytes=-${input.maxBytes}` },
             signal: controller.signal,
           });
           if (response.status < 200 || response.status >= 300) return null;
