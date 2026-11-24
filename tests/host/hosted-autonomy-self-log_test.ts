@@ -19,22 +19,30 @@ Deno.test("self observation: a long repair-cell log retains its terminal failure
   );
   const filed: { title: string; body: string }[] = [];
   const original = globalThis.fetch;
-  let signedReads = 0;
+  const signedRanges: (string | null)[] = [];
   globalThis.fetch = (input, init) => {
     const url = new URL(String(input));
     const headers = new Headers(init?.headers);
     const json = (body: unknown) => Promise.resolve(Response.json(body));
     if (url.href === SIGNED_LOG) {
-      signedReads++;
+      signedRanges.push(headers.get("range"));
       assert.equal(headers.get("authorization"), null);
       assert.equal(init?.redirect, "manual");
-      const ranged = headers.get("range") ===
-        `bytes=-${SELF_DEFECT_MAX_LOG_BYTES}`;
+      // The Actions results host ignores suffix ranges, but honors explicit
+      // start-end requests. Returning a 200 prefix must not hide the exit line.
+      const range = /^bytes=(\d+)-(\d+)$/.exec(headers.get("range") ?? "");
+      if (range === null) return Promise.resolve(new Response(bytes));
+      const start = Number(range[1]);
+      const end = Math.min(Number(range[2]), bytes.byteLength - 1);
+      assert.ok(start <= end);
+      assert.ok(end - start + 1 <= SELF_DEFECT_MAX_LOG_BYTES);
       return Promise.resolve(
-        new Response(
-          ranged ? bytes.slice(-SELF_DEFECT_MAX_LOG_BYTES) : bytes,
-          { status: ranged ? 206 : 200 },
-        ),
+        new Response(bytes.slice(start, end + 1), {
+          status: 206,
+          headers: {
+            "content-range": `bytes ${start}-${end}/${bytes.byteLength}`,
+          },
+        }),
       );
     }
     assert.equal(url.origin, "https://api.github.com");
@@ -91,7 +99,10 @@ Deno.test("self observation: a long repair-cell log retains its terminal failure
       ["self-observation:no_change"],
     );
     assert.equal(filed.length, 1);
-    assert.equal(signedReads, 2);
+    const tail = `bytes=${bytes.byteLength - SELF_DEFECT_MAX_LOG_BYTES}-${
+      bytes.byteLength - 1
+    }`;
+    assert.deepEqual(signedRanges, ["bytes=0-0", tail, "bytes=0-0", tail]);
   } finally {
     globalThis.fetch = original;
   }
@@ -105,7 +116,7 @@ Deno.test("self observation log: short inline and redirected responses remain re
       globalThis.fetch = (input, init) => {
         calls++;
         const headers = new Headers(init?.headers);
-        assert.equal(headers.get("range"), "bytes=-64");
+        assert.equal(headers.get("range"), calls === 1 ? null : "bytes=0-0");
         if (calls === 1) {
           assert.equal(headers.get("authorization"), "Bearer fixture-token");
           if (redirected) {
@@ -136,7 +147,7 @@ Deno.test("self observation log: short inline and redirected responses remain re
   }
 });
 
-Deno.test("self observation log: a server ignoring the suffix request cannot exceed the read bound", async () => {
+Deno.test("self observation log: a server ignoring explicit ranges cannot exceed the read bound", async () => {
   const original = globalThis.fetch;
   let cancelled = false;
   let pulls = 0;
@@ -149,8 +160,15 @@ Deno.test("self observation log: a server ignoring the suffix request cannot exc
       cancelled = true;
     },
   });
-  globalThis.fetch = (_input, init) => {
-    assert.equal(new Headers(init?.headers).get("range"), "bytes=-64");
+  globalThis.fetch = (input, init) => {
+    const headers = new Headers(init?.headers);
+    if (String(input) !== SIGNED_LOG) {
+      return Promise.resolve(
+        new Response(null, { status: 302, headers: { location: SIGNED_LOG } }),
+      );
+    }
+    assert.equal(headers.get("authorization"), null);
+    assert.equal(headers.get("range"), "bytes=0-0");
     return Promise.resolve(new Response(body));
   };
   try {
@@ -164,5 +182,136 @@ Deno.test("self observation log: a server ignoring the suffix request cannot exc
     assert.ok(pulls <= 2, `unexpected extra stream reads: ${pulls}`);
   } finally {
     globalThis.fetch = original;
+  }
+});
+
+Deno.test("self observation log: explicit ranges retain short logs and exact byte boundaries", async (t) => {
+  for (const length of [1, 10, 64, 65]) {
+    await t.step(`${length} bytes`, async () => {
+      const original = globalThis.fetch;
+      const ranges: (string | null)[] = [];
+      const bytes = new Uint8Array(length).fill(120);
+      globalThis.fetch = (input, init) => {
+        const headers = new Headers(init?.headers);
+        assert.equal(init?.redirect, "manual");
+        if (String(input) !== SIGNED_LOG) {
+          assert.equal(headers.get("authorization"), "Bearer fixture-token");
+          return Promise.resolve(
+            new Response(null, {
+              status: 302,
+              headers: { location: SIGNED_LOG },
+            }),
+          );
+        }
+        assert.equal(headers.get("authorization"), null);
+        ranges.push(headers.get("range"));
+        const range = /^bytes=(\d+)-(\d+)$/.exec(headers.get("range") ?? "");
+        assert.ok(range);
+        const start = Number(range[1]);
+        const end = Number(range[2]);
+        assert.ok(start <= end && end < length);
+        return Promise.resolve(
+          new Response(bytes.slice(start, end + 1), {
+            status: 206,
+            headers: { "content-range": `bytes ${start}-${end}/${length}` },
+          }),
+        );
+      };
+      try {
+        const github = createHostedAutonomyGitHub("fixture-token", REPOSITORY);
+        assert.equal(
+          await github.selfObservation!.readJobLog({ jobId: 11, maxBytes: 64 }),
+          "x".repeat(Math.min(length, 64)),
+        );
+        assert.deepEqual(ranges, [
+          "bytes=0-0",
+          `bytes=${Math.max(0, length - 64)}-${length - 1}`,
+        ]);
+      } finally {
+        globalThis.fetch = original;
+      }
+    });
+  }
+});
+
+Deno.test("self observation log: invalid partial responses are cancelled and refused", async (t) => {
+  const cases: {
+    name: string;
+    probe: string | null;
+    tailStatus?: number;
+    tailRange?: string;
+  }[] = [
+    { name: "missing total", probe: null },
+    { name: "unknown total", probe: "bytes 0-0/*" },
+    { name: "empty partial log", probe: "bytes 0-0/0" },
+    { name: "incorrect probe offset", probe: "bytes 1-1/65" },
+    { name: "unsafe total", probe: "bytes 0-0/9007199254740992" },
+    { name: "ignored tail range", probe: "bytes 0-0/65", tailStatus: 200 },
+    {
+      name: "incorrect tail offset",
+      probe: "bytes 0-0/65",
+      tailStatus: 206,
+      tailRange: "bytes 0-63/65",
+    },
+    { name: "second redirect", probe: "bytes 0-0/65", tailStatus: 302 },
+    { name: "unavailable tail", probe: "bytes 0-0/65", tailStatus: 416 },
+  ];
+  for (const test of cases) {
+    await t.step(test.name, async () => {
+      const original = globalThis.fetch;
+      let signedReads = 0;
+      const cancelled: number[] = [];
+      globalThis.fetch = (input, init) => {
+        if (String(input) !== SIGNED_LOG) {
+          return Promise.resolve(
+            new Response(null, {
+              status: 302,
+              headers: { location: SIGNED_LOG },
+            }),
+          );
+        }
+        const read = ++signedReads;
+        const headers = new Headers(init?.headers);
+        assert.equal(headers.get("authorization"), null);
+        assert.equal(init?.redirect, "manual");
+        assert.equal(
+          headers.get("range"),
+          read === 1 ? "bytes=0-0" : "bytes=1-64",
+        );
+        const contentRange = read === 1 ? test.probe : test.tailRange;
+        const responseHeaders = new Headers();
+        if (contentRange) responseHeaders.set("content-range", contentRange);
+        return Promise.resolve(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(Uint8Array.of(120));
+              },
+              cancel() {
+                cancelled.push(read);
+              },
+            }),
+            {
+              status: read === 1 ? 206 : test.tailStatus,
+              headers: responseHeaders,
+            },
+          ),
+        );
+      };
+      try {
+        const github = createHostedAutonomyGitHub("fixture-token", REPOSITORY);
+        assert.equal(
+          await github.selfObservation!.readJobLog({ jobId: 11, maxBytes: 64 }),
+          null,
+        );
+        assert.equal(signedReads, test.tailStatus === undefined ? 1 : 2);
+        assert.deepEqual(
+          cancelled,
+          test.tailStatus === undefined ? [1] : [1, 2],
+        );
+      } finally {
+        globalThis.fetch = original;
+      }
+    });
   }
 });

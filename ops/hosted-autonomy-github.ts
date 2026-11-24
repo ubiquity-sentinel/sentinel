@@ -768,7 +768,6 @@ export function createHostedAutonomyGitHub(
                 authorization: `Bearer ${token}`,
                 accept: "application/vnd.github+json",
                 "user-agent": "sentinel-hosted-autonomy",
-                range: `bytes=-${input.maxBytes}`,
               },
               signal: controller.signal,
             },
@@ -778,14 +777,36 @@ export function createHostedAutonomyGitHub(
           if (isRedirect && location === null) return null;
           const target = isRedirect ? location! : null;
           if (target !== null && !target.startsWith("https://")) return null;
-          // Failures and exit annotations are at the end of long job logs.
-          // Request only that bounded suffix, still without the App token.
-          const response = target === null ? head : await fetch(target, {
+          // The results host ignores suffix ranges. Probe the total, then
+          // request the explicit tail range without the App token.
+          const logRequest = {
             method: "GET",
-            redirect: "manual",
-            headers: { range: `bytes=-${input.maxBytes}` },
+            redirect: "manual" as const,
+            headers: { range: "bytes=0-0" },
             signal: controller.signal,
-          });
+          };
+          let response = target === null
+            ? head
+            : await fetch(target, logRequest);
+          if (target !== null && response.status === 206) {
+            const match = /^bytes 0-0\/(\d+)$/.exec(
+              response.headers.get("content-range") ?? "",
+            );
+            const size = Number(match?.[1]);
+            await response.body?.cancel();
+            if (!Number.isSafeInteger(size) || size <= 0) return null;
+            const start = Math.max(0, size - input.maxBytes);
+            logRequest.headers.range = `bytes=${start}-${size - 1}`;
+            response = await fetch(target, logRequest);
+            if (
+              response.status !== 206 ||
+              response.headers.get("content-range") !==
+                `bytes ${start}-${size - 1}/${size}`
+            ) {
+              await response.body?.cancel();
+              return null;
+            }
+          }
           if (response.status < 200 || response.status >= 300) return null;
           const body = response.body;
           if (body === null) return null;
