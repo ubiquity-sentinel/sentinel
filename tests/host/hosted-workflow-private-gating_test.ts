@@ -5,7 +5,8 @@
  * former condition (or adding only that condition where there was none). On
  * the public repository the prefix is `true`, so `true && (X)` is exactly X:
  * the same jobs run on the same triggers. The private repository runs only
- * the daily cycle and the weekly sync, which the public one skips.
+ * the paced cycle, private CI and the weekly sync. The public repository
+ * skips the private cadence and sync jobs.
  */
 import assert from "node:assert/strict";
 import { parse } from "@std/yaml";
@@ -175,13 +176,16 @@ Deno.test("private gating: each self mint names its own organization and only th
   assert.equal(selfMints, 7);
 });
 
-Deno.test("private gating: the daily cycle and the weekly sync run on the private repository only", async () => {
+Deno.test("private gating: the paced cycle and the weekly sync run on the private repository only", async () => {
   const daily = await workflow("private-daily.yml");
+  assert.equal(daily.name, "sentinel-private-daily");
   assert.deepEqual(Object.keys(daily.on as Obj).sort(), [
     "schedule",
     "workflow_dispatch",
   ]);
-  assert.deepEqual((daily.on as Obj).schedule, [{ cron: "41 3 * * *" }]);
+  assert.deepEqual((daily.on as Obj).schedule, [{
+    cron: "41 3,9,15,21 * * *",
+  }]);
   const day = jobs(daily).daily;
   assert.equal(day.if, PRIVATE);
   assert.equal(day["timeout-minutes"], 3);
@@ -199,23 +203,23 @@ Deno.test("private gating: the daily cycle and the weekly sync run on the privat
   assert.match(bind, /exit 1\n/);
   assert.equal(start.if, "steps.binding.outputs.ready == 'true'");
   const run = String(start.run);
-  // Once a UTC day, only a launcher with its own green test-local, and only
-  // below 1,800 billed minutes this month; each guard exits 0.
+  // Check repository-wide overlap before CI and again before dispatch.
   const order = [
-    /created=%3E%3D\$today/,
+    /for status in queued in_progress; do/,
+    /supervisor\.yml\/runs\?status=\$status&per_page=1/,
+    /\nrequire_idle_supervisor\nlauncher=/,
     /check_name=test-local&filter=latest/,
-    /if \[ "\$used" -ge 1800 \]; then/,
+    /if \[ "\$used" -ge "\$allowance" \]; then/,
+    /\nrequire_idle_supervisor\necho "\$budget decision=dispatch"/,
     /gh workflow run supervisor\.yml --repo "\$GH_REPO" --ref sentinel-supervisor/,
   ].map((pattern) => run.search(pattern));
   assert.ok(order.every((at) => at >= 0), JSON.stringify(order));
   assert.deepEqual([...order].sort((a, b) => a - b), order);
-  // One exit, green, for every stop; a listing is captured before any loop
-  // or sum uses it (a failed read stops the day: private-daily-guard_test).
+  // Each failed read and guard refusal exits green with one line.
   assert.equal((run.match(/exit 0/g) ?? []).length, 1);
-  assert.match(run, /none\(\) \{\n\s+echo "no cycle today: \$1"\n\s+exit 0\n/);
+  assert.match(run, /none\(\) \{\n\s+echo "no cycle: \$1"\n\s+exit 0\n/);
   assert.doesNotMatch(run, /exit 1/);
   assert.doesNotMatch(run, /for \w+ in \$\(/);
-  assert.equal((run.match(/\) \|\| none "/g) ?? []).length, 5);
 
   const sync = await workflow("private-sync.yml");
   assert.deepEqual((sync.on as Obj).schedule, [{ cron: "17 2 * * 0" }]);

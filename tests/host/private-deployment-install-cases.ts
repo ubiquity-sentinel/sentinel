@@ -56,8 +56,8 @@ const listing = (...checks: unknown[]) => ({
 Deno.test("private install: a green private test-local installs the launcher at generation+1, then ordinary", async () => {
   privateRole();
   assert.deepEqual({ ...HOSTED_CONTROLLER_CYCLE_CELLS }, {
-    matrix: 1,
-    repair: 2,
+    matrix: 6,
+    repair: 4,
   });
   const rig = await liveInstallRig();
   try {

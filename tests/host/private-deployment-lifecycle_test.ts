@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { runAsPrivateDeployment } from "./private-deployment-copy.ts";
 
-Deno.test("private role: a bound copy takes a private target's issue from intake to a reviewed merge", async () => {
+Deno.test("private role: a bound copy verifies reviewed merges and grants six of seven ready issues", async () => {
   const { code, output } = await runAsPrivateDeployment(
     "tests/host/private-deployment-lifecycle-cases.ts",
     "private-lifecycle-",

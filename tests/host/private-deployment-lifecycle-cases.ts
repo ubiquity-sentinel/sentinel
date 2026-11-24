@@ -389,7 +389,7 @@ Deno.test("private role: a private target's owner issue goes from intake to a re
 Deno.test("private role: prospector, no longer under a CI-minute policy, goes from intake to a reviewed merge", () =>
   issueToMerge("ubiquity/prospector"));
 
-Deno.test("private role: one planner pass grants at most one implementation cell (free tier)", async () => {
+Deno.test("private role: one planner pass grants six of seven ready issues", async () => {
   assert.equal(HOSTED_CONTROLLER_ROLE, "private");
   const r = await rig();
   const seen = {
@@ -399,7 +399,7 @@ Deno.test("private role: one planner pass grants at most one implementation cell
   };
   try {
     const port = privatePort(r, TARGET);
-    const rows = [1, 2, 3].map(issue);
+    const rows = [1, 2, 3, 4, 5, 6, 7].map(issue);
     port.listOpenIssues = () => Promise.resolve(portOk(rows));
     port.readIssue = (number) =>
       Promise.resolve(portOk(rows[number - 1] ?? null));
@@ -416,17 +416,26 @@ Deno.test("private role: one planner pass grants at most one implementation cell
       })
     );
     assert.ok("plan" in planner, JSON.stringify(planner));
-    // Three ready owner issues; the private role's ceiling grants one.
-    assert.equal(planner.prepared, 1);
-    assert.equal(planner.plan.cells.length, 1);
+    assert.equal(planner.prepared, 6);
+    assert.equal(planner.plan.cells.length, 6);
+    assert.deepEqual(planner.refusal, { reason: null, readyUnplanned: 1 });
     const state = await r.store.readRepair();
     assert.ok(state.ok && state.value.status === "found");
-    assert.equal(
-      state.value.snapshot.reservations.filter((row) =>
-        row.purpose === "implementation"
-      ).length,
-      1,
+    const plannedIds = new Set(planner.plan.cells.map((cell) => cell.taskId));
+    assert.equal(plannedIds.size, 6);
+    const granted = state.value.snapshot.reservations.filter((row) =>
+      row.purpose === "implementation"
     );
+    assert.equal(granted.length, 6);
+    assert.deepEqual(new Set(granted.map((row) => row.taskId)), plannedIds);
+    const waiting = state.value.snapshot.work.filter((row) =>
+      !plannedIds.has(row.id)
+    );
+    assert.equal(waiting.length, 1);
+    assert.equal(waiting[0].related.issueNumber, 7);
+    assert.equal(waiting[0].nextStep, "work");
+    assert.equal(waiting[0].intent, null);
+    assert.equal(waiting[0].counters.attempts, 0);
   } finally {
     await r.cleanup();
   }

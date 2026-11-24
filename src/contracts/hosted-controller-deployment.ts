@@ -182,17 +182,15 @@ export interface HostedControllerCycleCellsV1 {
 }
 
 /**
- * GitHub Free (owner, 2026-11-22: "Private deploy if it isn't free then no
- * go"): the private role runs one supervisor cycle a day, and a cycle costs
- * about one billed minute per job minute, so its cells are bounded. One
- * implementation cell lets one issue start each day; two repair cells let the
- * records already in flight (review observation, CI read, merge) of two
- * repositories progress beside it, and every record a cell does not take
- * stays with the serial pass. The public role keeps the platform bounds (the
- * owner lifted artificial caps there).
+ * Private cadence (2026-11-24): a measured one-cell cycle cost 17 billed
+ * minutes (about 10 fixed and 7 for the implementation job); idle cost 5.
+ * Batching up to six implementations shares the fixed cost. GitHub rounds
+ * and bills every matrix job separately. Up to four repository repair cells
+ * advance records already in flight while the serial pass keeps the rest.
+ * The private dispatcher paces admission against the monthly free allowance.
  */
 export const PRIVATE_CYCLE_CELLS: HostedControllerCycleCellsV1 = Object.freeze(
-  { matrix: 1, repair: 2 },
+  { matrix: 6, repair: 4 },
 );
 export const HOSTED_CONTROLLER_CYCLE_CELLS:
   | HostedControllerCycleCellsV1
