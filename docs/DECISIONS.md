@@ -6889,6 +6889,8 @@ reverting the scope exclusion restores read-only target selection.
 
 ## 2026-11-22: the private deployment runs on GitHub's free tier: one cycle a day, a weekly fast-forward, its own CI
 
+The 2026-11-24 decision below supersedes this entry's daily cadence, private cell ceilings and budget estimates.
+
 - Owner, verbatim: "Private deploy if it isn't free then no go. If theee is a
   free tier then lets do it". GitHub Free gives an organization 2,000 Actions
   minutes a month for private repositories; with no payment method the
@@ -7231,3 +7233,13 @@ Rollback: revert the commit; the three names leave both files.
   not have) or a resolution in each entrypoint; not small, not done.
 
 Rollback: revert the commit; nothing else changes.
+
+## 2026-11-24: pace private supervisor cycles against the GitHub Free allowance
+
+- Owner, verbatim: "the only limitation im concerned about is the private free tier github actions" and "Raise Sentinel cadence". The private deployment has 2,000 included Actions minutes per month and a $0 spending limit. On November 24 it had used 63 minutes and had about 180 open issues across its targets. The daily supervisor limit and single-cell planner ceiling let one private issue start per UTC day.
+- Measured on the private deployment: one implementation cycle cost 17 billed minutes (maintenance 2, prepare 1, matrix_plan 4, matrix_cell 7 including a five-minute model session, repair 2, finalize 1). An idle cycle cost 5. This working cycle had about 10 fixed minutes and 7 marginal minutes per implementation. Batching shares the fixed cost. Every matrix job is billed separately, rounded up to the minute, so running cells concurrently saves elapsed time while their billed minutes add up.
+- `PRIVATE_CYCLE_CELLS` allows six implementation cells and four repository repair cells per cycle. Records outside the repair fan-out stay with the trusted serial pass. The public role uses the platform bounds. The private lifecycle test exercises six durable implementation grants from seven ready issues in one real planner pass and leaves the seventh ready for another pass. [Private lifecycle](../tests/host/private-deployment-lifecycle_test.ts) · [Repair fan-out](../tests/repair/repair-fanout-cycle-cells_test.ts)
+- `private-daily.yml` checks every six hours UTC at an off-peak minute and on manual dispatch. It waits while a supervisor run is queued or in progress and checks the binding and the launcher's successful `test-local`. It dispatches only when estimated month-to-date usage is below `min(1800, 60 * UTC day of month)`. Unused allowance carries forward within that month. The estimate sums the rounded job minutes for supervisor and CI, plus one minute per private daily and sync run. An unreadable listing ends the check without dispatch. [Private dispatch](../.github/workflows/private-daily.yml)
+- The 1,800-minute threshold governs admission. A cycle admitted below the threshold can finish above it, and the GitHub account's $0 spending limit is the hard billing boundary. Weekly private sync and the private launcher's exact green CI install requirement continue to apply.
+
+Rollback: revert the cadence and cell-ceiling change to restore the previous daily schedule and limits.

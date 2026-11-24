@@ -103,6 +103,20 @@ async function reads(): Promise<Read[]> {
   return out;
 }
 
+Deno.test("private zero config: pacing uses the GitHub token and repository identity", async () => {
+  const jobs = (await workflow("private-daily.yml")).jobs as Record<
+    string,
+    Obj
+  >;
+  const guard = (jobs.daily.steps as Obj[]).find((step) =>
+    String(step.run).includes("gh workflow run supervisor.yml")
+  );
+  assert.deepEqual(guard?.env, {
+    GH_TOKEN: "${{ github.token }}",
+    GH_REPO: "${{ github.repository }}",
+  });
+});
+
 Deno.test("private zero config: every variable is optional, with a reviewed absent value", async () => {
   const variables = new Map<string, Set<string>>();
   for (const read of await reads()) {

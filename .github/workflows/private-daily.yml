@@ -1,17 +1,14 @@
 # Private deployment only (ubiquity-sentinel-private/sentinel, GitHub Free:
-# 2,000 Actions minutes a month, spending limit $0). It starts at most one
-# supervisor cycle per UTC day (docs/DECISIONS.md, 2026-11-22). Every other
-# automatic trigger in this repository is gated to the public deployment, and
-# on the public deployment this job is skipped (no runner, 0 billed minutes).
-# A day without a cycle ends green with one log line: no notification.
+# 2,000 Actions minutes a month, spending limit $0). Check every six hours
+# for a supervisor dispatch within the accrued UTC monthly allowance.
+# The public deployment skips this job (no runner, 0 billed minutes).
+# A guard refusal ends green with one log line.
 name: sentinel-private-daily
 
 on:
   schedule:
-    # Off-peak UTC, after the Sunday 02:17 sync's CI (about 20 minutes) has
-    # finished; the line also fires on the public repository, where the job
-    # below is skipped.
-    - cron: "41 3 * * *"
+    # Off-peak UTC, keeping the 03:41 slot after the Sunday 02:17 sync's CI.
+    - cron: "41 3,9,15,21 * * *"
   workflow_dispatch:
 
 permissions:
@@ -52,47 +49,56 @@ jobs:
             cat "$RUNNER_TEMP/binding.txt" >&2
             exit 1
           fi
-      # Every guard is state-free (GitHub's own listings) and ends the day
-      # green: one cycle per UTC day; only a launcher whose own test-local is
-      # green (a red or still-running CI waits for the next day); and the
-      # month's billed minutes (each job rounded up to the minute) stay
-      # below 1,800 of the 2,000.
-      - name: Start at most one supervisor cycle per UTC day
+      # Dispatch only when there is no active supervisor, the launcher's own
+      # test-local is green and the month-to-date estimate is below allowance.
+      - name: Start a supervisor cycle within the accrued allowance
         if: steps.binding.outputs.ready == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         # Every listing is captured before it is used, and a failed read (an
         # HTTP error with or without a body, a timeout, a failed later page)
-        # or a non-numeric answer ends the day here, green, with one line:
-        # the guard fails closed and never dispatches on missing evidence.
+        # or a non-numeric answer ends the check green with one line.
         run: |
           set -euo pipefail
           none() {
-            echo "no cycle today: $1"
+            echo "no cycle: $1"
             exit 0
           }
           number() {
-            [[ "$1" =~ ^[0-9]+$ ]] || none "unreadable $2"
+            [[ "$1" =~ ^(0|[1-9][0-9]*)$ ]] || none "unreadable $2"
           }
-          today=$(date -u +%F)
-          month=$(date -u +%Y-%m-01)
-          started=$(gh api "repos/$GH_REPO/actions/workflows/supervisor.yml/runs?created=%3E%3D$today&per_page=1" --jq .total_count) || none "today's supervisor runs are unreadable"
-          number "$started" "supervisor run count"
-          if [ "$started" != 0 ]; then
-            none "a supervisor cycle already started on $today (UTC)"
+          require_idle_supervisor() {
+            local status active
+            # Read queued first to catch runs transitioning to in_progress.
+            for status in queued in_progress; do
+              active=$(gh api "repos/$GH_REPO/actions/workflows/supervisor.yml/runs?status=$status&per_page=1" --jq .total_count 2>/dev/null) || none "$status supervisor runs are unreadable"
+              number "$active" "$status supervisor run count"
+              if [ "$active" != 0 ]; then
+                none "a supervisor run is $status"
+              fi
+            done
+          }
+          today=$(date -u +%F 2>/dev/null) || none "the UTC date is unreadable"
+          [[ "$today" =~ ^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$ ]] || none "the UTC date is unreadable"
+          month="${today%-*}-01"
+          day="${today##*-}"
+          allowance=$((60 * 10#$day))
+          if [ "$allowance" -gt 1800 ]; then
+            allowance=1800
           fi
+          require_idle_supervisor
           launcher=$(git rev-parse HEAD)
-          ci=$(gh api "repos/$GH_REPO/commits/$launcher/check-runs?check_name=test-local&filter=latest&per_page=100" --jq '[.check_runs[] | select(.app.slug == "github-actions")] | if length > 0 and all(.status == "completed" and .conclusion == "success") then "green" else "not_green" end') || none "the launcher's checks are unreadable"
+          ci=$(gh api "repos/$GH_REPO/commits/$launcher/check-runs?check_name=test-local&filter=latest&per_page=100" --jq '[.check_runs[] | select(.app.slug == "github-actions")] | if length > 0 and all(.status == "completed" and .conclusion == "success") then "green" else "not_green" end' 2>/dev/null) || none "the launcher's checks are unreadable"
           if [ "$ci" != green ]; then
             none "launcher $launcher has no green test-local yet (running, red or absent)"
           fi
           used=0
           for workflow in supervisor.yml ci.yml; do
-            ids=$(gh api --paginate "repos/$GH_REPO/actions/workflows/$workflow/runs?created=%3E%3D$month&per_page=100" --jq '.workflow_runs[].id') || none "this month's $workflow runs are unreadable"
+            ids=$(gh api --paginate "repos/$GH_REPO/actions/workflows/$workflow/runs?created=%3E%3D$month&per_page=100" --jq '.workflow_runs[].id' 2>/dev/null) || none "this month's $workflow runs are unreadable"
             for run in $ids; do
               number "$run" "$workflow run id"
-              durations=$(gh api --paginate "repos/$GH_REPO/actions/runs/$run/jobs?filter=all&per_page=100" --jq '.jobs[] | select(.started_at != null and .completed_at != null) | (((.completed_at | fromdateiso8601) - (.started_at | fromdateiso8601) + 59) / 60 | floor)') || none "the jobs of run $run are unreadable"
+              durations=$(gh api --paginate "repos/$GH_REPO/actions/runs/$run/jobs?filter=all&per_page=100" --jq '.jobs[] | select(.started_at != null and .completed_at != null) | (((.completed_at | fromdateiso8601) - (.started_at | fromdateiso8601) + 59) / 60 | floor)' 2>/dev/null) || none "the jobs of run $run are unreadable"
               for minutes in $durations; do
                 number "$minutes" "job minutes of run $run"
                 used=$((used + minutes))
@@ -100,12 +106,15 @@ jobs:
             done
           done
           for workflow in private-daily.yml private-sync.yml; do
-            runs=$(gh api "repos/$GH_REPO/actions/workflows/$workflow/runs?created=%3E%3D$month&per_page=1" --jq .total_count) || none "this month's $workflow runs are unreadable"
+            runs=$(gh api "repos/$GH_REPO/actions/workflows/$workflow/runs?created=%3E%3D$month&per_page=1" --jq .total_count 2>/dev/null) || none "this month's $workflow runs are unreadable"
             number "$runs" "$workflow run count"
             used=$((used + runs))
           done
-          echo "month-to-date billed minutes (estimate): $used of 2000"
-          if [ "$used" -ge 1800 ]; then
-            none "free-tier guard: $used minutes used this month"
+          budget="month-to-date billed minutes (estimate): used=$used allowance=$allowance"
+          if [ "$used" -ge "$allowance" ]; then
+            none "$budget decision=hold"
           fi
+          # Billing listings can take time. Recheck before dispatch.
+          require_idle_supervisor
+          echo "$budget decision=dispatch"
           gh workflow run supervisor.yml --repo "$GH_REPO" --ref sentinel-supervisor
