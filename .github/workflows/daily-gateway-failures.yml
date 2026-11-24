@@ -1,0 +1,96 @@
+name: sentinel-daily-gateway-failures
+
+on:
+  schedule:
+    - cron: "37 0 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sentinel-daily-gateway-failures
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    if: >-
+      github.repository == 'ubiquity-sentinel/sentinel' &&
+      github.ref == 'refs/heads/development' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    outputs:
+      findings_json: ${{ steps.scan.outputs.findings_json }}
+      qualifies: ${{ steps.scan.outputs.qualifies }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.9.7
+      - name: Scan 48 hours of gateway failure metadata
+        id: scan
+        env:
+          SENTINEL_GATEWAY_AUTH_JSON: ${{ secrets.SENTINEL_GATEWAY_AUTH_JSON }}
+        run: |
+          set -euo pipefail
+          timeout --kill-after=5s 120s deno run --cached-only --frozen --no-prompt \
+            --allow-env=SENTINEL_GATEWAY_AUTH_JSON,GITHUB_OUTPUT,GITHUB_STEP_SUMMARY \
+            --allow-net=ai.ubq.fi:443 \
+            --allow-write="$GITHUB_OUTPUT,$GITHUB_STEP_SUMMARY" \
+            ops/daily-gateway-scan.ts
+      - name: Check the collector handoff
+        env:
+          SCAN_QUALIFIES: ${{ steps.scan.outputs.qualifies }}
+          SCAN_FINDINGS_JSON: ${{ steps.scan.outputs.findings_json }}
+        run: |
+          set -euo pipefail
+          if [[ "$SCAN_QUALIFIES" != true && "$SCAN_QUALIFIES" != false ]] || [[ -z "$SCAN_FINDINGS_JSON" ]]; then
+            echo "Daily gateway collector did not provide its findings handoff." >&2
+            exit 1
+          fi
+
+  publish:
+    needs: collect
+    if: >-
+      github.repository == 'ubiquity-sentinel/sentinel' &&
+      github.ref == 'refs/heads/development' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') &&
+      needs.collect.result == 'success' &&
+      needs.collect.outputs.qualifies == 'true' &&
+      needs.collect.outputs.findings_json != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    environment: sentinel-supervisor
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.9.7
+      - name: Mint the gateway issue token
+        id: issue-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: 4682172
+          private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
+          owner: ubiquity
+          repositories: ai.ubq.fi
+          permission-issues: write
+      - name: Reconcile qualifying gateway issues
+        env:
+          DAILY_GATEWAY_FINDINGS_JSON: ${{ needs.collect.outputs.findings_json }}
+          GH_TOKEN: ${{ steps.issue-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          timeout --kill-after=5s 120s deno run --cached-only --frozen --no-prompt \
+            --allow-env=DAILY_GATEWAY_FINDINGS_JSON,GH_TOKEN,GITHUB_REPOSITORY,GITHUB_RUN_ID \
+            --allow-net=api.github.com:443 \
+            ops/daily-gateway-issues.ts

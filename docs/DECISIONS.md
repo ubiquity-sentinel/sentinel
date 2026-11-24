@@ -1,5 +1,9 @@
 # Sentinel decisions
 
+## Daily ai.ubq.fi failure monitoring (2026-11-24)
+
+The owner requested a daily GitHub Actions check for problems on ai.ubq.fi. Sentinel reads production health and bounded failure metadata, reports the observed coverage, and files recurring, actionable gateway failures in the target repository under the Sentinel App identity. These issues enter the existing issue intake and review process. Public reports contain fixed failure categories and aggregate observations. Customer requests and captured payloads stay in gateway custody.
+
 ## ai.ubq.fi source, auth, ops and tooling are ordinary work (2026-11-05)
 
 Owner directive (2026-11-05, "remove the policy"): the gateway's protected-path
