@@ -22,6 +22,8 @@ The supervisor runs isolated issue workers and keeps durable candidate and accou
 
 Start with [the current master plan](MASTER-PLAN.md), [project instructions](AGENTS.md) and [owner decisions](docs/DECISIONS.md). [The build ledger](docs/build-status.md) is the sole source of current task ownership and acceptance; [the active memory plan](docs/sentinel-memory-plan.md) covers durable attempt memory and self-healing. Historical plans and receipts remain available in Git history.
 
+The public and private controllers run the same source. GitHub's repository identity selects a committed deployment profile. Public works public targets, and private works private or internal foreign targets after checking its own visibility. Planning, repair and late-cell recovery use the same target-loading rule. The profile also records the workflow differences and cell ceilings. [Deployment profile](src/contracts/hosted-controller-deployment.ts) · [Deployment rules and inventory](docs/DECISIONS.md#2026-11-25-one-deployment-profile-governs-hosted-behavior)
+
 The public repository is [ubiquity-sentinel/sentinel](https://github.com/ubiquity-sentinel/sentinel). A five-minute scheduled dispatcher invokes the protected supervisor; explicit trusted-host dispatch and receipt inspection remain available through the installed `sentinel` CLI:
 
 ```sh
