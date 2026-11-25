@@ -123,7 +123,8 @@ export async function agentHeartbeat(probe: {
 }): Promise<string> {
   const run = async (args: string[]) => {
     const done = await new Deno.Command("git", {
-      args,
+      // A background status must leave the index lock available to the agent and host.
+      args: ["--no-optional-locks", ...args],
       cwd: probe.checkout,
       stdout: "piped",
       stderr: "null",
