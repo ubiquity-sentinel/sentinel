@@ -2,6 +2,11 @@
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import {
+  HOSTED_CONTROLLER_REPOSITORY,
+  HOSTED_CONTROLLER_SUPERVISOR_REF,
+  HOSTED_CONTROLLER_WORKFLOW_REF,
+} from "../../src/contracts/hosted-controller-deployment.ts";
+import {
   HOSTED_RUNTIME_ID,
   HOSTED_SUPERVISOR_WORKFLOW_ID,
   HOSTED_SUPERVISOR_WORKFLOW_PATH,
@@ -149,7 +154,7 @@ export async function rig(
   const env = testGitEnv(root + "/home");
   const sha = await checkout(root + "/seed", env, {
     "sentinel.targets.json": JSON.stringify([
-      "ubiquity-sentinel/sentinel",
+      HOSTED_CONTROLLER_REPOSITORY,
       "ubiquity/ai.ubq.fi",
     ]),
     ".gitignore": ".sentinel-actions-state/\n",
@@ -185,8 +190,8 @@ export async function rig(
     execution: prior,
     workflowId: HOSTED_SUPERVISOR_WORKFLOW_ID,
     workflowPath: HOSTED_SUPERVISOR_WORKFLOW_PATH,
-    repository: "ubiquity-sentinel/sentinel",
-    ref: "refs/heads/sentinel-supervisor",
+    repository: HOSTED_CONTROLLER_REPOSITORY,
+    ref: HOSTED_CONTROLLER_SUPERVISOR_REF,
     jobId: 101,
     startedAt: T0,
     finishedAt: T0 + 1000,
@@ -301,7 +306,7 @@ export async function rig(
     );
   const github = new Map<string, TargetGithub>();
   for (
-    const [slug, base] of [["ubiquity-sentinel/sentinel", sha], [
+    const [slug, base] of [[HOSTED_CONTROLLER_REPOSITORY, sha], [
       "ubiquity/ai.ubq.fi",
       foreignSha,
     ]] as const
@@ -425,12 +430,11 @@ export async function rig(
       env: {
         GITHUB_RUN_ID: String(currentRun),
         GITHUB_RUN_ATTEMPT: "1",
-        GITHUB_REPOSITORY: "ubiquity-sentinel/sentinel",
-        GITHUB_REF: "refs/heads/sentinel-supervisor",
+        GITHUB_REPOSITORY: HOSTED_CONTROLLER_REPOSITORY,
+        GITHUB_REF: HOSTED_CONTROLLER_SUPERVISOR_REF,
         GITHUB_SHA: sha,
         GITHUB_WORKFLOW_SHA: sha,
-        GITHUB_WORKFLOW_REF:
-          "ubiquity-sentinel/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor",
+        GITHUB_WORKFLOW_REF: HOSTED_CONTROLLER_WORKFLOW_REF,
         GITHUB_JOB: role,
         GITHUB_TOKEN: "fake-read-token",
         SENTINEL_SUPERVISOR_TOKEN: "fake-app-token",

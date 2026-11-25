@@ -1,25 +1,15 @@
 /**
- * Private-role issue lifecycle. Runs ONLY inside a tree copy whose committed
- * private entry is bound and wired, under GITHUB_REPOSITORY of the private
- * repository (`private-deployment-lifecycle_test.ts` builds that copy and runs
- * this file).
- *
- * One private target (`ubiquity/auth.ubq.fi`) goes through the real hosted
- * consumers of the private deployment: the matrix planner takes its open
- * owner issue (intake), one isolated cell implements it with a fake model
- * port over the target's real Git mirror (implementation), the aggregate
- * publishes the candidate pull request and requests native review
- * (publication, review request), observes the completed review with no P0
- * and merges it. Every HTTP request is recorded, the state remote and the
- * target remote are temporary Git directories, and no request, remote or
- * composed GitHub surface names the public deployment's repository.
+ * Both deployments run these cases through the hosted planner, cell,
+ * maintenance recovery and repair aggregate. Temporary Git repositories
+ * carry the state and candidate objects. Fixture ports supply GitHub's API,
+ * the implementation result and the native review receipt.
  */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import {
+  HOSTED_CONTROLLER_PROFILE as profile,
+  HOSTED_CONTROLLER_PROFILES,
   HOSTED_CONTROLLER_REMOTE,
-  HOSTED_CONTROLLER_REPOSITORY,
-  HOSTED_CONTROLLER_ROLE,
 } from "../../src/contracts/hosted-controller-deployment.ts";
 import type {
   ImplementationPort,
@@ -27,17 +17,19 @@ import type {
   ModelRunRequestV1,
 } from "../../src/contracts/ports.ts";
 import { portOk } from "../../src/contracts/ports.ts";
-import type { MatrixCellResultV1 } from "../../src/contracts/matrix.ts";
+import {
+  type MatrixCellResultV1,
+  MAX_MATRIX_CELLS,
+} from "../../src/contracts/matrix.ts";
 import type { HttpTransportV1 } from "../../src/github/http.ts";
 import { runActionsRepairHost } from "../../src/host/actions.ts";
 import {
   runActionsMatrixAggregateCycles,
   runActionsMatrixHost,
 } from "../../src/host/matrix-actions.ts";
-import { PUBLIC_TARGET_REASON } from "../../src/repair/target-visibility.ts";
 import { PRIVATE_TARGETS_KIND } from "../../src/repair/private-targets-line.ts";
 import { scanStepLines } from "../../src/repair/step-line.ts";
-import { recoverLatePrivateCell } from "./private-matrix-maintenance.ts";
+import { recoverLateCell } from "./private-matrix-maintenance.ts";
 import { response, snapshotWire } from "../github/merge-queue-fixtures.ts";
 import {
   checked,
@@ -54,27 +46,32 @@ import {
   servingJobLogs,
 } from "./targets-deferral-fixtures.ts";
 
-const PRIVATE = "ubiquity-sentinel-private/sentinel";
-// Built, never written whole, so no fixture rewrite can touch it.
-const PUBLIC = ["ubiquity-sentinel", "sentinel"].join("/");
-const TARGET = "ubiquity/auth.ubq.fi";
-const SELF_INSTALLATION = "183425201";
+const [PUBLIC_CONTROLLER, PRIVATE_CONTROLLER] = HOSTED_CONTROLLER_PROFILES.map(
+  ({ repository }) => repository,
+);
+type TargetPair = Readonly<Record<"public" | "private", string>>;
+const DIRECT_TARGETS: TargetPair = {
+  public: "ubiquity/lifecycle-public",
+  private: "ubiquity/auth.ubq.fi",
+};
+const LATE_TARGETS: TargetPair = {
+  public: "ubiquity/lifecycle-public-late",
+  private: "ubiquity/prospector",
+};
 const PRIVATE_BODY =
   '{"default_branch":"development","private":true,"visibility":"private"}';
 const PUBLIC_BODY =
   '{"default_branch":"development","private":false,"visibility":"public"}';
-// The committed setting of the private deployment lists private targets
-// only; the public Sentinel and a public target listed beside them stay with
-// the public deployment and are never read.
-const setting = (target: string) =>
-  JSON.stringify([target, PUBLIC, "ubiquity/ai.ubq.fi"]);
-
-/** GitHub as the private deployment sees it; every request is recorded. */
-function privateGithub(urls: string[], target: string): HttpTransportV1 {
+/** Each deployment gets the same repository metadata and branch rules. */
+function repositoryHttp(
+  urls: string[],
+  targets: TargetPair,
+): HttpTransportV1 {
   const bodies: Record<string, string> = {
-    [`/repos/${PRIVATE}`]: PRIVATE_BODY,
-    [`/repos/${target}`]: PRIVATE_BODY,
-    "/repos/ubiquity/ai.ubq.fi": PUBLIC_BODY,
+    [`/repos/${PUBLIC_CONTROLLER}`]: PUBLIC_BODY,
+    [`/repos/${PRIVATE_CONTROLLER}`]: PRIVATE_BODY,
+    [`/repos/${targets.public}`]: PUBLIC_BODY,
+    [`/repos/${targets.private}`]: PRIVATE_BODY,
   };
   return (request) => {
     urls.push(`${request.method} ${request.url}`);
@@ -87,8 +84,11 @@ function privateGithub(urls: string[], target: string): HttpTransportV1 {
     // public repository's rules to any token.
     if (
       request.method === "GET" &&
-      (path === `/repos/${target}/rules/branches/development` ||
-        path === "/repos/ubiquity/ai.ubq.fi/rules/branches/development")
+      [
+        `/repos/${targets.public}/rules/branches/development`,
+        `/repos/${targets.private}/rules/branches/development`,
+        "/repos/ubiquity/ai.ubq.fi/rules/branches/development",
+      ].includes(path)
     ) return Promise.resolve(response([]));
     if (
       request.method === "POST" && path === "/graphql" &&
@@ -100,8 +100,8 @@ function privateGithub(urls: string[], target: string): HttpTransportV1 {
 
 type Rig = Awaited<ReturnType<typeof rig>>;
 
-/** The rig's only target surface: `slug`, with a real review lifecycle. */
-function privatePort(r: Rig, slug: string): TargetGithub {
+/** The fixture's active target has one issue and a pending native review. */
+function lifecyclePort(r: Rig, slug: string): TargetGithub {
   const port: TargetGithub = new TargetGithub({
     baseSha: r.foreignSha,
     candidateLifecycle: {
@@ -114,32 +114,43 @@ function privatePort(r: Rig, slug: string): TargetGithub {
   port.reviewStatus = "pending";
   port.prepareBaseRefresh = () =>
     Promise.reject(new Error("unchanged fixture base must not refresh"));
+  const self = r.github.get(profile.repository);
   r.github.clear();
+  if (profile.worksControllerTargets) {
+    assert.ok(self, "the controller's fixture port is missing");
+    self.listOpenIssues = () => Promise.resolve(portOk([]));
+    r.github.set(profile.repository, self);
+  }
   r.github.set(slug, port);
   return port;
 }
 
-/** Jobs of the current run as the private deployment, on its own setting. */
-function privateJobs(
+/** Native jobs have the same mixed-visibility setting on both deployments. */
+function lifecycleJobs(
   r: Rig,
   seen: { urls: string[]; composed: string[]; remotes: string[] },
-  target = TARGET,
+  targets: TargetPair,
 ) {
   return async (name: string, role: string) => {
     const deps = await r.job(name, role);
-    assert.equal(deps.env.GITHUB_REPOSITORY, PRIVATE);
+    assert.equal(deps.env.GITHUB_REPOSITORY, profile.repository);
     await Deno.writeTextFile(
       `${deps.workDir}/sentinel.targets.json`,
-      setting(target),
+      JSON.stringify([targets.public, targets.private, PUBLIC_CONTROLLER]),
     );
     seen.remotes.push(deps.stateRemoteUrl);
     return {
       ...deps,
-      env: { ...deps.env, SENTINEL_SELF_INSTALLATION_ID: SELF_INSTALLATION },
+      env: {
+        ...deps.env,
+        ...(profile.selfInstallationId === null ? {} : {
+          SENTINEL_SELF_INSTALLATION_ID: String(profile.selfInstallationId),
+        }),
+      },
       // The production resolvers read the host and the target over `http`.
       resolveRepository: undefined,
       http: servingJobLogs(
-        privateGithub(seen.urls, target),
+        repositoryHttp(seen.urls, targets),
         new Map([[101, QUIET_LOG]]),
       ),
       composeGithub: (
@@ -156,23 +167,25 @@ function privateJobs(
 }
 
 /**
- * Intake to a reviewed merge for `TARGET`. Since the owner removed the
- * special CI-minute policy (2026-11-23), `ubiquity/prospector` takes exactly
- * this path too: its CI effects are `inactive` like any other target's.
+ * One eligible target flows from intake to a reviewed merge. In the late
+ * case the aggregate's first scan finishes before the cell uploads.
  */
-async function issueToMerge(TARGET: string, late = false): Promise<void> {
-  assert.equal(HOSTED_CONTROLLER_ROLE, "private");
-  assert.equal(HOSTED_CONTROLLER_REPOSITORY, PRIVATE);
-  assert.equal(HOSTED_CONTROLLER_REMOTE, `https://github.com/${PRIVATE}.git`);
+async function issueToMerge(targets: TargetPair, late = false): Promise<void> {
+  assert.equal(profile.repository, Deno.env.get("GITHUB_REPOSITORY"));
+  assert.equal(
+    HOSTED_CONTROLLER_REMOTE,
+    `https://github.com/${profile.repository}.git`,
+  );
+  const target = targets[profile.targetVisibility];
   const r = await rig();
   const urls: string[] = [];
   const composed: string[] = [];
   const remotes: string[] = [];
   try {
-    const port = privatePort(r, TARGET);
-    const job = privateJobs(r, { urls, composed, remotes }, TARGET);
+    const port = lifecyclePort(r, target);
+    const job = lifecycleJobs(r, { urls, composed, remotes }, targets);
 
-    // Intake: the planner admits the private target's owner issue.
+    // Intake: the planner finds the eligible repository's owner issue.
     const planDeps = await job("plan", "matrix_plan");
     const planned = await quietly(() =>
       runActionsMatrixHost({
@@ -196,16 +209,23 @@ async function issueToMerge(TARGET: string, late = false): Promise<void> {
       planner.plan.cells.map((cell) =>
         `${cell.repository.owner}/${cell.repository.name}`
       ),
-      [TARGET],
+      [target],
     );
+    assert.ok(port.calls.includes("listOpenIssues"));
     assert.deepEqual(
       scanStepLines(planned.lines.join("\n")).filter((entry) =>
         entry.kind === PRIVATE_TARGETS_KIND
-      ).map((entry) => (entry as { reason?: string }).reason),
-      [PUBLIC_TARGET_REASON],
+      ),
+      [{
+        kind: PRIVATE_TARGETS_KIND,
+        reason: profile.excludedTargetReason,
+        listed: 3,
+        configured: profile.worksControllerTargets ? 2 : 1,
+        skipped: profile.worksControllerTargets ? 1 : 2,
+      }],
     );
 
-    // A single scan reproduces the exhausted wait window on the private host.
+    // A single scan reproduces the exhausted aggregate wait window.
     const aggregateModel = {
       modelId: "gpt-reserve",
       runModel: () => Promise.reject(new Error("aggregate cannot infer")),
@@ -255,14 +275,14 @@ async function issueToMerge(TARGET: string, late = false): Promise<void> {
         modelCalls++;
         assert.equal(
           `${request.repository.owner}/${request.repository.name}`,
-          TARGET,
+          target,
         );
         const source = deps.workDir +
-          "/.sentinel-actions-state/sources/" + TARGET.replace("/", "-");
+          "/.sentinel-actions-state/sources/" + target.replace("/", "-");
         remotes.push(
           await checked(source, ["remote", "get-url", "origin"], r.env),
         );
-        await Deno.writeTextFile(source + "/repair.txt", "private repair\n");
+        await Deno.writeTextFile(source + "/repair.txt", "repair\n");
         await checked(source, ["add", "repair.txt"], r.env);
         await checked(source, ["commit", "-q", "-m", "repair"], r.env);
         const head = await checked(source, ["rev-parse", "HEAD"], r.env);
@@ -314,7 +334,7 @@ async function issueToMerge(TARGET: string, late = false): Promise<void> {
       const previous = Deno.cwd();
       try {
         Deno.chdir(planDeps.workDir);
-        await recoverLatePrivateCell(
+        await recoverLateCell(
           r,
           planner,
           done,
@@ -349,8 +369,16 @@ async function issueToMerge(TARGET: string, late = false): Promise<void> {
     const pull = [...port.candidatePullRequests.values()][0]!;
     assert.equal(pull.state, "open");
     assert.equal(pull.head, done.bundle.head);
+    assert.equal(pull.body, "Resolves #1");
     assert.ok(port.calls.includes("createPr"), port.calls.join("\n"));
     assert.ok(port.calls.includes("requestReview"), port.calls.join("\n"));
+    assert.deepEqual(
+      port.reviewRequestIdentities.map(({ prNumber, expectedHead }) => ({
+        prNumber,
+        expectedHead,
+      })),
+      [{ prNumber: pull.number, expectedHead: done.bundle.head }],
+    );
     assert.ok(!port.calls.includes("merge"), port.calls.join("\n"));
     const requested = await r.store.readRepair();
     assert.ok(requested.ok && requested.value.status === "found");
@@ -391,37 +419,40 @@ async function issueToMerge(TARGET: string, late = false): Promise<void> {
     const after = await r.store.readRepair();
     assert.ok(after.ok && after.value.status === "found");
     const work = after.value.snapshot.work.filter((row) =>
-      `${row.repository.owner}/${row.repository.name}` === TARGET
+      `${row.repository.owner}/${row.repository.name}` === target
     );
     assert.equal(work.length, 1, JSON.stringify(after.value.snapshot.work));
 
-    // Nothing named the public deployment: no request, remote or surface.
-    assert.ok(urls.length > 0);
-    assert.ok(urls.some((url) => url.endsWith(`/repos/${PRIVATE}`)));
+    assert.ok(urls.some((url) => url.endsWith(`/repos/${profile.repository}`)));
     const fixturePrefix = r.root + "/";
     const remoteNames = remotes.map((remote) =>
       remote.startsWith(fixturePrefix)
         ? remote.slice(fixturePrefix.length)
         : remote
     );
+    const otherController = profile.worksControllerTargets
+      ? PRIVATE_CONTROLLER
+      : PUBLIC_CONTROLLER;
     const leaked = [...urls, ...remoteNames, ...composed].filter((value) =>
-      value.includes(PUBLIC)
+      value.includes(otherController)
     );
     assert.deepEqual(leaked, [], [...urls, ...remotes].join("\n"));
-    assert.deepEqual([...new Set(composed)], [TARGET]);
+    const expectedTargets = profile.worksControllerTargets
+      ? [PUBLIC_CONTROLLER, target]
+      : [target];
+    assert.deepEqual([...new Set(composed)].sort(), expectedTargets.sort());
   } finally {
     await r.cleanup();
   }
 }
 
-Deno.test("private role: a private target's owner issue goes from intake to a reviewed merge without naming the public repository", () =>
-  issueToMerge(TARGET));
+Deno.test("an owner issue goes from intake to a reviewed merge", () =>
+  issueToMerge(DIRECT_TARGETS));
 
-Deno.test("private role: maintenance recovers a late prospector cell for publication, native review and merge", () =>
-  issueToMerge("ubiquity/prospector", true));
+Deno.test("maintenance recovers a late cell for publication, native review and merge", () =>
+  issueToMerge(LATE_TARGETS, true));
 
-Deno.test("private role: one planner pass grants six of seven ready issues", async () => {
-  assert.equal(HOSTED_CONTROLLER_ROLE, "private");
+Deno.test("the planner applies the deployment's cell ceiling", async () => {
   const r = await rig();
   const seen = {
     urls: [] as string[],
@@ -429,12 +460,20 @@ Deno.test("private role: one planner pass grants six of seven ready issues", asy
     remotes: [] as string[],
   };
   try {
-    const port = privatePort(r, TARGET);
+    const port = lifecyclePort(r, DIRECT_TARGETS[profile.targetVisibility]);
     const rows = [1, 2, 3, 4, 5, 6, 7].map(issue);
     port.listOpenIssues = () => Promise.resolve(portOk(rows));
     port.readIssue = (number) =>
       Promise.resolve(portOk(rows[number - 1] ?? null));
-    const deps = await privateJobs(r, seen)("plan", "matrix_plan");
+    const expectedGrants = Math.min(
+      rows.length,
+      profile.cycleCells?.matrix ?? MAX_MATRIX_CELLS,
+    );
+    const readyUnplanned = rows.length - expectedGrants;
+    const deps = await lifecycleJobs(r, seen, DIRECT_TARGETS)(
+      "plan",
+      "matrix_plan",
+    );
     const { value: planner } = await quietly(() =>
       runActionsMatrixHost({
         ...deps,
@@ -447,26 +486,30 @@ Deno.test("private role: one planner pass grants six of seven ready issues", asy
       })
     );
     assert.ok("plan" in planner, JSON.stringify(planner));
-    assert.equal(planner.prepared, 6);
-    assert.equal(planner.plan.cells.length, 6);
-    assert.deepEqual(planner.refusal, { reason: null, readyUnplanned: 1 });
+    assert.equal(planner.prepared, expectedGrants);
+    assert.equal(planner.plan.cells.length, expectedGrants);
+    assert.deepEqual(planner.refusal, { reason: null, readyUnplanned });
     const state = await r.store.readRepair();
     assert.ok(state.ok && state.value.status === "found");
     const plannedIds = new Set(planner.plan.cells.map((cell) => cell.taskId));
-    assert.equal(plannedIds.size, 6);
+    assert.equal(plannedIds.size, expectedGrants);
     const granted = state.value.snapshot.reservations.filter((row) =>
       row.purpose === "implementation"
     );
-    assert.equal(granted.length, 6);
+    assert.equal(granted.length, expectedGrants);
     assert.deepEqual(new Set(granted.map((row) => row.taskId)), plannedIds);
     const waiting = state.value.snapshot.work.filter((row) =>
       !plannedIds.has(row.id)
     );
-    assert.equal(waiting.length, 1);
-    assert.equal(waiting[0].related.issueNumber, 7);
-    assert.equal(waiting[0].nextStep, "work");
-    assert.equal(waiting[0].intent, null);
-    assert.equal(waiting[0].counters.attempts, 0);
+    assert.deepEqual(
+      waiting.map((row) => row.related.issueNumber),
+      rows.slice(expectedGrants).map((row) => row.number),
+    );
+    for (const row of waiting) {
+      assert.equal(row.nextStep, "work");
+      assert.equal(row.intent, null);
+      assert.equal(row.counters.attempts, 0);
+    }
   } finally {
     await r.cleanup();
   }
