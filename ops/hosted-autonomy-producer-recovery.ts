@@ -288,14 +288,16 @@ async function recoverProducerWithinBudget(
   );
   if (requests.length === 0) {
     console.log(JSON.stringify({
-      kind: "sentinel_current_matrix_deferred",
+      kind: "sentinel_current_matrix_unmatched",
       reason: "no_matching_target_config",
       runId: saved.execution.runId,
       runAttempt: saved.execution.runAttempt,
       pendingRequests: bound.length,
       configuredTargets: ports.configs.length,
     }));
-    return { result: null, deferred: true };
+    // Logged, not deferred: a deferral here would stop the walk over older
+    // producers for a repository this deployment never configures.
+    return { result: null, deferred: false };
   }
   // An expired or unlisted blocker-bound plan can never be read again: that
   // producer is unrecoverable, which is a typed skip that writes nothing,
