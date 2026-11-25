@@ -202,13 +202,14 @@ export async function advanceWithLog(
   next: number,
   log: string,
   jobId: number,
+  maintenance?: () => Promise<void>,
 ): Promise<void> {
   const logDigest = await sha256Hex(log);
   await r.advanceRun(next, (settlement) => ({
     ...settlement,
     jobId,
     logDigest,
-  }));
+  }), maintenance);
 }
 
 /** The rig's current settled previous execution. */

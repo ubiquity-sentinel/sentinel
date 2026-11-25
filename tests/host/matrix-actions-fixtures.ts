@@ -333,6 +333,7 @@ export async function rig(
     settle: (settlement: Record<string, unknown>) => Record<string, unknown> = (
       settlement,
     ) => settlement,
+    maintenance?: () => Promise<void>,
   ) {
     const read = await release.readRelease();
     assert.ok(read.ok && read.value.status === "found");
@@ -369,6 +370,7 @@ export async function rig(
       saved.ok && saved.value.status === "applied",
       JSON.stringify(saved),
     );
+    await maintenance?.();
     clock.advance(1);
     const next = await release.readRelease();
     assert.ok(next.ok && next.value.status === "found");

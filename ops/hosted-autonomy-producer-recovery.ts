@@ -286,7 +286,17 @@ async function recoverProducerWithinBudget(
         canonicalStringify(request.repository)
     )
   );
-  if (requests.length === 0) return { result: null, deferred: false };
+  if (requests.length === 0) {
+    console.log(JSON.stringify({
+      kind: "sentinel_current_matrix_deferred",
+      reason: "no_matching_target_config",
+      runId: saved.execution.runId,
+      runAttempt: saved.execution.runAttempt,
+      pendingRequests: bound.length,
+      configuredTargets: ports.configs.length,
+    }));
+    return { result: null, deferred: true };
+  }
   // An expired or unlisted blocker-bound plan can never be read again: that
   // producer is unrecoverable, which is a typed skip that writes nothing,
   // never an escaping transport refusal that would starve every later pass.
