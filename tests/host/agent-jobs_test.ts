@@ -9,6 +9,7 @@ import { canonicalStringifySha256 } from "../../src/contracts/canonical.ts";
 import type { ReviewResultV1 } from "../../src/github/review-result-contracts.ts";
 import { reviewResultDigest } from "../../src/github/review-result-parser.ts";
 import {
+  agentHeartbeat,
   type AgentJobResultV1,
   type AgentJobsCellPorts,
   codexExecCommand,
@@ -180,6 +181,42 @@ Deno.test("agent jobs plan refuses invalid reasoning efforts", () => {
         planAgentJobs([job("bad-effort", "ubiquity/a", { reasoningEffort })]),
       /job bad-effort: reasoningEffort must be one of/,
     );
+  }
+});
+
+Deno.test("agent job heartbeat reports uncommitted work without refreshing the Git index", async () => {
+  const checkout = await Deno.makeTempDir({
+    dir: Deno.cwd(),
+    prefix: ".agent-jobs-test-",
+  });
+  const repo = { cwd: checkout };
+  try {
+    await gitOk(["init", "--quiet"], repo);
+    const tracked = `${checkout}/tracked.txt`;
+    await Deno.writeTextFile(tracked, "base\n");
+    await gitOk(["add", "tracked.txt"], repo);
+    await gitOk(["commit", "--quiet", "-m", "base"], repo);
+    // Stale stat data makes an ordinary git status rewrite the index.
+    await Deno.utime(tracked, 1, 1);
+    const index = `${checkout}/.git/index`;
+    const before = await Deno.readFile(index);
+    await Deno.writeTextFile(`${checkout}/partial.txt`, "partial\n");
+    const line = await agentHeartbeat({
+      id: "probe",
+      checkout,
+      baseSha: await gitOk(["rev-parse", "HEAD"], repo),
+      logFile: `${checkout}/.git/agent.log`,
+      startedAtMs: Date.now(),
+      restarts: 0,
+    });
+    assert.match(line, /uncommitted files 1,/);
+    assert.deepEqual(
+      await Deno.readFile(index),
+      before,
+      "heartbeat rewrote the Git index",
+    );
+  } finally {
+    await Deno.remove(checkout, { recursive: true });
   }
 });
 
@@ -435,18 +472,6 @@ Deno.test("agent jobs cell bundles agent work and publishes only reviewed heads"
       ports,
     });
 
-    const byId = Object.fromEntries(cell.results.map((row) => [row.id, row]));
-    assert.equal(byId.commits.status, "changed", byId.commits.detail);
-    const workerCheckout = { cwd: `${workRoot}/commits/checkout` };
-    assert.equal(
-      await gitOk(["log", "-1", "--format=%s"], workerCheckout),
-      "own",
-    );
-    const identities = ["log", "-1", "--format=%an <%ae>%n%cn <%ce>"];
-    assert.equal(
-      await gitOk(identities, workerCheckout),
-      await gitOk(identities, { cwd: `${workRoot}/writes/checkout` }),
-    );
     assert.deepEqual(
       cell.results.map((row) => [row.id, row.status]),
       [
@@ -461,6 +486,19 @@ Deno.test("agent jobs cell bundles agent work and publishes only reviewed heads"
         ["nosetup", "setup_failed"],
         ["bad-effort", "host_failed"],
       ],
+      cell.results.map(({ id, status, detail }) => `${id}: ${status} ${detail}`)
+        .join("\n"),
+    );
+    const byId = Object.fromEntries(cell.results.map((row) => [row.id, row]));
+    const workerCheckout = { cwd: `${workRoot}/commits/checkout` };
+    assert.equal(
+      await gitOk(["log", "-1", "--format=%s"], workerCheckout),
+      "own",
+    );
+    const identities = ["log", "-1", "--format=%an <%ae>%n%cn <%ce>"];
+    assert.equal(
+      await gitOk(identities, workerCheckout),
+      await gitOk(identities, { cwd: `${workRoot}/writes/checkout` }),
     );
     assert.match(
       byId["bad-effort"].detail,
