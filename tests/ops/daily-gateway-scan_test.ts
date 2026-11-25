@@ -77,6 +77,8 @@ function fixture(options: {
   pages?: unknown[];
   status?: number;
   healthSha?: string;
+  healthDeployment?: string;
+  healthDeploymentHeader?: string;
 } = {}) {
   const calls: RequestObservation[] = [];
   let page = 0;
@@ -91,8 +93,17 @@ function fixture(options: {
     if (url.pathname === "/health") {
       return Promise.resolve(Response.json({
         status: "available",
-        release: { git_sha: CURRENT, deployment_id: "vps-" + CURRENT },
-      }, { headers: { "x-uos-git-sha": options.healthSha ?? CURRENT } }));
+        release: {
+          git_sha: CURRENT,
+          deployment_id: options.healthDeployment ?? "vps-" + CURRENT,
+        },
+      }, {
+        headers: {
+          "x-uos-git-sha": options.healthSha ?? CURRENT,
+          "x-uos-deployment-id": options.healthDeploymentHeader ??
+            "vps-" + CURRENT,
+        },
+      }));
     }
     if (url.pathname === "/admin/errors") {
       return Promise.resolve(Response.json({
@@ -307,13 +318,20 @@ Deno.test("auth, health, transport, malformed rows and partial pages report fixe
     }),
     diagnostic("health", "transport_unavailable"),
   );
-  await assert.rejects(
-    scanDailyGateway(AUTH, {
-      now: NOW,
-      transport: fixture({ healthSha: OTHER }).transport,
-    }),
-    diagnostic("health", "invalid_data", 200),
-  );
+  for (
+    const options of [
+      { healthSha: OTHER },
+      { healthDeployment: "deno-" + CURRENT },
+      { healthDeploymentHeader: "vps-" + OTHER },
+    ]
+  ) {
+    const { transport, calls } = fixture(options);
+    await assert.rejects(
+      scanDailyGateway(AUTH, { now: NOW, transport }),
+      diagnostic("health", "invalid_data", 200),
+    );
+    assert.equal(calls.length, 1);
+  }
   for (const rows of [[row(1, { status: PRIVATE })], [row(2), row(1)]]) {
     await assert.rejects(
       scanDailyGateway(AUTH, {
@@ -425,4 +443,63 @@ Deno.test("an exhausted body retry reports only stage, status and deadline", asy
   );
   assert.equal(attempts, 2);
   assert.equal(cancelled, 2);
+});
+
+Deno.test("current-release upstream diagnostics remain separate from repair findings", async () => {
+  const rateLimit = {
+    provider: "chatgpt_codex",
+    status: 429,
+    failure_kind: "rate_limit_exceeded",
+  };
+  const inBandFailure = {
+    provider: "chatgpt_codex",
+    status: 200,
+    stream: true,
+    terminal_type: "response.failed",
+    failure_kind: "upstream_error",
+  };
+  const rows = [
+    ...Array.from({ length: 36 }, (_, index) => row(index + 1, rateLimit)),
+    row(37, inBandFailure),
+    row(38, {
+      provider: "chatgpt_codex",
+      status: 503,
+      failure_kind: "upstream_error",
+    }),
+    row(39, { ...rateLimit, git_sha: OTHER }),
+    row(40, { ...inBandFailure, git_sha: OTHER }),
+    row(41, {
+      ...inBandFailure,
+      terminal_type: "cancelled",
+      failure_kind: "request_cancelled",
+    }),
+    row(42, {
+      ...inBandFailure,
+      terminal_type: "response.incomplete",
+      failure_kind: "max_output_tokens",
+    }),
+    row(43, {
+      status: 429,
+      provider: "gateway",
+      failure_kind: "api_key_quota_exceeded",
+    }),
+  ];
+  const report = await scanDailyGateway(AUTH, {
+    now: NOW,
+    transport: fixture({ rows }).transport,
+  });
+  assert.equal(report.counts.upstream_429, 36);
+  assert.equal(report.counts.upstream_5xx, 1);
+  assert.equal(report.counts.upstream_in_band_failures, 1);
+  assert.deepEqual(report.findings, []);
+  const rendered = dailyGatewayStepSummary(report);
+  assert(
+    rendered.includes("Request counts describe observed gateway error records"),
+  );
+  assert(rendered.includes("### Current-release upstream signals"));
+  assert(rendered.includes("| Upstream HTTP 429 | 36 |"));
+  assert(rendered.includes("| Upstream HTTP 5xx | 1 |"));
+  assert(
+    rendered.includes("| In-band upstream failure terminals (HTTP 200) | 1 |"),
+  );
 });

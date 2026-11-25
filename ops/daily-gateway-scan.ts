@@ -37,6 +37,15 @@ export const DAILY_GATEWAY_KINDS = [
   "gateway_5xx",
   "unexpected_upstream_stream_end",
 ] as const;
+const UPSTREAM_SIGNAL_LABELS = [
+  ["upstream_429", "Upstream HTTP 429"],
+  ["upstream_5xx", "Upstream HTTP 5xx"],
+  [
+    "upstream_in_band_failures",
+    "In-band upstream failure terminals (HTTP 200)",
+  ],
+] as const;
+
 export const DAILY_GATEWAY_COUNT_KEYS = [
   "observed_requests",
   "http_4xx",
@@ -48,6 +57,7 @@ export const DAILY_GATEWAY_COUNT_KEYS = [
   "prior_release",
   "singleton_clusters",
   "active_incident_groups",
+  ...UPSTREAM_SIGNAL_LABELS.map(([key]) => key),
   ...DAILY_GATEWAY_KINDS,
 ] as const;
 
@@ -318,6 +328,15 @@ function summarizeRows(
     ) {
       counts.client_quota++;
     } else {
+      const upstream = PROVIDERS.has(row.provider);
+      if (upstream && row.release === release) {
+        if (row.status === 429) counts.upstream_429++;
+        else if (row.status >= 500) counts.upstream_5xx++;
+        else if (
+          row.status === 200 &&
+          (STREAM_TERMINALS.has(row.terminal) || row.terminal === "deadline")
+        ) counts.upstream_in_band_failures++;
+      }
       const kind = row.release === release ? eligible(row) : undefined;
       if (kind && row.route) {
         counts[kind]++;
@@ -332,7 +351,7 @@ function summarizeRows(
             release_sha: release,
           });}
       } else if (
-        PROVIDERS.has(row.provider) && (row.status === 429 || row.status >= 500)
+        upstream && (row.status === 429 || row.status >= 500)
       ) {
         counts.provider_failures++;
       } else if (row.status < 400 || row.status >= 500) {
@@ -407,12 +426,14 @@ export async function scanDailyGateway(
       PER_REQUEST_MS,
     );
     let healthHeader: string | null = null;
+    let healthDeploymentHeader: string | null = null;
     const read = async (reading: ReadStage, query: URLSearchParams) => {
       stage = reading;
       for (let attempt = 0;; attempt++) {
         status = undefined;
         let receivedStatus: number | undefined;
         let receivedSha: string | null = null;
+        let receivedDeploymentId: string | null = null;
         const remaining = Math.floor(deadline - performance.now());
         if (remaining <= 0) throw new ScanFailure(reading, "deadline");
         const result = await gatewayRead(
@@ -433,13 +454,19 @@ export async function scanDailyGateway(
             }
             if (reading === "health") {
               receivedSha = response.headers.get("x-uos-git-sha");
+              receivedDeploymentId = response.headers.get(
+                "x-uos-deployment-id",
+              );
             }
             return response;
           },
           reading === "health" ? PUBLIC_AUTH : auth,
         );
         status = receivedStatus;
-        if (reading === "health") healthHeader = receivedSha;
+        if (reading === "health") {
+          healthHeader = receivedSha;
+          healthDeploymentHeader = receivedDeploymentId;
+        }
         if (result.ok && result.value.status === 200) {
           return record(result.value.body);
         }
@@ -466,10 +493,13 @@ export async function scanDailyGateway(
       }
     };
     const health = await read("health", new URLSearchParams());
-    const release = text(record(health.release).git_sha, 40);
+    const identity = record(health.release);
+    const release = text(identity.git_sha, 40);
+    const deployment = `vps-${release}`;
     insist(
       health.status === "available" && SHA.test(release) &&
-        healthHeader === release,
+        healthHeader === release && identity.deployment_id === deployment &&
+        healthDeploymentHeader === deployment,
     );
     const errors = await read(
       "errors",
@@ -557,10 +587,20 @@ export function dailyGatewayStepSummary(
     `Window ${window}`,
     coverage,
     "",
-    "| Measure | Count |",
+    "Request counts describe observed gateway error records within the window.",
+    "",
+    "| Measure | Observed records |",
     "| --- | ---: |",
-    ...DAILY_GATEWAY_COUNT_KEYS.map((key) =>
-      `| ${key} | ${report.counts[key]} |`
+    ...DAILY_GATEWAY_COUNT_KEYS.filter((key) =>
+      !UPSTREAM_SIGNAL_LABELS.some(([signal]) => signal === key)
+    ).map((key) => `| ${key} | ${report.counts[key]} |`),
+    "",
+    "### Current-release upstream signals",
+    "",
+    "| Signal | Observed error records |",
+    "| --- | ---: |",
+    ...UPSTREAM_SIGNAL_LABELS.map(([key, label]) =>
+      `| ${label} | ${report.counts[key]} |`
     ),
     "",
     `Qualifying groups observed ${report.findings.length}`,
