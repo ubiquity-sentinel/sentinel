@@ -180,23 +180,47 @@ export interface HostedControllerCycleCellsV1 {
 export const PRIVATE_CYCLE_CELLS: HostedControllerCycleCellsV1 = Object.freeze(
   { matrix: 6, repair: 4 },
 );
+export interface HostedControllerProfileV1<
+  T extends HostedControllerEntryV1 = HostedControllerEntryV1,
+> extends HostedControllerEntryV1 {
+  readonly deployment: T["deployment"];
+  readonly repository: string;
+  readonly targetVisibility: HostedControllerRoleV1;
+  readonly worksControllerTargets: boolean;
+  readonly excludedTargetReason: "private_repository" | "public_repository";
+  readonly cycleCells: HostedControllerCycleCellsV1 | null;
+  readonly selfObservation: boolean;
+  readonly release: boolean;
+  readonly backupCi: boolean;
+  readonly agentJobs: boolean;
+  readonly chaining: boolean;
+  readonly privateCadence: boolean;
+  readonly developmentPushCiOnly: boolean;
+  readonly matrixCellTimeoutMinutes: number;
+  readonly selfTokenOwner: string;
+  readonly ownerDevelopmentInstall: boolean;
+  readonly requireInstalledLauncher: boolean;
+  readonly queueCanary: boolean;
+  readonly gatewayMonitor: boolean;
+  readonly gatewaySourceVerify: boolean;
+  readonly supervisorDispatcher: boolean;
+}
+
 /** All differences in behavior follow the committed binding. GitHub may confirm
  * its visibility or refuse a run, but cannot select a different set of targets. */
 function hostedControllerProfileV1<T extends HostedControllerEntryV1>(
   binding: T,
-) {
+): HostedControllerProfileV1<T> {
   const isPublic = binding.role === "public";
   return Object.freeze({
-    deployment: binding.deployment as T["deployment"],
+    deployment: binding.deployment,
     retiredRepository: binding.retiredRepository,
     retiredRuntimeId: binding.retiredRuntimeId,
     role: binding.role,
     repository: `${binding.deployment.owner}/${binding.deployment.name}`,
     targetVisibility: binding.role,
     worksControllerTargets: isPublic,
-    excludedTargetReason: isPublic
-      ? "private_repository" as const
-      : "public_repository" as const,
+    excludedTargetReason: isPublic ? "private_repository" : "public_repository",
     cycleCells: isPublic ? null : PRIVATE_CYCLE_CELLS,
     selfObservation: isPublic,
     release: isPublic,
@@ -216,14 +240,15 @@ function hostedControllerProfileV1<T extends HostedControllerEntryV1>(
     supervisorDispatcher: isPublic,
   });
 }
-export type HostedControllerProfileV1 = ReturnType<
-  typeof hostedControllerProfileV1
->;
-export const HOSTED_CONTROLLER_PROFILES = Object.freeze(
-  HOSTED_CONTROLLER_DEPLOYMENTS.map(hostedControllerProfileV1),
-);
-export const PUBLIC_CONTROLLER_PROFILE = HOSTED_CONTROLLER_PROFILES[0];
-export const HOSTED_CONTROLLER_PROFILE = hostedControllerProfileV1(
+export const HOSTED_CONTROLLER_PROFILES: readonly HostedControllerProfileV1[] =
+  Object.freeze(
+    HOSTED_CONTROLLER_DEPLOYMENTS.map(hostedControllerProfileV1),
+  );
+export const PUBLIC_CONTROLLER_PROFILE: HostedControllerProfileV1 =
+  HOSTED_CONTROLLER_PROFILES[0];
+export const HOSTED_CONTROLLER_PROFILE: HostedControllerProfileV1<
+  HostedControllerBindingV1
+> = hostedControllerProfileV1(
   SELECTED.binding,
 );
 /** The selected entry's role; only the public entry works Sentinel itself. */
