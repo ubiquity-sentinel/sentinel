@@ -1,16 +1,15 @@
-/**
- * The private role's issue-to-merge half through real consumers: a copy of
- * this tree whose committed private entry is bound (test ids) runs
- * `private-deployment-lifecycle-cases.ts` as the private deployment.
- */
+/** Both committed deployments exercise the same hosted lifecycle cases. */
 import assert from "node:assert/strict";
-import { runAsPrivateDeployment } from "./private-deployment-copy.ts";
+import { HOSTED_CONTROLLER_PROFILES } from "../../src/contracts/hosted-controller-deployment.ts";
+import { runDeploymentCases } from "./private-deployment-copy.ts";
 
-Deno.test("private role: a bound copy verifies reviewed merges and grants six of seven ready issues", async () => {
-  const { code, output } = await runAsPrivateDeployment(
-    "tests/host/private-deployment-lifecycle-cases.ts",
-    "private-lifecycle-",
-  );
-  assert.equal(code, 0, output);
-  assert.match(output, /ok \| 3 passed \| 0 failed/);
-});
+for (const { role, repository } of HOSTED_CONTROLLER_PROFILES) {
+  Deno.test(`${role} deployment: hosted issue delivery through a reviewed merge`, async () => {
+    const { code, output } = await runDeploymentCases(
+      "tests/host/private-deployment-lifecycle-cases.ts",
+      repository,
+    );
+    assert.equal(code, 0, output);
+    assert.match(output, /ok \| 3 passed \| 0 failed/);
+  });
+}

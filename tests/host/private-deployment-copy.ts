@@ -1,10 +1,8 @@
 /**
  * Builds a copy of this tree whose committed private entry is bound (test
  * ids), runs one private-role cases file in it as the private deployment
- * (GitHub's GITHUB_REPOSITORY) and returns the test output. Only the runtime
- * rig's own literal self identity is renamed in the copy; production source
- * is the committed source plus the binding edits below. No test
- * registrations.
+ * (GitHub's GITHUB_REPOSITORY) and returns the test output. The copied
+ * fixtures derive controller identity from the selected binding.
  */
 import assert from "node:assert/strict";
 import { cp } from "node:fs/promises";
@@ -13,11 +11,6 @@ import { HOSTED_CONTROLLER_DEPLOYMENTS } from "../../src/contracts/hosted-contro
 
 const SOURCE = fileURLToPath(new URL("../../", import.meta.url));
 export const PRIVATE_REPOSITORY = "ubiquity-sentinel-private/sentinel";
-const PUBLIC = ["ubiquity-sentinel", "sentinel"].join("/");
-const RIG_FIXTURES = [
-  "tests/host/matrix-actions-fixtures.ts",
-  "tests/host/targets-deferral-fixtures.ts",
-];
 
 async function rewrite(
   path: string,
@@ -40,6 +33,40 @@ const BINDING: readonly (readonly [string, string])[] = [
   ],
   [`ciWorkflowId: ${privateDeployment.ciWorkflowId},`, "ciWorkflowId: 793002,"],
 ];
+
+/** Starts a separate test process with GitHub's repository identity. */
+export async function runDeploymentCases(
+  cases: string,
+  repository: string,
+  cwd = SOURCE,
+): Promise<{ code: number; output: string }> {
+  const result = await new Deno.Command(Deno.execPath(), {
+    args: [
+      "test",
+      "--frozen",
+      `--allow-read=.,/usr,/bin,${Deno.execPath()}`,
+      "--allow-run",
+      "--allow-write",
+      "--allow-env=PATH,NODE_V8_COVERAGE,GITHUB_REPOSITORY",
+      cases,
+    ],
+    cwd,
+    clearEnv: true,
+    env: {
+      PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin",
+      GITHUB_REPOSITORY: repository,
+      NO_COLOR: "1",
+    },
+    signal: AbortSignal.timeout(240_000),
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+  return {
+    code: result.code,
+    output: decode(result.stdout) + decode(result.stderr),
+  };
+}
 
 /** Runs `cases` in a bound private copy; resolves to the combined output. */
 export async function runAsPrivateDeployment(
@@ -66,35 +93,7 @@ export async function runAsPrivateDeployment(
       copy + "src/contracts/hosted-controller-deployment.ts",
       BINDING,
     );
-    for (const fixture of RIG_FIXTURES) {
-      await rewrite(copy + fixture, [[PUBLIC, PRIVATE_REPOSITORY]]);
-    }
-    const result = await new Deno.Command(Deno.execPath(), {
-      args: [
-        "test",
-        "--frozen",
-        `--allow-read=.,/usr,/bin,${Deno.execPath()}`,
-        "--allow-run",
-        "--allow-write",
-        "--allow-env=PATH,NODE_V8_COVERAGE,GITHUB_REPOSITORY",
-        cases,
-      ],
-      cwd: copy,
-      clearEnv: true,
-      env: {
-        PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin",
-        GITHUB_REPOSITORY: PRIVATE_REPOSITORY,
-        NO_COLOR: "1",
-      },
-      signal: AbortSignal.timeout(240_000),
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
-    const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
-    return {
-      code: result.code,
-      output: decode(result.stdout) + decode(result.stderr),
-    };
+    return await runDeploymentCases(cases, PRIVATE_REPOSITORY, copy);
   } finally {
     await Deno.remove(root, { recursive: true });
   }

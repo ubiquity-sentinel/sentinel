@@ -1,149 +1,231 @@
-/**
- * Free-tier gating of the private deployment (docs/DECISIONS.md, 2026-11-22).
- * Every automatically triggered job is gated to the public repository by
- * prefixing `github.repository == 'ubiquity-sentinel/sentinel' &&` to its
- * former condition (or adding only that condition where there was none). On
- * the public repository the prefix is `true`, so `true && (X)` is exactly X:
- * the same jobs run on the same triggers. The private repository runs only
- * the paced cycle, private CI and the weekly sync. The public repository
- * skips the private cadence and sync jobs.
- */
 import assert from "node:assert/strict";
 import { parse } from "@std/yaml";
+import {
+  HOSTED_CONTROLLER_DEPLOYMENTS,
+  HOSTED_CONTROLLER_PROFILES,
+  HOSTED_CONTROLLER_WORKFLOW_TABLE,
+} from "../../src/contracts/hosted-controller-deployment.ts";
 
 type Obj = Record<string, unknown>;
-const PUBLIC = "github.repository == 'ubiquity-sentinel/sentinel'";
-const PRIVATE = "github.repository == 'ubiquity-sentinel-private/sentinel'";
+type RepositoryField = string | readonly string[];
+const WORKFLOW_DIRECTORY = ".github/workflows";
+const AUTOMATIC_TRIGGERS = new Set([
+  "schedule",
+  "push",
+  "pull_request",
+  "workflow_run",
+]);
 
 async function workflow(name: string): Promise<Obj> {
-  return parse(await Deno.readTextFile(`.github/workflows/${name}`)) as Obj;
+  return parse(
+    await Deno.readTextFile(WORKFLOW_DIRECTORY + "/" + name),
+  ) as Obj;
 }
+
 function jobs(doc: Obj): Record<string, Obj> {
   return doc.jobs as Record<string, Obj>;
 }
+
 function steps(job: Obj): Obj[] {
   return job.steps as Obj[];
 }
-const flat = (text: unknown) => String(text).replace(/\s+/g, " ").trim();
-const PRIVATE_CI =
-  "(github.event_name == 'push' && github.ref == 'refs/heads/development')";
 
-// Today's (pre-gating) condition of every automatically triggered job;
-// `null` where the job had none.
-const FORMER: readonly (readonly [string, string, string | null])[] = [
-  ["release.yml", "release", null],
-  ["sentinel-scheduler.yml", "tick", null],
-  ["gateway-source-verify.yml", "verify", null],
-  ["repair.yml", "dispatch", null],
-  [
-    "supervisor-dispatch.yml",
-    "backup_completion",
-    "github.event_name == 'workflow_run' && " +
-    "(github.event.workflow_run.path == '.github/workflows/backup-ci-leg.yml' || " +
-    "github.event.workflow_run.path == '.github/workflows/ci.yml') && " +
-    "github.event.workflow_run.head_repository.full_name == github.repository",
-  ],
-  [
-    "supervisor-dispatch.yml",
-    "dispatch",
-    "(github.event_name != 'workflow_run' || " +
-    "(github.event.workflow_run.path == '.github/workflows/supervisor.yml' && " +
-    "github.event.workflow_run.head_branch == 'sentinel-supervisor' && " +
-    "github.event.workflow_run.head_repository.full_name == github.repository))",
-  ],
-  [
-    "backup-ci.yml",
-    "backup_ci",
-    "github.ref == 'refs/heads/sentinel-supervisor' && github.run_attempt == 1 && " +
-    "(contains(fromJSON('[\"shadow\",\"on\"]'), vars.SENTINEL_BACKUP_CI || 'on'))",
-  ],
-  [
-    "backup-ci-leg.yml",
-    "leg",
-    "github.ref == 'refs/heads/sentinel-backup-legs' && github.run_attempt == 1 && " +
-    'contains(fromJSON(\'["ubuntu-latest","ubuntu-24.04","ubuntu-22.04"]\'), inputs.runs_on)',
-  ],
-];
+function isAutomatic(value: unknown): boolean {
+  const triggers = typeof value === "string"
+    ? [value]
+    : Array.isArray(value)
+    ? value
+    : Object.keys(value as Obj);
+  return triggers.some((trigger) => AUTOMATIC_TRIGGERS.has(trigger));
+}
 
-Deno.test("private gating: every automatic job is today's condition behind the public-repository prefix", async () => {
-  for (const [file, job, former] of FORMER) {
-    const condition = flat(jobs(await workflow(file))[job].if);
-    assert.equal(
-      condition,
-      former === null ? PUBLIC : `${PUBLIC} && ${former}`,
-      `${file} ${job}`,
+const [publicProfile, privateProfile] = HOSTED_CONTROLLER_PROFILES;
+const [publicEntry, privateEntry] = HOSTED_CONTROLLER_DEPLOYMENTS;
+const workflowFacts = {
+  public: {
+    ...publicProfile,
+    sourceRef: "refs/heads/" + publicEntry.deployment.sourceBranch,
+    supervisorRef: "refs/heads/" + publicEntry.deployment.supervisorBranch,
+  },
+  private: {
+    ...privateProfile,
+    sourceRef: "refs/heads/" + privateEntry.deployment.sourceBranch,
+  },
+};
+const templateFacts = Object.fromEntries(
+  Object.entries(workflowFacts).flatMap(([role, facts]) =>
+    Object.entries(facts).map(([name, value]) => [role + "." + name, value])
+  ),
+);
+
+function resolveProfileFacts(value: string): string {
+  return value.replace(/@([a-z]+\.[a-zA-Z]+)@/g, (_, name: string) => {
+    const fact = templateFacts[name];
+    assert.ok(typeof fact === "string" || typeof fact === "number", name);
+    return String(fact);
+  });
+}
+
+const GITHUB_CONTEXT_ACCESS = /\bgithub(?:\s*\.\s*[\w-]+|\s*\[[^\]\n]+\])+/gi;
+const CONTROLLER_CONTEXT_PROPERTY =
+  /\b(?:repository(?:_id|_owner|_owner_id|_visibility)?|head_repository|base_repository|workflow_ref)\b/i;
+const REPOSITORY_ENVIRONMENT =
+  /\b(?:GH_REPO|GITHUB_REPOSITORY(?:_ID|_OWNER(?:_ID)?)?|GITHUB_WORKFLOW_REF|(?:SENTINEL_)?(?:HOSTED_CONTROLLER|DEPLOYMENT|REPOSITORY|HOST)_(?:ROLE|VISIBILITY)|IS_(?:PUBLIC|PRIVATE))\b/i;
+const VISIBILITY_VALUE =
+  /['"](?:public|private)['"]|\b(?:repo|repository)\.(?:private|isPrivate|visibility)\b/i;
+const CONTROLLER_OWNERS = HOSTED_CONTROLLER_PROFILES.map((profile) =>
+  profile.selfTokenOwner.toLowerCase()
+);
+
+function mentionsController(value: string): boolean {
+  return [...value.matchAll(GITHUB_CONTEXT_ACCESS)].some(([access]) =>
+    CONTROLLER_CONTEXT_PROPERTY.test(access) || /\[\s*\w+\s*\]/.test(access)
+  ) ||
+    /\btoJSON\s*\(\s*github(?:\s*\.\s*event)?\s*\)/i.test(value) ||
+    REPOSITORY_ENVIRONMENT.test(value) ||
+    VISIBILITY_VALUE.test(value) ||
+    /\bcontext\s*\.\s*repo\b/i.test(value) ||
+    (value.toLowerCase().match(/[\w-]+/g) ?? []).some((word) =>
+      CONTROLLER_OWNERS.includes(word)
     );
-  }
-  // ci.yml: on public `true || ...` (unchanged: no condition before, and
-  // the aggregate keeps always()); on private only a push to development.
-  const ci = jobs(await workflow("ci.yml"));
-  for (const job of ["quality", "test-shards"]) {
-    assert.equal(flat(ci[job].if), `${PUBLIC} || ${PRIVATE_CI}`, job);
-  }
-  assert.equal(
-    flat(ci["test-local"].if),
-    `\${{ always() && (${PUBLIC} || ${PRIVATE_CI}) }}`,
-  );
-  // Already public-only before this change.
-  assert.ok(
-    flat(jobs(await workflow("queue-canary.yml")).canary.if).startsWith(
-      PUBLIC + " &&",
-    ),
-  );
-});
+}
 
-Deno.test("private gating: every scheduled, push and workflow_run workflow is gated or private-only", async () => {
-  const automatic = new Set([
-    "schedule",
-    "push",
-    "pull_request",
-    "workflow_run",
-  ]);
-  for await (const entry of Deno.readDir(".github/workflows")) {
-    if (!entry.name.endsWith(".yml")) continue;
-    const doc = await workflow(entry.name);
-    const on = (doc.on ?? doc[true as unknown as string]) as Obj;
-    if (!Object.keys(on).some((trigger) => automatic.has(trigger))) continue;
-    for (const [name, job] of Object.entries(jobs(doc))) {
-      const condition = flat(job.if);
-      assert.ok(
-        condition.startsWith(PUBLIC) || condition === PRIVATE ||
-          condition === `\${{ always() && (${PUBLIC} || ${PRIVATE_CI}) }}`,
-        `${entry.name} ${name}: ${condition}`,
+function scriptRepositoryReferences(script: string): string[] {
+  // Expressions can span lines in a block scalar. Join them before scanning
+  // script lines so a split property name still has its GitHub context.
+  const joined = script.replace(
+    /\$\{\{[\s\S]*?\}\}/g,
+    (expression) => expression.replace(/\s*\n\s*/g, " "),
+  );
+  // A Deno permission grant passes through context without reading it here.
+  return joined.split("\n").map((line) => line.trim()).filter((line) =>
+    (!line.startsWith("#") || line.includes("${{")) &&
+    mentionsController(line.replace(/--allow-env=[\w,]+/g, ""))
+  );
+}
+
+function collectRepositoryFields(
+  value: unknown,
+  path: string,
+  jobConditions: ReadonlySet<string>,
+  fields: Record<string, RepositoryField>,
+): void {
+  if (typeof value === "string") {
+    if (jobConditions.has(path)) return; // Job conditions are checked in full.
+    const script = path.endsWith(".run") || path.endsWith(".with.script");
+    const references = script
+      ? scriptRepositoryReferences(value)
+      : mentionsController(value) || REPOSITORY_ENVIRONMENT.test(path)
+      ? value
+      : undefined;
+    if (references === undefined || references.length === 0) return;
+    assert.ok(!Object.hasOwn(fields, path), "Duplicate workflow field " + path);
+    fields[path] = references;
+  } else if (Array.isArray(value)) {
+    for (const [index, item] of value.entries()) {
+      const step = path.endsWith(".steps") ? item as Obj : undefined;
+      const label = step?.id ?? step?.name ?? index;
+      collectRepositoryFields(
+        item,
+        path + "[" + label + "]",
+        jobConditions,
+        fields,
       );
     }
+  } else if (value && typeof value === "object") {
+    for (const [key, entry] of Object.entries(value)) {
+      const child = path ? path + "." + key : key;
+      collectRepositoryFields(entry, child, jobConditions, fields);
+    }
+  }
+}
+
+Deno.test("workflow deployment policy matches every job and role-dependent field", async () => {
+  const files = (await Array.fromAsync(Deno.readDir(WORKFLOW_DIRECTORY)))
+    .map(({ name }) => name)
+    .filter((name) => /\.ya?ml$/i.test(name))
+    .sort();
+  assert.deepEqual(files, Object.keys(HOSTED_CONTROLLER_WORKFLOW_TABLE).sort());
+  assert.deepEqual(
+    HOSTED_CONTROLLER_PROFILES.filter(({ chaining }) => chaining).map((
+      { role },
+    ) => role),
+    ["public"],
+    "Only the public profile chains a supervisor dispatch",
+  );
+  const switchByAdmission = {
+    "public-only": [true, false],
+    "private-only": [false, true],
+    "both": [true, true],
+    "role-dependent": [false, true], // Only private limits CI to development pushes.
+  };
+  for (const file of files) {
+    const doc = await workflow(file);
+    const automatic = isAutomatic(doc.on);
+    const expectedJobs = HOSTED_CONTROLLER_WORKFLOW_TABLE[file];
+    const actualJobs = jobs(doc);
+    assert.deepEqual(
+      Object.keys(actualJobs).sort(),
+      Object.keys(expectedJobs).sort(),
+      file + " job IDs",
+    );
+
+    const jobConditions = new Set<string>();
+    const expectedFields: Record<string, RepositoryField> = {};
+    for (const [name, expected] of Object.entries(expectedJobs)) {
+      const job = actualJobs[name];
+      const label = file + " " + name;
+      assert.ok(
+        !automatic || expected.admission !== "both",
+        label + " automatic admission must be scoped by deployment",
+      );
+      assert.equal(
+        job.if,
+        expected.if && resolveProfileFacts(expected.if),
+        label,
+      );
+      if (expected.inheritsGateFrom) {
+        assert.equal(
+          job.needs,
+          expected.inheritsGateFrom,
+          label + " dependency",
+        );
+        assert.equal(
+          expected.admission,
+          expectedJobs[expected.inheritsGateFrom].admission,
+          label + " inherited deployment admission",
+        );
+      }
+      if (expected.profileSwitch) {
+        const policy = expected.profileSwitch;
+        assert.deepEqual(
+          [publicProfile[policy], privateProfile[policy]],
+          switchByAdmission[expected.admission],
+          label + " deployment profile",
+        );
+      }
+      jobConditions.add("jobs." + name + ".if");
+      for (
+        const [path, value] of Object.entries(expected.repositoryFields ?? {})
+      ) {
+        expectedFields["jobs." + name + "." + path] = typeof value === "string"
+          ? resolveProfileFacts(value)
+          : value.map(resolveProfileFacts);
+      }
+    }
+
+    const actualFields: Record<string, RepositoryField> = {};
+    collectRepositoryFields(doc, "", jobConditions, actualFields);
+    assert.deepEqual(actualFields, expectedFields, file + " deployment fields");
   }
 });
 
-Deno.test("private gating: the chain continues on the public deployment only", async () => {
-  const finalize = jobs(await workflow("supervisor.yml")).finalize;
-  const chain = steps(finalize).find((step) =>
-    step.name === "Chain the next dispatcher run"
-  )!;
-  assert.equal(
-    flat(chain.if),
-    `always() && github.ref == 'refs/heads/sentinel-supervisor' && ${PUBLIC}`,
-  );
-  assert.equal(
-    flat(finalize.if),
-    "always() && github.ref == 'refs/heads/sentinel-supervisor'",
-  );
-});
-
-Deno.test("private gating: only the matrix cell's timeout differs by repository, and it is 300 on public", async () => {
+Deno.test("private gating: the remaining supervisor timeouts and self token scopes stay fixed", async () => {
   const supervisor = jobs(await workflow("supervisor.yml"));
-  assert.equal(
-    supervisor.matrix_cell["timeout-minutes"],
-    `\${{ ${PRIVATE} && 120 || 300 }}`,
-  );
-  // On public `false && 120 || 300` is 300 (today's value); every other
-  // runtime job already stops at 120, past the runtime's 110-minute window.
   assert.deepEqual(
     Object.fromEntries(
-      Object.entries(supervisor).map(([name, job]) => [
-        name,
-        job["timeout-minutes"],
-      ]).filter(([name]) => name !== "matrix_cell"),
+      Object.entries(supervisor).filter(([name]) => name !== "matrix_cell")
+        .map(([name, job]) => [name, job["timeout-minutes"]]),
     ),
     {
       maintenance: 15,
@@ -154,26 +236,11 @@ Deno.test("private gating: only the matrix cell's timeout differs by repository,
       finalize: 10,
     },
   );
-});
-
-Deno.test("private gating: each self mint names its own organization and only the repository sentinel", async () => {
-  const owner =
-    "${{ github.repository == 'ubiquity-sentinel-private/sentinel'" +
-    " && 'ubiquity-sentinel-private' || 'ubiquity-sentinel' }}";
-  let selfMints = 0;
-  for (const job of Object.values(jobs(await workflow("supervisor.yml")))) {
-    for (const step of steps(job)) {
-      const given = step.with as Obj | undefined;
-      if (step.name !== "Mint the scoped self installation token") continue;
-      selfMints++;
-      // The expression is a closed choice of two non-empty literals, and the
-      // repository list stays the literal name: no mint can ever name every
-      // repository of an installation.
-      assert.equal(given?.owner, owner);
-      assert.equal(given?.repositories, "sentinel");
-    }
+  for (const job of Object.values(supervisor)) {
+    const selfToken = steps(job).find((step) => step.id === "self-token");
+    assert.ok(selfToken);
+    assert.equal((selfToken.with as Obj).repositories, "sentinel");
   }
-  assert.equal(selfMints, 7);
 });
 
 Deno.test("private gating: the paced cycle and the weekly sync run on the private repository only", async () => {
@@ -187,7 +254,6 @@ Deno.test("private gating: the paced cycle and the weekly sync run on the privat
     cron: "41 3,9,15,21 * * *",
   }]);
   const day = jobs(daily).daily;
-  assert.equal(day.if, PRIVATE);
   assert.equal(day["timeout-minutes"], 3);
   const [, , binding, start] = steps(day);
   // Unfilled ids end the day green with no follow-on step; any other
@@ -224,14 +290,13 @@ Deno.test("private gating: the paced cycle and the weekly sync run on the privat
   const sync = await workflow("private-sync.yml");
   assert.deepEqual((sync.on as Obj).schedule, [{ cron: "17 2 * * 0" }]);
   const job = jobs(sync).sync;
-  assert.equal(job.if, PRIVATE);
   // Repository secret, no environment (one instruction for the operator).
   assert.equal(job.environment, undefined);
   const [mint, move] = steps(job);
   assert.deepEqual(mint.with, {
     "client-id": "Iv23liHUJNXds9mU3j7Q",
     "private-key": "${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}",
-    owner: "ubiquity-sentinel-private",
+    owner: privateProfile.selfTokenOwner,
     repositories: "sentinel",
     "permission-contents": "write",
     "permission-workflows": "write",

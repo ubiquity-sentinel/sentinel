@@ -1,4 +1,5 @@
 /** Hosted actions-repair-host responsibility. */
+import { isPublicControllerScopeV1 } from "../contracts/hosted-controller-deployment.ts";
 import { canonicalStringify } from "../contracts/canonical.ts";
 import { hostedOrdinaryAdmitted } from "../contracts/hosted-supervisor-verification.ts";
 import { DenoReplayRuntime, type ReplayRuntimeV1 } from "../replay/runtime.ts";
@@ -48,8 +49,8 @@ import { createActionsCandidateRestorer } from "./actions-candidates.ts";
 import type { ActionsCandidateRestorerV1 } from "./actions-candidates.ts";
 import type { ReleaseRequestV1 } from "../contracts/release.ts";
 import {
+  createDeploymentTargetHostV1,
   createGitHubTargetResolvers,
-  createHostVisibilityReader,
   loadTargetConfigsV1,
   privateTargetsLineV1,
   STATIC_TARGETS_EMPTY,
@@ -395,17 +396,8 @@ export async function runActionsRepairHost(
     template: templateConfig,
     // The setting lives in this run's own checkout, exactly as before.
     root: sourceDir,
-    // The deployment rule (`target-visibility.ts`): the run's own repository,
-    // already bound to the committed controller by `parseHostedEnvironment`,
-    // is read on the self credential only when the setting does not list it.
-    host: {
-      repository: readEnv("GITHUB_REPOSITORY"),
-      readVisibility: createHostVisibilityReader({
-        http,
-        token: selfWriteToken,
-        repository: readEnv("GITHUB_REPOSITORY"),
-      }),
-    },
+    // Bind the self credential to the selected controller, including for the matrix planner.
+    host: createDeploymentTargetHostV1({ http, token: selfWriteToken }),
     // Private targets need the App token; reads share the cooldown gate.
     ...resolvers,
     resolveRepository: scopedTargetResolverV1(
@@ -420,9 +412,7 @@ export async function runActionsRepairHost(
   });
   const scopeLine = tokenScopeLineV1(outOfScope);
   if (scopeLine !== null) console.log(JSON.stringify(scopeLine));
-  // Owner decision 2026-11-18 (`src/repair/target-visibility.ts`): a private
-  // target is never configured, so nothing below reads, plans, runs, reviews,
-  // comments on or writes its work. One text-free line counts the skips.
+  // Report opposite-visibility targets separately from unavailable reads.
   const privateLine = privateTargetsLineV1(targets);
   if (privateLine !== null) console.log(JSON.stringify(privateLine));
   // Listed targets that were all unreadable defer (or fail as unavailable);
@@ -577,9 +567,7 @@ export async function runActionsRepairHost(
       ownerSettlement: {
         read: (input) => nativeSelf.readReviewOwnerSettlement(input),
       },
-      selfMergeEnabled: config.repository.owner === "ubiquity-sentinel" &&
-        config.repository.name === "sentinel" &&
-        config.repository.installationId === 0,
+      selfMergeEnabled: isPublicControllerScopeV1(config.repository),
       stateRoot,
       sourcePath: mirrorPathFor(config),
       scratch,

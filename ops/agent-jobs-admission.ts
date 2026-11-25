@@ -1,3 +1,4 @@
+import { PUBLIC_CONTROLLER_PROFILE, deploymentWorksTargetV1 } from "../src/contracts/hosted-controller-deployment.ts";
 import { repositoryVisibilityV1 } from "../src/repair/target-visibility.ts";
 import type { AgentJobsPlanV1, AgentJobV1 } from "./agent-jobs-plan.ts";
 
@@ -48,7 +49,7 @@ export async function readPublicAgentJobRepository(
 ): Promise<{ defaultBranch: string }> {
   const data = await githubObject(repositoryUrl(repository), read);
   if (
-    !data || repositoryVisibilityV1(data) !== "public" ||
+    !data || !deploymentWorksTargetV1(PUBLIC_CONTROLLER_PROFILE, repositoryVisibilityV1(data)) ||
     typeof data.full_name !== "string" ||
     data.full_name.toLowerCase() !== repository.toLowerCase() ||
     typeof data.default_branch !== "string" || !data.default_branch

@@ -1,3 +1,4 @@
+import { PUBLIC_CONTROLLER_PROFILE } from "../contracts/hosted-controller-deployment.ts";
 // client ci wire.
 
 import type { PortResultV1 } from "../contracts/ports.ts";
@@ -20,7 +21,7 @@ import type { ApproveExactCiRunInputV1 } from "./client-contracts.ts";
  * only for the scope-0 `ubiquity-sentinel/sentinel` repository (explicit no-App local
  * credential scope); every identity below is revalidated before any POST.
  */
-export const CI_REPOSITORY_FULL_NAME = "ubiquity-sentinel/sentinel";
+export const CI_REPOSITORY_FULL_NAME = PUBLIC_CONTROLLER_PROFILE.repository;
 
 export const CI_REPOSITORY_API_URL =
   "https://api.github.com/repos/ubiquity-sentinel/sentinel";

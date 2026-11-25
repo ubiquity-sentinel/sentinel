@@ -1,3 +1,4 @@
+import { isPublicControllerScopeV1 } from "../contracts/hosted-controller-deployment.ts";
 import { guardQueueDelivery } from "./loop-queue-guard.ts";
 /** Repair loop internals: release. */
 import {
@@ -67,9 +68,7 @@ import {
  */
 export function isLocalReleaseScope(request: ReleaseRequestV1): boolean {
   const repository = request.target.repository;
-  return repository.installationId === 0 &&
-    repository.owner === "ubiquity-sentinel" &&
-    repository.name === "sentinel";
+  return isPublicControllerScopeV1(repository);
 }
 
 /** One explicit release wait; an unreadable or pending local receipt waits. */

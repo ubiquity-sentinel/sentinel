@@ -1,3 +1,4 @@
+import { PUBLIC_CONTROLLER_PROFILE, deploymentRunsServiceV1 } from "../src/contracts/hosted-controller-deployment.ts";
 import {
   DAILY_GATEWAY_KINDS,
   DAILY_GATEWAY_ROUTES,
@@ -21,7 +22,7 @@ const REPOSITORY = {
 };
 const TARGET = REPOSITORY.owner + "/" + REPOSITORY.name;
 const REPOSITORY_API = "/repos/" + TARGET;
-const CONTROLLER = "ubiquity-sentinel/sentinel";
+const CONTROLLER = PUBLIC_CONTROLLER_PROFILE.repository;
 const MAX_LIST_PAGES = 8;
 const SHA = /^[a-f0-9]{40}$/;
 const RUN_ID = /^[1-9][0-9]{0,19}$/;
@@ -231,7 +232,7 @@ export async function publishDailyGatewayIssues(
   const report = parseDailyGatewayScanReport(input);
   const run = actions.runId;
   require(
-    actions.repository === CONTROLLER && run !== undefined && RUN_ID.test(run),
+    deploymentRunsServiceV1(actions.repository, "gatewayMonitor") && run !== undefined && RUN_ID.test(run),
     "daily publisher Actions identity is not trusted",
   );
 

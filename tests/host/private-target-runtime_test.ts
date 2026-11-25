@@ -261,7 +261,10 @@ Deno.test("private target: a setting whose every target is private refuses as em
     await ensureRepairStateSeed(r.store, r.clock);
     await advanceWithLog(r, 72, QUIET_LOG, 101);
     const deps = await r.job("private-target-all", "repair");
-    await Deno.writeTextFile(`${deps.workDir}/sentinel.targets.json`, LISTED);
+    await Deno.writeTextFile(
+      `${deps.workDir}/sentinel.targets.json`,
+      JSON.stringify(["ubiquity/prospector"]),
+    );
     const repairBefore = await r.store.readRepair();
     const { value: failure, lines } = await quietly(async () => {
       try {
@@ -271,7 +274,7 @@ Deno.test("private target: a setting whose every target is private refuses as em
           state: r.store,
           http: targets(
             servingJobLogs(deps.http, QUIET),
-            PRIVATE_PROSPECTOR,
+            PUBLIC_SENTINEL,
             PRIVATE_PROSPECTOR,
           ),
           model: NO_MODEL,
@@ -290,8 +293,8 @@ Deno.test("private target: a setting whose every target is private refuses as em
     assert.deepEqual(JSON.parse(privateLines(lines)[0]), {
       kind: "sentinel_private_targets",
       reason: PRIVATE_TARGET_REASON,
-      skipped: 2,
-      listed: 2,
+      skipped: 1,
+      listed: 1,
       configured: 0,
     });
     assert.deepEqual(await r.store.readRepair(), repairBefore);

@@ -1,3 +1,4 @@
+import { isPublicControllerScopeV1 } from "../contracts/hosted-controller-deployment.ts";
 import type { ExistingPrTakeoverPort } from "../contracts/existing-pr-takeover.ts";
 import { canonicalStringify } from "../contracts/canonical.ts";
 import type { GitSha } from "../contracts/brands.ts";
@@ -348,9 +349,7 @@ export function composeLocalGitHub(
         ),
   });
   if (
-    repository.owner === "ubiquity-sentinel" &&
-    repository.name === "sentinel" &&
-    repository.installationId === 0
+    isPublicControllerScopeV1(repository)
   ) {
     input.onOwnerSuccessorReviewPorts?.({
       capture: snapshotSource.capture,

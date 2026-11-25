@@ -1,8 +1,9 @@
-/** The late private cell's next maintenance pass, between two native runs. */
+/** Recover a late cell in maintenance between two native runs. */
 import assert from "node:assert/strict";
 import { recoverHostedCurrentMatrix } from "../../ops/hosted-autonomy-current-recovery.ts";
 import { createHostedClosedMatrixRecovery } from "../../ops/hosted-autonomy-matrix-adapters.ts";
 import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
+import { HOSTED_CONTROLLER_REPOSITORY } from "../../src/contracts/hosted-controller-deployment.ts";
 import type { MatrixCellResultV1 } from "../../src/contracts/matrix.ts";
 import { portOk } from "../../src/contracts/ports.ts";
 import type { HttpTransportV1 } from "../../src/github/http.ts";
@@ -21,7 +22,7 @@ import {
   reply,
 } from "./targets-deferral-fixtures.ts";
 
-export async function recoverLatePrivateCell(
+export async function recoverLateCell(
   r: Awaited<ReturnType<typeof rig>>,
   planner: MatrixPlanReportV1 & { planDigest: string },
   result: MatrixCellResultV1,
@@ -30,6 +31,8 @@ export async function recoverLatePrivateCell(
   repositoryHttp: HttpTransportV1,
   github: TargetGithub,
 ) {
+  const bundle = result.bundle;
+  assert.ok(bundle);
   const files = await createFreshMatrixArchives(
     r,
     planner,
@@ -100,7 +103,8 @@ export async function recoverLatePrivateCell(
               ...recovery,
               // The external native settlement and target repository are fixtures.
               readExecution: () => Promise.resolve(portOk(proof)),
-              prepareTarget: async () => {
+              prepareTarget: async ({ repository }) => {
+                assert.equal(`${repository.owner}/${repository.name}`, target);
                 await checked(r.root, [
                   "clone",
                   "-q",
@@ -123,16 +127,20 @@ export async function recoverLatePrivateCell(
       ),
     );
     assert.equal(files.artifactCalls.length, 0);
+    assert.equal(github.candidateRefs.size, 0);
     const recovered = await recover(true);
     assert.deepEqual(recovered?.actions, ["current-matrix:ingested:1"]);
+    assert.equal(github.candidatePullRequests.size, 0);
     const read = await r.store.readRepair();
     assert.ok(read.ok && read.value.status === "found");
     const work = read.value.snapshot.work.find((row) =>
       row.id === result.taskId
     );
+    assert.ok(work?.target.candidateState?.preserved);
+    assert.equal(work.target.candidateState.preserved.head, bundle.head);
     assert.equal(
-      work?.target.candidateState?.preserved?.head,
-      result.bundle!.head,
+      github.candidateRefs.get(work.target.candidateState.preserved.ref),
+      bundle.head,
     );
     assert.equal(work?.intent, null);
     assert.equal(
@@ -144,11 +152,15 @@ export async function recoverLatePrivateCell(
   });
   assert.ok(
     metadata.includes(
-      "/repos/ubiquity-sentinel-private/sentinel Bearer fake-read-token",
+      `/repos/${HOSTED_CONTROLLER_REPOSITORY} Bearer fake-read-token`,
     ),
   );
   assert.ok(metadata.includes(`/repos/${target} Bearer fake-app-token`));
   assert.ok(
-    files.artifactCalls.some((url) => url.includes("/runs/71/artifacts?")),
+    files.artifactCalls.some((url) =>
+      url.includes(
+        `/repos/${HOSTED_CONTROLLER_REPOSITORY}/actions/runs/71/artifacts?`,
+      )
+    ),
   );
 }

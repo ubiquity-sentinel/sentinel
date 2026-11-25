@@ -19,7 +19,15 @@
 
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
-import { isHostedControllerDeploymentSlugV1 } from "../contracts/hosted-controller-deployment.ts";
+import {
+  deploymentWorksTargetV1,
+  HOSTED_CONTROLLER_PROFILE,
+  type HostedControllerProfileV1,
+  isDeploymentSelfSlugV1,
+  isHostedControllerDeploymentSlugV1,
+  PUBLIC_CONTROLLER_PROFILE,
+  verifyDeploymentTargetScopeV1,
+} from "../contracts/hosted-controller-deployment.ts";
 import type { HttpTransportV1 } from "../github/http.ts";
 import type { GitHubCooldownGateV1 } from "../contracts/ports.ts";
 import {
@@ -35,9 +43,6 @@ import type { TargetReadObserverV1 } from "./target-read-observer.ts";
 import {
   PUBLIC_TARGET_REASON,
   repositoryVisibilityV1,
-  resolveSentinelHostV1,
-  sentinelHostIsPrivateV1,
-  sentinelWorksRepositoryV1,
   type TargetVisibilityV1,
 } from "../repair/target-visibility.ts";
 import {
@@ -349,7 +354,7 @@ export interface LoadTargetConfigsResultV1 {
   /** Slug of every target skipped because its tree facts were unavailable. */
   readonly factsUnavailable: readonly string[];
   /**
-   * Present only on a host proven private (`target-visibility.ts`): slug of
+   * Present only on a verified private deployment: slug of
    * every target GitHub answered is public, which the public deployment
    * works. Never configured here, and never counted as a read failure.
    */
@@ -357,33 +362,29 @@ export interface LoadTargetConfigsResultV1 {
 }
 
 /**
- * The repository a load runs in (the native `GITHUB_REPOSITORY`) and the one
- * read of its own visibility. Read only when the setting does not list it.
+ * The bound controller and its self-credential read. A listed public controller
+ * reuses its ordinary target read.
  */
 export interface TargetLoadHostV1 {
-  readonly repository: string | null | undefined;
+  readonly profile: HostedControllerProfileV1;
   readonly readVisibility: () => Promise<TargetVisibilityV1>;
 }
 
 /**
- * The host's visibility from one `GET /repos/{owner}/{name}` of the host's
- * own repository on the given (self) credential; unknown on any failure.
+ * Bind the trusted self credential to one selected repository for both planning and recovery.
  */
-export function createHostVisibilityReader(options: {
+export function createDeploymentTargetHostV1(options: {
   readonly http: HttpTransportV1;
   readonly token: string;
-  readonly repository: string | null | undefined;
-  readonly apiBaseUrl?: string;
-}): () => Promise<TargetVisibilityV1> {
-  return async () => {
-    let slug: TargetSlugV1;
-    try {
-      [slug] = parseTargetSlugsV1([options.repository]);
-    } catch {
-      return "unknown";
-    }
-    const read = await createTargetRepositoryResolver(options)(slug);
-    return read?.visibility ?? "unknown";
+}): TargetLoadHostV1 {
+  const profile = HOSTED_CONTROLLER_PROFILE;
+  return {
+    profile,
+    async readVisibility() {
+      const [self] = parseTargetSlugsV1([profile.repository]);
+      const read = await createTargetRepositoryResolver(options)(self);
+      return read?.visibility ?? "unknown";
+    },
   };
 }
 
@@ -454,7 +455,7 @@ export function unavailableTargetCountsV1(
  * Load the committed target setting into exact configuration objects. A target
  * whose default branch cannot be read is skipped (never defaulted); an empty
  * or invalid setting yields no configs at all. A target is configured only
- * when `sentinelWorksRepositoryV1` accepts the visibility of that same read:
+ * when the deployment profile accepts the visibility of that same read:
  * a private repository is listed in `privateTargets`, and a visibility
  * GitHub did not state skips the target like an unreadable branch. On a host
  * proven private (`host`), private targets are configured instead and every
@@ -469,7 +470,7 @@ export function unavailableTargetCountsV1(
  * branch: it is never rebuilt without evidence it declared. Sentinel, Passport
  * and the Gateway keep their named policies and never spend a facts read.
  */
-export async function loadTargetConfigsV1(options: {
+interface TargetLoadOptionsV1 {
   readonly template: RepositoryConfigV1;
   readonly resolveRepository: (
     target: TargetSlugV1,
@@ -481,25 +482,50 @@ export async function loadTargetConfigsV1(options: {
   ) => Promise<TargetTreeFactsV1 | null>;
   readonly root?: string;
   readonly readFile?: (path: string) => Promise<string>;
-  /**
-   * The run's own repository (`target-visibility.ts` deployment rule).
-   * Omitted, or listed in the setting, or not proven private: exactly the
-   * public-only load, with no extra read.
-   */
-  readonly host?: TargetLoadHostV1;
-}): Promise<LoadTargetConfigsResultV1> {
+}
+
+/** A hosted caller must supply the bound deployment and its self visibility read. */
+export function loadTargetConfigsV1(
+  options: TargetLoadOptionsV1 & { readonly host: TargetLoadHostV1 },
+): Promise<LoadTargetConfigsResultV1> {
+  return loadConfigsForScopeV1(options, options.host.profile, options.host);
+}
+
+/** The fixed public target contract of the local host and existing-PR publisher for ai.ubq.fi. */
+export function loadPublicTargetConfigsV1(
+  options: TargetLoadOptionsV1,
+): Promise<LoadTargetConfigsResultV1> {
+  return loadConfigsForScopeV1(options, PUBLIC_CONTROLLER_PROFILE, null);
+}
+
+async function loadConfigsForScopeV1(
+  options: TargetLoadOptionsV1,
+  profile: HostedControllerProfileV1,
+  host: TargetLoadHostV1 | null,
+): Promise<LoadTargetConfigsResultV1> {
   const targets = await readTargetSlugsV1({
     root: options.root,
     readFile: options.readFile,
   });
-  const host = options.host === undefined || targets.length === 0
-    ? undefined
-    : await resolveSentinelHostV1({
-      repository: options.host.repository,
-      listed: targets.map((target) => target.slug),
-      readVisibility: options.host.readVisibility,
-    });
-  const privateHost = sentinelHostIsPrivateV1(host);
+  const listedSelf = targets.find((target) =>
+    isDeploymentSelfSlugV1(profile, target.slug)
+  );
+  // The ordinary public self read already carries visibility; reuse its exact
+  // result and credential. Check the host before reading any foreign target.
+  const readListedSelf = host !== null && listedSelf !== undefined &&
+    profile.worksControllerTargets;
+  const selfRead = readListedSelf
+    ? await options.resolveRepository(listedSelf)
+    : null;
+  if (host && targets.length > 0) {
+    await verifyDeploymentTargetScopeV1(
+      profile,
+      listedSelf !== undefined,
+      readListedSelf
+        ? () => Promise.resolve(selfRead?.visibility ?? "unknown")
+        : host.readVisibility,
+    );
+  }
   const configs: RepositoryConfigV1[] = [];
   const skipped: string[] = [];
   const privateTargets: string[] = [];
@@ -508,19 +534,26 @@ export async function loadTargetConfigsV1(options: {
   for (const target of targets) {
     // A host proven private never works a Sentinel deployment (owner,
     // 2026-11-18), so it never reads one: it is left to the public one.
-    if (privateHost && isHostedControllerDeploymentSlugV1(target.slug)) {
+    if (
+      !profile.worksControllerTargets &&
+      isHostedControllerDeploymentSlugV1(target.slug)
+    ) {
       publicTargets.push(target.slug);
       continue;
     }
-    const read = await options.resolveRepository(target);
+    const read = readListedSelf && target === listedSelf
+      ? selfRead
+      : await options.resolveRepository(target);
     if (read === null) {
       skipped.push(target.slug);
       continue;
     }
-    if (!sentinelWorksRepositoryV1(read.visibility, host)) {
-      const excluded = privateHost
-        ? (read.visibility === "public" ? publicTargets : skipped)
-        : (read.visibility === "private" ? privateTargets : skipped);
+    if (!deploymentWorksTargetV1(profile, read.visibility)) {
+      const excluded = read.visibility === "unknown"
+        ? skipped
+        : profile.worksControllerTargets
+        ? privateTargets
+        : publicTargets;
       excluded.push(target.slug);
       continue;
     }
@@ -565,6 +598,6 @@ export async function loadTargetConfigsV1(options: {
     skipped,
     privateTargets,
     factsUnavailable,
-    ...(privateHost ? { publicTargets } : {}),
+    ...(!profile.worksControllerTargets ? { publicTargets } : {}),
   };
 }

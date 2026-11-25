@@ -1,3 +1,4 @@
+import { isPublicControllerSlugV1 } from "../contracts/hosted-controller-deployment.ts";
 import { REFUSING_CI_MINUTES } from "../budget/ci-minutes.ts";
 /** Conservative custody of incomplete admissions; never an artifact or non-start proof. */
 import { RollingStartBudget } from "../budget/mod.ts";
@@ -193,9 +194,9 @@ export function createMatrixUncertaintyMaintenance(input: {
           pr.merged === true &&
           pr.merge_commit_sha === STALE_BASE_REQUEST.revision &&
           pr.head?.sha === STALE_BASE_REQUEST.source.head &&
-          pr.head?.repo?.full_name === "ubiquity-sentinel/sentinel" &&
+          isPublicControllerSlugV1(pr.head?.repo?.full_name) &&
           pr.base?.ref === "development" &&
-          pr.base?.repo?.full_name === "ubiquity-sentinel/sentinel" &&
+          isPublicControllerSlugV1(pr.base?.repo?.full_name) &&
           merged.sha === STALE_BASE_REQUEST.revision &&
           Array.isArray(merged.parents) && merged.parents.length === 2 &&
           merged.parents[0]?.sha === STALE_BASE_RUNTIME &&

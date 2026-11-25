@@ -2,7 +2,7 @@
 import { isGitSha } from "../contracts/brands.ts";
 import { SELF_TOKEN_ENV } from "./hosted-app-grant.ts";
 import {
-  HOSTED_CONTROLLER_ROLE,
+  HOSTED_CONTROLLER_PROFILE,
   HOSTED_CONTROLLER_SELF,
   PRIVATE_DEPLOYMENT_REASON,
 } from "../contracts/hosted-controller-deployment.ts";
@@ -533,7 +533,7 @@ export async function main(): Promise<void> {
         Deno.writeTextFile(summaryPath, line, { append: true });
     // The private deployment files nothing in its own tracker (owner,
     // 2026-11-18): no watchdog issues, and its upkeep notice is the log line.
-    const ownTracker = HOSTED_CONTROLLER_ROLE === "public";
+    const ownTracker = HOSTED_CONTROLLER_PROFILE.selfObservation;
     // The self App token files the watchdog's issues on the self repository
     // through the existing trusted issue port; no model worker holds it.
     if (ownTracker) {

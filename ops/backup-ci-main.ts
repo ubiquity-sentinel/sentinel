@@ -8,6 +8,7 @@
  * nothing. Only hex, enum and integer values reach `GITHUB_OUTPUT`, the
  * step summary and the log.
  */
+import { deploymentRunsServiceV1, HOSTED_CONTROLLER_REMOTE } from "../src/contracts/hosted-controller-deployment.ts";
 import type { GitSha } from "../src/contracts/brands.ts";
 import {
   BACKUP_CI_RUN_REF,
@@ -18,7 +19,6 @@ import {
   parseBackupCiTargets,
 } from "../src/contracts/backup-ci.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
-import { HOSTED_CONTROLLER_REMOTE } from "../src/contracts/hosted-controller-deployment.ts";
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import { wakeBackupCiReceipt } from "../src/host/backup-ci-completion.ts";
 import { createRepairStateStore, DenoGitRunner } from "../src/state/mod.ts";
@@ -85,7 +85,7 @@ export async function backupCiIdentity(
   const runId = env("GITHUB_RUN_ID") ?? "";
   if (
     !/^[1-9][0-9]{0,18}$/.test(runId) || env("GITHUB_RUN_ATTEMPT") !== "1" ||
-    env("GITHUB_REPOSITORY") !== BACKUP_CI_SENTINEL_REPOSITORY ||
+    !deploymentRunsServiceV1(env("GITHUB_REPOSITORY"), "backupCi") ||
     env("GITHUB_REF") !== BACKUP_CI_RUN_REF ||
     !SHA_RE.test(env("GITHUB_SHA") ?? "")
   ) return null;
@@ -242,7 +242,7 @@ async function commit(): Promise<number> {
   if (
     token === "" || !runTemp.startsWith("/") || !SHA_RE.test(sha) ||
     !/^[0-9a-f]{64}$/.test(digest) ||
-    env("GITHUB_REPOSITORY") !== BACKUP_CI_SENTINEL_REPOSITORY
+    !deploymentRunsServiceV1(env("GITHUB_REPOSITORY"), "backupCi")
   ) return 1;
   const workDir = `${runTemp}/backup-ci`;
   const git = createBackupCiGit(`${workDir}/git-home`);

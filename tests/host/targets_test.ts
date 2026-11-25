@@ -13,7 +13,7 @@ import {
   createGatedTargetReadTransport,
   createTargetConfigV1,
   createTargetTreeFactsResolver,
-  loadTargetConfigsV1,
+  loadPublicTargetConfigsV1,
   parseTargetSlugsV1,
   readTargetSlugsV1,
   STATIC_TARGETS_INVALID,
@@ -197,7 +197,7 @@ Deno.test("targets: the 64-target setting resolves in order without resolver fan
     (_unused, index) => `ubiquity/repo-${index}`,
   );
   const reads: string[] = [];
-  const loaded = await loadTargetConfigsV1({
+  const loaded = await loadPublicTargetConfigsV1({
     template: TEMPLATE,
     readFile: () => Promise.resolve(JSON.stringify(targets)),
     resolveRepository: async (target) => {
@@ -234,7 +234,7 @@ Deno.test("targets: 65 entries fail closed before resolving any repository", asy
     { length: 65 },
     (_unused, index) => `ubiquity/repo-${index}`,
   );
-  const loaded = await loadTargetConfigsV1({
+  const loaded = await loadPublicTargetConfigsV1({
     template: TEMPLATE,
     readFile: () => Promise.resolve(JSON.stringify(targets)),
     resolveRepository: () => {
@@ -332,7 +332,7 @@ Deno.test("targets: a slug can only change identity and base branch", () => {
 });
 
 Deno.test("targets: a target whose default branch is unavailable is skipped", async () => {
-  const loaded = await loadTargetConfigsV1({
+  const loaded = await loadPublicTargetConfigsV1({
     template: TEMPLATE,
     readFile: () =>
       Promise.resolve('["ubiquity-sentinel/sentinel", "ubiquity/other"]'),
@@ -354,7 +354,7 @@ Deno.test("targets: a target whose default branch is unavailable is skipped", as
 });
 
 Deno.test("targets: a bun target with CI gets the bun verify policy", async () => {
-  const loaded = await loadTargetConfigsV1({
+  const loaded = await loadPublicTargetConfigsV1({
     template: TEMPLATE,
     readFile: () => Promise.resolve('["ubiquity/prospector"]'),
     resolveRepository: () =>
@@ -426,7 +426,7 @@ Deno.test("targets: prospector mixed manifests select the declared package manag
     const tree = await resolveTreeFacts(slug("ubiquity", "prospector"), "main");
     assert.ok(tree);
     assert.equal(tree.packageManager, packageManager);
-    const loaded = await loadTargetConfigsV1({
+    const loaded = await loadPublicTargetConfigsV1({
       template: TEMPLATE,
       readFile: () => Promise.resolve('["ubiquity/prospector"]'),
       resolveRepository: () =>
@@ -450,7 +450,7 @@ Deno.test("targets: prospector mixed manifests select the declared package manag
 });
 
 Deno.test("targets: Deno without package-manager markers keeps its task names separate", async () => {
-  const loaded = await loadTargetConfigsV1({
+  const loaded = await loadPublicTargetConfigsV1({
     template: TEMPLATE,
     readFile: () => Promise.resolve('["ubiquity/prospector"]'),
     resolveRepository: () =>
@@ -470,7 +470,7 @@ Deno.test("targets: Deno without package-manager markers keeps its task names se
 });
 
 Deno.test("targets: no CI and no local verify carries the no-evidence park", async () => {
-  const loaded = await loadTargetConfigsV1({
+  const loaded = await loadPublicTargetConfigsV1({
     template: TEMPLATE,
     readFile: () => Promise.resolve('["ubiquity/empty-repo"]'),
     resolveRepository: () =>
@@ -489,7 +489,7 @@ Deno.test("targets: no CI and no local verify carries the no-evidence park", asy
 });
 
 Deno.test("targets: unreadable tree facts skip the target like a bad branch", async () => {
-  const loaded = await loadTargetConfigsV1({
+  const loaded = await loadPublicTargetConfigsV1({
     template: TEMPLATE,
     readFile: () =>
       Promise.resolve('["ubiquity-sentinel/sentinel", "ubiquity/offline"]'),
@@ -553,7 +553,7 @@ Deno.test("targets: a malformed sentinel.protected skips the target", async () =
     http: treeFactsHttp(root, routes),
     token: "token-value",
   });
-  const loaded = await loadTargetConfigsV1({
+  const loaded = await loadPublicTargetConfigsV1({
     template: TEMPLATE,
     readFile: () => Promise.resolve('["ubiquity/protected"]'),
     resolveRepository: () =>
@@ -567,7 +567,7 @@ Deno.test("targets: a malformed sentinel.protected skips the target", async () =
 
 Deno.test("targets: named policies never spend a tree-facts read", async () => {
   const asked: string[] = [];
-  const loaded = await loadTargetConfigsV1({
+  const loaded = await loadPublicTargetConfigsV1({
     template: TEMPLATE,
     readFile: () =>
       Promise.resolve(
@@ -592,7 +592,7 @@ Deno.test("targets: named policies never spend a tree-facts read", async () => {
 });
 
 Deno.test("targets: an omitted facts resolver keeps the generic boundary", async () => {
-  const loaded = await loadTargetConfigsV1({
+  const loaded = await loadPublicTargetConfigsV1({
     template: TEMPLATE,
     readFile: () =>
       Promise.resolve('["ubiquity-sentinel/sentinel", "ubiquity/prospector"]'),

@@ -25,10 +25,7 @@ import { githubGitAuthEnv } from "../src/host/local.ts";
 import { createRepairStateStore, DenoGitRunner } from "../src/state/mod.ts";
 import { GitMaintenanceIndex } from "../src/state/maintenance-index.ts";
 import type { StateReadView } from "../src/contracts/ports.ts";
-import {
-  HOSTED_CONTROLLER_REMOTE,
-  isHostedControllerMaintenanceIdentity,
-} from "../src/contracts/hosted-controller-deployment.ts";
+import { HOSTED_CONTROLLER_REMOTE, isHostedControllerMaintenanceIdentity, HOSTED_CONTROLLER_PROFILE, isDeploymentSelfSlugV1, verifyDeploymentTargetScopeV1 } from "../src/contracts/hosted-controller-deployment.ts";
 import { runHostedAutonomy } from "./hosted-autonomy-runner.ts";
 import { GitDeliveryTrainStore } from "../src/state/delivery-train-store.ts";
 import { createVerifiedTrainLandingReader } from "../src/host/hosted-repair-state.ts";
@@ -97,7 +94,6 @@ import {
   tokenScopeLineV1,
   UNAVAILABLE_TARGETS_ENV,
 } from "../src/host/target-token-scope.ts";
-import { resolveSentinelHostV1 } from "../src/repair/target-visibility.ts";
 import type {
   HostedAutonomyDepsV1,
   HostedAutonomyGitHubV1,
@@ -476,7 +472,6 @@ async function runHostedAutonomyMainResult(
               hostedRepositoryKey(effect.repository),
             )?.(effect.head as GitSha, limit) ?? Promise.resolve(null),
       });
-      await ciMinutes.reconcile(nativeTurnDeadline);
       const githubFor = (
         repository: RepositoryIdentityV1,
       ): HostedAutonomyGitHubV1 => {
@@ -492,9 +487,6 @@ async function runHostedAutonomyMainResult(
         surfaces.set(key, created);
         return created;
       };
-      const artifactRoot = await Deno.makeTempDir({
-        prefix: "sentinel-maintenance-matrix-",
-      });
       // Owner decision 2026-11-18: one gate for the whole run. The runner
       // routes every pass through it; the queue coordinator and its
       // publication get the gated state and surfaces here.
@@ -502,10 +494,9 @@ async function runHostedAutonomyMainResult(
       // hidden for the run without a read (`target-token-scope.ts`), even
       // when it is public; an unset report hides nothing.
       const reported = env(UNAVAILABLE_TARGETS_ENV);
+      const listed = await readTargetSlugsV1({ root: Deno.cwd() });
       const outOfScope = reported === null ? [] : reportedTokenScopeV1(
-        (await readTargetSlugsV1({ root: Deno.cwd() })).map((target) =>
-          target.slug
-        ),
+        listed.map((target) => target.slug),
         reported,
       );
       const scopeLine = tokenScopeLineV1(outOfScope);
@@ -516,23 +507,18 @@ async function runHostedAutonomyMainResult(
             await githubFor(repository).readVisibility?.() ?? "unknown",
           outOfScope,
         ),
-        // The deployment rule (`target-visibility.ts`): `GITHUB_REPOSITORY`
-        // is the self scope (`isHostedControllerMaintenanceIdentity` above).
-        // A checkout whose setting lists it never reads it; otherwise the
-        // self surface reads it once, shared with its default-branch read.
-        host: async () =>
-          await resolveSentinelHostV1({
-            repository: env("GITHUB_REPOSITORY"),
-            listed: (await readTargetSlugsV1({ root: Deno.cwd() })).map((
-              target,
-            ) => target.slug),
-            readVisibility: async () =>
-              await githubFor(HOSTED_AUTONOMY_SELF_SCOPE).readVisibility?.() ??
-                "unknown",
-          }),
+        profile: await verifyDeploymentTargetScopeV1(
+          HOSTED_CONTROLLER_PROFILE,
+          listed.some((target) => isDeploymentSelfSlugV1(HOSTED_CONTROLLER_PROFILE, target.slug)),
+          async () => await githubFor(HOSTED_AUTONOMY_SELF_SCOPE).readVisibility?.() ?? "unknown",
+        ),
       });
       const gatedState = privateTargets.wrapState(state);
       const gatedGithubFor = privateTargets.githubFor(githubFor);
+      await ciMinutes.reconcile(nativeTurnDeadline);
+      const artifactRoot = await Deno.makeTempDir({
+        prefix: "sentinel-maintenance-matrix-",
+      });
       try {
         result = await runFromVerifiedSource({
           ciMinutes,

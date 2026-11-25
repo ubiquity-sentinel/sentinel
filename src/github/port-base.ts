@@ -1,3 +1,4 @@
+import { isPublicControllerScopeV1 } from "../contracts/hosted-controller-deployment.ts";
 import {
   isNativeQueueTarget,
   type NativeQueueGuardV1,
@@ -89,9 +90,7 @@ export abstract class GitHubPortBase {
       TARGET_DELIVERY_POLICIES;
     this.nativeQueue = options.nativeQueue;
     this.selfMergeEnabled = options.selfMergeEnabled === true &&
-      options.repository.owner === "ubiquity-sentinel" &&
-      options.repository.name === "sentinel" &&
-      options.repository.installationId === 0;
+      isPublicControllerScopeV1(options.repository);
     this.repository = options.repository;
     this.clock = options.clock;
     this.git = options.git;

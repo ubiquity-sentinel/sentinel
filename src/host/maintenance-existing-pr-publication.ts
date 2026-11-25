@@ -20,7 +20,7 @@ import { createLocalRepositoryConfig } from "./local-config.ts";
 import { trustedGitPath } from "./local-io.ts";
 import {
   createTargetRepositoryResolver,
-  loadTargetConfigsV1,
+  loadPublicTargetConfigsV1,
 } from "./targets.ts";
 
 type PublicationPort = Pick<ExistingPrTakeoverPort, "resolvePublication">;
@@ -108,7 +108,7 @@ export function createMaintenancePublicationFor(input: {
           });
         },
       });
-      const targets = await loadTargetConfigsV1({
+      const targets = await loadPublicTargetConfigsV1({
         root: input.sourceDir,
         template: createLocalRepositoryConfig(),
         resolveRepository: (target) =>

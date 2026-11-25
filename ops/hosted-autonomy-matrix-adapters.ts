@@ -10,7 +10,7 @@ import {
 import { CLOSED_C_WAVE } from "../src/host/modern-matrix-recovery.ts";
 import { createGitBundleImporter } from "../src/host/matrix-git.ts";
 import {
-  createHostVisibilityReader,
+  createDeploymentTargetHostV1,
   createTargetRepositoryResolver,
   createTargetTreeFactsResolver,
   loadTargetConfigsV1,
@@ -22,7 +22,6 @@ import {
 import type { GitSha } from "../src/contracts/brands.ts";
 import { RollingStartBudget } from "../src/budget/mod.ts";
 import {
-  HOSTED_CONTROLLER_REPOSITORY,
   HOSTED_CONTROLLER_SELF,
 } from "../src/contracts/hosted-controller-deployment.ts";
 import { GitHubApiClient } from "../src/github/client.ts";
@@ -104,14 +103,7 @@ export async function createHostedClosedMatrixRecovery(input: {
   const targets = await loadTargetConfigsV1({
     template,
     root: input.sourceDir,
-    host: {
-      repository: HOSTED_CONTROLLER_REPOSITORY,
-      readVisibility: createHostVisibilityReader({
-        http,
-        token: input.token,
-        repository: HOSTED_CONTROLLER_REPOSITORY,
-      }),
-    },
+    host: createDeploymentTargetHostV1({ http, token: input.token }),
     resolveRepository: (target) =>
       (target.owner === template.repository.owner &&
           target.name === template.repository.name
