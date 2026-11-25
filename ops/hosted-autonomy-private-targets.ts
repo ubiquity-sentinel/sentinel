@@ -1,42 +1,13 @@
 /**
- * The launcher's private-target gate (owner decision 2026-11-18, "no private
- * repos"; `src/repair/target-visibility.ts` holds the one predicate).
+ * The launcher applies the verified deployment profile to repair state as well
+ * as GitHub access. Each foreign repository gets one cached visibility read.
+ * Unknown or opposite-visibility repositories have no surface and their rows
+ * are hidden from each maintenance pass. The controller's own state surface
+ * remains available for infrastructure.
  *
- * The maintenance passes walk repair-state records, not the target setting,
- * so the runtime's target-load exclusion does not reach them. This gate does,
- * at the two things every pass reads through:
- *
- * - State (`wrapState`): a read returns the snapshot without any row of a
- *   repository the predicate does not accept, in every collection that names
- *   a repository (`REPOSITORY_COLLECTIONS`, enumerated from the repair
- *   snapshot contract); an optional collection left without rows is left out
- *   (`OPTIONAL_COLLECTIONS`), and a view the contract parser refuses is never
- *   returned (the runner stops before any pass: `checkPrivateTargetViewV1`).
- *   A write through the view gets those rows back
- *   byte-identical (the exact objects of the snapshot at the expected head),
- *   each after exactly as many visible rows as preceded it, so a pass that
- *   keeps its visible rows in place leaves every hidden row at its index. A
- *   write that names a hidden repository in any row, or that would make the
- *   store compact a ledger holding hidden reservations, is refused with a
- *   closed reason and nothing is written. A moved head is the store's own
- *   conflict, and a head the gate already knows costs no extra state read.
- * - GitHub (`githubFor`): a repository whose visibility is not proven public
- *   this run has no surface (null: the documented "unreadable surface, skip
- *   the record, change nothing").
- *
- * Visibility is one repository read per distinct repository the state names,
- * per run, cached for the run, on the launcher's own surface (which shares
- * that answer with its default-branch read). Unknown or unreadable is not
- * public: the repository is hidden for the run. Sentinel's own repository is
- * never read or hidden (it is the public repository the launcher runs in), so
- * a failed visibility read hides only the repository it was for and never
- * stops Sentinel's own delivery or the owner-merge flow; only a view the
- * contract refuses stops the whole run.
- *
- * The host (`target-visibility.ts` deployment rule) is decided once, before
- * the first repository: a launcher whose committed setting lists its own
- * repository never reads it and is the public-only gate above. Only a host
- * proven private shows private repositories and hides public ones instead.
+ * Writes restore hidden rows at their original positions and refuse changes to
+ * hidden repositories or compaction of their reservations. The first state
+ * view must still parse under the repair snapshot contract.
  */
 import {
   portError,
@@ -55,13 +26,12 @@ import type { GitSha } from "../src/contracts/brands.ts";
 import { MaxItems } from "../src/contracts/validation.ts";
 import {
   PRIVATE_TARGET_REASON,
-  type SentinelHostV1,
-  sentinelWorksRepositoryV1,
   type TargetExclusionReasonV1,
-  targetExclusionReasonV1,
   type TargetVisibilityV1,
 } from "../src/repair/target-visibility.ts";
 import { HOSTED_AUTONOMY_SELF_SCOPE } from "./hosted-autonomy-policy.ts";
+
+import { deploymentWorksTargetV1, type HostedControllerProfileV1 } from "../src/contracts/hosted-controller-deployment.ts";
 
 type Row = Record<string, unknown>;
 
@@ -396,27 +366,12 @@ export function createPrivateTargetGateV1(input: {
    * Production never sets it and uses `parseRepairStateSnapshotV1`.
    */
   validateView?: (view: RepairStateSnapshotV1) => unknown;
-  /**
-   * The run's own repository, decided once on the first repository the gate
-   * decides (`resolveSentinelHostV1`). Omitted or failed: not private, so
-   * exactly the public-only gate.
-   */
-  host?: () => Promise<SentinelHostV1>;
+  /** Bound and checked against GitHub before the launcher builds any view. */
+  profile: HostedControllerProfileV1;
 }): PrivateTargetGateV1 {
   const validateView = input.validateView ?? parseRepairStateSnapshotV1;
   const pending = new Map<string, Promise<boolean>>();
   const settled = new Map<string, boolean>();
-  let decidedHost: SentinelHostV1 | undefined;
-  let hostOnce: Promise<SentinelHostV1 | undefined> | null = null;
-  const host = (): Promise<SentinelHostV1 | undefined> =>
-    hostOnce ??= (async () => {
-      try {
-        decidedHost = await input.host?.();
-      } catch {
-        decidedHost = undefined;
-      }
-      return decidedHost;
-    })();
   const raws = new Map<string, RepairStateSnapshotV1>();
   // Heads whose state hid nothing: the view was the state itself.
   const clean = new Set<string>();
@@ -440,7 +395,6 @@ export function createPrivateTargetGateV1(input: {
     let known = pending.get(key);
     if (known === undefined) {
       known = (async () => {
-        const decided = await host();
         let visibility: TargetVisibilityV1 = "unknown";
         try {
           if (repository !== null) {
@@ -449,7 +403,7 @@ export function createPrivateTargetGateV1(input: {
         } catch {
           visibility = "unknown";
         }
-        const works = sentinelWorksRepositoryV1(visibility, decided);
+        const works = deploymentWorksTargetV1(input.profile, visibility);
         settled.set(key, works);
         return works;
       })();
@@ -630,7 +584,7 @@ export function createPrivateTargetGateV1(input: {
       }
       return {
         kind: "sentinel_private_targets_hidden",
-        reason: targetExclusionReasonV1(decidedHost),
+        reason: input.profile.excludedTargetReason,
         repositories,
         rows: hiddenRows,
         refusedWrites,

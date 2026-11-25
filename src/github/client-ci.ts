@@ -1,3 +1,4 @@
+import { isPublicControllerScopeV1 } from "../contracts/hosted-controller-deployment.ts";
 // client ci.
 
 import type { PortResultV1 } from "../contracts/ports.ts";
@@ -47,9 +48,7 @@ export abstract class GitHubClientCi extends GitHubClientWrites {
     input: ApproveExactCiRunInputV1,
   ): Promise<PortResultV1<CiApprovalOutcomeV1>> {
     if (
-      this.repository.owner !== "ubiquity-sentinel" ||
-      this.repository.name !== "sentinel" ||
-      this.repository.installationId !== 0
+      !isPublicControllerScopeV1(this.repository)
     ) {
       return portError("invalid", CI_APPROVAL_SCOPE);
     }

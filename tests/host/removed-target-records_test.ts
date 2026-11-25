@@ -17,6 +17,7 @@
  *   reads it again in the run. The full launcher run over an unknown
  *   visibility is `hosted-autonomy-private-targets_test.ts`.
  */
+import { PUBLIC_CONTROLLER_PROFILE } from "../../src/contracts/hosted-controller-deployment.ts";
 import assert from "node:assert/strict";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
 import type { GitSha, WorkItemId } from "../../src/contracts/brands.ts";
@@ -25,11 +26,10 @@ import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import { createLocalRepositoryConfig } from "../../src/host/local.ts";
 import {
-  loadTargetConfigsV1,
+  loadPublicTargetConfigsV1,
   readTargetSlugsV1,
 } from "../../src/host/targets.ts";
 import { rankEligibleWork } from "../../src/repair/selection.ts";
-import { resolveSentinelHostV1 } from "../../src/repair/target-visibility.ts";
 import type { HostedAutonomyGitHubV1 } from "../../ops/hosted-autonomy.ts";
 import { createHostedAutonomyGitHub } from "../../ops/hosted-autonomy-github.ts";
 import {
@@ -123,7 +123,7 @@ Deno.test("removed target (runtime): the shipped setting never reads or configur
   const listed = (await readTargetSlugsV1()).map((target) => target.slug);
   assert.equal(listed.includes(SLUG), false, "the vanished name is gone");
   const asked: string[] = [];
-  const loaded = await loadTargetConfigsV1({
+  const loaded = await loadPublicTargetConfigsV1({
     template: createLocalRepositoryConfig(),
     resolveRepository: (target) => {
       asked.push(target.slug);
@@ -212,8 +212,7 @@ Deno.test("removed target (launcher): the gate's one read answers 404, so it is 
   }) as typeof fetch;
   try {
     // The production composition (`hosted-autonomy-main.ts`): one launcher
-    // surface per repository, and the host decided from the shipped setting,
-    // which lists Sentinel itself, so the host is never read.
+    // surface per repository and the public deployment profile.
     const surfaces = new Map<string, HostedAutonomyGitHubV1>();
     const githubFor = (repository: RepositoryIdentityV1) => {
       const key = `${repository.owner}/${repository.name}`;
@@ -222,16 +221,10 @@ Deno.test("removed target (launcher): the gate's one read answers 404, so it is 
       surfaces.set(key, surface);
       return surface;
     };
-    const listed = (await readTargetSlugsV1()).map((target) => target.slug);
     const gate = createPrivateTargetGateV1({
+      profile: PUBLIC_CONTROLLER_PROFILE,
       readVisibility: async (repository) =>
         await githubFor(repository).readVisibility?.() ?? "unknown",
-      host: async () =>
-        await resolveSentinelHostV1({
-          repository: "ubiquity-sentinel/sentinel",
-          listed,
-          readVisibility: () => Promise.reject(new Error("never read")),
-        }),
     });
     const state = new MemoryState();
     const publicRecord = foreignRecord();

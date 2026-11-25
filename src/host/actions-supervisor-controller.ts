@@ -3,7 +3,7 @@ import {
   HOSTED_RUNTIME_ID,
   type HostedRuntimeRecordV1,
 } from "../contracts/hosted-supervisor.ts";
-import { HOSTED_CONTROLLER_ROLE } from "../contracts/hosted-controller-deployment.ts";
+import { HOSTED_CONTROLLER_PROFILE } from "../contracts/hosted-controller-deployment.ts";
 import { hostedRuntimeBootstrapDisposition } from "./hosted-runtime-bootstrap.ts";
 
 /** The private role's closed hold while its launcher is not installed. */
@@ -173,7 +173,7 @@ export async function runHostedSupervisorPrepare(
     // installed revision), so nothing starts until it installs: no ordinary,
     // bootstrap or release execution on the mismatch.
     if (
-      HOSTED_CONTROLLER_ROLE === "private" &&
+      HOSTED_CONTROLLER_PROFILE.requireInstalledLauncher &&
       runtime.activeRevision !== input.run.launcherSha
     ) return pending(PRIVATE_LAUNCHER_NOT_INSTALLED);
     const due = ordinaryDue(runtime, releases);

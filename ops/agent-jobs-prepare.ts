@@ -1,3 +1,4 @@
+import { deploymentRunsServiceV1 } from "../src/contracts/hosted-controller-deployment.ts";
 import {
   pinAgentJobsPlan,
   readPublicAgentJobRepository,
@@ -21,7 +22,7 @@ async function prepare() {
     throw new Error("unknown agent jobs request lane");
   }
   if (
-    env("GITHUB_REPOSITORY") !== "ubiquity-sentinel/sentinel" ||
+    !deploymentRunsServiceV1(env("GITHUB_REPOSITORY"), "agentJobs") ||
     env("GITHUB_REF") !== "refs/heads/development"
   ) throw new Error("agent jobs requires the Sentinel development ref");
 

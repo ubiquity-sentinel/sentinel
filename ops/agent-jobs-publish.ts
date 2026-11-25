@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { type GitSha, isGitSha } from "../src/contracts/brands.ts";
 import { portError, portOk } from "../src/contracts/ports.ts";
 import { pushGuardRefusal } from "../src/github/push-content-guard.ts";
-import { sentinelWorksRepositoryV1 } from "../src/repair/target-visibility.ts";
+import { deploymentWorksTargetV1, isPublicControllerSlugV1, PUBLIC_CONTROLLER_PROFILE } from "../src/contracts/hosted-controller-deployment.ts";
 import type { TargetVisibilityV1 } from "../src/repair/target-visibility.ts";
 import { git, gitAuthEnv, githubRemoteUrl } from "./agent-jobs-git.ts";
 import type { RemoteUrl } from "./agent-jobs-git.ts";
@@ -39,7 +39,6 @@ const REVIEWED_VERDICTS = [
   "skipped_no_diff",
   "blocked",
 ] as const;
-const CONTROLLER = "ubiquity-sentinel/sentinel";
 
 type PublishStatus =
   | "published"
@@ -331,7 +330,8 @@ async function checkCurrentBase(
   env: Record<string, string>,
 ): Promise<void> {
   if (
-    !sentinelWorksRepositoryV1(
+    !deploymentWorksTargetV1(
+      PUBLIC_CONTROLLER_PROFILE,
       await input.ports.repositoryVisibility(job.repository),
     )
   ) {
@@ -446,7 +446,7 @@ async function publishOne(
     },
     {
       base: baseSha,
-      ownRepository: job.repository.toLowerCase() === CONTROLLER,
+      ownRepository: isPublicControllerSlugV1(job.repository.toLowerCase()),
       // The manual plan carries no independently verified issue provenance.
       trust: () => Promise.resolve("unavailable"),
     },

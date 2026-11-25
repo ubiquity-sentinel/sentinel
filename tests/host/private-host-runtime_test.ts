@@ -1,26 +1,9 @@
-/**
- * The deployment rule (`src/repair/target-visibility.ts`) through the actual
- * hosted runtime composition, the production repository resolver and the
- * matrix rig's real Git state, release custody and native identity:
- *
- * - a host whose own repository GitHub answers is private, and that does not
- *   list it, configures its private target, leaves the public one to the
- *   public deployment and skips one whose visibility GitHub did not state;
- *   the host read is one read on the self credential;
- * - the same host answered public configures exactly what today's runtime
- *   configures (the public target only), with the same line;
- * - the native repository cannot be pointed elsewhere: any other
- *   `GITHUB_REPOSITORY` is the static identity refusal before any read.
- */
 import assert from "node:assert/strict";
 import { ensureRepairStateSeed } from "../../src/host/actions-host-io.ts";
 import { runActionsRepairHost } from "../../src/host/actions-repair-host.ts";
 import { HOSTED_RUNTIME_STATIC_IDENTITY } from "../../src/host/hosted-runtime-identity.ts";
 import type { HttpTransportV1 } from "../../src/github/http.ts";
-import {
-  PRIVATE_TARGET_REASON,
-  PUBLIC_TARGET_REASON,
-} from "../../src/repair/target-visibility.ts";
+import { PRIVATE_TARGET_REASON } from "../../src/repair/target-visibility.ts";
 import { PRIVATE_TARGETS_KIND } from "../../src/repair/private-targets-line.ts";
 import { scanStepLines } from "../../src/repair/step-line.ts";
 import { rig } from "./matrix-actions-fixtures.ts";
@@ -102,34 +85,30 @@ async function pass(host: string, name: string) {
         return error instanceof CyclesReached ? "cycles" : String(error);
       }
     });
-    const line = scanStepLines(lines.join("\n")).filter((entry) =>
-      entry.kind === PRIVATE_TARGETS_KIND
-    );
+    const line = scanStepLines(lines.join("\n"));
     return { outcome, configured, requests, line };
   } finally {
     await r.cleanup();
   }
 }
 
-Deno.test("private host: its private target is configured, the public one is left to the public deployment, an unstated one is skipped", async () => {
-  const run = await pass(BODY.private, "private-host-runtime");
-  assert.equal(run.outcome, "cycles");
-  assert.deepEqual(run.configured, [["ubiquity/prospector"]]);
-  // One host read on the self credential, then one read per target on the
-  // target credential, in setting order.
+Deno.test("the committed public controller refuses a private host answer before foreign reads or repair", async () => {
+  const run = await pass(BODY.private, "public-host-mismatch");
+  assert.match(run.outcome, /deployment_visibility_mismatch/);
+  assert.deepEqual(run.configured, []);
   assert.deepEqual(run.requests, [
     "/repos/ubiquity-sentinel/sentinel Bearer fake-read-token",
-    "/repos/ubiquity/prospector Bearer fake-app-token",
-    "/repos/ubiquity/ai.ubq.fi Bearer fake-app-token",
-    "/repos/ubiquity/unstated Bearer fake-app-token",
   ]);
-  assert.deepEqual(run.line, [{
-    kind: PRIVATE_TARGETS_KIND,
-    reason: PUBLIC_TARGET_REASON,
-    skipped: 1,
-    listed: 3,
-    configured: 1,
-  }]);
+  assert.deepEqual(
+    run.line.filter((entry) => entry.kind === "sentinel_deployment_refused"),
+    [{
+      kind: "sentinel_deployment_refused",
+      reason: "deployment_visibility_mismatch",
+      repository: "ubiquity-sentinel/sentinel",
+      expected: "public",
+      observed: "private",
+    }],
+  );
 });
 
 Deno.test("private host: a host GitHub answers is public, or does not say, works exactly the public-only set", async () => {
@@ -137,13 +116,17 @@ Deno.test("private host: a host GitHub answers is public, or does not say, works
     const run = await pass(host, `public-host-runtime-${host.length}`);
     assert.equal(run.outcome, "cycles", host);
     assert.deepEqual(run.configured, [["ubiquity/ai.ubq.fi"]], host);
-    assert.deepEqual(run.line, [{
-      kind: PRIVATE_TARGETS_KIND,
-      reason: PRIVATE_TARGET_REASON,
-      skipped: 1,
-      listed: 3,
-      configured: 1,
-    }], host);
+    assert.deepEqual(
+      run.line.filter((entry) => entry.kind === PRIVATE_TARGETS_KIND),
+      [{
+        kind: PRIVATE_TARGETS_KIND,
+        reason: PRIVATE_TARGET_REASON,
+        skipped: 1,
+        listed: 3,
+        configured: 1,
+      }],
+      host,
+    );
   }
 });
 

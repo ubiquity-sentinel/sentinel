@@ -8,6 +8,7 @@
  * no HTTP, token or GitHub client, and every failure is a bounded sanitized
  * `unavailable`.
  */
+import { isPublicControllerScopeV1 } from "../contracts/hosted-controller-deployment.ts";
 
 import {
   hostedReceiptBindsRequest,
@@ -29,9 +30,7 @@ const STATIC_SCOPE = "hosted supervisor receipt requires the self scope";
 /** Exact hosted self scope: the no-App owner credential identity. */
 function isHostedSelfRequest(request: ReleaseRequestV1): boolean {
   const repository = request.target.repository;
-  return repository.installationId === 0 &&
-    repository.owner === "ubiquity-sentinel" &&
-    repository.name === "sentinel" &&
+  return isPublicControllerScopeV1(repository) &&
     request.target.environment === "production";
 }
 

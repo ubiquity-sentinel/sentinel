@@ -1,4 +1,5 @@
 /** Trusted controller placement. Change only in reviewed deployment source. */
+import type { TargetVisibilityV1 } from "../repair/target-visibility.ts";
 import type { RepositoryIdentityV1 } from "./shared.ts";
 import {
   expectNonEmptyString,
@@ -126,10 +127,14 @@ export function selectHostedControllerDeploymentV1(
   }
   return {
     ok: true,
-    binding: {
+    binding: Object.freeze({
       ...entry,
-      deployment: { ...entry.deployment, supervisorWorkflowId, ciWorkflowId },
-    },
+      deployment: Object.freeze({
+        ...entry.deployment,
+        supervisorWorkflowId,
+        ciWorkflowId,
+      }),
+    }),
   };
 }
 
@@ -156,23 +161,6 @@ if (!SELECTED.ok) {
   );
 }
 
-/** The selected entry's role; only the public entry works Sentinel itself. */
-export const HOSTED_CONTROLLER_ROLE: HostedControllerRoleV1 =
-  SELECTED.binding.role;
-/**
- * Closed reason every public-only path (Sentinel's own tracker, backup CI,
- * owner install) reports on the private role instead of re-pointing itself.
- */
-export const PRIVATE_DEPLOYMENT_REASON = "private_deployment";
-/** Retired pre-migration names of the selected entry, for state reads only. */
-export const HOSTED_CONTROLLER_RETIRED_REPOSITORY: string | null =
-  SELECTED.binding.retiredRepository;
-export const HOSTED_CONTROLLER_RETIRED_RUNTIME_ID: string | null =
-  SELECTED.binding.retiredRuntimeId;
-/** Committed App self installation of the selected entry, when committed. */
-export const HOSTED_CONTROLLER_SELF_INSTALLATION_ID: number | null =
-  SELECTED.binding.selfInstallationId;
-
 /** Per-cycle cell ceilings of one deployment; null is the platform bound. */
 export interface HostedControllerCycleCellsV1 {
   /** Implementation (matrix) cells one planner pass may grant. */
@@ -192,16 +180,222 @@ export interface HostedControllerCycleCellsV1 {
 export const PRIVATE_CYCLE_CELLS: HostedControllerCycleCellsV1 = Object.freeze(
   { matrix: 6, repair: 4 },
 );
-export const HOSTED_CONTROLLER_CYCLE_CELLS:
-  | HostedControllerCycleCellsV1
-  | null = SELECTED.binding.role === "private" ? PRIVATE_CYCLE_CELLS : null;
-
-export const HOSTED_CONTROLLER_DEPLOYMENT = Object.freeze(
-  SELECTED.binding.deployment,
+/** All differences in behavior follow the committed binding. GitHub may confirm
+ * its visibility or refuse a run, but cannot select a different set of targets. */
+function hostedControllerProfileV1<T extends HostedControllerEntryV1>(
+  binding: T,
+) {
+  const isPublic = binding.role === "public";
+  return Object.freeze({
+    deployment: binding.deployment as T["deployment"],
+    retiredRepository: binding.retiredRepository,
+    retiredRuntimeId: binding.retiredRuntimeId,
+    role: binding.role,
+    repository: `${binding.deployment.owner}/${binding.deployment.name}`,
+    targetVisibility: binding.role,
+    worksControllerTargets: isPublic,
+    excludedTargetReason: isPublic
+      ? "private_repository" as const
+      : "public_repository" as const,
+    cycleCells: isPublic ? null : PRIVATE_CYCLE_CELLS,
+    selfObservation: isPublic,
+    release: isPublic,
+    backupCi: isPublic,
+    agentJobs: isPublic,
+    chaining: isPublic,
+    privateCadence: !isPublic,
+    developmentPushCiOnly: !isPublic,
+    matrixCellTimeoutMinutes: isPublic ? 300 : 120,
+    selfTokenOwner: binding.deployment.owner,
+    selfInstallationId: binding.selfInstallationId,
+    ownerDevelopmentInstall: isPublic,
+    requireInstalledLauncher: !isPublic,
+    queueCanary: isPublic,
+    gatewayMonitor: isPublic,
+  });
+}
+export type HostedControllerProfileV1 = ReturnType<
+  typeof hostedControllerProfileV1
+>;
+export const HOSTED_CONTROLLER_PROFILES = Object.freeze(
+  HOSTED_CONTROLLER_DEPLOYMENTS.map(hostedControllerProfileV1),
 );
+export const PUBLIC_CONTROLLER_PROFILE = HOSTED_CONTROLLER_PROFILES[0];
+export const HOSTED_CONTROLLER_PROFILE = hostedControllerProfileV1(
+  SELECTED.binding,
+);
+/** The selected entry's role; only the public entry works Sentinel itself. */
+export const HOSTED_CONTROLLER_ROLE: HostedControllerRoleV1 =
+  HOSTED_CONTROLLER_PROFILE.role;
+/**
+ * Closed reason every public-only path (Sentinel's own tracker, backup CI,
+ * owner install) reports on the private role instead of re-pointing itself.
+ */
+export const PRIVATE_DEPLOYMENT_REASON = "private_deployment";
+/** Retired pre-migration names of the selected entry, for state reads only. */
+export const HOSTED_CONTROLLER_RETIRED_REPOSITORY: string | null =
+  HOSTED_CONTROLLER_PROFILE.retiredRepository;
+export const HOSTED_CONTROLLER_RETIRED_RUNTIME_ID: string | null =
+  HOSTED_CONTROLLER_PROFILE.retiredRuntimeId;
+/** Committed App self installation of the selected entry, when committed. */
+export const HOSTED_CONTROLLER_SELF_INSTALLATION_ID: number | null =
+  HOSTED_CONTROLLER_PROFILE.selfInstallationId;
 
+export const HOSTED_CONTROLLER_CYCLE_CELLS =
+  HOSTED_CONTROLLER_PROFILE.cycleCells;
+export const HOSTED_CONTROLLER_DEPLOYMENT =
+  HOSTED_CONTROLLER_PROFILE.deployment;
 export const HOSTED_CONTROLLER_REPOSITORY =
-  `${HOSTED_CONTROLLER_DEPLOYMENT.owner}/${HOSTED_CONTROLLER_DEPLOYMENT.name}`;
+  HOSTED_CONTROLLER_PROFILE.repository;
+
+/** Fixed public artifacts and scope-zero repair contracts must never follow a mirror. */
+export function isPublicControllerSlugV1(slug: unknown): boolean {
+  return slug === PUBLIC_CONTROLLER_PROFILE.repository;
+}
+export function isPublicControllerNameV1(owner: string, name: string): boolean {
+  return owner === HOSTED_CONTROLLER_DEPLOYMENTS[0].deployment.owner &&
+    name === HOSTED_CONTROLLER_DEPLOYMENTS[0].deployment.name;
+}
+export function isPublicControllerScopeV1(
+  repository: RepositoryIdentityV1,
+): boolean {
+  return repository.installationId === 0 &&
+    isPublicControllerNameV1(repository.owner, repository.name);
+}
+
+/** Native proofs must identify an exact committed repository, including on an unknown fork. */
+export function deploymentRunsServiceV1(
+  repository: unknown,
+  service:
+    | "release"
+    | "backupCi"
+    | "agentJobs"
+    | "ownerDevelopmentInstall"
+    | "queueCanary"
+    | "gatewayMonitor",
+): boolean {
+  return HOSTED_CONTROLLER_PROFILES.some((profile) =>
+    profile.repository === repository && profile[service]
+  );
+}
+
+export function isDeploymentSelfSlugV1(
+  profile: HostedControllerProfileV1,
+  slug: string,
+): boolean {
+  return profile.repository.toLowerCase() === slug.toLowerCase();
+}
+
+export class HostedControllerVisibilityRefusalV1 extends Error {
+  constructor(
+    readonly reason:
+      | "deployment_visibility_mismatch"
+      | "deployment_visibility_unavailable"
+      | "private_controller_self_listed",
+    readonly profile: HostedControllerProfileV1,
+    readonly observed: TargetVisibilityV1,
+  ) {
+    super(
+      `${reason}: ${profile.repository} expected ${profile.targetVisibility}, observed ${observed}`,
+    );
+  }
+}
+
+export const DEPLOYMENT_REFUSAL_KIND = "sentinel_deployment_refused";
+interface DeploymentRefusalLineV1 {
+  kind: typeof DEPLOYMENT_REFUSAL_KIND;
+  reason: HostedControllerVisibilityRefusalV1["reason"];
+  repository: string;
+  expected: HostedControllerRoleV1;
+  observed: TargetVisibilityV1;
+}
+
+/** Only committed identifiers and closed codes may leave a captured child log. */
+export function parseDeploymentRefusalLineV1(
+  value: unknown,
+): DeploymentRefusalLineV1 | null {
+  if (!value || typeof value !== "object") return null;
+  const line = value as Record<string, unknown>;
+  const profile = HOSTED_CONTROLLER_PROFILES.find((p) =>
+    p.repository === line.repository
+  );
+  if (
+    line.kind !== DEPLOYMENT_REFUSAL_KIND || !profile ||
+    line.expected !== profile.targetVisibility ||
+    Object.keys(line).sort().join() !==
+      "expected,kind,observed,reason,repository"
+  ) return null;
+  const { reason, observed } = line;
+  if (
+    reason !== "deployment_visibility_mismatch" &&
+    reason !== "deployment_visibility_unavailable" &&
+    reason !== "private_controller_self_listed"
+  ) return null;
+  if (
+    observed !== "public" && observed !== "private" && observed !== "unknown"
+  ) return null;
+  return {
+    kind: DEPLOYMENT_REFUSAL_KIND,
+    reason,
+    repository: profile.repository,
+    expected: profile.targetVisibility,
+    observed,
+  };
+}
+
+export async function verifyDeploymentTargetScopeV1(
+  profile: HostedControllerProfileV1,
+  selfListed: boolean,
+  readVisibility: () => Promise<TargetVisibilityV1>,
+): Promise<HostedControllerProfileV1> {
+  const refuse = (
+    reason: HostedControllerVisibilityRefusalV1["reason"],
+    observed: TargetVisibilityV1,
+  ): never => {
+    const error = new HostedControllerVisibilityRefusalV1(
+      reason,
+      profile,
+      observed,
+    );
+    console.log(
+      JSON.stringify({
+        kind: DEPLOYMENT_REFUSAL_KIND,
+        reason,
+        repository: profile.repository,
+        expected: profile.targetVisibility,
+        observed,
+      }),
+    );
+    throw error;
+  };
+  if (selfListed && !profile.worksControllerTargets) {
+    refuse("private_controller_self_listed", "unknown");
+  }
+  let observed: TargetVisibilityV1;
+  try {
+    observed = await readVisibility();
+  } catch {
+    observed = "unknown";
+  }
+  if (observed === "unknown") {
+    // Losing a read cannot widen the public allowlist. The private deployment
+    // needs affirmative evidence before handling any private material.
+    if (profile.targetVisibility === "private") {
+      refuse("deployment_visibility_unavailable", observed);
+    }
+  } else if (observed !== profile.targetVisibility) {
+    refuse("deployment_visibility_mismatch", observed);
+  }
+  return profile;
+}
+
+export function deploymentWorksTargetV1(
+  profile: HostedControllerProfileV1,
+  visibility: TargetVisibilityV1,
+): boolean {
+  return visibility === profile.targetVisibility;
+}
+
 export const HOSTED_CONTROLLER_SELF: Readonly<RepositoryIdentityV1> = Object
   .freeze({
     owner: HOSTED_CONTROLLER_DEPLOYMENT.owner,

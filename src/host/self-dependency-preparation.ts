@@ -1,4 +1,5 @@
 /** Trusted host preparation only; no credential or executable target code crosses. */
+import { isPublicControllerNameV1 } from "../contracts/hosted-controller-deployment.ts";
 import { type GitSha, isGitSha } from "../contracts/brands.ts";
 import { portError, portOk, type PortResultV1 } from "../contracts/ports.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
@@ -27,8 +28,7 @@ export type PrepareCheckoutDependenciesV1 = (
 export function isSentinelSelfTarget(
   repository: RepositoryIdentityV1,
 ): boolean {
-  return repository.owner === "ubiquity-sentinel" &&
-    repository.name === "sentinel";
+  return isPublicControllerNameV1(repository.owner, repository.name);
 }
 /**
  * expectedSealSha256/sourceCommit and seedRoot must come from the protected,

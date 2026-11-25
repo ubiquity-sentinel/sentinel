@@ -14,6 +14,7 @@
  * - An unknown or unreadable visibility behaves like private.
  * - One text-free line names the closed reason and counts.
  */
+import { PUBLIC_CONTROLLER_PROFILE } from "../../src/contracts/hosted-controller-deployment.ts";
 import assert from "node:assert/strict";
 import type { WorkItemId } from "../../src/contracts/brands.ts";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
@@ -227,6 +228,7 @@ async function launcherRun(
   try {
     const gate = options.gate
       ? createPrivateTargetGateV1({
+        profile: PUBLIC_CONTROLLER_PROFILE,
         readVisibility: async (repository) =>
           await githubFor(repository).readVisibility?.() ?? "unknown",
       })
@@ -394,6 +396,7 @@ Deno.test("private targets (launcher): with every foreign visibility read failin
     assert.ok(before.ok && before.value.status === "found");
     const visibilityReads: string[] = [];
     const gate = createPrivateTargetGateV1({
+      profile: PUBLIC_CONTROLLER_PROFILE,
       readVisibility: (repository) => {
         visibilityReads.push(repository.name);
         return Promise.reject(new Error("read failed"));
@@ -447,6 +450,7 @@ Deno.test("private targets (launcher): a hidden view the contract refuses stops 
     const before = await rig.state.readRepair();
     assert.ok(before.ok && before.value.status === "found");
     const gate = createPrivateTargetGateV1({
+      profile: PUBLIC_CONTROLLER_PROFILE,
       readVisibility: () => Promise.resolve("private"),
       validateView: () => {
         throw new Error("refused");

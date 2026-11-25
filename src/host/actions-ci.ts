@@ -12,6 +12,7 @@
  * count — an approval problem can never prevent deterministic repair
  * bookkeeping or drain.
  */
+import { isPublicControllerScopeV1 } from "../contracts/hosted-controller-deployment.ts";
 
 import type {
   Clock,
@@ -162,9 +163,7 @@ function isSelfCandidate(record: WorkRecordV1): boolean {
       return false;
     }
   }
-  return record.repository.owner === SELF_REPOSITORY.owner &&
-    record.repository.name === SELF_REPOSITORY.name &&
-    record.repository.installationId === SELF_REPOSITORY.installationId &&
+  return isPublicControllerScopeV1(record.repository) &&
     record.nextStep !== "done" &&
     record.target.pr !== null &&
     record.target.head !== null &&

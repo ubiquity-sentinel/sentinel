@@ -1,4 +1,5 @@
 /** Facts emitted only by the protected native CI wrapper; parsing is not authentication. */
+import { isPublicControllerSlugV1 } from "./hosted-controller-deployment.ts";
 import type { GitSha } from "./brands.ts";
 import {
   expectExactKeys,
@@ -60,7 +61,7 @@ export function parseNativeCiProof(
     "sources",
   ], path);
   expectVersion(o.version, `${path}.version`);
-  if (o.repository !== "ubiquity-sentinel/sentinel" || o.job !== "test-local") {
+  if (!isPublicControllerSlugV1(o.repository) || o.job !== "test-local") {
     fail(path, "invalid_value", "native CI scope mismatch");
   }
   const s = expectRecord(o.sources, `${path}.sources`);
