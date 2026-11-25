@@ -274,7 +274,7 @@ export const PRIVATE_TARGET_VIEW_INVALID =
 export interface PrivateTargetGateV1 {
   /** The state every pass reads and writes through (see the module). */
   wrapState<T extends StateReadView & RepairStateWriter>(state: T): T;
-  /** No surface for a repository not proven public this run. */
+  /** Only foreign repositories accepted by the verified profile get a surface. */
   githubFor<S>(
     inner: (repository: RepositoryIdentityV1) => S | null,
   ): (repository: RepositoryIdentityV1) => S | null;

@@ -80,25 +80,23 @@ const rule: Deno.lint.Plugin = {
               node.id.type === "Identifier" && node.init && isPolicy(node.init)
             ) names.add(node.id.name);
           },
-          ImportSpecifier(node) {
-            const symbol = text(node.imported);
+          Identifier(node) {
             if (
-              symbol === "HOSTED_CONTROLLER_ROLE" ||
-              symbol === "PRIVATE_CYCLE_CELLS" ||
-              (symbol === publicLoader &&
+              [
+                "HOSTED_CONTROLLER_ROLE",
+                "PRIVATE_CYCLE_CELLS",
+                "HOSTED_CONTROLLER_PROFILES",
+                "HOSTED_CONTROLLER_DEPLOYMENTS",
+              ].includes(node.name) ||
+              (node.name === publicLoader &&
                 !publicOnlyConsumers.has(ctx.filename))
-            ) report(node);
-          },
-          MemberExpression(node) {
-            if (
-              text(node.property) === publicLoader &&
-              !publicOnlyConsumers.has(ctx.filename)
             ) report(node);
           },
           BinaryExpression(node) {
             if (
               ["==", "!=", "===", "!=="].includes(node.operator) &&
-              (isPolicy(node.left) || isPolicy(node.right))
+              (isPolicy(node.left) || isPolicy(node.right) ||
+                /PUBLIC_CONTROLLER_PROFILE\s*\.\s*repository/.test(text(node)))
             ) report(node);
           },
           SwitchCase(node) {

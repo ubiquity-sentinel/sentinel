@@ -212,6 +212,8 @@ function hostedControllerProfileV1<T extends HostedControllerEntryV1>(
     requireInstalledLauncher: !isPublic,
     queueCanary: isPublic,
     gatewayMonitor: isPublic,
+    gatewaySourceVerify: isPublic,
+    supervisorDispatcher: isPublic,
   });
 }
 export type HostedControllerProfileV1 = ReturnType<
@@ -486,31 +488,34 @@ export function isHostedControllerMaintenanceIdentity(
 
 /** Deployment policy as expressed by GitHub Actions, which cannot import TypeScript. */
 
-type WorkflowAdmission =
-  | "public-only"
-  | "private-only"
-  | "both"
-  | "role-dependent";
 type WorkflowSwitch =
   | "agentJobs"
   | "backupCi"
   | "developmentPushCiOnly"
+  | "supervisorDispatcher"
+  | "gatewaySourceVerify"
   | "gatewayMonitor"
   | "privateCadence"
   | "queueCanary"
   | "release";
 
-interface WorkflowJob {
-  readonly admission: WorkflowAdmission;
-  readonly if?: string;
-  /** A dependency carrying the role gate of this job. */
-  readonly inheritsGateFrom?: string;
-  readonly profileSwitch?: WorkflowSwitch;
-  /** Workflow fields that name or use the current or other controller. */
-  readonly repositoryFields?: Readonly<
-    Record<string, string | readonly string[]>
-  >;
-}
+type WorkflowJob =
+  & (
+    | { readonly admission: "both"; readonly profileSwitch?: never }
+    | {
+      readonly admission: "public-only" | "private-only" | "role-dependent";
+      readonly profileSwitch: WorkflowSwitch;
+    }
+  )
+  & {
+    readonly if?: string;
+    /** A dependency carrying the role gate of this job. */
+    readonly inheritsGateFrom?: string;
+    /** Workflow fields that name or use the current or other controller. */
+    readonly repositoryFields?: Readonly<
+      Record<string, string | readonly string[]>
+    >;
+  };
 
 const PUBLIC = "github.repository == '@public.repository@'";
 const PRIVATE = "github.repository == '@private.repository@'";
@@ -649,7 +654,11 @@ export const HOSTED_CONTROLLER_WORKFLOW_TABLE: Readonly<
     },
   },
   "gateway-source-verify.yml": {
-    verify: { admission: "public-only", if: PUBLIC },
+    verify: {
+      admission: "public-only",
+      profileSwitch: "gatewaySourceVerify",
+      if: PUBLIC,
+    },
   },
   "local-status.yml": {
     report: { admission: "both" },
@@ -713,6 +722,7 @@ export const HOSTED_CONTROLLER_WORKFLOW_TABLE: Readonly<
   "repair.yml": {
     dispatch: {
       admission: "public-only",
+      profileSwitch: "supervisorDispatcher",
       if: PUBLIC,
       repositoryFields: {
         "steps[Dispatch the exact protected supervisor ref].run": [
@@ -724,6 +734,7 @@ export const HOSTED_CONTROLLER_WORKFLOW_TABLE: Readonly<
   "sentinel-scheduler.yml": {
     tick: {
       admission: "public-only",
+      profileSwitch: "supervisorDispatcher",
       if: PUBLIC,
       repositoryFields: {
         "steps[Dispatch the trusted supervisor dispatcher].env.GH_REPO":
@@ -742,6 +753,7 @@ export const HOSTED_CONTROLLER_WORKFLOW_TABLE: Readonly<
     },
     dispatch: {
       admission: "public-only",
+      profileSwitch: "supervisorDispatcher",
       if: PUBLIC + " && (github.event_name != 'workflow_run' || " +
         "(github.event.workflow_run.path == '.github/workflows/supervisor.yml' && " +
         "github.event.workflow_run.head_branch == 'sentinel-supervisor' && " +
