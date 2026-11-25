@@ -5,6 +5,10 @@
  * registrations.
  */
 import assert from "node:assert/strict";
+import {
+  HOSTED_CONTROLLER_API_PATH,
+  HOSTED_CONTROLLER_REPOSITORY,
+} from "../../src/contracts/hosted-controller-deployment.ts";
 import type { HostedExecutionSettlementV1 } from "../../src/contracts/hosted-supervisor.ts";
 import { sha256Hex } from "../../src/github/client-hosted-revision-wire.ts";
 import type {
@@ -72,7 +76,7 @@ export function unreadable(
   return (request) => {
     const path = new URL(request.url).pathname;
     if (request.method !== "GET") return http(request);
-    if (path === "/repos/ubiquity-sentinel/sentinel") return branch(request);
+    if (path === HOSTED_CONTROLLER_API_PATH) return branch(request);
     if (path === "/repos/ubiquity/prospector") {
       return reply(200, {}, '{"default_branch":"main","private":false}')();
     }
@@ -84,13 +88,13 @@ export function unreadable(
 }
 
 export const TARGET_READS = [
-  "GET /repos/ubiquity-sentinel/sentinel",
+  `GET ${HOSTED_CONTROLLER_API_PATH}`,
   "GET /repos/ubiquity/prospector",
   "GET /repos/ubiquity/prospector/commits/main",
 ];
 
 export const LISTED = JSON.stringify([
-  "ubiquity-sentinel/sentinel",
+  HOSTED_CONTROLLER_REPOSITORY,
   "ubiquity/prospector",
 ]);
 
@@ -160,7 +164,7 @@ export const QUIET_LOG = jobLog([
   "##[endgroup]",
 ]);
 
-export const JOB_LOGS = "/repos/ubiquity-sentinel/sentinel/actions/jobs/";
+export const JOB_LOGS = `${HOSTED_CONTROLLER_API_PATH}/actions/jobs/`;
 const SIGNED_HOST = "productionresultssa7.blob.core.windows.net";
 
 /**
