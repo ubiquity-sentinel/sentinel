@@ -7247,3 +7247,11 @@ Rollback: revert the commit; nothing else changes.
 - The 1,800-minute threshold governs admission. A cycle admitted below the threshold can finish above it, and the GitHub account's $0 spending limit is the hard billing boundary. Weekly private sync and the private launcher's exact green CI install requirement continue to apply.
 
 Rollback: revert the cadence and cell-ceiling change to restore the previous daily schedule and limits.
+
+## 2026-11-25: recover late cells on the deployment that admitted them
+
+The repair job runs alongside implementation cells. Its App-token deadline can leave time for just the initial artifact scan. Cells that finish later upload their bundles to the producer run. A later maintenance pass authenticates the producer and its artifacts, imports each matching candidate and preserves it for publication and native review.
+
+The November 18 public-only default for the closed-matrix adapter predated the active private controller. That adapter also serves ordinary producer recovery. Its missing host input filtered out the private repositories whose grants it was trying to settle. The adapter now reads the bound controller's visibility on its self credential and resolves listed targets on their respective credentials using the planner's visibility rule. When none of the pending requests matches a configured target, maintenance reports `no_matching_target_config` with counts and the producer run identity.
+
+The private lifecycle regression runs repair before the implementation finishes, then exercises the real maintenance target loader, artifact reader, bundle importer and state transitions between runs. It follows the preserved commit through publication, a native review request and a reviewed merge using temporary Git repositories and fixture services. [Private lifecycle test](../tests/host/private-deployment-lifecycle_test.ts)

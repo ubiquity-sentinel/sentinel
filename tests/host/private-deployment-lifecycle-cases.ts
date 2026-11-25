@@ -37,6 +37,7 @@ import {
 import { PUBLIC_TARGET_REASON } from "../../src/repair/target-visibility.ts";
 import { PRIVATE_TARGETS_KIND } from "../../src/repair/private-targets-line.ts";
 import { scanStepLines } from "../../src/repair/step-line.ts";
+import { recoverLatePrivateCell } from "./private-matrix-maintenance.ts";
 import { response, snapshotWire } from "../github/merge-queue-fixtures.ts";
 import {
   checked,
@@ -101,10 +102,13 @@ type Rig = Awaited<ReturnType<typeof rig>>;
 
 /** The rig's only target surface: `slug`, with a real review lifecycle. */
 function privatePort(r: Rig, slug: string): TargetGithub {
-  const port = new TargetGithub({
+  const port: TargetGithub = new TargetGithub({
     baseSha: r.foreignSha,
     candidateLifecycle: {
-      preserveCandidate: () => Promise.resolve(portOk(undefined)),
+      preserveCandidate: ({ candidate }) => {
+        port.candidateRefs.set(candidate.ref, candidate.head);
+        return Promise.resolve(portOk(undefined));
+      },
     },
   });
   port.reviewStatus = "pending";
@@ -156,7 +160,7 @@ function privateJobs(
  * special CI-minute policy (2026-11-23), `ubiquity/prospector` takes exactly
  * this path too: its CI effects are `inactive` like any other target's.
  */
-async function issueToMerge(TARGET: string): Promise<void> {
+async function issueToMerge(TARGET: string, late = false): Promise<void> {
   assert.equal(HOSTED_CONTROLLER_ROLE, "private");
   assert.equal(HOSTED_CONTROLLER_REPOSITORY, PRIVATE);
   assert.equal(HOSTED_CONTROLLER_REMOTE, `https://github.com/${PRIVATE}.git`);
@@ -200,6 +204,39 @@ async function issueToMerge(TARGET: string): Promise<void> {
       ).map((entry) => (entry as { reason?: string }).reason),
       [PUBLIC_TARGET_REASON],
     );
+
+    // A single scan reproduces the exhausted wait window on the private host.
+    const aggregateModel = {
+      modelId: "gpt-reserve",
+      runModel: () => Promise.reject(new Error("aggregate cannot infer")),
+    };
+    const aggregate = (
+      deps: Awaited<ReturnType<typeof job>>,
+      waves: Parameters<typeof runActionsMatrixAggregateCycles>[1],
+    ) =>
+      quietly(() =>
+        runActionsRepairHost({
+          ...deps,
+          model: aggregateModel,
+          runTargetCycles: (input) =>
+            runActionsMatrixAggregateCycles(
+              { ...input, modelStartsEnabled: true },
+              waves,
+              { planDigest: planner.planDigest },
+              { maxWaitMs: 0 },
+            ),
+        })
+      );
+    const empty = { recover: () => Promise.resolve([]) };
+    if (late) {
+      const early = await aggregate(
+        await job("before-upload", "repair"),
+        empty,
+      );
+      assert.equal(early.value.status, "ran");
+      assert.equal(port.candidatePullRequests.size, 0);
+      r.clock.advance(1_000);
+    }
 
     // Implementation: one isolated cell commits the repair in its mirror.
     const cell = planner.plan.cells[0]!;
@@ -273,51 +310,45 @@ async function issueToMerge(TARGET: string): Promise<void> {
       archive + "/" + done.bundle.file,
     );
 
-    // Publication and review request: the aggregate of the same run.
-    const aggregateModel = {
-      modelId: "gpt-reserve",
-      runModel: () => Promise.reject(new Error("aggregate cannot infer")),
-    };
-    const aggregate = (
-      deps: Awaited<ReturnType<typeof job>>,
-      waves: Parameters<typeof runActionsMatrixAggregateCycles>[1],
-    ) =>
-      quietly(() =>
-        runActionsRepairHost({
-          ...deps,
-          model: aggregateModel,
-          runTargetCycles: (input) =>
-            runActionsMatrixAggregateCycles(
-              { ...input, modelStartsEnabled: true },
-              waves,
-              { planDigest: planner.planDigest },
-              {
-                pollWait: (ms) => {
-                  r.clock.advance(ms);
-                  return Promise.resolve();
-                },
-              },
-            ),
-        })
-      );
-    const published = await aggregate(await job("aggregate", "repair"), {
-      recover: () =>
-        Promise.resolve([{
-          plan: planner.plan,
-          planDigest: planner.planDigest,
-          results: [done],
-          bundlesDir: archive,
-          provenance: {
-            run: planner.plan.run,
-            plannerJobId: 101,
-            cellJobIds: [102],
-          },
-        }]),
-    });
+    if (late) {
+      const previous = Deno.cwd();
+      try {
+        Deno.chdir(planDeps.workDir);
+        await recoverLatePrivateCell(
+          r,
+          planner,
+          done,
+          archive,
+          planDeps.workDir,
+          planDeps.http,
+          port,
+        );
+      } finally {
+        Deno.chdir(previous);
+      }
+    }
+    const published = await aggregate(
+      await job("aggregate", "repair"),
+      late ? empty : {
+        recover: () =>
+          Promise.resolve([{
+            plan: planner.plan,
+            planDigest: planner.planDigest,
+            results: [done],
+            bundlesDir: archive,
+            provenance: {
+              run: planner.plan.run,
+              plannerJobId: 101,
+              cellJobIds: [102],
+            },
+          }]),
+      },
+    );
     assert.equal(published.value.status, "ran", JSON.stringify(published));
     assert.equal(port.candidatePullRequests.size, 1);
     const pull = [...port.candidatePullRequests.values()][0]!;
     assert.equal(pull.state, "open");
+    assert.equal(pull.head, done.bundle.head);
     assert.ok(port.calls.includes("createPr"), port.calls.join("\n"));
     assert.ok(port.calls.includes("requestReview"), port.calls.join("\n"));
     assert.ok(!port.calls.includes("merge"), port.calls.join("\n"));
@@ -335,7 +366,7 @@ async function issueToMerge(TARGET: string): Promise<void> {
     const wait = requested.value.snapshot.work[0]?.wait;
     assert.equal(wait?.reason, "review_pending");
     r.clock.advance((wait?.until ?? 0) - r.clock.now() + 1);
-    await advanceWithLog(r, 72, QUIET_LOG, 101);
+    await advanceWithLog(r, late ? 73 : 72, QUIET_LOG, 101);
     const merged = await aggregate(await job("aggregate-next", "repair"), {
       recover: () => Promise.resolve([]),
     });
@@ -386,8 +417,8 @@ async function issueToMerge(TARGET: string): Promise<void> {
 Deno.test("private role: a private target's owner issue goes from intake to a reviewed merge without naming the public repository", () =>
   issueToMerge(TARGET));
 
-Deno.test("private role: prospector, no longer under a CI-minute policy, goes from intake to a reviewed merge", () =>
-  issueToMerge("ubiquity/prospector"));
+Deno.test("private role: maintenance recovers a late prospector cell for publication, native review and merge", () =>
+  issueToMerge("ubiquity/prospector", true));
 
 Deno.test("private role: one planner pass grants six of seven ready issues", async () => {
   assert.equal(HOSTED_CONTROLLER_ROLE, "private");

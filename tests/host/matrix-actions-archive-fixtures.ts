@@ -4,6 +4,7 @@ import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { createActionsMatrixArtifactHttpTransport } from "../../src/host/matrix-artifacts.ts";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import {
+  HOSTED_SUPERVISOR_REPOSITORY,
   HOSTED_SUPERVISOR_WORKFLOW_ID,
   HOSTED_SUPERVISOR_WORKFLOW_PATH,
 } from "../../src/contracts/hosted-supervisor.ts";
@@ -351,6 +352,7 @@ export async function createFreshMatrixArchives(
   const artifactHttp = function (
     available: () => boolean,
     allow: (row: Record<string, unknown>) => boolean = () => true,
+    runStatus: "in_progress" | "completed" = "in_progress",
   ) {
     return createActionsMatrixArtifactHttpTransport((url, init) => {
       artifactCalls.push(url);
@@ -381,18 +383,20 @@ export async function createFreshMatrixArchives(
           event: "workflow_dispatch",
           head_branch: "sentinel-supervisor",
           head_sha: r.sha,
-          repository: { id: 123, full_name: "ubiquity-sentinel/sentinel" },
-          head_repository: { id: 123, full_name: "ubiquity-sentinel/sentinel" },
-          status: "in_progress",
+          repository: { id: 123, full_name: HOSTED_SUPERVISOR_REPOSITORY },
+          head_repository: { id: 123, full_name: HOSTED_SUPERVISOR_REPOSITORY },
+          status: runStatus,
           run_started_at: iso,
-          updated_at: iso,
+          updated_at: runStatus === "completed"
+            ? new Date(r.clock.now()).toISOString()
+            : iso,
         });
       }
       if (parsed.pathname.endsWith("/artifacts")) {
         if (
           nativeScopedOnly &&
           parsed.pathname ===
-            "/repos/ubiquity-sentinel/sentinel/actions/artifacts"
+            `/repos/${HOSTED_SUPERVISOR_REPOSITORY}/actions/artifacts`
         ) {
           return Promise.resolve(
             new Response(
