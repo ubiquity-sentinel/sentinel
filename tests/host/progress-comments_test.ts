@@ -15,12 +15,17 @@ import {
 } from "../../src/host/progress-comments.ts";
 import type { RepositoryConfigV1 } from "../../src/contracts/repository-config.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
-import { REPO, SHA1, SHA2, T0, workRecord } from "../state/helpers.ts";
+import { REPO, SHA1, SHA2, SHA3, T0, workRecord } from "../state/helpers.ts";
+import { RED_BASE_RECHECK_MS } from "../../src/repair/ci-first-policy.ts";
+import { BASE_RED_WAIT_CAUSE } from "../../src/repair/loop-wait-cause.ts";
 import {
   PROTECTED_PATH_PARK,
   UNTRUSTED_WORKFLOW_PARK,
 } from "../../src/repair/workflow-trust.ts";
-import { AUTHOR_NOT_ADMITTED_PARK } from "../../src/repair/issue-admission.ts";
+import {
+  AUTHOR_NOT_ADMITTED_PARK,
+  SENTINEL_APP_ISSUE_AUTHOR,
+} from "../../src/repair/issue-admission.ts";
 import { FakeGate } from "./actions-ci-fixture.ts";
 import {
   makeTargetHostRig,
@@ -59,6 +64,14 @@ const opened = workRecord("issue-1", {
     pr: 1258,
   },
   wait: { reason: "ci_pending", since: T0, until: T0 + 300_000 },
+});
+const legacyBackoff = workRecord("issue-1", {
+  ...opened,
+  wait: { reason: "backoff", since: T0, until: T0 + RED_BASE_RECHECK_MS },
+});
+const baseRed = workRecord("issue-1", {
+  ...legacyBackoff,
+  wait: { ...legacyBackoff.wait, cause: BASE_RED_WAIT_CAUSE },
 });
 const parked = workRecord("issue-1", {
   related: { incidentId: null, issueNumber: 1 },
@@ -143,6 +156,61 @@ Deno.test("progress: only a changed stage of this repository reports", () => {
   assert.equal(fresh[0].commentOn, 1, "no PR yet: the issue");
   const other = { ...REPO, name: "passport.ubq.fi" };
   assert.deepEqual(progressChanges([started], [opened], other), []);
+});
+
+Deno.test("progress: only an attributed red hold explains the exact base on the PR", () => {
+  const unknownCause = workRecord("issue-1", {
+    ...legacyBackoff,
+    wait: {
+      ...legacyBackoff.wait,
+      cause: { port: "ci", status: "none", code: "minute_budget" },
+    },
+  });
+  assert.equal(progressStage(legacyBackoff)?.key, "opened:1258:backoff");
+  assert.deepEqual(progressStage(unknownCause), progressStage(legacyBackoff));
+  const changes = progressChanges([legacyBackoff], [baseRed], REPO);
+  assert.equal(changes.length, 1, "an existing hold gains real attribution");
+  const [change] = changes;
+  assert.equal(change.commentOn, 1258);
+  assert.equal(change.stage.key, `base_red:1258:${SHA1}`);
+  assert.equal(
+    change.stage.words,
+    `CI checks also fail on base revision \`${SHA1.slice(0, 10)}\`. ` +
+      "The base needs a repair first. Once the target branch advances, " +
+      "Sentinel will refresh this pull request and recheck CI.",
+  );
+  assert.doesNotMatch(change.stage.words, /[0-9a-f]{11,}/);
+  assert.deepEqual(progressChanges([baseRed], [baseRed], REPO), []);
+  assert.deepEqual(
+    progressChanges([legacyBackoff], [baseRed], { ...REPO, installationId: 8 }),
+    [],
+  );
+  const rechecked = workRecord("issue-1", {
+    ...baseRed,
+    updatedAt: T0 + RED_BASE_RECHECK_MS,
+    wait: {
+      ...baseRed.wait,
+      until: T0 + 2 * RED_BASE_RECHECK_MS,
+    },
+  });
+  assert.deepEqual(progressChanges([baseRed], [rechecked], REPO), []);
+  const moved = workRecord("issue-1", {
+    ...rechecked,
+    target: { ...rechecked.target, base: SHA3 },
+  });
+  assert.equal(
+    progressChanges([baseRed], [moved], REPO)[0]?.stage.key,
+    `base_red:1258:${SHA3}`,
+  );
+  const alreadyEndedAtWrite = workRecord("issue-1", {
+    ...baseRed,
+    updatedAt: T0 + RED_BASE_RECHECK_MS,
+  });
+  assert.equal(
+    progressStage(alreadyEndedAtWrite)?.key,
+    "opened:1258:backoff",
+    "a code without an active hold at the observation time is insufficient",
+  );
 });
 
 interface Sent {
@@ -230,6 +298,37 @@ Deno.test("progress: the latest same marker posts nothing; an older one does not
   ]);
   const posted = await postProgressComments(deps(moved.http), CONFIG, changes);
   assert.equal(posted.posted, 1);
+});
+
+Deno.test("progress: an older trusted red-base marker counts once per base", async () => {
+  const changes = progressChanges([legacyBackoff], [baseRed], REPO);
+  const marker = progressMarker("issue-1", changes[0].stage.key);
+  const older = fakeHttp([
+    {
+      body: `previous red observation\n\n${marker}`,
+      user: { login: SENTINEL_APP_ISSUE_AUTHOR },
+    },
+    { body: progressMarker("issue-1", "opened:1258:ci_pending") },
+  ]);
+  const skipped = await postProgressComments(deps(older.http), CONFIG, changes);
+  assert.equal(skipped.skipped, 1);
+  assert.equal(older.sent.filter((row) => row.method === "POST").length, 0);
+  const unrelated = fakeHttp([
+    { body: marker, user: { login: "0x4007", id: 1 } },
+    { body: marker, user: { login: "outsider" } },
+    {
+      body: progressMarker("issue-1", `base_red:1258:${SHA3}`),
+      user: { login: SENTINEL_APP_ISSUE_AUTHOR },
+    },
+  ]);
+  const posted = await postProgressComments(
+    deps(unrelated.http),
+    CONFIG,
+    changes,
+  );
+  assert.equal(posted.posted, 1);
+  const comment = unrelated.sent.find((row) => row.method === "POST");
+  assert.ok(JSON.parse(comment!.body!).body.endsWith(marker));
 });
 
 Deno.test("progress: a failed comment or a cooling gate never throws", async () => {

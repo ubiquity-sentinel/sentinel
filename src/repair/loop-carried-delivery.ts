@@ -108,6 +108,8 @@ import {
   parkAtReviewRoundCeiling,
 } from "./loop-review-round-cap.ts";
 import { persistWork } from "./loop-state.ts";
+import { BASE_RED_WAIT_CAUSE, causedWait } from "./loop-wait-cause.ts";
+import type { WorkWaitCauseV1 } from "../contracts/work-wait-cause.ts";
 import {
   readMergeTaskContext,
   semanticRefusalKind,
@@ -169,6 +171,7 @@ function boundedWait(
   reason: WorkWaitV1["reason"],
   recheckMs: number,
   park: string,
+  cause?: WorkWaitCauseV1,
 ): Promise<StepResultV1> {
   const now = deps.clock.now();
   const since = record.wait?.reason === reason && record.wait.since < now
@@ -184,7 +187,11 @@ function boundedWait(
   return persistWork(
     deps,
     context,
-    setWait(record, { reason, since, until: now + recheckMs }, now),
+    setWait(
+      record,
+      causedWait(deps, { reason, since, until: now + recheckMs }, cause),
+      now,
+    ),
   );
 }
 
@@ -756,6 +763,7 @@ async function gateCarriedChecks(
       `${REVIEW_ROUND_CEILING_CARRIED_CI_FAILED_PREFIX}${
         decision.blocked.replace(/^CI checks failed: /, "")
       } (the base is red)`,
+      BASE_RED_WAIT_CAUSE,
     );
   }
   if (observed.kind === "base_pending" || observed.kind === "unattributed") {

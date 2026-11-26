@@ -13,10 +13,18 @@
  * Each comment carries a hidden marker
  * (`<!-- sentinel:progress <record id>:<stage key> -->`); a stage whose
  * marker the issue's latest Sentinel progress comment for that record already
- * carries is skipped, so retries and re-runs never duplicate.
+ * carries is skipped, so retries and re-runs never duplicate. An attributed
+ * red base uses its exact revision as the key and deduplicates across the
+ * bounded comment history, even after an intervening stage.
  */
 import { UNTRUSTED_WORKFLOW_PARK } from "../repair/workflow-trust.ts";
-import { AUTHOR_NOT_ADMITTED_PARK } from "../repair/issue-admission.ts";
+import {
+  AUTHOR_NOT_ADMITTED_PARK,
+  issueAuthorAdmitted,
+} from "../repair/issue-admission.ts";
+import { isGitSha } from "../contracts/brands.ts";
+import { isRedBaseHold } from "../repair/ci-first-policy.ts";
+import { BASE_RED_WAIT_CAUSE } from "../repair/loop-wait-cause.ts";
 import type { Clock, GitHubCooldownGateV1 } from "../contracts/ports.ts";
 import type { HttpResponseV1, HttpTransportV1 } from "../github/http.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
@@ -28,6 +36,7 @@ import { ownerLandingWords, ownerMergeReady } from "../repair/owner-landing.ts";
 export interface ProgressStageV1 {
   readonly key: string;
   readonly words: string;
+  readonly oncePerBase?: true;
 }
 
 /** One stage change to report, on the record's pull request or its issue. */
@@ -151,6 +160,24 @@ export function progressStage(record: WorkRecordV1): ProgressStageV1 | null {
     record.nextStep === "delivery" && pr !== null &&
     record.target.selfMerge?.prState === "merged"
   ) return mergedStage(pr);
+  const cause = record.wait?.cause;
+  const base = record.target.base;
+  if (
+    pr !== null && record.target.branch !== null &&
+    record.target.head !== null && record.intent === null &&
+    isGitSha(base) && cause?.port === BASE_RED_WAIT_CAUSE.port &&
+    cause.status === BASE_RED_WAIT_CAUSE.status &&
+    cause.code === BASE_RED_WAIT_CAUSE.code &&
+    isRedBaseHold(record.wait, record.updatedAt)
+  ) {
+    return {
+      key: `base_red:${pr}:${base}`,
+      words: `CI checks also fail on base revision \`${base.slice(0, 10)}\`. ` +
+        "The base needs a repair first. Once the target branch advances, " +
+        "Sentinel will refresh this pull request and recheck CI.",
+      oncePerBase: true,
+    };
+  }
   if (record.nextStep === "delivery" && record.ownerLanding !== undefined) {
     // Sentinel never merges a protected-path change: one owner comment per
     // reviewed, CI-green head, and no "merging" claim before it.
@@ -219,7 +246,10 @@ export function progressChanges(
     const issueNumber = record.related.issueNumber;
     if (issueNumber === null) continue;
     const stage = progressStage(record);
-    if (stage === null) continue;
+    if (
+      stage === null || (stage.oncePerBase &&
+        record.repository.installationId !== repository.installationId)
+    ) continue;
     const prior = previous.get(record.id);
     const priorStage = prior === undefined ? null : progressStage(prior);
     if (priorStage?.key === stage.key) continue;
@@ -234,6 +264,18 @@ export function progressChanges(
     a.issueNumber - b.issueNumber ||
     (a.recordId < b.recordId ? -1 : a.recordId > b.recordId ? 1 : 0)
   );
+}
+
+function writtenByTrustedProgressAuthor(
+  comment: Record<string, unknown>,
+): boolean {
+  const user = comment.user;
+  if (typeof user !== "object" || user === null) return false;
+  const { login, id } = user as Record<string, unknown>;
+  return issueAuthorAdmitted({
+    author: typeof login === "string" ? login : null,
+    authorId: typeof id === "number" ? id : undefined,
+  });
 }
 
 export interface ProgressCommentsDepsV1 {
@@ -316,13 +358,17 @@ export async function postProgressComments(
   };
   const isStop = (value: unknown): value is Stop =>
     value === "deadline" || value === "cooldown" || value === "rate_limited";
-  /** The key of the latest progress marker for `recordId`, or null. */
+  /** Latest stage marker, or an exact trusted red-base marker in the history. */
   const latestKey = async (
     /** The issue or pull request number whose comments are read. */
     issue: number,
     recordId: string,
+    stage: ProgressStageV1,
   ): Promise<string | null | Stop | "unreadable"> => {
     const prefix = `${MARKER_PREFIX}${recordId}:`;
+    const wanted = stage.oncePerBase
+      ? progressMarker(recordId, stage.key)
+      : null;
     let latest: string | null = null;
     for (let page = 1; page <= PROGRESS_COMMENT_PAGES; page++) {
       const response = await api(
@@ -340,10 +386,18 @@ export async function postProgressComments(
       }
       if (!Array.isArray(rows)) return "unreadable";
       for (const row of rows) {
-        const body = typeof row === "object" && row !== null
-          ? (row as Record<string, unknown>).body
-          : undefined;
+        if (typeof row !== "object" || row === null) continue;
+        const comment = row as Record<string, unknown>;
+        const body = comment.body;
         if (typeof body !== "string") continue;
+        if (wanted !== null) {
+          if (
+            body.endsWith(wanted) && writtenByTrustedProgressAuthor(comment)
+          ) {
+            return stage.key;
+          }
+          continue;
+        }
         const at = body.lastIndexOf(prefix);
         if (at < 0) continue;
         const end = body.indexOf(" -->", at);
@@ -354,7 +408,11 @@ export async function postProgressComments(
     return "unreadable";
   };
   for (const change of changes.slice(0, PROGRESS_COMMENTS_PER_CYCLE)) {
-    const latest = await latestKey(change.commentOn, change.recordId);
+    const latest = await latestKey(
+      change.commentOn,
+      change.recordId,
+      change.stage,
+    );
     if (isStop(latest)) {
       report.stopped = latest;
       break;

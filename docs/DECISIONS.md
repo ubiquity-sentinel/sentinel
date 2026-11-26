@@ -1,5 +1,13 @@
 # Sentinel decisions
 
+## Follow-through on open repair pull requests (2026-11-26)
+
+A pull request explicitly waiting for its owner to merge yields the base-refresh queue to other eligible pull requests. Its owner keeps control of the merge. A pull request still undergoing validation keeps its usual place in line.
+
+When Sentinel confirms that a failing check is already failing on the shared base, it records that cause and identifies the affected base in the pull request's progress update. This distinguishes a shared test failure from other reasons for waiting.
+
+A worker that finishes without a usable candidate outcome emits the existing failure result. The controller can then account for the failed attempt. A verified unchanged checkout still follows the explicit no-change path.
+
 ## Daily ai.ubq.fi failure monitoring (2026-11-24)
 
 The owner requested a daily GitHub Actions check for problems on ai.ubq.fi. Sentinel reads production health and bounded failure metadata, reports the observed coverage, and files recurring, actionable gateway failures in the target repository under the Sentinel App identity. These issues enter the existing issue intake and review process. Public reports contain fixed failure categories and aggregate observations. Customer requests and captured payloads stay in gateway custody.

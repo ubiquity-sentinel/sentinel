@@ -310,6 +310,9 @@ export async function runMatrixCell(
   // a completed result exists: a candidate head with no transferred objects
   // stays failed/ambiguous, never a fabricated recovery.
   const candidate = receipt.value.candidate;
+  if (receipt.value.outcome === "completed" && candidate === null) {
+    return refuse("failed", "model run failed (missing candidate outcome)");
+  }
   let bundle: MatrixCellBundleV1 | null = null;
   if (candidate !== null && candidate.head !== null) {
     if (deps.bundle === undefined) {

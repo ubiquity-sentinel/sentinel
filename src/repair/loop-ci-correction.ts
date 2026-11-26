@@ -14,10 +14,9 @@
  * delivery and turn every base move into another charged review round.
  * Unproven attribution keeps a terminal block too.
  *
- * Rollback contract: nothing here writes a field, key or enum value the
- * generation-76 parsers do not already read. The CI evidence lives only in
- * memory and in the correction request; the durable record holds the ordinary
- * lifecycle step, wait or blocker message.
+ * Check evidence stays in memory and in the correction request. The durable
+ * record holds the ordinary lifecycle step, wait or blocker. Hosted writers
+ * can also record the closed wait cause through the existing opt-in gate.
  */
 import { ownBaseRed } from "./base-repair.ts";
 import type { GitHubCheckV1 } from "../contracts/ports.ts";
@@ -42,6 +41,7 @@ import {
 } from "./loop-review-records.ts";
 import { legacyCutoff } from "./loop-review-round-cap.ts";
 import { persistWork } from "./loop-state.ts";
+import { BASE_RED_WAIT_CAUSE, causedWait } from "./loop-wait-cause.ts";
 import type {
   LoopContextV1,
   RepairCycleDepsV1,
@@ -194,11 +194,15 @@ export async function routeFailedDeliveryChecks(
       return persistWork(
         deps,
         context,
-        setWait(record, {
-          reason: "backoff",
-          since: waitSince(record, "backoff", now),
-          until: deps.clock.now() + RED_BASE_RECHECK_MS,
-        }, now),
+        setWait(
+          record,
+          causedWait(deps, {
+            reason: "backoff",
+            since: waitSince(record, "backoff", now),
+            until: deps.clock.now() + RED_BASE_RECHECK_MS,
+          }, BASE_RED_WAIT_CAUSE),
+          now,
+        ),
       );
     case "unattributed":
       return persistBlocked(

@@ -16,6 +16,13 @@ import type { WorkWaitCauseV1 } from "../contracts/work-wait-cause.ts";
  */
 export const HOSTED_RECORD_WAIT_CAUSES = true;
 
+/** A completed CI failure attributed to the record's exact current base. */
+export const BASE_RED_WAIT_CAUSE = {
+  port: "ci",
+  status: "none",
+  code: "base_red",
+} as const satisfies WorkWaitCauseV1;
+
 export function causedWait(
   deps: { recordWaitCauses?: boolean },
   wait: WorkWaitV1,
