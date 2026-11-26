@@ -3,13 +3,8 @@
  * (`runHostedAutonomy`) with fake GitHub targets and an injected clock, as
  * the review of the 2026-11-15 enablement reproduced them.
  *
- * Hard bound (`BASE_REPAIR_ISSUE_LIMIT` = 1 within
- * `BASE_REPAIR_ISSUE_WINDOW_MS` = 14 days): any issue the App opened in the
- * target, open or closed, whatever its title or body (content-independent
- * since the second review; hosted-autonomy-base-repair-content_test.ts), so
- * a person closing it, a person editing its first line or title, and a flaky
- * check re-redding the base after each merged fix never file a second one
- * within the window.
+ * Same-tip deduplication and open-issue holds stay in place. A closed
+ * repair for a different tip permits filing on a later UTC day.
  *
  * Listing proof: the App listing (`creator=ubiquity-sentinel[bot]`) had
  * never run live, and an empty answer counted as complete, so a filter that
@@ -64,30 +59,6 @@ function redTip(target: ReturnType<typeof redTargets>[string], tip: string) {
 
 const tipAt = (index: number) => index.toString(16).padStart(2, "e").repeat(20);
 
-Deno.test("base repair limit: a person closing the issue lets no red tip file another within 14 days", async () => {
-  const targets = redTargets();
-  const ai = targets[AI];
-  const first = await maintain(onTip(ai.tip, NOW), targets);
-  assert.deepEqual(first.baseRepair, [`${TAG}:filed=#9000`]);
-  // A person closes it (any reason); each later red tip holds the record.
-  const times = [NOW + HOUR, NOW + 2 * DAY, NOW + 7 * DAY, NOW + 14 * DAY];
-  for (const [index, now] of times.entries()) {
-    ai.items.find((item) => item.number === 9000)!.state = "closed";
-    redTip(ai, tipAt(index + 1));
-    const pass = await maintain(onTip(ai.tip, now), targets, now);
-    assert.deepEqual(pass.baseRepair, [`${TAG}:recent=#9000`], `tip ${index}`);
-  }
-  assert.equal(ai.created.length, 1, "four red tips after a close: one issue");
-  // The bound is a window: past it, the next red tip files exactly one.
-  const later = NOW + 14 * DAY + 60_000;
-  redTip(ai, tipAt(9));
-  const after = await maintain(onTip(ai.tip, later), targets, later);
-  assert.deepEqual(after.baseRepair, [`${TAG}:filed=#9001`]);
-  const again = await maintain(onTip(ai.tip, later + HOUR), targets, later);
-  assert.deepEqual(again.baseRepair, [`${TAG}:filed_before=#9001`]);
-  assert.equal(ai.created.length, 2);
-});
-
 Deno.test("base repair limit: an edited first line or title leaves the issue recognised, so no second one is filed", async () => {
   const targets = redTargets();
   const ai = targets[AI];
@@ -105,18 +76,18 @@ Deno.test("base repair limit: an edited first line or title leaves the issue rec
   const t2 = NOW + 2 * HOUR;
   const retitled = await maintain(onTip(ai.tip, t2), targets, t2);
   assert.deepEqual(retitled.baseRepair, [`${TAG}:open=#9000`]);
-  // Edited and then closed: still within the bound's window.
+  // Closing the recognized issue permits a different red tip the next day.
   issue.firstLine = "Not needed.";
   issue.title = "CI is failing on development";
   issue.state = "closed";
   redTip(ai, tipAt(2));
   const closed = await maintain(onTip(ai.tip, NOW + DAY), targets, NOW + DAY);
-  assert.deepEqual(closed.baseRepair, [`${TAG}:recent=#9000`]);
-  assert.equal(ai.created.length, 1);
-  assert.equal(ai.issues.length, 1, "never two open for one tip");
+  assert.deepEqual(closed.baseRepair, [`${TAG}:filed=#9001`]);
+  assert.equal(ai.created.length, 2);
+  assert.equal(ai.issues.filter((item) => item.state === "open").length, 1);
 });
 
-Deno.test("base repair limit: the bound holds across many red tips while each merged fix closes the issue", async () => {
+Deno.test("base repair limit: red tips on later days can file after the previous repair closes", async () => {
   const targets = redTargets();
   const ai = targets[AI];
   const actions: string[] = [];
@@ -129,11 +100,12 @@ Deno.test("base repair limit: the bound holds across many red tips while each me
     const pass = await maintain(onTip(ai.tip, now), targets, now);
     actions.push(...pass.baseRepair);
   }
-  assert.deepEqual(actions, [
-    `${TAG}:filed=#9000`,
-    ...Array.from({ length: 8 }, () => `${TAG}:recent=#9000`),
-  ]);
-  assert.equal(ai.created.length, 1, "nine red tips in 12 days: one issue");
+  assert.deepEqual(
+    actions,
+    Array.from({ length: 9 }, (_, index) => `${TAG}:filed=#${9000 + index}`),
+  );
+  assert.equal(ai.created.length, 9);
+  assert.equal(ai.issues.filter((item) => item.state === "open").length, 1);
 });
 
 Deno.test("base repair proof: an empty App listing files nothing, pass after pass, with a fixed reason", async () => {
@@ -200,7 +172,7 @@ Deno.test("base repair brake: a listing blind to the App's issues still files on
   const targets = redTargets();
   const ai = targets[AI];
   // The filter answers the App's pull requests but none of its issues: the
-  // proof holds and the hard bound sees nothing; GitHub's own record holds.
+  // App listing proof still holds; GitHub's own daily listing supplies the brake.
   ai.appListing = (app) => app.filter((item) => item.pullRequest);
   const actions: string[] = [];
   for (let index = 0; index < 6; index++) {

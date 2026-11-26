@@ -2,6 +2,8 @@
 
 ## Follow-through on open repair pull requests (2026-11-26)
 
+A completed shared-base repair no longer starts a fourteen-day cooldown for a different broken revision. The owner approved starting the next repair once the previous one closes. Sentinel still files at most one such issue per target per UTC day, deduplicates the same revision, and waits for an open repair to finish. Existing checks on issue ownership, concurrent work, charged attempts, CI and review continue to apply. This supersedes the older fourteen-day filing quota.
+
 A pull request explicitly waiting for its owner to merge yields the base-refresh queue to other eligible pull requests. Its owner keeps control of the merge. A pull request still undergoing validation keeps its usual place in line.
 
 When Sentinel confirms that a failing check is already failing on the shared base, it records that cause and identifies the affected base in the pull request's progress update. This distinguishes a shared test failure from other reasons for waiting.

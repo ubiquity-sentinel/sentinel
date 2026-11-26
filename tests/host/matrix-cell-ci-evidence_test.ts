@@ -12,7 +12,6 @@ import {
 } from "../../src/contracts/matrix.ts";
 import {
   type GitHubCheckV1,
-  type ModelRunReceiptV1,
   type ModelRunRequestV1,
   portError,
   portOk,
@@ -41,7 +40,6 @@ import {
   DEADLINE,
   freshIssue,
   makeRig,
-  PROVIDER,
   type RigV1,
   RUN,
   seedSnapshot,
@@ -51,27 +49,6 @@ import {
 import { fixtureBytes } from "../repair/ci-evidence-fixtures.ts";
 
 const SESSION_MS = 240_000;
-
-function receipt(): ModelRunReceiptV1 {
-  return {
-    invocationId: "codex-ci-evidence-1",
-    outcome: "completed",
-    actual: {
-      evidenceKind: "request-runtime",
-      provider: PROVIDER,
-      threadId: "thread-ci",
-      turnId: "turn-ci",
-      terminalOrigin: "runtime",
-      observedTerminalStatus: "completed",
-      observedModel: "gpt-reserve",
-      observedReasoning: "max",
-      durationMs: 100,
-      outputChars: 500,
-    },
-    candidate: null,
-    error: null,
-  };
-}
 
 function evidence1009(input: CiEvidenceReadInputV1): CiEvidenceV1 {
   const scanner = new CiLogScanner();
@@ -170,7 +147,7 @@ async function runCell(
     modelId: "gpt-reserve",
     runModel(...args: [ModelRunRequestV1, ModelRunOptionsV1?]) {
       calls.push({ request: args[0], options: args[1], arity: args.length });
-      return Promise.resolve(portOk(receipt()));
+      return ctx.deps.model.runModel(args[0]);
     },
   };
   if (at !== undefined) rig.clock.advance(at - rig.clock.now());

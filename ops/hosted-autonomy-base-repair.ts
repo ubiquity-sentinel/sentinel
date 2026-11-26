@@ -28,9 +28,8 @@
  * on its first line, only while no existing issue holds it
  * (`hosted-autonomy-base-repair-bounds.ts`): the complete, bounded listing
  * of every issue the App created shows no issue for this tip, no open
- * base-repair issue (one at a time per target, 2026-11-15) and none within
- * the hard bound's window (2026-11-16), and GitHub's created-since listing,
- * independent of it, shows no filing that UTC day (the daily brake, across
+ * base-repair issue (one at a time per target). GitHub's independent
+ * created-since listing must show no filing that UTC day (the daily brake, across
  * runs; within one, one create attempt per target and day) and fewer open
  * issues this pass may have filed than the open ceiling. Before any filing
  * the App listing must be proven live for the target (`listingProof`: it
@@ -65,8 +64,6 @@ import { createHostedAutonomyScopes } from "./hosted-autonomy-scopes.ts";
 import { readRepairSafely } from "./hosted-autonomy-state.ts";
 import { baseRepairRuntimeHold } from "./hosted-autonomy-base-repair-runtime.ts";
 import {
-  BASE_REPAIR_BOUND_POLICY,
-  type BaseRepairBoundPolicyV1,
   listingHold,
   recentHold,
 } from "./hosted-autonomy-base-repair-bounds.ts";
@@ -264,14 +261,12 @@ async function filingRead(
 }
 
 /**
- * Run the base-repair pass; its actions only, never a state change. The
- * maintenance pass passes no `policy`, so production always files under
- * `BASE_REPAIR_BOUND_POLICY`; tests name a mode to run both.
+ * Run the base-repair pass and return its actions without changing repair
+ * state.
  */
 export async function runHostedBaseRepairPass(
   deps: HostedAutonomyDepsV1,
   passDeadline: number = Number.POSITIVE_INFINITY,
-  policy: BaseRepairBoundPolicyV1 = BASE_REPAIR_BOUND_POLICY,
 ): Promise<string[]> {
   const actions: string[] = [];
   if (BASE_REPAIR_FILING_TARGETS.length === 0) return actions;
@@ -391,7 +386,7 @@ export async function runHostedBaseRepairPass(
         actions.push(`${tag}:${unproven}`);
         continue;
       }
-      const hold = listingHold(filed, branch, tip, started, policy);
+      const hold = listingHold(filed, branch, tip);
       if (hold !== null) {
         actions.push(`${tag}:${hold}`);
         continue;
