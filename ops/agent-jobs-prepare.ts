@@ -132,12 +132,11 @@ async function prepare() {
     plan = admitted;
     matrix = {
       include: admitted.cells.map(
-        ({ cellId, owner, repositories, runner, jobs }) => ({
+        ({ cellId, owner, repositories, runner }) => ({
           cellId,
           owner,
           repositories,
           runner,
-          pullRequests: jobs.some(({ pr }) => pr),
         }),
       ),
     };

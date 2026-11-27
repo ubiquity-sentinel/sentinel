@@ -22,10 +22,6 @@ on:
       repositories:
         type: string
         required: true
-      pull-requests:
-        type: boolean
-        required: false
-        default: false
     secrets:
       UOS_AI_TOKEN:
         required: true
@@ -266,6 +262,28 @@ jobs:
           artifact-ids: ${{ needs.review.outputs.artifact-id }}
           path: ${{ runner.temp }}/agent-job-reviewed
           merge-multiple: true
+      - name: Read the admitted cell's draft PR permission
+        id: publication-access
+        env:
+          AGENT_JOBS_PLAN: ${{ runner.temp }}/agent-job-plan/plan.json
+          AGENT_JOBS_CELL_ID: ${{ inputs.cell-id }}
+        run: |
+          set -euo pipefail
+          permission=$(jq -ers --arg cell "$AGENT_JOBS_CELL_ID" '
+            if length != 1 or .[0].schema != "sentinel.agent-jobs.plan/v1" or (.[0].cells | type) != "array"
+            then error("invalid plan")
+            else [.[0].cells[] | select(.cellId == $cell)] |
+              if length != 1 or (.[0].jobs | type) != "array" or (.[0].jobs | length) == 0
+              then error("invalid cell")
+              elif any(.[0].jobs[]; (.pr | type) != "boolean") then error("invalid PR setting")
+              elif any(.[0].jobs[]; .pr) then "write"
+              else "" end
+            end
+          ' "$AGENT_JOBS_PLAN" 2>/dev/null) || {
+            echo "Admitted cell PR permission could not be verified" >&2
+            exit 1
+          }
+          printf 'permission=%s\n' "$permission" >> "$GITHUB_OUTPUT"
       - name: Mint the publication App token
         id: write-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -275,7 +293,7 @@ jobs:
           owner: ${{ inputs.owner }}
           repositories: ${{ inputs.repositories }}
           permission-contents: write
-          permission-pull-requests: ${{ inputs.pull-requests && 'write' || '' }}
+          permission-pull-requests: ${{ steps.publication-access.outputs.permission }}
       - name: Publish verified agent branches and commit comments
         env:
           AGENT_JOBS_PLAN: ${{ runner.temp }}/agent-job-plan/plan.json

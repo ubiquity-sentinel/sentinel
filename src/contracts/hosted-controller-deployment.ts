@@ -671,7 +671,12 @@ export const HOSTED_CONTROLLER_WORKFLOW_TABLE: Readonly<
       admission: "both",
       profileSwitch: "agentJobs",
       if: HUMAN_AGENT_JOBS_DEVELOPMENT_EVENT,
-      repositoryFields: AGENT_JOBS_PLAN_REPOSITORIES,
+      repositoryFields: {
+        ...AGENT_JOBS_PLAN_REPOSITORIES,
+        "steps[plan].run": [
+          'if [[ "$GITHUB_REPOSITORY" == \'@public.repository@\' && "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then',
+        ],
+      },
     },
     delivery: {
       admission: "both",
