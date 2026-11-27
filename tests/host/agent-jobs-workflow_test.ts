@@ -16,6 +16,7 @@ type Job = {
   needs?: string | string[];
   env?: Record<string, string>;
   environment?: { name: string };
+  permissions?: Record<string, string>;
   outputs?: Record<string, string>;
   uses?: string;
   with?: Record<string, string>;
@@ -25,7 +26,7 @@ type Job = {
 type Workflow = {
   on: {
     push?: { branches: string[]; paths: string[] };
-    workflow_call?: unknown;
+    workflow_call?: { inputs?: Record<string, unknown> };
   };
   jobs: Record<string, Job>;
 };
@@ -50,6 +51,7 @@ Deno.test("agent job intake runs on development and skips empty push plans", asy
       paths: ["jobs/" + requestDir + "/*.json"],
     });
     const { plan, ...jobs } = input.jobs;
+    assert.match(plan.if!, /ubiquity-sentinel-private\/sentinel/);
     assert.match(plan.if!, /github.ref == 'refs\/heads\/development'/);
     assert.match(plan.if!, /github\.event\.sender\.type == 'User'/);
     assert.match(plan.if!, /github\.event\.sender\.login == github\.actor/);
@@ -58,9 +60,22 @@ Deno.test("agent job intake runs on development and skips empty push plans", asy
       plan.steps.find((step) => step.id === "plan")!.run!,
       /agent-jobs-prepare\.ts/,
     );
-    assert(!JSON.stringify(plan).includes("secrets."));
+    const prep = plan.steps.find((step) => step.id === "plan")!;
+    assert.match(
+      prep.env!.AGENT_JOBS_APP_PRIVATE_KEY,
+      /github.repository == 'ubiquity-sentinel-private\/sentinel' && secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY/,
+    );
+    assert.equal(prep.env!.AGENT_JOBS_NATIVE_TOKEN, "${{ github.token }}");
+    assert.doesNotMatch(
+      JSON.stringify(plan),
+      /\$\{\{\s*(?:github\.event\.)?inputs\.jobs\b/,
+    );
+    assert.equal(prep.env!.AGENT_JOBS_JSON, undefined);
+    assert(!JSON.stringify(plan).includes("UOS_AI_TOKEN"));
+    assert.match(prep.run!, /--allow-read="\$GITHUB_EVENT_PATH/);
     for (const job of Object.values(jobs)) {
       assert.match(job.if!, /needs\.plan\.outputs\.has-work == 'true'/);
+      assert.match(job.if!, /ubiquity-sentinel-private\/sentinel/);
     }
   }
 });
@@ -154,8 +169,14 @@ Deno.test("agent job review produces an attempt-bound artifact ID for the scoped
     jobs.delivery.uses,
     "./.github/workflows/agent-jobs-delivery.yml",
   );
-  // The App key is named so the publish job's environment can supply it; the
-  // caller has no environment, so the value it forwards is empty.
+  assert.deepEqual(jobs.plan.permissions, {
+    contents: "read",
+    actions: "read",
+  });
+  assert.equal(
+    jobs.plan.steps.find(({ id }) => id === "plan-artifact")!.with!.path,
+    "${{ runner.temp }}/agent-job-plan",
+  );
   assert.deepEqual(Object.keys(jobs.delivery.secrets!), [
     "UOS_AI_TOKEN",
     "SENTINEL_SUPERVISOR_APP_PRIVATE_KEY",
@@ -164,8 +185,10 @@ Deno.test("agent job review produces an attempt-bound artifact ID for the scoped
     jobs.delivery.with!["plan-artifact-id"],
     /needs\.plan\.outputs\.artifact-id/,
   );
+  assert.equal(jobs.delivery.with!["pull-requests"], undefined);
   const delivery = await workflow("agent-jobs-delivery");
   assert.deepEqual(Object.keys(delivery.on), ["workflow_call"]);
+  assert.equal(delivery.on.workflow_call?.inputs?.["pull-requests"], undefined);
   const { cell, review, publish } = delivery.jobs;
   assert.equal(cell.environment, undefined);
   assert(!JSON.stringify(cell).includes("APP_PRIVATE_KEY"));
@@ -210,6 +233,112 @@ Deno.test("agent job review produces an attempt-bound artifact ID for the scoped
     ),
   );
   const mint = publish.steps.find((step) => step.id === "write-token")!;
+  assert.equal(
+    mint.with!["permission-pull-requests"],
+    "${{ steps.publication-access.outputs.permission }}",
+  );
   assert.equal(mint.with!["permission-statuses"], undefined);
   assert.equal(mint.with!["permission-workflows"], undefined);
+});
+
+function runStep(run: string, env: Record<string, string>) {
+  return new Deno.Command("/bin/bash", {
+    args: ["-c", run],
+    clearEnv: true,
+    env: { PATH: "/usr/bin:/bin", ...env },
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+}
+
+Deno.test("public dispatch supplies old pinned planner with inputs from the native event", async () => {
+  const root = await Deno.makeTempDir({ dir: Deno.cwd() });
+  try {
+    const request = '[{"id":"one","prompt":"fixture $($HOME)"}]';
+    const event = root + "/event.json";
+    const captured = root + "/captured";
+    await Deno.writeTextFile(
+      event,
+      JSON.stringify({
+        inputs: { jobs: request, agents_per_cell: "2", max_cells: "3" },
+      }),
+    );
+    await Deno.writeTextFile(
+      root + "/deno",
+      `#!/bin/bash
+printf '%s\\n' "$AGENT_JOBS_JSON" "$AGENT_JOBS_PER_CELL" "$AGENT_JOBS_MAX_CELLS" > "$CAPTURED"
+`,
+      { mode: 0o755 },
+    );
+    const { jobs } = await workflow("agent-jobs");
+    const step = jobs.plan.steps.find(({ id }) => id === "plan")!;
+    const env = {
+      PATH: root + ":/usr/bin:/bin",
+      CAPTURED: captured,
+      GITHUB_EVENT_NAME: "workflow_dispatch",
+      GITHUB_EVENT_PATH: event,
+      AGENT_JOBS_PREP_DIR: root,
+      GITHUB_OUTPUT: captured,
+      AGENT_JOBS_PER_CELL: "4",
+      AGENT_JOBS_MAX_CELLS: "20",
+    };
+    for (
+      const [repo, expected] of [
+        ["ubiquity-sentinel/sentinel", request + "\n2\n3\n"],
+        ["ubiquity-sentinel-private/sentinel", "\n4\n20\n"],
+      ]
+    ) {
+      const result = await runStep(step.run!, {
+        ...env,
+        GITHUB_REPOSITORY: repo,
+      });
+      assert.equal(result.code, 0, new TextDecoder().decode(result.stderr));
+      assert.equal(result.stdout.length, 0);
+      assert.equal(await Deno.readTextFile(captured), expected);
+    }
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("publication derives draft write access from the exact trusted cell for either launcher", async () => {
+  const { jobs } = await workflow("agent-jobs-delivery");
+  const scope = jobs.publish.steps.find(({ id }) =>
+    id === "publication-access"
+  );
+  assert.ok(scope?.run);
+  const root = await Deno.makeTempDir({ dir: Deno.cwd() });
+  try {
+    const plan = root + "/plan.json";
+    const output = root + "/out";
+    for (
+      const [pr, expected] of [
+        [true, "permission=write\n"],
+        [false, "permission=\n"],
+        ["true", ""],
+        [null, ""],
+      ] as const
+    ) {
+      await Deno.writeTextFile(
+        plan,
+        JSON.stringify({
+          schema: "sentinel.agent-jobs.plan/v1",
+          cells: [
+            { cellId: "c01", jobs: [{ pr }] },
+            { cellId: "c02", jobs: [{ pr: true }] },
+          ],
+        }),
+      );
+      await Deno.writeTextFile(output, "");
+      const result = await runStep(scope.run, {
+        AGENT_JOBS_CELL_ID: "c01",
+        AGENT_JOBS_PLAN: plan,
+        GITHUB_OUTPUT: output,
+      });
+      assert.equal(result.code, typeof pr === "boolean" ? 0 : 1);
+      assert.equal(await Deno.readTextFile(output), expected);
+    }
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
 });

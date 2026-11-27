@@ -2,24 +2,31 @@
  * EXPERIMENTAL manual agent-job lane: one Actions cell.
  *
  * Runs the cell's jobs side by side on one runner. For each job the host
- * clones the target with a read-only token, runs the job's setup commands and
+ * clones the public target or checks out the staged private base, runs the job's setup commands and
  * starts `codex exec` with no sandbox: the agent has the runner's full
  * filesystem, toolchains and network for up to the cell's six-hour window.
  * The host commits whatever the agent left uncommitted and seals the branch
  * into a Git bundle. The cell holds no write credential;
  * `agent-jobs-publish.ts` pushes the bundles from a separate job.
  *
- * Agent output is kept out of the job log and the artifact (targets may be
- * private while this controller is public); only the bundle, the agent's
- * final message and a status row leave the runner.
+ * The run's artifacts hold the bundle, the agent's final message, progress
+ * and status.
  */
+import { dirname } from "node:path";
+import {
+  agentJobsUseStagedBaseV1,
+  deploymentRunsServiceV1,
+  HOSTED_CONTROLLER_PROFILE,
+} from "../src/contracts/hosted-controller-deployment.ts";
 import {
   cloneBranch,
+  cloneStagedAgentJobBase,
   configureCheckoutIdentity,
   git,
   githubRemoteUrl,
   gitOk,
   type RemoteUrl,
+  stagedAgentJobBasePath,
 } from "./agent-jobs-git.ts";
 import { AGENT_JOB_SHA } from "./agent-jobs-admission.ts";
 import {
@@ -274,6 +281,8 @@ export interface AgentJobsCellInput {
   cellId: string;
   workRoot: string;
   outDir: string;
+  /** Root of the run-owned plan artifact when this deployment stages bases. */
+  baseBundleRoot?: string;
   readToken: string | null;
   defaultModel: string;
   /** Epoch ms after which the cell must be committing, not running agents. */
@@ -404,12 +413,29 @@ async function runJob(
       job.id,
     );
     await Deno.mkdir(tmpDir, { recursive: true });
-    const base = await cloneBranch({
-      url: ports.remoteUrl(job.repository),
-      base: job.base,
-      directory: checkout,
-      token: input.readToken,
-    });
+    let base: { branch: string; sha: string };
+    if (input.baseBundleRoot !== undefined) {
+      if (!job.base || !job.baseSha) {
+        throw new Error("staged base identity is missing");
+      }
+      base = await cloneStagedAgentJobBase({
+        bundlePath: stagedAgentJobBasePath(
+          input.baseBundleRoot,
+          job.repository,
+          job.baseSha,
+        ),
+        base: job.base,
+        baseSha: job.baseSha,
+        directory: checkout,
+      });
+    } else {
+      base = await cloneBranch({
+        url: ports.remoteUrl(job.repository),
+        base: job.base,
+        directory: checkout,
+        token: input.readToken,
+      });
+    }
     if (
       job.baseSha !== undefined &&
       (job.base !== base.branch || !AGENT_JOB_SHA.test(job.baseSha))
@@ -732,7 +758,11 @@ export async function runAgentJobsCell(
 /** Credentials of the cell process that no agent or setup command inherits. */
 const WITHHELD_ENV = [
   "UOS_AI_TOKEN",
+  "GH_TOKEN",
+  "GITHUB_TOKEN",
   "AGENT_JOBS_READ_TOKEN",
+  "AGENT_JOBS_WRITE_TOKEN",
+  "SENTINEL_SUPERVISOR_APP_PRIVATE_KEY",
   "ACTIONS_RUNTIME_TOKEN",
   "ACTIONS_RESULTS_URL",
   "AGENT_JOBS_PROGRESS_SCRIPT",
@@ -759,6 +789,9 @@ export function codexExecCommand(start: AgentStartV1): string[] {
 if (import.meta.main) {
   const startedAtMs = Date.now();
   const env = (name: string) => Deno.env.get(name) ?? "";
+  if (!deploymentRunsServiceV1(env("GITHUB_REPOSITORY"), "agentJobs")) {
+    throw new Error("agent job cell must run in a bound deployment");
+  }
   const modelToken = env("UOS_AI_TOKEN");
   if (modelToken.length === 0) throw new Error("UOS_AI_TOKEN is not set");
   const workspace = env("GITHUB_WORKSPACE") || Deno.cwd();
@@ -775,14 +808,16 @@ if (import.meta.main) {
       console.log(`trace proxy unavailable: ${String(error).slice(0, 200)}`);
     }
   }
-  const plan = JSON.parse(
-    await Deno.readTextFile(env("AGENT_JOBS_PLAN")),
-  ) as AgentJobsPlanV1;
+  const planPath = env("AGENT_JOBS_PLAN");
+  const plan = JSON.parse(await Deno.readTextFile(planPath)) as AgentJobsPlanV1;
   const cell = await runAgentJobsCell({
     plan,
     cellId: env("AGENT_JOBS_CELL_ID"),
     workRoot: `${env("RUNNER_TEMP") || "/tmp"}/agent-jobs`,
     outDir: `${workspace}/.agent-jobs/out`,
+    baseBundleRoot: agentJobsUseStagedBaseV1(HOSTED_CONTROLLER_PROFILE)
+      ? dirname(planPath)
+      : undefined,
     readToken: null,
     defaultModel: env("SENTINEL_MODEL_ID") || "gpt-6.1-sol",
     deadlineAtMs: startedAtMs + AGENT_JOBS_MAX_MINUTES * 60_000,

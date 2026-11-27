@@ -20,6 +20,11 @@ import {
   isBoundedTaskText,
   MAX_REVIEW_TASK_BODY,
 } from "../src/contracts/review-task-acceptance.ts";
+import {
+  agentJobsUseStagedBaseV1,
+  type HostedControllerProfileV1,
+  PUBLIC_CONTROLLER_PROFILE,
+} from "../src/contracts/hosted-controller-deployment.ts";
 
 /** GitHub's matrix size limit. */
 export const AGENT_JOBS_MAX_CELLS = 256;
@@ -166,7 +171,11 @@ function boundedInt(
   return number;
 }
 
-function parseJob(value: unknown): AgentJobV1 {
+function parseJob(
+  value: unknown,
+  defaultRunner: AgentJobRunner,
+  position: number,
+): AgentJobV1 {
   if (!record(value)) fail("every job must be an object");
   const known = [
     "id",
@@ -190,39 +199,39 @@ function parseJob(value: unknown): AgentJobV1 {
     fail("job id must match [a-z0-9][a-z0-9-]{0,39}");
   }
   if (typeof repository !== "string" || !REPOSITORY_PATTERN.test(repository)) {
-    fail(`job ${id}: repository must be owner/name`);
+    fail(`job ${position}: repository must be owner/name`);
   }
   if (
     base !== undefined && base !== null &&
     (typeof base !== "string" || !REF_PATTERN.test(base) || base.includes(".."))
-  ) fail(`job ${id}: base is not a plain branch name`);
+  ) fail(`job ${position}: base is not a plain branch name`);
   if (typeof prompt !== "string" || prompt.trim().length === 0) {
-    fail(`job ${id}: prompt must not be empty`);
+    fail(`job ${position}: prompt must not be empty`);
   }
   if (!isBoundedTaskText(prompt, MAX_REVIEW_TASK_BODY)) {
-    fail(`job ${id}: prompt exceeds the task receipt text bounds`);
+    fail(`job ${position}: prompt exceeds the task receipt text bounds`);
   }
   const commands = setup ?? [];
   if (
     !Array.isArray(commands) ||
     commands.some((item) => typeof item !== "string" || item.length === 0)
-  ) fail(`job ${id}: setup must be a list of commands`);
+  ) fail(`job ${position}: setup must be a list of commands`);
   if (
     model !== undefined && model !== null &&
     (typeof model !== "string" || !MODEL_PATTERN.test(model))
-  ) fail(`job ${id}: model is not a plain model id`);
+  ) fail(`job ${position}: model is not a plain model id`);
   if (pr !== undefined && typeof pr !== "boolean") {
-    fail(`job ${id}: pr must be a boolean`);
+    fail(`job ${position}: pr must be a boolean`);
   }
   if (review !== undefined && typeof review !== "boolean") {
-    fail(`job ${id}: review must be a boolean`);
+    fail(`job ${position}: review must be a boolean`);
   }
   if (
     runner !== undefined && runner !== null &&
     (typeof runner !== "string" || !Object.hasOwn(AGENT_JOB_RUNNERS, runner))
   ) {
     fail(
-      `job ${id}: runner must be one of ${
+      `job ${position}: runner must be one of ${
         Object.keys(AGENT_JOB_RUNNERS).join(", ")
       }`,
     );
@@ -238,20 +247,27 @@ function parseJob(value: unknown): AgentJobV1 {
       AGENT_JOBS_MAX_MINUTES,
       1,
       AGENT_JOBS_MAX_MINUTES,
-      `job ${id}: minutes`,
+      `job ${position}: minutes`,
     ),
     model: model ?? null,
-    reasoningEffort: resolveAgentJobReasoningEffort(value.reasoningEffort, id),
+    reasoningEffort: resolveAgentJobReasoningEffort(
+      value.reasoningEffort,
+      String(position),
+    ),
     pr: pr ?? false,
     review: review ?? true,
-    runner: (runner ?? "linux-x64") as AgentJobRunner,
+    runner: (runner ?? defaultRunner) as AgentJobRunner,
   };
 }
 
 /** Validate a request and pack it into cells. Pure. */
 export function planAgentJobs(
   request: unknown,
-  overrides: { agentsPerCell?: unknown; maxCells?: unknown } = {},
+  overrides: {
+    agentsPerCell?: unknown;
+    maxCells?: unknown;
+    profile?: HostedControllerProfileV1;
+  } = {},
 ): AgentJobsPlanV1 {
   const body = requestBody(request);
   if (body.jobs.length === 0) {
@@ -271,7 +287,14 @@ export function planAgentJobs(
     AGENT_JOBS_MAX_CELLS,
     "maxCells",
   );
-  const jobs = body.jobs.map((job) => parseJob(job));
+  const defaultRunner = agentJobsUseStagedBaseV1(
+      overrides.profile ?? PUBLIC_CONTROLLER_PROFILE,
+    )
+    ? "linux-arm64"
+    : "linux-x64";
+  const jobs = body.jobs.map((job, index) =>
+    parseJob(job, defaultRunner, index + 1)
+  );
   const ids = new Set(jobs.map((job) => job.id));
   if (ids.size !== jobs.length) fail("job ids must be unique");
 

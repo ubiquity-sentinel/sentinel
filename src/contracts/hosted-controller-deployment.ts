@@ -225,7 +225,7 @@ function hostedControllerProfileV1<T extends HostedControllerEntryV1>(
     selfObservation: isPublic,
     release: isPublic,
     backupCi: isPublic,
-    agentJobs: isPublic,
+    agentJobs: true,
     chaining: isPublic,
     privateCadence: !isPublic,
     developmentPushCiOnly: !isPublic,
@@ -423,6 +423,45 @@ export function deploymentWorksTargetV1(
   return visibility === profile.targetVisibility;
 }
 
+/** Operator jobs require an exact visibility; the ordinary issue policy is unchanged. */
+export function agentJobRepositoryVisibilityV1(
+  body: unknown,
+): TargetVisibilityV1 {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return "unknown";
+  }
+  const { private: isPrivate, visibility } = body as Record<string, unknown>;
+  if (isPrivate === true && visibility === "private") return "private";
+  if (
+    isPrivate === false && (visibility === undefined || visibility === "public")
+  ) {
+    return "public";
+  }
+  return "unknown";
+}
+
+/** A private host uses an admitted bundle so model jobs need no target credential. */
+export function agentJobsUseStagedBaseV1(
+  profile: HostedControllerProfileV1,
+): boolean {
+  return profile.role === "private";
+}
+
+export function deploymentWorksAgentJobTargetV1(
+  profile: HostedControllerProfileV1,
+  repository: string,
+  body: unknown,
+): boolean {
+  if (!deploymentWorksTargetV1(profile, agentJobRepositoryVisibilityV1(body))) {
+    return false;
+  }
+  const { full_name: fullName } = body as { full_name?: unknown };
+  return typeof fullName === "string" &&
+    fullName.toLowerCase() === repository.toLowerCase() &&
+    (profile.worksControllerTargets ||
+      !isHostedControllerDeploymentSlugV1(repository));
+}
+
 export const HOSTED_CONTROLLER_SELF: Readonly<RepositoryIdentityV1> = Object
   .freeze({
     owner: HOSTED_CONTROLLER_DEPLOYMENT.owner,
@@ -526,7 +565,7 @@ type WorkflowSwitch =
 
 type WorkflowJob =
   & (
-    | { readonly admission: "both"; readonly profileSwitch?: never }
+    | { readonly admission: "both"; readonly profileSwitch?: "agentJobs" }
     | {
       readonly admission: "public-only" | "private-only" | "role-dependent";
       readonly profileSwitch: WorkflowSwitch;
@@ -547,7 +586,13 @@ const PRIVATE = "github.repository == '@private.repository@'";
 const DEVELOPMENT = "github.ref == '@public.sourceRef@'";
 const SUPERVISOR = "github.ref == '@public.supervisorRef@'";
 const REPOSITORY = "${{ github.repository }}";
-const HUMAN_DEVELOPMENT_PUSH = PUBLIC + " && " + DEVELOPMENT +
+const AGENT_JOBS_DEPLOYMENTS = "(" + PUBLIC + " || " + PRIVATE + ")";
+const AGENT_JOBS_PLAN_REPOSITORIES = {
+  "steps[plan].env.AGENT_JOBS_APP_PRIVATE_KEY": "${{ " + PRIVATE +
+    " && secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY || '' }}",
+} as const;
+const HUMAN_AGENT_JOBS_DEVELOPMENT_EVENT = AGENT_JOBS_DEPLOYMENTS + " && " +
+  DEVELOPMENT +
   " && github.event.sender.type == 'User' && " +
   "github.event.sender.login == github.actor && !endsWith(github.actor, '[bot]')";
 const CI_ADMISSION = PUBLIC +
@@ -580,33 +625,40 @@ export const HOSTED_CONTROLLER_WORKFLOW_TABLE: Readonly<
 > = {
   "agent-jobs-cleanup.yml": {
     plan: {
-      admission: "public-only",
+      admission: "both",
       profileSwitch: "agentJobs",
-      if: HUMAN_DEVELOPMENT_PUSH,
+      if: HUMAN_AGENT_JOBS_DEVELOPMENT_EVENT,
+      repositoryFields: AGENT_JOBS_PLAN_REPOSITORIES,
     },
     delete: {
-      admission: "public-only",
+      admission: "both",
       profileSwitch: "agentJobs",
-      if: PUBLIC +
+      if: AGENT_JOBS_DEPLOYMENTS +
         " && needs.plan.outputs.has-work == 'true' && needs.plan.outputs.control-sha != ''",
     },
   },
   "agent-jobs-delivery.yml": {
     cell: {
-      admission: "public-only",
+      admission: "both",
       profileSwitch: "agentJobs",
-      if: PUBLIC + " && " + DEVELOPMENT +
-        " && github.workflow_ref == '@public.repository@/.github/workflows/agent-jobs.yml@@public.sourceRef@'",
+      if: AGENT_JOBS_DEPLOYMENTS + " && " + DEVELOPMENT +
+        " && github.workflow_ref == format('{0}/.github/workflows/agent-jobs.yml@@public.sourceRef@', github.repository)",
+      repositoryFields: {
+        "steps[build-cache].if": PUBLIC,
+        "steps[Prepare the build cache].if": PUBLIC,
+        "steps[Save the build cache].if": "${{ !cancelled() && " + PUBLIC +
+          " }}",
+      },
     },
     review: {
-      admission: "public-only",
+      admission: "both",
       profileSwitch: "agentJobs",
       inheritsGateFrom: "cell",
       if:
         "needs.cell.result == 'success' && needs.cell.outputs.artifact-id != ''",
     },
     publish: {
-      admission: "public-only",
+      admission: "both",
       profileSwitch: "agentJobs",
       inheritsGateFrom: "review",
       if:
@@ -616,14 +668,21 @@ export const HOSTED_CONTROLLER_WORKFLOW_TABLE: Readonly<
   },
   "agent-jobs.yml": {
     plan: {
-      admission: "public-only",
+      admission: "both",
       profileSwitch: "agentJobs",
-      if: HUMAN_DEVELOPMENT_PUSH,
+      if: HUMAN_AGENT_JOBS_DEVELOPMENT_EVENT,
+      repositoryFields: {
+        ...AGENT_JOBS_PLAN_REPOSITORIES,
+        "steps[plan].run": [
+          'if [[ "$GITHUB_REPOSITORY" == \'@public.repository@\' && "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then',
+        ],
+      },
     },
     delivery: {
-      admission: "public-only",
+      admission: "both",
       profileSwitch: "agentJobs",
-      if: PUBLIC + " && !cancelled() && needs.plan.result == 'success' && " +
+      if: AGENT_JOBS_DEPLOYMENTS +
+        " && !cancelled() && needs.plan.result == 'success' && " +
         "needs.plan.outputs.has-work == 'true' && needs.plan.outputs.control-sha != ''",
     },
   },
@@ -706,14 +765,6 @@ export const HOSTED_CONTROLLER_WORKFLOW_TABLE: Readonly<
           '--jq \'[.check_runs[] | select(.app.slug == "github-actions")] | if length > 0 and all(.status == ' +
           '"completed" and .conclusion == "success") then "green" else "not_green" end\' 2>/dev/null) || none ' +
           '"the launcher\'s checks are unreadable"',
-          'ids=$(gh api --paginate "repos/$GH_REPO/actions/workflows/$workflow/runs?created=%3E%3D$month&per_page=100" ' +
-          "--jq '.workflow_runs[].id' 2>/dev/null) || none \"this month's $workflow runs are unreadable\"",
-          'durations=$(gh api --paginate "repos/$GH_REPO/actions/runs/$run/jobs?filter=all&per_page=100" ' +
-          "--jq '.jobs[] | select(.started_at != null and .completed_at != null) | " +
-          "(((.completed_at | fromdateiso8601) - (.started_at | fromdateiso8601) + 59) / 60 | floor)' " +
-          '2>/dev/null) || none "the jobs of run $run are unreadable"',
-          'runs=$(gh api "repos/$GH_REPO/actions/workflows/$workflow/runs?created=%3E%3D$month&per_page=1" ' +
-          '--jq .total_count 2>/dev/null) || none "this month\'s $workflow runs are unreadable"',
           'gh workflow run supervisor.yml --repo "$GH_REPO" --ref sentinel-supervisor',
         ],
       },

@@ -4,15 +4,78 @@
  * No network or credential.
  */
 import assert from "node:assert/strict";
+import { HOSTED_CONTROLLER_PROFILES } from "../../src/contracts/hosted-controller-deployment.ts";
 import {
   agentJobsCleanupMatrix,
   type AgentJobsCleanupPorts,
   cleanupAgentJobBranches,
+  githubCleanupPorts,
   parseAgentJobsCleanup,
 } from "../../ops/agent-jobs-cleanup.ts";
 import { linkAgentMessage } from "../../ops/agent-jobs-publish.ts";
 
 const BRANCH = "agent-jobs/fix-a-123-1";
+
+Deno.test("private agent job cleanup checks target visibility before each mutation", async (t) => {
+  const repository = "example-org/example-repository";
+  const slug = "/repos/" + repository;
+  const [entry] = parseAgentJobsCleanup([{
+    branches: [{ repository, branch: BRANCH, closePullRequest: true }],
+  }]);
+  for (
+    const [name, drift, expected] of [
+      ["private result stays private", 0, ["PATCH", "DELETE"]],
+      ["visibility changes before pull request close", 2, []],
+      ["visibility changes before branch deletion", 3, ["PATCH"]],
+    ] as const
+  ) {
+    await t.step(name, async () => {
+      let visibilityReads = 0;
+      const writes: string[] = [];
+      const fetchResponse: typeof fetch = (input, init) => {
+        assert.equal(init?.redirect, "manual");
+        assert.equal(
+          new Headers(init?.headers).get("authorization"),
+          "Bearer fixture-token",
+        );
+        const url = new URL(String(input));
+        assert.equal(url.origin, "https://api.github.com");
+        if (url.pathname === slug) {
+          const privateTarget = drift !== ++visibilityReads;
+          return Promise.resolve(Response.json({
+            full_name: repository,
+            private: privateTarget,
+            visibility: privateTarget ? "private" : "public",
+          }));
+        }
+        if (init?.method === "GET") {
+          assert.equal(url.pathname, slug + "/pulls");
+          return Promise.resolve(Response.json([{ number: 7 }]));
+        }
+        if (init?.method === "PATCH") {
+          assert.equal(url.pathname, slug + "/pulls/7");
+          writes.push("PATCH");
+          return Promise.resolve(Response.json({ number: 7, state: "closed" }));
+        }
+        assert.equal(init?.method, "DELETE");
+        assert.equal(url.pathname, slug + "/git/refs/heads/" + BRANCH);
+        writes.push("DELETE");
+        return Promise.resolve(new Response(null, { status: 204 }));
+      };
+      const [result] = await cleanupAgentJobBranches(
+        [entry],
+        githubCleanupPorts(
+          "fixture-token",
+          fetchResponse,
+          HOSTED_CONTROLLER_PROFILES[1],
+        ),
+      );
+      assert.deepEqual(writes, [...expected]);
+      assert.equal(result.status, drift === 0 ? "deleted" : "failed");
+      if (drift) assert.match(result.detail, /target visibility/);
+    });
+  }
+});
 
 Deno.test("agent jobs cleanup accepts only result branches", () => {
   const entries = parseAgentJobsCleanup([

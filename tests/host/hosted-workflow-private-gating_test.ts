@@ -176,7 +176,10 @@ Deno.test("workflow deployment policy matches every job and role-dependent field
       const job = actualJobs[name];
       const label = file + " " + name;
       assert.ok(
-        !automatic || expected.admission !== "both",
+        !automatic || expected.admission !== "both" ||
+          (expected.profileSwitch === "agentJobs" &&
+            expected.if?.includes("@public.repository@") &&
+            expected.if.includes("@private.repository@")),
         label + " automatic admission must be scoped by deployment",
       );
       assert.equal(
@@ -275,6 +278,7 @@ Deno.test("private gating: the paced cycle and the weekly sync run on the privat
     /supervisor\.yml\/runs\?status=\$status&per_page=1/,
     /\nrequire_idle_supervisor\nlauncher=/,
     /check_name=test-local&filter=latest/,
+    /used=\$\(bash ops\/private-actions-minutes.sh "\$month" 2>&1\)/,
     /if \[ "\$used" -ge "\$allowance" \]; then/,
     /\nrequire_idle_supervisor\necho "\$budget decision=dispatch"/,
     /gh workflow run supervisor\.yml --repo "\$GH_REPO" --ref sentinel-supervisor/,

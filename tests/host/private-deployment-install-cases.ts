@@ -13,6 +13,7 @@
  *   and no state write (the run ends after prepare with the closed hold).
  */
 import assert from "node:assert/strict";
+import { requireInstalledAgentJobsLauncher } from "../../ops/agent-jobs-launcher.ts";
 import {
   HOSTED_CONTROLLER_CYCLE_CELLS,
   HOSTED_CONTROLLER_REPOSITORY,
@@ -21,6 +22,7 @@ import {
 import { portOk } from "../../src/contracts/ports.ts";
 import { HostedSupervisorGitHubClient } from "../../src/host/actions-supervisor-install-api.ts";
 import { PRIVATE_LAUNCHER_NOT_INSTALLED } from "../../src/host/actions-supervisor-controller.ts";
+import { sha256Hex } from "../../src/state/state-records.ts";
 import { CONTROLLER } from "./controller-identity-fixture.ts";
 import { requireRun, runProof } from "./actions-supervisor-fixture.ts";
 import {
@@ -86,6 +88,58 @@ Deno.test("private install: a green private test-local installs the launcher at 
     assert.equal(ordinary.generation, 83);
     const installed = await rig.snapshot();
     assert.equal(installed.hostedInstallations?.[0]?.phase, "accepted");
+    const runtime = installed.hostedRuntimes?.[0];
+    assert.ok(runtime);
+    const stateSha = "a".repeat(40);
+    const runtimePath = `hostedRuntimes/${await sha256Hex(runtime.id)}.json`;
+    const reads: string[] = [];
+    const readReceipt =
+      (record: unknown) => (url: string, init: RequestInit) => {
+        assert.equal(
+          new Headers(init.headers).get("authorization"),
+          "Bearer synthetic",
+        );
+        const path = url.replace("https://api.github.com", "");
+        reads.push(path);
+        if (path === `/repos/${PRIVATE}/git/ref/heads/sentinel-state/release`) {
+          return Promise.resolve(Response.json({
+            ref: "refs/heads/sentinel-state/release",
+            object: { type: "commit", sha: stateSha },
+          }));
+        }
+        assert.equal(
+          path,
+          `/repos/${PRIVATE}/contents/${runtimePath}?ref=${stateSha}`,
+        );
+        return Promise.resolve(Response.json({
+          type: "file",
+          path: runtimePath,
+          encoding: "base64",
+          content: btoa(JSON.stringify(record)),
+        }));
+      };
+    await requireInstalledAgentJobsLauncher(
+      SUCCESSOR,
+      "synthetic",
+      readReceipt(runtime),
+    );
+    assert.equal(reads.length, 2);
+    await assert.rejects(
+      requireInstalledAgentJobsLauncher(
+        LEGACY_RUNTIME,
+        "synthetic",
+        readReceipt(runtime),
+      ),
+      /launcher to be installed and healthy/,
+    );
+    await assert.rejects(
+      requireInstalledAgentJobsLauncher(
+        SUCCESSOR,
+        "synthetic",
+        readReceipt({ ...runtime, lastHealthyProof: null }),
+      ),
+      /launcher to be installed and healthy/,
+    );
     // Every install read is the private repository's own.
     assert.ok(rig.calls.length > 0);
     assert.deepEqual(

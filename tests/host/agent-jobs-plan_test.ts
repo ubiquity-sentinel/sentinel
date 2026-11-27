@@ -69,7 +69,7 @@ Deno.test("agent jobs admit an exact public repo and branch SHA before dispatch"
         },
     ));
   };
-  const pinned = await pinAgentJobsPlan(plan, 100, read);
+  const pinned = await pinAgentJobsPlan(plan, 100, { read });
   assert.equal(pinned.createdAtMs, 100);
   assert.deepEqual(
     pinned.cells.flatMap((cell) =>
@@ -96,11 +96,13 @@ Deno.test("agent jobs admit an exact public repo and branch SHA before dispatch"
     ]
   ) {
     await assert.rejects(
-      pinAgentJobsPlan(plan, 100, () =>
-        Promise.resolve(Response.json({
-          default_branch: "main",
-          ...data,
-        }))),
+      pinAgentJobsPlan(plan, 100, {
+        read: () =>
+          Promise.resolve(Response.json({
+            default_branch: "main",
+            ...data,
+          })),
+      }),
       /target is unavailable or not public/,
     );
   }

@@ -31,6 +31,9 @@ import {
 
 /** Workflows with a job that runs on the private repository. */
 const PRIVATE_RUNNING = [
+  "agent-jobs.yml",
+  "agent-jobs-cleanup.yml",
+  "agent-jobs-delivery.yml",
   "supervisor.yml",
   "private-daily.yml",
   "private-sync.yml",
@@ -38,10 +41,10 @@ const PRIVATE_RUNNING = [
 ] as const;
 
 /** Every variable they read, with its value when the variable is absent. */
-const ABSENT_VARIABLES: Readonly<Record<string, string>> = {
+const ABSENT_VARIABLES: Readonly<Record<string, string | string[]>> = {
   // Lower-only; the committed ceiling is `off`.
   SENTINEL_MERGE_QUEUE: "",
-  SENTINEL_MODEL_BASE_URL: "",
+  SENTINEL_MODEL_BASE_URL: ["", "https://ai.ubq.fi/v1"],
   SENTINEL_IMPLEMENTATION_MODEL_ID: "gpt-6.1-sol",
   // Read but unused by the hosted route; native review mode selects.
   SENTINEL_REVIEW_MODEL_ID: "",
@@ -50,6 +53,12 @@ const ABSENT_VARIABLES: Readonly<Record<string, string>> = {
   SENTINEL_BACKUP_CI: "on",
   // The private role files no throughput-watchdog issue.
   SENTINEL_SELF_IMPROVE: "on",
+  SENTINEL_AGENT_JOBS_PER_CELL: "",
+  SENTINEL_AGENT_JOBS_MAX_CELLS: "",
+  SENTINEL_AGENT_JOBS_ENVIRONMENT: "sentinel-supervisor",
+  SENTINEL_AGENT_JOBS_CODEX_VERSION: "latest",
+  // The default is the current Free plan without paid overage.
+  SENTINEL_PRIVATE_PAID_ACTIONS_OVERAGE: "",
 };
 
 /** Every secret they read: required, or optional with the committed route. */
@@ -71,7 +80,10 @@ const FORM = /^\s*(vars|secrets)\.([A-Z0-9_]+)(?:\s*\|\|\s*'([^']*)')?\s*$/;
 /** The absent value of one `${{ }}` body, or null when it reads neither. */
 function absentValue(body: string, path: string): Read | null {
   if (!/\b(vars|secrets)\./.test(body)) return null;
-  const match = FORM.exec(body);
+  const match = FORM.exec(body.replace(
+    /^\s*github\.repository == 'ubiquity-sentinel-private\/sentinel' && /,
+    "",
+  ));
   assert.ok(match, `${path}: unreviewed expression \${{${body}}}`);
   const kind = match[1] as Read["kind"];
   return { kind, name: match[2], absent: match[3] ?? "", path };
@@ -129,7 +141,12 @@ Deno.test("private zero config: every variable is optional, with a reviewed abse
     Object.keys(ABSENT_VARIABLES).sort(),
   );
   for (const [name, values] of variables) {
-    assert.deepEqual([...values], [ABSENT_VARIABLES[name]], name);
+    const expected = ABSENT_VARIABLES[name];
+    assert.deepEqual(
+      [...values].sort(),
+      typeof expected === "string" ? [expected] : expected,
+      name,
+    );
   }
 });
 
@@ -141,8 +158,17 @@ Deno.test("private zero config: two required secrets; the DeepSeek key is only a
   );
   for (const read of secrets) {
     assert.equal(read.absent, "", `${read.path}: a secret has no fallback`);
+    if (read.path.startsWith("agent-jobs.yml.jobs.delivery.secrets.")) {
+      assert.ok(read.path.endsWith(read.name), read.path);
+      continue;
+    }
     if (read.name === "SENTINEL_SUPERVISOR_APP_PRIVATE_KEY") {
-      assert.ok(read.path.endsWith(".with.private-key"), read.path);
+      assert.ok(
+        read.path.endsWith(".with.private-key") ||
+          /^(agent-jobs|agent-jobs-cleanup)\.yml\.jobs\.plan\.steps\[\d+\]\.env\.AGENT_JOBS_APP_PRIVATE_KEY$/
+            .test(read.path),
+        read.path,
+      );
     } else {
       // A step env value of the same name: absent is an empty variable.
       assert.match(read.path, /\.steps\[\d+\]\.env\.([A-Z0-9_]+)$/);

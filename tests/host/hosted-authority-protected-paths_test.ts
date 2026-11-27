@@ -216,6 +216,11 @@ Deno.test("hosted agent-job authority: self code and request changes require the
   for (
     const path of [
       "ops/agent-jobs-git.ts",
+      "ops/agent-jobs-app-access.ts",
+      "ops/agent-jobs-base-stage.ts",
+      "ops/agent-jobs-launcher.ts",
+      "ops/agent-jobs-minutes.ts",
+      "ops/private-actions-minutes.sh",
       "ops/agent-jobs-review.ts",
       "ops/agent-jobs-publish-github.ts",
       "ops/agent-jobs-cleanup.ts",

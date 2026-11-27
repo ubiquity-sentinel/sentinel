@@ -9,6 +9,12 @@
  * explicitly, because GitHub does not reliably close it with the branch. No model runs here and no Sentinel
  * state is read or written.
  */
+import {
+  deploymentRunsServiceV1,
+  HOSTED_CONTROLLER_PROFILE,
+  type HostedControllerProfileV1,
+} from "../src/contracts/hosted-controller-deployment.ts";
+import { githubAgentJobsMutationApi } from "./agent-jobs-publish-github.ts";
 
 const REPOSITORY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9._-]+$/;
 /** The only branch shape `ops/agent-jobs-publish.ts` pushes. */
@@ -158,22 +164,27 @@ export async function cleanupAgentJobBranches(
 }
 
 /** GitHub REST ports for one installation token. */
-export function githubCleanupPorts(token: string): AgentJobsCleanupPorts {
-  const headers = {
-    authorization: `Bearer ${token}`,
-    accept: "application/vnd.github+json",
-    "x-github-api-version": "2022-11-28",
-  };
+export function githubCleanupPorts(
+  token: string,
+  fetchResponse: typeof fetch = fetch,
+  profile: HostedControllerProfileV1 = HOSTED_CONTROLLER_PROFILE,
+): AgentJobsCleanupPorts {
+  const { request, assertTarget } = githubAgentJobsMutationApi(
+    token,
+    fetchResponse,
+    profile,
+  );
   return {
     openPullRequests: async (repository, branch) => {
+      await assertTarget(repository);
       const owner = repository.split("/")[0];
-      const response = await fetch(
-        `https://api.github.com/repos/${repository}/pulls?state=open&per_page=100&head=${
+      const response = await request(
+        `${repository}/pulls?state=open&per_page=100&head=${
           encodeURIComponent(`${owner}:${branch}`)
         }`,
-        { headers },
       );
       if (!response.ok) {
+        await response.body?.cancel();
         throw new Error(`pull request lookup: HTTP ${response.status}`);
       }
       return (await response.json() as { number: number }[]).map((pull) =>
@@ -181,13 +192,11 @@ export function githubCleanupPorts(token: string): AgentJobsCleanupPorts {
       );
     },
     closePullRequest: async (repository, number) => {
-      const response = await fetch(
-        `https://api.github.com/repos/${repository}/pulls/${number}`,
-        {
-          method: "PATCH",
-          headers,
-          body: JSON.stringify({ state: "closed" }),
-        },
+      await assertTarget(repository);
+      const response = await request(
+        `${repository}/pulls/${number}`,
+        "PATCH",
+        { state: "closed" },
       );
       await response.body?.cancel();
       if (!response.ok) {
@@ -195,9 +204,10 @@ export function githubCleanupPorts(token: string): AgentJobsCleanupPorts {
       }
     },
     deleteBranch: async (repository, branch) => {
-      const response = await fetch(
-        `https://api.github.com/repos/${repository}/git/refs/heads/${branch}`,
-        { method: "DELETE", headers },
+      await assertTarget(repository);
+      const response = await request(
+        `${repository}/git/refs/heads/${branch}`,
+        "DELETE",
       );
       await response.body?.cancel();
       if (response.status === 204) return "deleted";
@@ -234,6 +244,9 @@ if (import.meta.main) {
       `planned ${entries.length} branches for ${matrix.include.length} owners`,
     );
   } else if (mode === "delete") {
+    if (!deploymentRunsServiceV1(env("GITHUB_REPOSITORY"), "agentJobs")) {
+      fail("delete must run in a bound deployment");
+    }
     const token = env("AGENT_JOBS_WRITE_TOKEN");
     if (token.length === 0) {
       throw new Error("AGENT_JOBS_WRITE_TOKEN is not set");
