@@ -185,7 +185,7 @@ Deno.test("agent jobs plan refuses invalid reasoning efforts", () => {
     assert.throws(
       () =>
         planAgentJobs([job("bad-effort", "ubiquity/a", { reasoningEffort })]),
-      /job bad-effort: reasoningEffort must be one of/,
+      /^Error: agent jobs request refused: job 1: reasoningEffort must be one of /,
     );
   }
 });
