@@ -4,8 +4,9 @@
  * Git repositories with a fake agent process and native-review receipts.
  */
 import assert from "node:assert/strict";
-import { relative } from "node:path";
+import { dirname, relative } from "node:path";
 import { canonicalStringifySha256 } from "../../src/contracts/canonical.ts";
+import { HOSTED_CONTROLLER_PROFILES } from "../../src/contracts/hosted-controller-deployment.ts";
 import type { ReviewResultV1 } from "../../src/github/review-result-contracts.ts";
 import { reviewResultDigest } from "../../src/github/review-result-parser.ts";
 import {
@@ -35,10 +36,15 @@ import {
 } from "../../ops/agent-jobs-publish.ts";
 import {
   AGENT_JOB_REVIEW_COMMENT,
+  AgentJobPublicationRefusal,
   githubAgentJobsPublishPorts,
 } from "../../ops/agent-jobs-publish-github.ts";
 import type { ReviewedAgentJobResultV1 } from "../../ops/agent-jobs-review-contract.ts";
 import { reviewAgentJobsCell } from "../../ops/agent-jobs-review.ts";
+import {
+  AGENT_JOB_BASE_REF,
+  agentJobBaseBundlePath,
+} from "../../ops/agent-jobs-admission.ts";
 
 function job(id: string, repository = "ubiquity/a", extra = {}) {
   return { id, repository, prompt: `Do ${id}\nmore detail`, ...extra };
@@ -970,13 +976,295 @@ Deno.test("agent jobs cell bundles agent work and publishes only reviewed heads"
       ...one,
       ports: {
         ...one.ports,
-        repositoryVisibility: () => Promise.resolve("private"),
+        assertTarget: () =>
+          Promise.reject(
+            new AgentJobPublicationRefusal("target visibility mismatch"),
+          ),
       },
     });
     assert.equal(hidden.status, "blocked");
-    assert.match(hidden.detail, /visibility is private or unavailable/);
+    assert.match(hidden.detail, /target visibility mismatch/);
   } finally {
     Deno.chdir(originalCwd);
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("private agent job publishes only on its own private target and rechecks before each write", async (t) => {
+  const root = await Deno.makeTempDir({
+    dir: Deno.cwd(),
+    prefix: ".agent-private-publication-",
+  });
+  try {
+    const privateProfile = HOSTED_CONTROLLER_PROFILES[1];
+    const repository = "example-org/example-repository";
+    const remote = root + "/remote.git";
+    const seed = root + "/seed";
+    const artifactDir = root + "/reviewed";
+    await gitOk(["init", "--quiet", "--bare", "-b", "main", remote]);
+    await gitOk(["init", "--quiet", "-b", "main", seed]);
+    const cwd = { cwd: seed };
+    await Deno.writeTextFile(seed + "/content.txt", "base\n");
+    await gitOk(["add", "content.txt"], cwd);
+    await gitOk(["commit", "--quiet", "-m", "base"], cwd);
+    const baseSha = await gitOk(["rev-parse", "HEAD"], cwd);
+    await gitOk(["push", "--quiet", remote, "main"], cwd);
+    const baseBundleRoot = root + "/plan";
+    const baseBundle = baseBundleRoot + "/" +
+      agentJobBaseBundlePath(repository, baseSha);
+    await Deno.mkdir(dirname(baseBundle), { recursive: true });
+    await gitOk(["update-ref", AGENT_JOB_BASE_REF, baseSha], cwd);
+    await gitOk([
+      "bundle",
+      "create",
+      "--quiet",
+      baseBundle,
+      AGENT_JOB_BASE_REF,
+    ], cwd);
+    const plan = planAgentJobs({
+      jobs: [job("private-fixture", repository, { base: "main", pr: true })],
+    });
+    const plannedJob = { ...plan.cells[0].jobs[0], base: "main", baseSha };
+    plan.cells[0].jobs[0] = plannedJob;
+    plan.createdAtMs = Date.now();
+    const cellId = plan.cells[0].cellId;
+    const refuseNetwork = (): never => {
+      throw new Error("the model runner cannot read the target on GitHub");
+    };
+    const cellInput = {
+      plan,
+      cellId,
+      baseBundleRoot,
+      workRoot: root + "/cell-scratch",
+      outDir: root + "/cell",
+      readToken: null,
+      defaultModel: "fixture",
+      deadlineAtMs: Date.now() + 120_000,
+      ports: {
+        remoteUrl: refuseNetwork,
+        prepareClient: () => Promise.resolve(),
+        agentCommand: () => [
+          "bash",
+          "-c",
+          "test -z \"$(git remote)\" && printf 'changed\\n' > content.txt",
+        ],
+        agentEnv: () => ({ PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" }),
+        sleep: () => Promise.resolve(),
+        log: () => {},
+      },
+    };
+    const { results: [candidate] } = await runAgentJobsCell(cellInput);
+    assert.equal(candidate.status, "changed", candidate.detail);
+    assert.equal(candidate.baseSha, baseSha);
+    const reviewed = await reviewAgentJobsCell({
+      plan,
+      cellId,
+      baseBundleRoot,
+      artifactDir: cellInput.outDir,
+      reviewedDir: artifactDir,
+      workRoot: root + "/review-scratch",
+      runTag: "88-1",
+      defaultModel: "fixture",
+      baseUrl: "https://example.invalid",
+      modelToken: "",
+      ports: {
+        publicRepository: refuseNetwork,
+        remoteUrl: refuseNetwork,
+        task: agentJobTask,
+        review: async (request) =>
+          (await reviewedRow(
+            { ...candidate, headSha: request.headSha },
+            plannedJob,
+            "accepted",
+            request.runTag,
+            request.round,
+          )).review.rounds[0],
+        verdict: agentJobReviewRoundVerdict,
+        correct: refuseNetwork,
+        log: () => {},
+      },
+    });
+    const accepted = reviewed.results[0];
+    assert.equal(accepted.review.verdict, "accepted", accepted.detail);
+    const headSha = accepted.headSha;
+    assert(headSha);
+    for (
+      const [index, drift] of [
+        "none",
+        "before push",
+        "before comment",
+        "before draft",
+        "wrong deployment",
+        "renamed",
+        "redirected",
+      ].entries()
+    ) {
+      await t.step(drift, async () => {
+        const runTag = `${88 + index}-1`;
+        const ref = `refs/heads/agent-jobs/${plannedJob.id}-${runTag}`;
+        let isPrivate = true;
+        let metadataReads = 0;
+        const writes: string[] = [];
+        const comments: unknown[] = [];
+        const pulls: unknown[] = [];
+        const fetchResponse: typeof fetch = (request, options) => {
+          const url = new URL(String(request));
+          assert.equal(url.origin, "https://api.github.com");
+          const path = `/repos/${repository}`;
+          assert(url.pathname === path || url.pathname.startsWith(path + "/"));
+          assert.equal(
+            new Headers(options?.headers).get("authorization"),
+            "Bearer fixture-token",
+          );
+          assert.equal(options?.redirect, "manual");
+          if (url.pathname === path) {
+            metadataReads++;
+            if (drift === "before push" && metadataReads === 3) {
+              isPrivate = false;
+            }
+            if (drift === "redirected" && metadataReads === 3) {
+              return Promise.resolve(
+                new Response(null, {
+                  status: 301,
+                  headers: {
+                    location: "https://api.github.com/repos/example-org/moved",
+                  },
+                }),
+              );
+            }
+            return Promise.resolve(Response.json({
+              full_name: drift === "renamed" && metadataReads === 3
+                ? "example-org/moved"
+                : repository,
+              private: isPrivate,
+              visibility: isPrivate ? "private" : "public",
+            }));
+          }
+          if (url.pathname.endsWith("/comments")) {
+            if (options?.method === "GET") {
+              if (drift === "before comment") isPrivate = false;
+              return Promise.resolve(Response.json(comments));
+            }
+            assert.equal(options?.method, "POST");
+            assert.equal(isPrivate, true);
+            writes.push("comment");
+            const body = JSON.parse(String(options.body)).body;
+            assert(
+              body.includes(
+                `https://github.com/${privateProfile.repository}/actions/runs/${
+                  88 + index
+                }/attempts/1`,
+              ),
+            );
+            assert(
+              !body.includes(
+                HOSTED_CONTROLLER_PROFILES[0].repository + "/actions",
+              ),
+            );
+            comments.push({
+              id: 31,
+              commit_id: headSha,
+              body,
+              user: { login: "ubiquity-sentinel[bot]", type: "Bot" },
+            });
+          } else {
+            assert.equal(url.pathname, path + "/pulls");
+            if (options?.method === "GET") {
+              if (drift === "before draft") isPrivate = false;
+              return Promise.resolve(Response.json(pulls));
+            }
+            assert.equal(options?.method, "POST");
+            assert.equal(isPrivate, true);
+            writes.push("draft");
+            const body = JSON.parse(String(options.body));
+            pulls.push({
+              number: 19,
+              state: "open",
+              ...body,
+              user: { login: "ubiquity-sentinel[bot]", type: "Bot" },
+              head: {
+                sha: headSha,
+                ref: ref.slice("refs/heads/".length),
+                repo: { full_name: repository },
+              },
+              base: {
+                sha: baseSha,
+                ref: "main",
+                repo: { full_name: repository },
+              },
+            });
+          }
+          // A retry reconciles the exact App record after a lost response.
+          return Promise.reject(new TypeError("fixture lost response"));
+        };
+        const row = drift === "none"
+          ? accepted
+          : await reviewedRow(accepted, plannedJob, "accepted", runTag);
+        const input: AgentJobsPublishInput = {
+          plan,
+          cellId,
+          reviewed: { ...reviewed, results: [row] },
+          artifactDir,
+          workRoot: root,
+          runTag,
+          writeToken: null,
+          ports: githubAgentJobsPublishPorts(
+            "fixture-token",
+            () => remote,
+            fetchResponse,
+            drift === "wrong deployment"
+              ? HOSTED_CONTROLLER_PROFILES[0]
+              : privateProfile,
+          ),
+        };
+        const [publication] = await publishAgentJobsCell(input);
+        if (drift === "none") {
+          assert.equal(publication.status, "published", publication.detail);
+          assert.equal(
+            publication.reviewCommentUrl,
+            `https://github.com/${repository}/commit/${headSha}#commitcomment-31`,
+          );
+          assert.equal(
+            publication.pullRequest,
+            `https://github.com/${repository}/pull/19`,
+          );
+          assert.deepEqual(await publishAgentJobsCell(input), [publication]);
+          assert.deepEqual(writes, ["comment", "draft"]);
+        } else {
+          assert.equal(publication.status, "blocked");
+          assert.match(publication.detail, /target visibility/);
+          assert.deepEqual(writes, drift === "before draft" ? ["comment"] : []);
+        }
+        const remoteHead = await gitOk([
+          "--git-dir",
+          remote,
+          "for-each-ref",
+          "--format=%(objectname)",
+          ref,
+        ]);
+        assert.equal(
+          remoteHead,
+          ["before push", "wrong deployment", "renamed", "redirected"].includes(
+              drift,
+            )
+            ? ""
+            : headSha,
+        );
+        if (remoteHead) {
+          assert.equal(
+            await gitOk([
+              "--git-dir",
+              remote,
+              "rev-list",
+              "--count",
+              baseSha + ".." + ref,
+            ]),
+            "1",
+          );
+        }
+      });
+    }
+  } finally {
     await Deno.remove(root, { recursive: true });
   }
 });

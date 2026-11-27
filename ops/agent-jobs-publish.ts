@@ -3,8 +3,10 @@ import { resolve } from "node:path";
 import { type GitSha, isGitSha } from "../src/contracts/brands.ts";
 import { portError, portOk } from "../src/contracts/ports.ts";
 import { pushGuardRefusal } from "../src/github/push-content-guard.ts";
-import { deploymentWorksTargetV1, isPublicControllerSlugV1, PUBLIC_CONTROLLER_PROFILE } from "../src/contracts/hosted-controller-deployment.ts";
-import type { TargetVisibilityV1 } from "../src/repair/target-visibility.ts";
+import {
+  deploymentRunsServiceV1,
+  isPublicControllerSlugV1,
+} from "../src/contracts/hosted-controller-deployment.ts";
 import { git, gitAuthEnv, githubRemoteUrl } from "./agent-jobs-git.ts";
 import type { RemoteUrl } from "./agent-jobs-git.ts";
 import {
@@ -78,7 +80,7 @@ export interface AgentJobDraftInput extends AgentJobCommitReviewInput {
 
 export interface AgentJobsPublishPorts {
   remoteUrl: RemoteUrl;
-  repositoryVisibility: (repository: string) => Promise<TargetVisibilityV1>;
+  assertTarget: (repository: string) => Promise<void>;
   ensureReviewComment: (input: AgentJobCommitReviewInput) => Promise<string>;
   ensureDraftPullRequest: (input: AgentJobDraftInput) => Promise<string>;
   log: (line: string) => void;
@@ -329,14 +331,7 @@ async function checkCurrentBase(
   baseSha: GitSha,
   env: Record<string, string>,
 ): Promise<void> {
-  if (
-    !deploymentWorksTargetV1(
-      PUBLIC_CONTROLLER_PROFILE,
-      await input.ports.repositoryVisibility(job.repository),
-    )
-  ) {
-    refuse("target visibility is private or unavailable");
-  }
+  await input.ports.assertTarget(job.repository);
   if (await readRemoteRef(url, `refs/heads/${base}`, env) !== baseSha) {
     refuse("target base changed since review");
   }
@@ -467,6 +462,7 @@ async function publishOne(
   if (before === null) {
     // An empty lease means the destination MUST be absent. This is create-only,
     // including against a racing ancestor ref that a plain push could fast-forward.
+    await input.ports.assertTarget(job.repository);
     const pushed = await git([
       "-c",
       "http.followRedirects=false",
@@ -606,6 +602,9 @@ if (import.meta.main) {
   let publications: AgentJobPublicationV1[] = [];
   let detail = "";
   try {
+    if (!deploymentRunsServiceV1(env("GITHUB_REPOSITORY"), "agentJobs")) {
+      refuse("publication must run in a bound deployment");
+    }
     runTag = agentJobsPublicationRunTag(
       env("GITHUB_RUN_ID"),
       env("GITHUB_RUN_ATTEMPT"),

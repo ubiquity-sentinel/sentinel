@@ -1,5 +1,10 @@
 import { dirname, resolve } from "node:path";
 import { isGitSha, isSha256Hex } from "../src/contracts/brands.ts";
+import {
+  agentJobsUseStagedBaseV1,
+  deploymentRunsServiceV1,
+  HOSTED_CONTROLLER_PROFILE,
+} from "../src/contracts/hosted-controller-deployment.ts";
 import type { AgentJobsPlanV1 } from "./agent-jobs-plan.ts";
 import { AGENT_JOBS_MAX_MINUTES } from "./agent-jobs-plan.ts";
 import type {
@@ -17,7 +22,7 @@ import {
   unavailableAgentJobReviewRound,
 } from "./agent-jobs-native-review.ts";
 import type { correctAgentJobHead } from "./agent-jobs-correct.ts";
-import { githubRemoteUrl } from "./agent-jobs-git.ts";
+import { githubRemoteUrl, stagedAgentJobBasePath } from "./agent-jobs-git.ts";
 import {
   AgentJobGateRefusal,
   type AgentJobGitInput,
@@ -54,6 +59,8 @@ export interface AgentJobsReviewInput {
   plan: ReviewPlan;
   cellId: string;
   artifactDir: string;
+  /** Root of the trusted plan artifact when this deployment stages bases. */
+  baseBundleRoot?: string;
   reviewedDir: string;
   workRoot: string;
   runTag: string;
@@ -381,8 +388,11 @@ async function gateOne(
   }
   const deadlineAtMs = createdAtMs + job.minutes * 60_000;
   agentJobTimeLeft({ deadlineAtMs, now: ports.now });
-  // No target Git process is permitted before the trusted public metadata read.
-  await ports.publicRepository(job.repository);
+  // The anonymous path requires affirmative public metadata before target Git I/O.
+  const baseBundleRoot = input.baseBundleRoot;
+  if (baseBundleRoot === undefined) {
+    await ports.publicRepository(job.repository);
+  }
   const root = await Deno.makeTempDir({
     dir: input.workRoot,
     prefix: `${job.id}-`,
@@ -390,7 +400,17 @@ async function gateOne(
   const sourcePath = resolve(root, "source.git");
   await Deno.mkdir(sourcePath);
   const git = { sourcePath, deadlineAtMs, now: ports.now };
-  const upstream = { ...git, ...job, remote: ports.remoteUrl(job.repository) };
+  const upstream = baseBundleRoot === undefined
+    ? { ...git, ...job, remote: ports.remoteUrl(job.repository) }
+    : {
+      ...git,
+      ...job,
+      bundlePath: stagedAgentJobBasePath(
+        baseBundleRoot,
+        job.repository,
+        job.baseSha,
+      ),
+    };
   await fetchAgentJobBase(upstream);
   let headSha = rawHead === null
     ? job.baseSha
@@ -405,7 +425,9 @@ async function gateOne(
   const finish = async (
     verdict: Exclude<AgentJobReviewV1["verdict"], "blocked">,
   ) => {
-    await ports.publicRepository(job.repository);
+    if (baseBundleRoot === undefined) {
+      await ports.publicRepository(job.repository);
+    }
     await confirmAgentJobBase(upstream);
     const changed = verdict === "accepted";
     if (changed) {
@@ -601,10 +623,17 @@ if (import.meta.main) {
     if (value.length === 0) throw new Error(`missing required ${key}`);
     return value;
   };
+  if (!deploymentRunsServiceV1(required("GITHUB_REPOSITORY"), "agentJobs")) {
+    throw new Error("agent job review must run in a bound deployment");
+  }
+  const planPath = required("AGENT_JOBS_PLAN");
   await reviewAgentJobsCell({
-    plan: JSON.parse(await Deno.readTextFile(required("AGENT_JOBS_PLAN"))),
+    plan: JSON.parse(await Deno.readTextFile(planPath)),
     cellId: required("AGENT_JOBS_CELL_ID"),
     artifactDir: resolve(required("AGENT_JOBS_ARTIFACT_DIR")),
+    baseBundleRoot: agentJobsUseStagedBaseV1(HOSTED_CONTROLLER_PROFILE)
+      ? dirname(planPath)
+      : undefined,
     reviewedDir: resolve(required("AGENT_JOBS_REVIEWED_DIR")),
     workRoot: resolve(required("RUNNER_TEMP"), "agent-jobs-review"),
     runTag: `${required("GITHUB_RUN_ID")}-${required("GITHUB_RUN_ATTEMPT")}`,

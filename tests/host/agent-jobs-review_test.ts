@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import {
+  AGENT_JOB_BASE_REF,
+  agentJobBaseBundlePath,
+} from "../../ops/agent-jobs-admission.ts";
 import {
   type AgentJobReviewRound,
   agentJobReviewRoundIsUnavailable,
@@ -461,6 +465,45 @@ Deno.test("dispatch gate permits skipped review only for exact unchanged trees",
     assert.equal(result.results[0].review.verdict, "blocked");
     assert.deepEqual(result.modelStarts, []);
   }, { review: false });
+});
+
+Deno.test("dispatch gate verifies the staged unchanged base and refuses a missing bundle without using the network", async () => {
+  await fixture(async ({ input, baseSha, remote, gitFixtureDir }) => {
+    const baseBundleRoot = resolve(gitFixtureDir, "plan");
+    const bundle = resolve(
+      baseBundleRoot,
+      agentJobBaseBundlePath(REPOSITORY, baseSha),
+    );
+    await Deno.mkdir(dirname(bundle), { recursive: true });
+    await gitOk(["update-ref", AGENT_JOB_BASE_REF, baseSha], { cwd: remote });
+    const noNetwork = (): never => {
+      assert.fail("private review must use the trusted local bundle");
+    };
+    const staged = {
+      ...input,
+      baseBundleRoot,
+      ports: {
+        ...input.ports,
+        remoteUrl: noNetwork,
+        publicRepository: noNetwork,
+      },
+    };
+    const absent = await reviewAgentJobsCell({
+      ...staged,
+      reviewedDir: resolve(gitFixtureDir, "absent-bundle-review"),
+    });
+    assert.equal(absent.results[0].review.verdict, "blocked");
+    assert.equal(absent.modelStarts.length, 0);
+    await gitOk(["bundle", "create", "--quiet", bundle, AGENT_JOB_BASE_REF], {
+      cwd: remote,
+    });
+    const verified = await reviewAgentJobsCell(staged);
+    const [result] = verified.results;
+    assert.equal(result.review.verdict, "skipped_no_diff", result.detail);
+    assert.equal(result.review.headSha, baseSha);
+    assert.equal(result.bundle, null);
+    assert.equal(verified.modelStarts.length, 0);
+  }, { review: false, emptyCommit: true });
 });
 
 Deno.test("dispatch gate reads the default review verdict for a no-diff job", async () => {

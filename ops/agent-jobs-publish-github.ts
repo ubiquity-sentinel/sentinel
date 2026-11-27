@@ -1,4 +1,8 @@
-import { repositoryVisibilityV1 } from "../src/repair/target-visibility.ts";
+import {
+  deploymentWorksAgentJobTargetV1,
+  HOSTED_CONTROLLER_PROFILE,
+  type HostedControllerProfileV1,
+} from "../src/contracts/hosted-controller-deployment.ts";
 import type { RemoteUrl } from "./agent-jobs-git.ts";
 import type {
   AgentJobCommitReviewInput,
@@ -28,22 +32,26 @@ function reviewMarker(input: AgentJobCommitReviewInput): string {
   return `<!-- ${AGENT_JOB_REVIEW_COMMENT} job=${input.id} run=${input.runTag} head=${input.headSha} task=${input.taskDigest} -->`;
 }
 
-function reviewBody(input: AgentJobCommitReviewInput): string {
+function reviewBody(
+  input: AgentJobCommitReviewInput,
+  controller: string,
+): string {
   const [run, attempt] = input.runTag.split("-");
   return `${
     reviewMarker(input)
-  }\nNative review verdict: **accepted** for Sentinel on-demand job \`${input.id}\`.\n\nReviewed commit: \`${input.headSha}\`.\n\n[Actions review run](https://github.com/ubiquity-sentinel/sentinel/actions/runs/${run}/attempts/${attempt})`;
+  }\nNative review verdict: **accepted** for Sentinel on-demand job \`${input.id}\`.\n\nReviewed commit: \`${input.headSha}\`.\n\n[Actions review run](https://github.com/${controller}/actions/runs/${run}/attempts/${attempt})`;
 }
 
 function exactComment(
   input: AgentJobCommitReviewInput,
   row: CommitComment | null,
+  body: string,
 ): string {
   if (
     !row || typeof row.id !== "number" || !Number.isSafeInteger(row.id) ||
     row.id < 1 || row.commit_id !== input.headSha ||
     row.user?.login !== PUBLISHER || row.user.type !== "Bot" ||
-    row.body !== reviewBody(input)
+    row.body !== body
   ) {
     throw new AgentJobPublicationRefusal(
       "commit comment does not match the reviewed candidate and App author",
@@ -52,11 +60,12 @@ function exactComment(
   return `https://github.com/${input.repository}/commit/${input.headSha}#commitcomment-${row.id}`;
 }
 
-export function githubAgentJobsPublishPorts(
+/** Authenticated, nonredirecting access shared by trusted publication and cleanup. */
+export function githubAgentJobsMutationApi(
   token: string,
-  remoteUrl: RemoteUrl,
   fetchResponse: typeof fetch = fetch,
-): AgentJobsPublishPorts {
+  profile: HostedControllerProfileV1 = HOSTED_CONTROLLER_PROFILE,
+) {
   const request = (path: string, method = "GET", body?: unknown) =>
     fetchResponse(`https://api.github.com/repos/${path}`, {
       method,
@@ -70,10 +79,37 @@ export function githubAgentJobsPublishPorts(
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
+  async function assertTarget(repository: string): Promise<void> {
+    const response = await request(repository).catch(() => null);
+    if (!response?.ok) {
+      await response?.body?.cancel();
+    }
+    const body = response?.ok ? await response.json().catch(() => null) : null;
+    if (!deploymentWorksAgentJobTargetV1(profile, repository, body)) {
+      throw new AgentJobPublicationRefusal(
+        `target visibility does not match the ${profile.targetVisibility} deployment or is unavailable`,
+      );
+    }
+  }
+  return { request, assertTarget };
+}
+
+export function githubAgentJobsPublishPorts(
+  token: string,
+  remoteUrl: RemoteUrl,
+  fetchResponse: typeof fetch = fetch,
+  profile: HostedControllerProfileV1 = HOSTED_CONTROLLER_PROFILE,
+): AgentJobsPublishPorts {
+  const { request, assertTarget } = githubAgentJobsMutationApi(
+    token,
+    fetchResponse,
+    profile,
+  );
   const commentPath = (input: AgentJobCommitReviewInput) =>
     `${input.repository}/commits/${input.headSha}/comments`;
   const readComment = async (
     input: AgentJobCommitReviewInput,
+    body: string,
   ): Promise<string | null> => {
     const marker = reviewMarker(input);
     for (let page = 1; page <= MAX_COMMENT_PAGES; page++) {
@@ -101,7 +137,7 @@ export function githubAgentJobsPublishPorts(
           "multiple App comments claim the same review verdict",
         );
       }
-      if (matches.length === 1) return exactComment(input, matches[0]);
+      if (matches.length === 1) return exactComment(input, matches[0], body);
       if (!response.headers.get("link")?.includes('rel="next"')) return null;
     }
     throw new AgentJobPublicationRefusal(
@@ -163,26 +199,18 @@ export function githubAgentJobsPublishPorts(
   };
   return {
     remoteUrl,
-    repositoryVisibility: async (repository) => {
-      const response = await request(repository);
-      if (!response.ok) {
-        await response.body?.cancel();
-        return "unknown";
-      }
-      const body = await response.json();
-      return sameRepository(body?.full_name, repository)
-        ? repositoryVisibilityV1(body)
-        : "unknown";
-    },
+    assertTarget,
     ensureReviewComment: async (input) => {
-      const existing = await readComment(input);
+      const body = reviewBody(input, profile.repository);
+      const existing = await readComment(input, body);
+      await assertTarget(input.repository);
       if (existing !== null) return existing;
       const created = await request(commentPath(input), "POST", {
-        body: reviewBody(input),
+        body,
       }).catch(() => null);
       if (created?.ok) {
         const row = await created.json().catch(() => null);
-        if (row !== null) return exactComment(input, row);
+        if (row !== null) return exactComment(input, row, body);
       } else if (created && created.status < 500) {
         await created.body?.cancel();
         throw new AgentJobPublicationRefusal(
@@ -192,7 +220,8 @@ export function githubAgentJobsPublishPorts(
         await created?.body?.cancel();
       }
       // A lost response can still leave an App comment on the exact commit.
-      const reconciled = await readComment(input);
+      await assertTarget(input.repository);
+      const reconciled = await readComment(input, body);
       if (reconciled !== null) return reconciled;
       const failure = created ? ` (HTTP ${created.status})` : "";
       throw new AgentJobPublicationRefusal(
@@ -201,6 +230,7 @@ export function githubAgentJobsPublishPorts(
     },
     ensureDraftPullRequest: async (input) => {
       const existing = await readDraft(input);
+      await assertTarget(input.repository);
       if (existing !== null) return existing;
       const created = await request(`${input.repository}/pulls`, "POST", {
         head: input.head,
@@ -211,6 +241,7 @@ export function githubAgentJobsPublishPorts(
       }).catch(() => null);
       if (created?.ok) return exactDraft(input, await created.json());
       await created?.body?.cancel();
+      await assertTarget(input.repository);
       const reconciled = await readDraft(input);
       if (reconciled !== null) return reconciled;
       const failure = created ? ` (HTTP ${created.status})` : "";

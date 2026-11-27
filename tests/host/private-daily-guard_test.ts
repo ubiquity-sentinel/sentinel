@@ -37,6 +37,12 @@ case "$1" in
   *"/check-runs?"*) answer="$CI";;
   *"supervisor.yml/runs?created=%3E%3D$MONTH&per_page=100") answer="$SUPERVISOR_IDS";;
   *"ci.yml/runs?created=%3E%3D$MONTH&per_page=100") answer="$CI_IDS";;
+  *"agent-jobs.yml/runs?created=%3E%3D$MONTH&per_page=100") answer="$AGENT_IDS";;
+  *"agent-jobs-cleanup.yml/runs?created=%3E%3D$MONTH&per_page=100") answer="$CLEANUP_IDS";;
+  *"/actions/runs/31/jobs?"*)
+    printf '%s\n' "$AGENT_JOBS" | jq -r "$3"
+    exit "$?"
+    ;;
   *"/actions/runs/"*"/jobs?"*) answer="$JOBS";;
   *"private-daily.yml/runs?created=%3E%3D$MONTH&per_page=1") answer="$DAILY_COUNT";;
   *"private-sync.yml/runs?created=%3E%3D$MONTH&per_page=1")
@@ -66,6 +72,8 @@ const OK = {
   CI: "green",
   SUPERVISOR_IDS: "11\n12",
   CI_IDS: "21",
+  AGENT_IDS: "",
+  CLEANUP_IDS: "",
   JOBS: "30\n5",
   DAILY_COUNT: "3",
   SYNC_COUNT: "3",
@@ -187,6 +195,11 @@ Deno.test("private daily guard: any failed or malformed read ends green with one
         "the jobs of run 11 are unreadable",
       ],
       [
+        "on-demand usage is unavailable",
+        { AGENT_IDS: "partial" },
+        "this month's agent-jobs.yml runs are unreadable",
+      ],
+      [
         "job minutes malformed",
         { JOBS: "30\nNaN" },
         "unreadable job minutes of run 11",
@@ -210,6 +223,37 @@ Deno.test("private daily guard: any failed or malformed read ends green with one
       assert.equal(result.out, `no cycle: ${reason}\n`);
     });
   }
+});
+
+Deno.test("private daily guard counts on-demand jobs with their runner multipliers", async () => {
+  const job = (
+    runner: string,
+    duration: string | null,
+    conclusion: string | null = "success",
+  ) => ({
+    started_at: "2026-11-01T01:00:00Z",
+    completed_at: duration,
+    labels: [runner],
+    conclusion,
+  });
+  const result = await run({
+    AGENT_IDS: "31",
+    AGENT_JOBS: JSON.stringify({
+      jobs: [
+        job("macos-15", "2026-11-01T01:00:31Z"),
+        job("ubuntu-24.04-arm", "2026-11-01T01:01:01Z"),
+        job("ubuntu-latest", "2026-11-01T01:00:03Z"),
+        job("unknown", "2026-11-01T01:03:00Z", "skipped"),
+        job("macos-15", null, null),
+      ],
+    }),
+  });
+  assert.equal(result.code, 0, result.out);
+  assert.deepEqual(result.dispatches, []);
+  assert.equal(
+    result.out,
+    "no cycle: month-to-date billed minutes (estimate): used=124 allowance=120 decision=hold\n",
+  );
 });
 
 Deno.test("private daily guard: bills the same inputs and paces dispatch within the monthly cap", async (t) => {

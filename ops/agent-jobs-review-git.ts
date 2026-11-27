@@ -3,6 +3,7 @@ import { isHostedControllerDeploymentSlugV1 } from "../src/contracts/hosted-cont
 import { GitReviewSnapshot } from "../src/github/review-snapshot.ts";
 import { SENTINEL_AUTHORITY_PATHS } from "../src/host/hosted-authority-protected-paths.ts";
 import { DenoReplayRuntime } from "../src/replay/runtime.ts";
+import { AGENT_JOB_BASE_REF } from "./agent-jobs-admission.ts";
 
 export const AGENT_JOB_BUNDLE_REF = "refs/heads/agent-job";
 const BASE_REF = "refs/heads/agent-job-base";
@@ -22,6 +23,16 @@ type CandidateInput = AgentJobGitInput & {
   baseSha: string;
   headSha: string;
 };
+type AgentJobBaseInput =
+  & AgentJobGitInput
+  & {
+    base: string;
+    baseSha: string;
+  }
+  & (
+    | { remote: string; bundlePath?: never }
+    | { remote?: never; bundlePath: string }
+  );
 
 export function agentJobTimeLeft(
   input: Pick<AgentJobGitInput, "deadlineAtMs" | "now">,
@@ -50,6 +61,8 @@ async function git(
       "fetch.fsckObjects=true",
       "-c",
       "transfer.fsckObjects=true",
+      "-c",
+      "http.followRedirects=false",
       ...args,
     ],
     cwd: input.sourcePath,
@@ -95,26 +108,48 @@ function assertCandidateShas(
 }
 
 export async function fetchAgentJobBase(
-  input: AgentJobGitInput & { base: string; baseSha: string; remote: string },
+  input: AgentJobBaseInput,
 ): Promise<void> {
   await git(input, ["check-ref-format", `refs/heads/${input.base}`]);
   await git(input, ["init", "--bare", "--template=", "--quiet"]);
+  if (input.bundlePath !== undefined) {
+    if (
+      !(await Deno.lstat(input.bundlePath)).isFile ||
+      await git(input, ["bundle", "list-heads", input.bundlePath]) !==
+        `${input.baseSha} ${AGENT_JOB_BASE_REF}`
+    ) throw new AgentJobGateRefusal("staged base bundle has the wrong commit");
+  }
+  const sourceRef = input.bundlePath === undefined
+    ? `refs/heads/${input.base}`
+    : AGENT_JOB_BASE_REF;
   await git(input, [
     "fetch",
     "--quiet",
     "--no-tags",
     "--no-recurse-submodules",
-    input.remote,
-    `refs/heads/${input.base}:${BASE_REF}`,
-  ], { transport: "https:file" });
-  if ((await git(input, ["rev-parse", BASE_REF])) !== input.baseSha) {
+    input.bundlePath ?? input.remote,
+    `${sourceRef}:${BASE_REF}`,
+  ], { transport: input.bundlePath === undefined ? "https:file" : "file" });
+  if (
+    (await git(input, ["rev-parse", "--verify", `${BASE_REF}^{commit}`])) !==
+      input.baseSha
+  ) {
     throw new AgentJobGateRefusal("pinned base is stale");
   }
 }
 
 export async function confirmAgentJobBase(
-  input: AgentJobGitInput & { base: string; baseSha: string; remote: string },
+  input: AgentJobBaseInput,
 ): Promise<void> {
+  if (input.bundlePath !== undefined) {
+    if (
+      await git(input, ["rev-parse", "--verify", `${BASE_REF}^{commit}`]) !==
+        input.baseSha
+    ) {
+      throw new AgentJobGateRefusal("staged pinned base changed");
+    }
+    return;
+  }
   const ref = `refs/heads/${input.base}`;
   const current = await git(input, [
     "ls-remote",

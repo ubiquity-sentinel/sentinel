@@ -4,11 +4,11 @@ Sentinel runs coding work on GitHub-hosted runners through two entries. Both use
 
 ## Issue mode
 
-Open an eligible GitHub issue in a public repository configured for the supervisor. The protected supervisor discovers it on its scheduled run and publishes a repair PR from a deterministic `sentinel/repair/issue-*` branch. Follow the issue and PR for progress. Sentinel merges qualifying repairs through its review and CI gates. [Supervisor targets](sentinel.targets.json) · [Branch naming via `candidateBranch`](src/repair/keys.ts#L62)
+Open an eligible GitHub issue in a repository configured for the matching public or private supervisor. The protected supervisor discovers it on its scheduled run and publishes a repair PR from a deterministic `sentinel/repair/issue-*` branch. Follow the issue and PR for progress. Sentinel merges qualifying repairs through its review and CI gates. [Supervisor targets](sentinel.targets.json) · [Branch naming via `candidateBranch`](src/repair/keys.ts#L62)
 
 ## On-demand mode
 
-Submit a JSON request on `development` after the repository owner admits that ref to the protected environment. Name an admitted public repository, the task and any specific base branch. Sentinel returns an accepted result branch and an optional draft PR. You control the merge. [Operator job guide](jobs/README.md)
+Give the dispatch helper a JSON request with the task, target repository and optional base branch. It sends public targets to public Sentinel and private targets to private Sentinel. Submit separate requests for the two deployments. Sentinel publishes an accepted commit to a result branch on its target and can open a draft PR. You control the merge. [Operator job guide](jobs/README.md)
 
 ## Review and delivery
 

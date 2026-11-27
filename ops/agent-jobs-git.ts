@@ -3,6 +3,11 @@
  * cell and publish steps. Tokens travel only in the environment of one Git
  * command (`GIT_CONFIG_*`); they are never written to a checkout's config.
  */
+import { resolve } from "node:path";
+import {
+  AGENT_JOB_BASE_REF,
+  agentJobBaseBundlePath,
+} from "./agent-jobs-admission.ts";
 
 export interface CommandResult {
   code: number;
@@ -101,6 +106,8 @@ export async function cloneBranch(input: {
   token: string | null;
 }): Promise<{ branch: string; sha: string }> {
   await gitOk([
+    "-c",
+    "http.followRedirects=false",
     "clone",
     "--quiet",
     "--no-tags",
@@ -115,4 +122,58 @@ export async function cloneBranch(input: {
     }),
     sha: await gitOk(["rev-parse", "HEAD"], { cwd: input.directory }),
   };
+}
+
+export function stagedAgentJobBasePath(
+  root: string,
+  repository: string,
+  baseSha: string,
+): string {
+  return resolve(root, agentJobBaseBundlePath(repository, baseSha));
+}
+
+/** Check out only the exact Git objects staged by the trusted planner. */
+export async function cloneStagedAgentJobBase(input: {
+  bundlePath: string;
+  base: string;
+  baseSha: string;
+  directory: string;
+}): Promise<{ branch: string; sha: string }> {
+  const { bundlePath, base, baseSha, directory } = input;
+  const env = {
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_ALLOW_PROTOCOL: "file",
+  };
+  if (
+    !(await Deno.lstat(bundlePath)).isFile ||
+    await gitOk(["bundle", "list-heads", bundlePath], { env }) !==
+      `${baseSha} ${AGENT_JOB_BASE_REF}`
+  ) {
+    throw new Error("staged base bundle does not match the admitted commit");
+  }
+  await gitOk([
+    "-c",
+    "transfer.fsckObjects=true",
+    "clone",
+    "--quiet",
+    "--no-local",
+    "--no-tags",
+    "--no-checkout",
+    "--single-branch",
+    "--template=",
+    "--branch",
+    AGENT_JOB_BASE_REF.slice("refs/heads/".length),
+    bundlePath,
+    directory,
+  ], { env });
+  const checkout = { cwd: directory, env };
+  if (
+    await gitOk(["rev-parse", "--verify", "HEAD^{commit}"], checkout) !==
+      baseSha
+  ) {
+    throw new Error("staged base checkout does not match the admitted commit");
+  }
+  await gitOk(["remote", "remove", "origin"], checkout);
+  return { branch: base, sha: baseSha };
 }

@@ -1,4 +1,9 @@
-import { AGENT_JOB_SHA } from "./agent-jobs-admission.ts";
+import {
+  AGENT_JOB_SHA,
+  agentJobRepositoryUrl,
+  type AgentJobsGitHubRead,
+  readAgentJobsGitHubObject,
+} from "./agent-jobs-admission.ts";
 import { git, gitOk } from "./agent-jobs-git.ts";
 
 type Inbox = "inbox" | "cleanup";
@@ -12,6 +17,30 @@ export function requireAgentJobOperator(event: unknown, actor: string): void {
     !actor ||
     /\[bot\]$/i.test(actor)
   ) throw new Error("agent jobs requires a matching GitHub User sender");
+}
+
+/** Check the sender's current write permission in this deployment only. */
+export async function requireAgentJobOperatorWrite(
+  repository: string,
+  actor: string,
+  nativeToken: string,
+  read: AgentJobsGitHubRead = fetch,
+): Promise<void> {
+  const data = nativeToken
+    ? await readAgentJobsGitHubObject(
+      agentJobRepositoryUrl(repository) +
+        `/collaborators/${encodeURIComponent(actor)}/permission`,
+      read,
+      nativeToken,
+    )
+    : null;
+  const user = data?.user as { login?: unknown; type?: unknown } | undefined;
+  if (
+    typeof data?.permission !== "string" ||
+    !["admin", "maintain", "write"].includes(data.permission) ||
+    user?.type !== "User" || typeof user.login !== "string" ||
+    user.login.toLowerCase() !== actor.toLowerCase()
+  ) throw new Error("agent jobs requires GitHub repository write access");
 }
 
 function validSha(sha: unknown): sha is string {
@@ -85,6 +114,25 @@ export function parseAgentJobJson(input: string): unknown {
   } catch {
     throw new Error("invalid agent jobs request JSON");
   }
+}
+
+/** GitHub stores dispatch inputs in the native event file. */
+export function readAgentJobDispatchRequest(event: unknown): {
+  document: unknown;
+  agentsPerCell?: unknown;
+  maxCells?: unknown;
+} {
+  const { inputs } = event as {
+    inputs?: { jobs?: unknown; agents_per_cell?: unknown; max_cells?: unknown };
+  } ?? {};
+  if (typeof inputs?.jobs !== "string") {
+    throw new Error("agent jobs dispatch is missing its request");
+  }
+  return {
+    document: parseAgentJobJson(inputs.jobs),
+    agentsPerCell: inputs.agents_per_cell,
+    maxCells: inputs.max_cells,
+  };
 }
 
 export async function readAgentJobsPushRequests(
